@@ -771,26 +771,15 @@ async function step4Next() {
   btn.innerHTML = '<div class="spinner"></div> Setting up…';
 
   try {
-    // Create the organisation
-    const { data: org, error: orgErr } = await sb.from('organisations').insert({
-      name: orgName,
-      type: state.type,
-      region: state.region,
-      billing_status: 'trial',
+    // Create the organisation using a secure database function
+    const { data: orgId, error: orgErr } = await sb.rpc('create_organisation', {
+      org_name: orgName,
+      org_type: state.type,
+      org_region: state.region,
       contact_email: state.email,
-    }).select().single();
-    if (orgErr) throw orgErr;
-    state.orgId = org.id;
-
-    // Add the user as admin
-    const role = state.type === 'retailer' ? 'corp_admin' : 'mfr_admin';
-    const { error: memberErr } = await sb.from('organisation_members').insert({
-      organisation_id: org.id,
-      user_id: state.userId,
-      role,
-      joined_at: new Date().toISOString(),
     });
-    if (memberErr) throw memberErr;
+    if (orgErr) throw orgErr;
+    state.orgId = orgId;
 
     goTo(5);
   } catch(e) {
