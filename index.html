@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Batch'd — Get Started</title>
+  <meta name="description" content="Food traceability and recall management for retailers and manufacturers." />
+  <meta name="theme-color" content="#34d399" />
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700;800;900&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #080f12;
+      --surface:  #0d1e1c;
+      --surface2: #13302b;
+      --border:   #163d37;
+      --accent:   #34d399;
+      --accent-dim: #059669;
+      --text:     #edfdf8;
+      --muted:    #6aaf9e;
+      --danger:   #ff5c5c;
+      --warn:     #f5a623;
+      --radius:   14px;
+    }
+
+    html, body {
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'DM Mono', monospace;
+      overflow-x: hidden;
+    }
+
+    /* ── Noise + aurora background ── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 80% 50% at 20% -10%, rgba(52,211,153,0.12) 0%, transparent 60%),
+        radial-gradient(ellipse 60% 40% at 80% 110%, rgba(5,150,105,0.10) 0%, transparent 55%),
+        radial-gradient(ellipse 40% 30% at 50% 50%, rgba(22,61,55,0.25) 0%, transparent 70%);
+      pointer-events: none;
+      z-index: 0;
+    }
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 0;
+      opacity: 0.5;
+    }
+
+    /* ── Layout ── */
+    .page {
+      position: relative;
+      z-index: 1;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ── */
+    header {
+      padding: 24px 40px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+    }
+    .logo-icon {
+      width: 36px;
+      height: 36px;
+      background: var(--accent);
+      border-radius: 9px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .logo-icon svg { color: #080f12; }
+    .logo-text {
+      font-family: 'Figtree', sans-serif;
+      font-weight: 800;
+      font-size: 20px;
+      color: var(--accent);
+      letter-spacing: -0.5px;
+    }
+    .header-sign-in {
+      font-size: 12px;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 8px 16px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      transition: all 0.15s;
+    }
+    .header-sign-in:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* ── Main container ── */
+    main {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px 20px 60px;
+    }
+
+    .onboarding-wrap {
+      width: 100%;
+      max-width: 520px;
+    }
+
+    /* ── Progress dots ── */
+    .progress {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 32px;
+      justify-content: center;
+    }
+    .progress-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--border);
+      transition: all 0.3s;
+    }
+    .progress-dot.active {
+      background: var(--accent);
+      width: 24px;
+      border-radius: 3px;
+    }
+    .progress-dot.done { background: var(--accent-dim); }
+
+    /* ── Card ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 40px;
+      animation: cardIn 0.35s cubic-bezier(0.16,1,0.3,1) both;
+    }
+    @keyframes cardIn {
+      from { opacity: 0; transform: translateY(16px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .step-label {
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+    .step-title {
+      font-family: 'Figtree', sans-serif;
+      font-weight: 800;
+      font-size: 26px;
+      color: var(--text);
+      line-height: 1.2;
+      margin-bottom: 6px;
+    }
+    .step-sub {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.6;
+      margin-bottom: 28px;
+    }
+
+    /* ── Type selection cards ── */
+    .type-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 28px;
+    }
+    .type-card {
+      border: 1.5px solid var(--border);
+      border-radius: 10px;
+      padding: 20px 16px;
+      cursor: pointer;
+      transition: all 0.15s;
+      text-align: left;
+      background: var(--surface2);
+      position: relative;
+      overflow: hidden;
+    }
+    .type-card:hover { border-color: var(--muted); }
+    .type-card.selected {
+      border-color: var(--accent);
+      background: rgba(52,211,153,0.06);
+    }
+    .type-card.selected::after {
+      content: '✓';
+      position: absolute;
+      top: 10px;
+      right: 12px;
+      font-size: 12px;
+      color: var(--accent);
+    }
+    .type-icon {
+      font-size: 24px;
+      margin-bottom: 10px;
+      display: block;
+    }
+    .type-name {
+      font-family: 'Figtree', sans-serif;
+      font-weight: 700;
+      font-size: 14px;
+      color: var(--text);
+      margin-bottom: 4px;
+    }
+    .type-desc {
+      font-size: 10px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    /* ── Fields ── */
+    .field { margin-bottom: 16px; }
+    .field label {
+      display: block;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    .field input, .field select {
+      width: 100%;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 11px 14px;
+      font-family: 'DM Mono', monospace;
+      font-size: 13px;
+      color: var(--text);
+      outline: none;
+      transition: border-color 0.15s;
+      -webkit-appearance: none;
+    }
+    .field input:focus, .field select:focus { border-color: var(--accent); }
+    .field input.error { border-color: var(--danger); }
+    .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .field-hint {
+      font-size: 10px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    /* ── Region selector ── */
+    .region-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .region-btn {
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      cursor: pointer;
+      background: var(--surface2);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: all 0.15s;
+      text-align: left;
+    }
+    .region-btn:hover { border-color: var(--muted); }
+    .region-btn.selected { border-color: var(--accent); background: rgba(52,211,153,0.06); }
+    .region-flag { font-size: 18px; }
+    .region-name { font-family: 'Figtree', sans-serif; font-weight: 700; font-size: 12px; color: var(--text); }
+    .region-sub { font-size: 10px; color: var(--muted); }
+
+    /* ── Buttons ── */
+    .btn-primary {
+      width: 100%;
+      background: var(--accent);
+      color: #080f12;
+      border: none;
+      border-radius: 10px;
+      padding: 14px;
+      font-family: 'DM Mono', monospace;
+      font-weight: 700;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.15s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      letter-spacing: 0.02em;
+    }
+    .btn-primary:hover { background: #6ee7b7; }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-ghost {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      border-radius: 8px;
+      padding: 10px 18px;
+      font-family: 'DM Mono', monospace;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn-ghost:hover { border-color: var(--muted); color: var(--text); }
+
+    .btn-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin-top: 8px;
+    }
+    .btn-row .btn-ghost { flex-shrink: 0; }
+    .btn-row .btn-primary { flex: 1; }
+
+    /* ── Error / message ── */
+    .msg {
+      font-size: 11px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      margin-bottom: 14px;
+      display: none;
+    }
+    .msg.error { background: rgba(255,92,92,0.1); border: 1px solid rgba(255,92,92,0.3); color: var(--danger); display: block; }
+    .msg.success { background: rgba(52,211,153,0.1); border: 1px solid rgba(52,211,153,0.3); color: var(--accent); display: block; }
+
+    /* ── Divider ── */
+    .divider {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 20px 0;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .divider::before, .divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
+    /* ── Success screen ── */
+    .success-wrap {
+      text-align: center;
+      padding: 20px 0;
+    }
+    .success-icon {
+      width: 64px;
+      height: 64px;
+      background: rgba(52,211,153,0.12);
+      border: 1.5px solid rgba(52,211,153,0.3);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 20px;
+      font-size: 28px;
+    }
+    .success-title {
+      font-family: 'Figtree', sans-serif;
+      font-weight: 800;
+      font-size: 24px;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+    .success-sub {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.7;
+      margin-bottom: 28px;
+    }
+    .next-steps {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 24px;
+      text-align: left;
+    }
+    .next-step {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .next-step-num {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: rgba(52,211,153,0.12);
+      border: 1px solid rgba(52,211,153,0.3);
+      color: var(--accent);
+      font-size: 10px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    /* ── Footer ── */
+    footer {
+      text-align: center;
+      padding: 20px;
+      font-size: 11px;
+      color: var(--muted);
+      position: relative;
+      z-index: 1;
+    }
+    footer a { color: var(--muted); text-decoration: none; }
+    footer a:hover { color: var(--accent); }
+
+    /* ── Spinner ── */
+    .spinner {
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(8,15,18,0.3);
+      border-top-color: #080f12;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      flex-shrink: 0;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Password strength ── */
+    .pw-strength {
+      display: flex;
+      gap: 4px;
+      margin-top: 6px;
+    }
+    .pw-bar {
+      height: 3px;
+      flex: 1;
+      border-radius: 2px;
+      background: var(--border);
+      transition: background 0.2s;
+    }
+    .pw-bar.weak   { background: var(--danger); }
+    .pw-bar.fair   { background: var(--warn); }
+    .pw-bar.strong { background: var(--accent); }
+
+    @media (max-width: 560px) {
+      header { padding: 16px 20px; }
+      .card  { padding: 28px 20px; }
+      .type-grid, .region-grid, .field-row { grid-template-columns: 1fr; }
+      .step-title { font-size: 22px; }
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <a class="logo" href="/">
+      <div class="logo-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <rect x="3" y="3" width="7" height="7" rx="1.5"/>
+          <rect x="14" y="3" width="7" height="7" rx="1.5"/>
+          <rect x="3" y="14" width="7" height="7" rx="1.5"/>
+          <rect x="14" y="14" width="7" height="7" rx="1.5"/>
+        </svg>
+      </div>
+      <span class="logo-text">Batch'd</span>
+    </a>
+    <a class="header-sign-in" href="#" onclick="showSignIn()">Sign in →</a>
+  </header>
+
+  <main>
+    <div class="onboarding-wrap">
+      <div class="progress" id="progress-dots"></div>
+      <div class="card" id="step-card"></div>
+    </div>
+  </main>
+
+  <footer>
+    <a href="https://batchd-app.netlify.app">Open scanning app</a>
+    &nbsp;·&nbsp;
+    <a href="mailto:ian.w.race@gmail.com">Contact</a>
+    &nbsp;·&nbsp;
+    © 2026 Batch'd
+  </footer>
+</div>
+
+<script>
+const SUPABASE_URL = 'https://lurxucdmrugikdlvvebc.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1cnh1Y2RtcnVnaWtkbHZ2ZWJjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTU5NTQsImV4cCI6MjA4OTgzMTk1NH0.ewNhBbF8nUzpF9Ve822D9t8VLwB_hjk27KuFFEXct0A';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// ── State ─────────────────────────────────────────────────────
+const state = {
+  step: 1,
+  totalSteps: 5,
+  type: null,       // 'retailer' | 'manufacturer'
+  region: 'no',
+  email: '',
+  password: '',
+  firstName: '',
+  lastName: '',
+  orgName: '',
+  orgId: null,
+  userId: null,
+};
+
+// ── Progress dots ──────────────────────────────────────────────
+function renderDots() {
+  const el = document.getElementById('progress-dots');
+  el.innerHTML = Array.from({ length: state.totalSteps }, (_, i) => {
+    const n = i + 1;
+    const cls = n < state.step ? 'done' : n === state.step ? 'active' : '';
+    return `<div class="progress-dot ${cls}"></div>`;
+  }).join('');
+}
+
+// ── Router ────────────────────────────────────────────────────
+function goTo(step) {
+  state.step = step;
+  renderDots();
+  const card = document.getElementById('step-card');
+  card.style.animation = 'none';
+  card.offsetHeight; // reflow
+  card.style.animation = '';
+  const steps = {
+    1: renderStep1,
+    2: renderStep2,
+    3: renderStep3,
+    4: renderStep4,
+    5: renderStep5,
+  };
+  (steps[step] || renderStep1)();
+}
+
+// ── STEP 1: Account type ───────────────────────────────────────
+function renderStep1() {
+  document.getElementById('step-card').innerHTML = `
+    <div class="step-label">Step 1 of 5</div>
+    <div class="step-title">Welcome to Batch'd</div>
+    <div class="step-sub">The food traceability platform connecting retailers and manufacturers. Choose how you'll use Batch'd.</div>
+    <div class="type-grid">
+      <button class="type-card ${state.type==='retailer'?'selected':''}" onclick="selectType('retailer')">
+        <span class="type-icon">🏪</span>
+        <div class="type-name">Retailer</div>
+        <div class="type-desc">Grocery stores, supermarket chains, food retailers. Manage traceability across all your locations.</div>
+      </button>
+      <button class="type-card ${state.type==='manufacturer'?'selected':''}" onclick="selectType('manufacturer')">
+        <span class="type-icon">🏭</span>
+        <div class="type-name">Manufacturer</div>
+        <div class="type-desc">Food producers and brands. Register products, manage lot codes, and push recalls directly to retailers.</div>
+      </button>
+    </div>
+    <button class="btn-primary" onclick="step1Next()" ${!state.type?'disabled':''} id="btn-step1">
+      Continue →
+    </button>
+    <div class="divider">already have an account?</div>
+    <button class="btn-ghost" style="width:100%;justify-content:center;" onclick="showSignIn()">Sign in to existing account</button>
+  `;
+}
+
+function selectType(t) {
+  state.type = t;
+  renderStep1();
+}
+
+function step1Next() {
+  if (!state.type) return;
+  goTo(2);
+}
+
+// ── STEP 2: Region ─────────────────────────────────────────────
+function renderStep2() {
+  document.getElementById('step-card').innerHTML = `
+    <div class="step-label">Step 2 of 5</div>
+    <div class="step-title">Your region</div>
+    <div class="step-sub">This determines which regulatory frameworks, recall databases, and compliance features are active.</div>
+    <div class="region-grid">
+      <button class="region-btn ${state.region==='no'?'selected':''}" onclick="selectRegion('no')">
+        <span class="region-flag">🇳🇴</span>
+        <div>
+          <div class="region-name">Norway / EU</div>
+          <div class="region-sub">Mattilsynet · EU Reg. 178/2002 · RASFF</div>
+        </div>
+      </button>
+      <button class="region-btn ${state.region==='us'?'selected':''}" onclick="selectRegion('us')">
+        <span class="region-flag">🇺🇸</span>
+        <div>
+          <div class="region-name">United States</div>
+          <div class="region-sub">FDA · FSMA · FSMA 204 (USA)</div>
+        </div>
+      </button>
+    </div>
+    <div class="btn-row">
+      <button class="btn-ghost" onclick="goTo(1)">← Back</button>
+      <button class="btn-primary" onclick="goTo(3)">Continue →</button>
+    </div>
+  `;
+}
+
+function selectRegion(r) {
+  state.region = r;
+  renderStep2();
+}
+
+// ── STEP 3: Account details ────────────────────────────────────
+function renderStep3() {
+  document.getElementById('step-card').innerHTML = `
+    <div class="step-label">Step 3 of 5</div>
+    <div class="step-title">Create your account</div>
+    <div class="step-sub">You'll be the administrator for your organisation.</div>
+    <div id="step3-msg" class="msg"></div>
+    <div class="field-row">
+      <div class="field">
+        <label>First name</label>
+        <input id="f-first" type="text" placeholder="Ian" value="${state.firstName}" autocomplete="given-name" />
+      </div>
+      <div class="field">
+        <label>Last name</label>
+        <input id="f-last" type="text" placeholder="Race" value="${state.lastName}" autocomplete="family-name" />
+      </div>
+    </div>
+    <div class="field">
+      <label>Email address</label>
+      <input id="f-email" type="email" placeholder="you@company.com" value="${state.email}" autocomplete="email" />
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <input id="f-password" type="password" placeholder="Min. 8 characters" oninput="checkPwStrength(this.value)" autocomplete="new-password" />
+      <div class="pw-strength">
+        <div class="pw-bar" id="pw1"></div>
+        <div class="pw-bar" id="pw2"></div>
+        <div class="pw-bar" id="pw3"></div>
+        <div class="pw-bar" id="pw4"></div>
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn-ghost" onclick="goTo(2)">← Back</button>
+      <button class="btn-primary" onclick="step3Next()" id="btn-step3">Continue →</button>
+    </div>
+  `;
+}
+
+function checkPwStrength(pw) {
+  const bars = [document.getElementById('pw1'), document.getElementById('pw2'),
+                document.getElementById('pw3'), document.getElementById('pw4')];
+  bars.forEach(b => b.className = 'pw-bar');
+  if (!pw) return;
+  let score = 0;
+  if (pw.length >= 8) score++;
+  if (pw.length >= 12) score++;
+  if (/[A-Z]/.test(pw) && /[0-9]/.test(pw)) score++;
+  if (/[^A-Za-z0-9]/.test(pw)) score++;
+  const cls = score <= 1 ? 'weak' : score <= 2 ? 'fair' : 'strong';
+  for (let i = 0; i < score; i++) bars[i].classList.add(cls);
+}
+
+async function step3Next() {
+  const first = document.getElementById('f-first').value.trim();
+  const last  = document.getElementById('f-last').value.trim();
+  const email = document.getElementById('f-email').value.trim();
+  const pw    = document.getElementById('f-password').value;
+  const msg   = document.getElementById('step3-msg');
+  msg.className = 'msg';
+
+  if (!first || !last) { msg.className = 'msg error'; msg.textContent = 'Please enter your first and last name.'; return; }
+  if (!email || !email.includes('@')) { msg.className = 'msg error'; msg.textContent = 'Please enter a valid email address.'; return; }
+  if (pw.length < 8) { msg.className = 'msg error'; msg.textContent = 'Password must be at least 8 characters.'; return; }
+
+  state.firstName = first;
+  state.lastName  = last;
+  state.email     = email;
+  state.password  = pw;
+
+  const btn = document.getElementById('btn-step3');
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner"></div> Creating account…';
+
+  try {
+    const { data, error } = await sb.auth.signUp({
+      email,
+      password: pw,
+      options: { data: { first_name: first, last_name: last } }
+    });
+    if (error) throw error;
+    state.userId = data.user?.id;
+    goTo(4);
+  } catch(e) {
+    msg.className = 'msg error';
+    msg.textContent = e.message || 'Could not create account. Please try again.';
+    btn.disabled = false;
+    btn.innerHTML = 'Continue →';
+  }
+}
+
+// ── STEP 4: Organisation ───────────────────────────────────────
+function renderStep4() {
+  const isRetailer = state.type === 'retailer';
+  document.getElementById('step-card').innerHTML = `
+    <div class="step-label">Step 4 of 5</div>
+    <div class="step-title">Set up your organisation</div>
+    <div class="step-sub">${isRetailer
+      ? 'Your organisation represents your retail company. Stores and staff will be added inside it.'
+      : 'Your organisation represents your manufacturing company. Products and lot codes will be registered here.'
+    }</div>
+    <div id="step4-msg" class="msg"></div>
+    <div class="field">
+      <label>${isRetailer ? 'Retail company name' : 'Manufacturing company name'}</label>
+      <input id="f-orgname" type="text" placeholder="${isRetailer ? 'e.g. REMA 1000 AS' : 'e.g. Tine SA'}" value="${state.orgName}" />
+    </div>
+    ${isRetailer ? `
+    <div class="field">
+      <label>Number of stores <span style="color:var(--muted);font-size:10px;">(approximate)</span></label>
+      <select id="f-storecount">
+        <option value="1-5">1–5 stores</option>
+        <option value="6-20">6–20 stores</option>
+        <option value="21-100">21–100 stores</option>
+        <option value="100+">100+ stores</option>
+      </select>
+    </div>
+    ` : `
+    <div class="field">
+      <label>Primary product category</label>
+      <select id="f-category">
+        <option value="dairy">Dairy & Eggs</option>
+        <option value="meat">Meat & Poultry</option>
+        <option value="seafood">Seafood</option>
+        <option value="bakery">Bakery & Bread</option>
+        <option value="beverages">Beverages</option>
+        <option value="frozen">Frozen Foods</option>
+        <option value="produce">Fresh Produce</option>
+        <option value="snacks">Snacks & Confectionery</option>
+        <option value="other">Other</option>
+      </select>
+    </div>
+    `}
+    <div class="btn-row">
+      <button class="btn-ghost" onclick="goTo(3)">← Back</button>
+      <button class="btn-primary" onclick="step4Next()" id="btn-step4">Continue →</button>
+    </div>
+  `;
+  document.getElementById('f-orgname').focus();
+}
+
+async function step4Next() {
+  const orgName = document.getElementById('f-orgname').value.trim();
+  const msg = document.getElementById('step4-msg');
+  msg.className = 'msg';
+
+  if (!orgName) { msg.className = 'msg error'; msg.textContent = 'Please enter your organisation name.'; return; }
+  state.orgName = orgName;
+
+  const btn = document.getElementById('btn-step4');
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner"></div> Setting up…';
+
+  try {
+    // Create the organisation
+    const { data: org, error: orgErr } = await sb.from('organisations').insert({
+      name: orgName,
+      type: state.type,
+      region: state.region,
+      billing_status: 'trial',
+      contact_email: state.email,
+    }).select().single();
+    if (orgErr) throw orgErr;
+    state.orgId = org.id;
+
+    // Add the user as admin
+    const role = state.type === 'retailer' ? 'corp_admin' : 'mfr_admin';
+    const { error: memberErr } = await sb.from('organisation_members').insert({
+      organisation_id: org.id,
+      user_id: state.userId,
+      role,
+      joined_at: new Date().toISOString(),
+    });
+    if (memberErr) throw memberErr;
+
+    goTo(5);
+  } catch(e) {
+    msg.className = 'msg error';
+    msg.textContent = e.message || 'Could not create organisation. Please try again.';
+    btn.disabled = false;
+    btn.innerHTML = 'Continue →';
+  }
+}
+
+// ── STEP 5: Success ────────────────────────────────────────────
+function renderStep5() {
+  const isRetailer = state.type === 'retailer';
+  document.getElementById('step-card').innerHTML = `
+    <div class="success-wrap">
+      <div class="success-icon">✓</div>
+      <div class="success-title">You're all set, ${state.firstName}!</div>
+      <div class="success-sub">
+        <strong style="color:var(--text)">${state.orgName}</strong> is now live on Batch'd.<br>
+        Check your email to verify your account, then you're ready to go.
+      </div>
+      <div class="next-steps">
+        ${isRetailer ? `
+        <div class="next-step"><div class="next-step-num">1</div>Verify your email address</div>
+        <div class="next-step"><div class="next-step-num">2</div>Add your first store location</div>
+        <div class="next-step"><div class="next-step-num">3</div>Invite your store managers and staff</div>
+        <div class="next-step"><div class="next-step-num">4</div>Staff download the Batch'd scanning app</div>
+        ` : `
+        <div class="next-step"><div class="next-step-num">1</div>Verify your email address</div>
+        <div class="next-step"><div class="next-step-num">2</div>Register your products and lot codes</div>
+        <div class="next-step"><div class="next-step-num">3</div>Connect with your retail trading partners</div>
+        <div class="next-step"><div class="next-step-num">4</div>Run your first mock recall drill</div>
+        `}
+      </div>
+      <button class="btn-primary" onclick="goToDashboard()">
+        Open dashboard →
+      </button>
+    </div>
+  `;
+}
+
+function goToDashboard() {
+  // For now redirect to the scanning app — this will become the proper dashboard
+  window.location.href = 'https://batchd-app.netlify.app';
+}
+
+// ── Sign in flow ───────────────────────────────────────────────
+function showSignIn() {
+  state.step = 0;
+  renderDots();
+  document.getElementById('step-card').innerHTML = `
+    <div class="step-label">Welcome back</div>
+    <div class="step-title">Sign in</div>
+    <div class="step-sub">Access your Batch'd dashboard.</div>
+    <div id="signin-msg" class="msg"></div>
+    <div class="field">
+      <label>Email address</label>
+      <input id="si-email" type="email" placeholder="you@company.com" autocomplete="email"
+        onkeydown="if(event.key==='Enter')doSignIn()" />
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <input id="si-password" type="password" placeholder="••••••••" autocomplete="current-password"
+        onkeydown="if(event.key==='Enter')doSignIn()" />
+    </div>
+    <button class="btn-primary" onclick="doSignIn()" id="btn-signin" style="margin-top:4px;">
+      Sign in →
+    </button>
+    <div class="divider">new to Batch'd?</div>
+    <button class="btn-ghost" style="width:100%;justify-content:center;" onclick="goTo(1)">Create an account</button>
+  `;
+  document.getElementById('si-email').focus();
+}
+
+async function doSignIn() {
+  const email = document.getElementById('si-email').value.trim();
+  const pw    = document.getElementById('si-password').value;
+  const msg   = document.getElementById('signin-msg');
+  const btn   = document.getElementById('btn-signin');
+  msg.className = 'msg';
+  if (!email || !pw) { msg.className = 'msg error'; msg.textContent = 'Please enter your email and password.'; return; }
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner"></div> Signing in…';
+  try {
+    const { error } = await sb.auth.signInWithPassword({ email, password: pw });
+    if (error) throw error;
+    window.location.href = 'https://batchd-app.netlify.app';
+  } catch(e) {
+    msg.className = 'msg error';
+    msg.textContent = e.message || 'Incorrect email or password.';
+    btn.disabled = false;
+    btn.innerHTML = 'Sign in →';
+  }
+}
+
+// ── Init ──────────────────────────────────────────────────────
+state.totalSteps = 5;
+goTo(1);
+</script>
+</body>
+</html>
