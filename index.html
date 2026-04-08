@@ -695,7 +695,11 @@ async function step3Next() {
       options: { data: { first_name: first, last_name: last } }
     });
     if (error) throw error;
-    state.userId = data.user?.id;
+
+    // Immediately sign in to get a live session before org insert
+    const { data: signInData, error: signInError } = await sb.auth.signInWithPassword({ email, password: pw });
+    if (signInError) throw signInError;
+    state.userId = signInData.user?.id;
     goTo(4);
   } catch(e) {
     msg.className = 'msg error';
