@@ -540,25 +540,24 @@ async function pushRecall() {
     });
     const retailerEmails = emailData || [];
 
-    // Send email notifications via Netlify function
-    if (retailerEmails?.length > 0) {
-      await fetch('https://www.batchdapp.com/.netlify/functions/push-recall-email', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          retailerEmails,
-          productName:      product,
-          lotNumber:        lot || null,
-          barcode:          barcode || null,
-          severity:         _selectedSeverity,
-          reason,
-          manufacturerName: _orgName,
-          affectedUnits:    result.stores_notified,
-          isDrill:          _isDrill,
-          recallEventId:    result.recall_event_id,
-        }),
-      });
-    }
+    // Send email notifications via Netlify function (server handles email lookup)
+    const emailRes = await fetch('https://www.batchdapp.com/.netlify/functions/push-recall-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        recallEventId:    result.recall_event_id,
+        productName:      product,
+        lotNumber:        lot || null,
+        barcode:          barcode || null,
+        severity:         _selectedSeverity,
+        reason,
+        manufacturerName: _orgName,
+        affectedStores:   result.stores_notified,
+        isDrill:          _isDrill,
+      }),
+    });
+    const emailResult = emailRes.ok ? await emailRes.json() : { sent: 0 };
+    const emailsSent = emailResult.sent || 0;
 
     // Show success
     const el = document.getElementById('main-content');
@@ -570,7 +569,7 @@ async function pushRecall() {
           <div style="font-size:12px;color:var(--muted);line-height:1.7;margin-bottom:20px;">
             <strong style="color:var(--text);">${result.retailers_notified}</strong> retailer${result.retailers_notified!==1?'s':''} notified<br>
             <strong style="color:var(--text);">${result.stores_notified}</strong> store${result.stores_notified!==1?'s':''} have acknowledgement records created<br>
-            ${retailerEmails.length > 0 ? `Email alerts sent to <strong style="color:var(--text);">${retailerEmails.length}</strong> contact${retailerEmails.length!==1?'s':''}` : 'No retailer email contacts found — check trading partners'}
+            ${emailsSent > 0 ? `Email alerts sent to <strong style="color:var(--text);">${emailsSent}</strong> contact${emailsSent!==1?'s':''}` : 'No retailer email contacts found — check trading partners'}
           </div>
           <div style="display:flex;gap:10px;justify-content:center;">
             <button class="btn-ghost" onclick="showPanel('acknowledgements')">View acknowledgements →</button>
