@@ -834,25 +834,212 @@ async function renderTraceability() {
 async function renderStaff() {
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading staff…</div>`;
-  const { data: members } = await sb.from('organisation_members').select('user_id, role, joined_at, store_id').eq('organisation_id', _orgId);
-  const list = members || [];
+
+  const [membersRes, storesRes] = await Promise.all([
+    sb.from('organisation_members').select('user_id, role, joined_at, store_id').eq('organisation_id', _orgId),
+    sb.from('stores').select('id, name').eq('organisation_id', _orgId).eq('active', true),
+    sb.from('invitations').select('id, email, role, accepted, created_at, expires_at').eq('organisation_id', _orgId).eq('accepted', false)
+  ]);
+
+  const members = membersRes.data || [];
+  const stores  = storesRes.data || [];
+
+  const { data: pending } = await sb.from('invitations')
+    .select('id, email, role, accepted, created_at, expires_at')
+    .eq('organisation_id', _orgId)
+    .eq('accepted', false)
+    .order('created_at', { ascending: false });
+
   el.innerHTML = `
-    <div style="margin-bottom:16px;">
-      <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">${list.length} team member${list.length!==1?'s':''}</div>
-      <div style="font-size:11px;color:var(--muted);margin-top:2px;">All staff and managers in ${_orgName}</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+      <div>
+        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">${members.length} team member${members.length!==1?'s':''}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px;">All staff and managers in ${_orgName}</div>
+      </div>
+      <button class="btn-primary" onclick="openInviteForm()">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Invite team member
+      </button>
     </div>
-    <div class="panel">
+
+    <!-- Invite form -->
+    <div id="invite-form" style="display:none;" class="panel" style="margin-bottom:16px;">
+      <div class="panel-header"><div class="panel-title">Invite a team member</div></div>
       <div class="panel-body">
-        ${list.map(m => `
+        <div id="invite-msg" style="display:none;font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+          <div class="field" style="margin:0;">
+            <label>Email address</label>
+            <input id="inv-email" type="email" placeholder="manager@company.com" />
+          </div>
+          <div class="field" style="margin:0;">
+            <label>Role</label>
+            <select id="inv-role" onchange="onInvRoleChange()">
+              <option value="store_manager">Store Manager</option>
+              <option value="staff">Staff / Employee</option>
+              <option value="corp_admin">Corporate Admin</option>
+            </select>
+          </div>
+        </div>
+        <div class="field" id="inv-store-wrap" style="margin-bottom:12px;">
+          <label>Assign to store <span style="color:var(--muted);font-size:10px;">required for store manager and staff</span></label>
+          <select id="inv-store">
+            <option value="">— Select store —</option>
+            ${stores.map(s => `<option value="${s.id}">${s.name}</option>`).join('')}
+          </select>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn-primary" onclick="sendInvitation()" id="btn-send-invite" style="flex:1;">
+            Send invitation email →
+          </button>
+          <button class="btn-ghost" onclick="closeInviteForm()">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pending invitations -->
+    ${pending?.length > 0 ? `
+    <div class="panel" style="margin-bottom:16px;">
+      <div class="panel-header"><div class="panel-title">Pending invitations</div><div class="panel-sub">${pending.length} awaiting acceptance</div></div>
+      <div class="panel-body">
+        ${pending.map(inv => `
           <div class="activity-item">
-            <div class="user-avatar" style="width:28px;height:28px;font-size:11px;flex-shrink:0;">${m.role[0].toUpperCase()}</div>
+            <div class="activity-dot warn"></div>
             <div class="activity-text">
-              <strong>${m.role.replace('_',' ')}</strong>
-              <span style="font-size:10px;color:var(--muted);margin-left:6px;">Joined ${m.joined_at ? new Date(m.joined_at).toLocaleDateString('en-GB') : '—'}</span>
+              <strong>${inv.email}</strong> — ${inv.role.replace('_',' ')}
+              <span style="font-size:10px;color:var(--muted);margin-left:6px;">Invited ${new Date(inv.created_at).toLocaleDateString('en-GB')} · Expires ${new Date(inv.expires_at).toLocaleDateString('en-GB')}</span>
             </div>
+            <span class="recall-status status-pending">Pending</span>
           </div>`).join('')}
       </div>
+    </div>` : ''}
+
+    <!-- Active members -->
+    <div class="panel">
+      <div class="panel-header"><div class="panel-title">Active members</div></div>
+      <div class="panel-body">
+        ${members.length === 0
+          ? `<div class="empty">No members yet. Invite your first team member above.</div>`
+          : members.map(m => `
+            <div class="activity-item">
+              <div class="user-avatar" style="width:28px;height:28px;font-size:11px;flex-shrink:0;background:var(--accent-dim);border-radius:50%;display:flex;align-items:center;justify-content:center;">${m.role[0].toUpperCase()}</div>
+              <div class="activity-text">
+                <strong>${m.role.replace('_',' ')}</strong>
+                <span style="font-size:10px;color:var(--muted);margin-left:6px;">Joined ${m.joined_at ? new Date(m.joined_at).toLocaleDateString('en-GB') : '—'}</span>
+              </div>
+            </div>`).join('')}
+      </div>
     </div>`;
+}
+
+function openInviteForm() {
+  document.getElementById('invite-form').style.display = 'block';
+  document.getElementById('inv-email').focus();
+}
+
+function closeInviteForm() {
+  document.getElementById('invite-form').style.display = 'none';
+  document.getElementById('inv-email').value = '';
+  document.getElementById('invite-msg').style.display = 'none';
+}
+
+function onInvRoleChange() {
+  const role = document.getElementById('inv-role').value;
+  const storeWrap = document.getElementById('inv-store-wrap');
+  storeWrap.style.display = role === 'corp_admin' ? 'none' : 'block';
+}
+
+async function sendInvitation() {
+  const email    = document.getElementById('inv-email').value.trim();
+  const role     = document.getElementById('inv-role').value;
+  const storeId  = document.getElementById('inv-store')?.value || null;
+  const msgEl    = document.getElementById('invite-msg');
+  const btn      = document.getElementById('btn-send-invite');
+
+  msgEl.style.display = 'none';
+
+  if (!email || !email.includes('@')) {
+    showInvMsg('Please enter a valid email address.', 'error'); return;
+  }
+  if (role !== 'corp_admin' && !storeId) {
+    showInvMsg('Please select a store for this team member.', 'error'); return;
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner"></div> Sending…';
+
+  try {
+    // Create invitation record in DB
+    const { data: inv, error } = await sb.rpc('send_invitation', {
+      p_organisation_id: _orgId,
+      p_email: email,
+      p_role: role,
+      p_store_id: storeId || null,
+    });
+    if (error) throw error;
+
+    // Send email via Resend
+    const inviteUrl = `https://batchdapp.com/join?token=${inv.token}`;
+    const roleLabel = role.replace('_', ' ');
+
+    const emailRes = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer re_hfJMphfo_4jQcxm42VWsQ83X9JbyaRpRB',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: 'Batch\'d <invite@batchdapp.com>',
+        to: [email],
+        subject: `You've been invited to join ${inv.org_name} on Batch'd`,
+        html: `
+          <div style="font-family:'DM Mono',monospace;background:#080f12;color:#edfdf8;padding:40px;max-width:520px;margin:0 auto;border-radius:12px;">
+            <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:24px;color:#34d399;margin-bottom:8px;">Batch'd</div>
+            <div style="font-size:14px;color:#6aaf9e;margin-bottom:28px;">Food traceability platform</div>
+            <div style="font-size:16px;font-weight:600;margin-bottom:12px;">You've been invited</div>
+            <p style="font-size:13px;color:#6aaf9e;line-height:1.7;margin-bottom:24px;">
+              <strong style="color:#edfdf8;">${inv.inviter_email}</strong> has invited you to join 
+              <strong style="color:#edfdf8;">${inv.org_name}</strong> on Batch'd as a 
+              <strong style="color:#edfdf8;">${roleLabel}</strong>.
+            </p>
+            <a href="${inviteUrl}" style="display:inline-block;background:#34d399;color:#080f12;font-weight:700;font-size:14px;padding:14px 28px;border-radius:8px;text-decoration:none;margin-bottom:24px;">
+              Accept invitation →
+            </a>
+            <p style="font-size:11px;color:#6aaf9e;line-height:1.6;">
+              This invitation expires in 7 days.<br>
+              If you didn't expect this email, you can safely ignore it.
+            </p>
+            <div style="border-top:1px solid #163d37;margin-top:24px;padding-top:16px;font-size:10px;color:#6aaf9e;">
+              © 2026 Batch'd · <a href="https://batchdapp.com" style="color:#34d399;">batchdapp.com</a>
+            </div>
+          </div>
+        `,
+      }),
+    });
+
+    if (!emailRes.ok) throw new Error('Email failed to send');
+
+    showInvMsg(`Invitation sent to ${email} ✓`, 'success');
+    btn.disabled = false;
+    btn.innerHTML = 'Send invitation email →';
+    document.getElementById('inv-email').value = '';
+    // Refresh staff panel after 1.5s
+    setTimeout(() => renderStaff(), 1500);
+
+  } catch(e) {
+    showInvMsg('Error: ' + (e.message || 'Could not send invitation.'), 'error');
+    btn.disabled = false;
+    btn.innerHTML = 'Send invitation email →';
+  }
+}
+
+function showInvMsg(txt, type) {
+  const el = document.getElementById('invite-msg');
+  el.textContent = txt;
+  el.style.display = 'block';
+  el.style.background = type === 'error' ? 'rgba(255,92,92,0.1)' : 'rgba(52,211,153,0.1)';
+  el.style.border = type === 'error' ? '1px solid rgba(255,92,92,0.3)' : '1px solid rgba(52,211,153,0.3)';
+  el.style.color = type === 'error' ? 'var(--danger)' : 'var(--accent)';
 }
 
 // ── Compliance panel ──────────────────────────────────────────

@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Batch'd — Accept Invitation</title>
+  <meta name="theme-color" content="#34d399" />
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700;800;900&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #080f12; --surface: #0d1e1c; --surface2: #13302b;
+      --border: #163d37; --accent: #34d399; --accent-dim: #059669;
+      --text: #edfdf8; --muted: #6aaf9e; --danger: #ff5c5c;
+    }
+    html, body { min-height: 100vh; background: var(--bg); color: var(--text); font-family: 'DM Mono', monospace; display: flex; flex-direction: column; }
+    body::before {
+      content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background: radial-gradient(ellipse 80% 50% at 20% -10%, rgba(52,211,153,0.12) 0%, transparent 60%),
+                  radial-gradient(ellipse 60% 40% at 80% 110%, rgba(5,150,105,0.10) 0%, transparent 55%);
+    }
+    .page { flex: 1; display: flex; align-items: center; justify-content: center; padding: 20px; position: relative; z-index: 1; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 40px; width: 100%; max-width: 420px; }
+    .logo { display: flex; align-items: center; gap: 10px; margin-bottom: 28px; }
+    .logo-icon { width: 36px; height: 36px; background: var(--accent); border-radius: 9px; display: flex; align-items: center; justify-content: center; }
+    .logo-icon svg { color: #080f12; }
+    .logo-text { font-family: 'Figtree', sans-serif; font-weight: 800; font-size: 20px; color: var(--accent); }
+    .title { font-family: 'Figtree', sans-serif; font-weight: 800; font-size: 24px; margin-bottom: 6px; }
+    .sub { font-size: 12px; color: var(--muted); line-height: 1.6; margin-bottom: 24px; }
+    .invite-badge {
+      background: var(--surface2); border: 1px solid var(--border); border-radius: 10px;
+      padding: 14px 16px; margin-bottom: 24px;
+    }
+    .invite-org { font-family: 'Figtree', sans-serif; font-weight: 700; font-size: 16px; color: var(--text); margin-bottom: 4px; }
+    .invite-role { font-size: 11px; color: var(--muted); }
+    .invite-role span { color: var(--accent); font-weight: 500; }
+    .field { margin-bottom: 14px; }
+    .field label { display: block; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 5px; }
+    .field input {
+      width: 100%; background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 8px; padding: 11px 12px; font-family: 'DM Mono', monospace;
+      font-size: 13px; color: var(--text); outline: none; transition: border-color 0.15s;
+    }
+    .field input:focus { border-color: var(--accent); }
+    .field input:disabled { opacity: 0.5; }
+    .btn {
+      width: 100%; background: var(--accent); color: #080f12; border: none; border-radius: 10px;
+      padding: 13px; font-family: 'DM Mono', monospace; font-size: 13px; font-weight: 700;
+      cursor: pointer; transition: all 0.15s; display: flex; align-items: center; justify-content: center; gap: 8px;
+    }
+    .btn:hover { background: #6ee7b7; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .msg { font-size: 11px; padding: 10px 12px; border-radius: 8px; margin-bottom: 14px; }
+    .msg.error { background: rgba(255,92,92,0.1); border: 1px solid rgba(255,92,92,0.3); color: var(--danger); }
+    .msg.success { background: rgba(52,211,153,0.1); border: 1px solid rgba(52,211,153,0.3); color: var(--accent); }
+    .spinner { width: 16px; height: 16px; border: 2px solid rgba(8,15,18,0.3); border-top-color: #080f12; border-radius: 50%; animation: spin 0.7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .pw-strength { display: flex; gap: 4px; margin-top: 6px; }
+    .pw-bar { height: 3px; flex: 1; border-radius: 2px; background: var(--border); transition: background 0.2s; }
+    .pw-bar.weak { background: var(--danger); }
+    .pw-bar.fair { background: var(--warn, #f5a623); }
+    .pw-bar.strong { background: var(--accent); }
+    footer { text-align: center; padding: 20px; font-size: 11px; color: var(--muted); position: relative; z-index: 1; }
+    footer a { color: var(--muted); text-decoration: none; }
+    footer a:hover { color: var(--accent); }
+  </style>
+</head>
+<body>
+<div class="page">
+  <div class="card" id="card">
+    <div class="logo">
+      <div class="logo-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></div>
+      <span class="logo-text">Batch'd</span>
+    </div>
+    <div id="card-content">
+      <div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner" style="border-top-color:var(--accent);border-color:var(--border);"></div> Loading invitation…</div>
+    </div>
+  </div>
+</div>
+<footer>© 2026 Batch'd · <a href="https://batchdapp.com">batchdapp.com</a></footer>
+
+<script>
+const SUPABASE_URL = 'https://lurxucdmrugikdlvvebc.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1cnh1Y2RtcnVnaWtkbHZ2ZWJjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTU5NTQsImV4cCI6MjA4OTgzMTk1NH0.ewNhBbF8nUzpF9Ve822D9t8VLwB_hjk27KuFFEXct0A';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+let _invitation = null;
+
+async function init() {
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get('token');
+
+  if (!token) {
+    showError('No invitation token found. Please use the link from your invitation email.');
+    return;
+  }
+
+  // Load invitation
+  const { data: inv, error } = await sb.from('invitations')
+    .select('*, organisations(name)')
+    .eq('token', token)
+    .maybeSingle();
+
+  if (error || !inv) {
+    showError('This invitation link is invalid or has expired.');
+    return;
+  }
+
+  if (inv.accepted) {
+    showError('This invitation has already been accepted. Please sign in at batchdapp.com.');
+    return;
+  }
+
+  if (new Date(inv.expires_at) < new Date()) {
+    showError('This invitation has expired. Please ask your administrator to send a new one.');
+    return;
+  }
+
+  _invitation = inv;
+  showForm(inv);
+}
+
+function showForm(inv) {
+  const orgName  = inv.organisations?.name || 'your organisation';
+  const roleLabel = inv.role.replace(/_/g, ' ');
+
+  document.getElementById('card-content').innerHTML = `
+    <div class="title">Accept invitation</div>
+    <div class="sub">You've been invited to join Batch'd. Set up your account below.</div>
+    <div class="invite-badge">
+      <div class="invite-org">${orgName}</div>
+      <div class="invite-role">Role: <span>${roleLabel}</span></div>
+    </div>
+    <div id="msg" style="display:none;" class="msg"></div>
+    <div class="field">
+      <label>Email address</label>
+      <input id="f-email" type="email" value="${inv.email}" disabled />
+    </div>
+    <div class="field">
+      <label>Your name</label>
+      <input id="f-name" type="text" placeholder="Full name" autocomplete="name" />
+    </div>
+    <div class="field">
+      <label>Create a password</label>
+      <input id="f-pw" type="password" placeholder="Min. 8 characters" oninput="checkPw(this.value)" autocomplete="new-password" onkeydown="if(event.key==='Enter')acceptInvitation()" />
+      <div class="pw-strength">
+        <div class="pw-bar" id="pw1"></div>
+        <div class="pw-bar" id="pw2"></div>
+        <div class="pw-bar" id="pw3"></div>
+        <div class="pw-bar" id="pw4"></div>
+      </div>
+    </div>
+    <button class="btn" onclick="acceptInvitation()" id="btn-accept">
+      Join ${orgName} →
+    </button>
+  `;
+  document.getElementById('f-name').focus();
+}
+
+function checkPw(pw) {
+  const bars = [1,2,3,4].map(i => document.getElementById('pw'+i));
+  bars.forEach(b => { if(b) b.className = 'pw-bar'; });
+  if (!pw) return;
+  let score = 0;
+  if (pw.length >= 8) score++;
+  if (pw.length >= 12) score++;
+  if (/[A-Z]/.test(pw) && /[0-9]/.test(pw)) score++;
+  if (/[^A-Za-z0-9]/.test(pw)) score++;
+  const cls = score <= 1 ? 'weak' : score <= 2 ? 'fair' : 'strong';
+  for (let i = 0; i < score; i++) { if(bars[i]) bars[i].classList.add(cls); }
+}
+
+async function acceptInvitation() {
+  const name = document.getElementById('f-name').value.trim();
+  const pw   = document.getElementById('f-pw').value;
+  const btn  = document.getElementById('btn-accept');
+  const msg  = document.getElementById('msg');
+  msg.style.display = 'none';
+
+  if (!name) { showMsg('Please enter your name.', 'error'); return; }
+  if (pw.length < 8) { showMsg('Password must be at least 8 characters.', 'error'); return; }
+
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner"></div> Setting up your account…';
+
+  try {
+    const nameParts = name.split(' ');
+    const firstName = nameParts[0];
+    const lastName  = nameParts.slice(1).join(' ');
+
+    // Sign up
+    const { data: signUpData, error: signUpErr } = await sb.auth.signUp({
+      email: _invitation.email,
+      password: pw,
+      options: { data: { first_name: firstName, last_name: lastName } }
+    });
+    if (signUpErr && !signUpErr.message.includes('already registered')) throw signUpErr;
+
+    // Sign in to get live session
+    const { data: signInData, error: signInErr } = await sb.auth.signInWithPassword({
+      email: _invitation.email,
+      password: pw,
+    });
+    if (signInErr) throw signInErr;
+
+    const userId = signInData.user.id;
+
+    // Add to organisation
+    const { error: memberErr } = await sb.from('organisation_members').insert({
+      organisation_id: _invitation.organisation_id,
+      user_id: userId,
+      role: _invitation.role,
+      store_id: _invitation.store_id || null,
+      joined_at: new Date().toISOString(),
+    });
+    if (memberErr && !memberErr.message.includes('duplicate')) throw memberErr;
+
+    // Mark invitation as accepted
+    await sb.from('invitations').update({ accepted: true }).eq('id', _invitation.id);
+
+    // Show success
+    document.getElementById('card-content').innerHTML = `
+      <div style="text-align:center;padding:20px 0;">
+        <div style="width:56px;height:56px;border-radius:50%;background:rgba(52,211,153,0.12);border:1.5px solid rgba(52,211,153,0.3);display:flex;align-items:center;justify-content:center;margin:0 auto 16px;font-size:24px;">✓</div>
+        <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:22px;margin-bottom:8px;">Welcome to Batch'd!</div>
+        <div style="font-size:12px;color:var(--muted);line-height:1.7;margin-bottom:24px;">
+          Your account is ready. You've joined<br>
+          <strong style="color:var(--text);">${_invitation.organisations?.name}</strong> as a <strong style="color:var(--text);">${_invitation.role.replace(/_/g,' ')}</strong>.
+        </div>
+        <button class="btn" onclick="window.location.href='https://app.batchdapp.com'">
+          Open dashboard →
+        </button>
+      </div>`;
+
+  } catch(e) {
+    showMsg(e.message || 'Could not complete setup. Please try again.', 'error');
+    btn.disabled = false;
+    btn.innerHTML = `Join ${_invitation.organisations?.name} →`;
+  }
+}
+
+function showError(txt) {
+  document.getElementById('card-content').innerHTML = `
+    <div style="text-align:center;padding:10px 0;">
+      <div style="font-size:32px;margin-bottom:12px;">⚠️</div>
+      <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;margin-bottom:8px;color:var(--text);">Invalid invitation</div>
+      <div style="font-size:12px;color:var(--muted);line-height:1.7;margin-bottom:20px;">${txt}</div>
+      <a href="https://batchdapp.com" style="color:var(--accent);font-size:12px;">Go to batchdapp.com →</a>
+    </div>`;
+}
+
+function showMsg(txt, type) {
+  const el = document.getElementById('msg');
+  if (!el) return;
+  el.textContent = txt;
+  el.className = 'msg ' + type;
+  el.style.display = 'block';
+}
+
+init();
+</script>
+</body>
+</html>
