@@ -733,33 +733,117 @@ async function renderOverview() {
 async function renderRecalls() {
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading recalls…</div>`;
-  const { data: recalls } = await sb.from('recalls').select('*').eq('organisation_id', _orgId).order('created_at', {ascending:false});
-  const list = recalls || [];
-  const badge = document.getElementById('nav-recall-badge');
-  const active = list.filter(r=>r.active).length;
+
+  const [recallsRes, pushedRes, acksRes] = await Promise.all([
+    sb.from('recalls').select('*').eq('organisation_id', _orgId).order('created_at', {ascending:false}),
+    sb.from('recall_distributions')
+      .select('*, recall_events(product_name, lot_number, barcode, severity, reason, description, is_drill, published_at, source_org_id, organisations(name))')
+      .eq('retailer_org_id', _orgId)
+      .order('distributed_at', {ascending:false}),
+    sb.from('recall_acknowledgements')
+      .select('*, stores(name)')
+      .eq('organisation_id', _orgId)
+      .order('created_at', {ascending:false}),
+  ]);
+
+  const recalls  = recallsRes.data  || [];
+  const pushed   = pushedRes.data   || [];
+  const acks     = acksRes.data     || [];
+  const badge    = document.getElementById('nav-recall-badge');
+  const active   = recalls.filter(r=>r.active).length + pushed.filter(p=>!p.recall_events?.is_drill).length;
+  const unacknowledged = acks.filter(a => a.status === 'notified').length;
   if (active > 0) { badge.textContent = active; badge.style.display = 'inline'; }
+
   el.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
       <div>
         <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">${active} active recall${active!==1?'s':''}</div>
-        <div style="font-size:11px;color:var(--muted);margin-top:2px;">${list.length} total on record for ${_orgName}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px;">${recalls.length + pushed.length} total · ${unacknowledged} store${unacknowledged!==1?'s':''} unacknowledged</div>
       </div>
     </div>
-    <div class="panel">
-      <div class="panel-header"><div class="panel-title">All recalls</div></div>
+
+    ${pushed.length > 0 ? `
+    <div class="panel" style="margin-bottom:16px;">
+      <div class="panel-header">
+        <div>
+          <div class="panel-title">Manufacturer recall alerts</div>
+          <div class="panel-sub">Pushed directly from your trading partners</div>
+        </div>
+        ${unacknowledged > 0 ? `<span style="font-size:10px;background:rgba(255,92,92,0.12);color:var(--danger);padding:4px 10px;border-radius:10px;">${unacknowledged} stores need acknowledgement</span>` : ''}
+      </div>
       <div class="panel-body">
-        ${list.length === 0 ? `<div class="empty">No recalls on record. When you log or receive a recall, it will appear here.</div>` :
-        list.map(r => `
-          <div class="recall-item">
-            <div class="recall-severity ${r.active?'sev-i':'sev-iii'}"></div>
-            <div class="recall-info">
-              <div class="recall-name">${r.product_name}</div>
-              <div class="recall-meta">Lot: ${r.lot_number||'—'} · Barcode: ${r.barcode_number||'—'} · Source: ${r.source||'Manual'}</div>
+        ${pushed.map(p => {
+          const ev = p.recall_events;
+          const isDrill = ev?.is_drill;
+          const mfrName = ev?.organisations?.name || 'Manufacturer';
+          const evAcks = acks.filter(a => a.recall_event_id === p.recall_event_id);
+          const allConfirmed = evAcks.length > 0 && evAcks.every(a => a.status === 'confirmed');
+          return `
+          <div style="margin-bottom:16px;padding:14px;background:var(--surface2);border:1px solid ${isDrill?'rgba(245,166,35,0.3)':'rgba(255,92,92,0.25)'};border-radius:10px;">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:12px;">
+              <div>
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                  <div class="recall-severity sev-${ev?.severity?.split('_')[1]||'ii'}"></div>
+                  <div style="font-size:13px;font-weight:600;color:var(--text);">${ev?.product_name||'—'}</div>
+                  ${isDrill ? `<span style="font-size:10px;background:rgba(245,166,35,0.12);color:var(--warn);padding:2px 8px;border-radius:10px;">Mock drill</span>` : ''}
+                </div>
+                <div style="font-size:10px;color:var(--muted);">
+                  From: <strong style="color:var(--text);">${mfrName}</strong> · 
+                  ${ev?.lot_number?`Lot: ${ev.lot_number} · `:''}
+                  ${ev?.severity?.replace('_',' ')} · 
+                  ${ev?.reason}
+                </div>
+              </div>
+              <span style="font-size:10px;padding:3px 10px;border-radius:10px;white-space:nowrap;${allConfirmed?'background:rgba(52,211,153,0.1);color:var(--accent)':'background:rgba(255,92,92,0.1);color:var(--danger)'}">
+                ${allConfirmed ? '✓ Confirmed' : 'Action needed'}
+              </span>
             </div>
-            <span class="recall-status ${r.active?'status-active':'status-resolved'}">${r.active?'Active':'Resolved'}</span>
-          </div>`).join('')}
+            ${ev?.description ? `<div style="font-size:11px;color:var(--muted);margin-bottom:12px;padding:8px 10px;background:var(--surface);border-radius:6px;line-height:1.5;">${ev.description}</div>` : ''}
+            <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px;">Store acknowledgements</div>
+            ${evAcks.length === 0
+              ? `<div style="font-size:11px;color:var(--muted);">No store records yet — run a recall check on the scanning app.</div>`
+              : evAcks.map(a => `
+                <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">
+                  <div style="font-size:11px;color:var(--text);flex:1;">${a.stores?.name || 'Unknown store'}</div>
+                  <select onchange="updateAckStatus('${a.id}', this.value)" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-family:'DM Mono',monospace;font-size:10px;color:var(--text);cursor:pointer;">
+                    <option value="notified"    ${a.status==='notified'?'selected':''}>Notified</option>
+                    <option value="acknowledged"${a.status==='acknowledged'?'selected':''}>Acknowledged</option>
+                    <option value="pulled"      ${a.status==='pulled'?'selected':''}>Pulled from shelf</option>
+                    <option value="disposed"    ${a.status==='disposed'?'selected':''}>Disposed</option>
+                    <option value="confirmed"   ${a.status==='confirmed'?'selected':''}>Confirmed ✓</option>
+                  </select>
+                </div>`).join('')}
+          </div>`;}).join('')}
+      </div>
+    </div>` : ''}
+
+    <div class="panel">
+      <div class="panel-header"><div class="panel-title">Internal recalls</div><div class="panel-sub">Manually logged by your team</div></div>
+      <div class="panel-body">
+        ${recalls.filter(r=>!r.is_pushed).length === 0
+          ? `<div class="empty">No internal recalls logged. Pushed recalls from manufacturers appear in the section above.</div>`
+          : recalls.filter(r=>!r.is_pushed).map(r => `
+            <div class="recall-item">
+              <div class="recall-severity ${r.active?'sev-i':'sev-iii'}"></div>
+              <div class="recall-info">
+                <div class="recall-name">${r.product_name}</div>
+                <div class="recall-meta">Lot: ${r.lot_number||'—'} · Barcode: ${r.barcode_number||'—'} · Source: ${r.source||'Manual'}</div>
+              </div>
+              <span class="recall-status ${r.active?'status-active':'status-resolved'}">${r.active?'Active':'Resolved'}</span>
+            </div>`).join('')}
       </div>
     </div>`;
+}
+
+async function updateAckStatus(ackId, status) {
+  const { error } = await sb.from('recall_acknowledgements').update({
+    status,
+    acknowledged_at: new Date().toISOString(),
+    acknowledged_by: (await sb.auth.getUser()).data.user?.id,
+  }).eq('id', ackId);
+  if (error) { showToast && showToast('Could not update status.', 'error'); return; }
+  // Refresh recalls panel
+  setTimeout(() => renderRecalls(), 300);
 }
 
 // ── Stores panel ──────────────────────────────────────────────
