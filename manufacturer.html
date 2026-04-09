@@ -534,36 +534,14 @@ async function pushRecall() {
     if (error) throw error;
 
     // Get retailer admin emails to notify
-    const { data: retailers } = await sb.from('recall_distributions')
-      .select('retailer_org_id')
-      .eq('recall_event_id', result.recall_event_id);
-
-    let retailerEmails = [];
-    if (retailers?.length > 0) {
-      const retailerOrgIds = retailers.map(r => r.retailer_org_id);
-      const { data: adminMembers } = await sb.from('organisation_members')
-        .select('user_id')
-        .in('organisation_id', retailerOrgIds)
-        .in('role', ['corp_admin', 'store_manager']);
-
-      if (adminMembers?.length > 0) {
-        const userIds = adminMembers.map(m => m.user_id);
-        // Get emails from auth.users via a workaround — use user settings
-        const { data: settings } = await sb.from('user_settings')
-          .select('user_id')
-          .in('user_id', userIds);
-        // We'll use the org contact emails instead
-        const { data: orgs } = await sb.from('organisations')
-          .select('contact_email')
-          .in('id', retailerOrgIds)
-          .not('contact_email', 'is', null);
-        retailerEmails = orgs?.map(o => o.contact_email).filter(Boolean) || [];
-      }
-    }
+    // Get retailer emails using the secure database function
+    const { data: retailerEmails } = await sb.rpc('get_retailer_emails', {
+      p_recall_event_id: result.recall_event_id
+    });
 
     // Send email notifications via Netlify function
-    if (retailerEmails.length > 0) {
-      await fetch('/.netlify/functions/push-recall-email', {
+    if (retailerEmails?.length > 0) {
+      await fetch('https://www.batchdapp.com/.netlify/functions/push-recall-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
