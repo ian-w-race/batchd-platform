@@ -1,0 +1,1026 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Batch'd — Food Traceability & Recall Management</title>
+  <meta name="description" content="Enterprise food traceability and recall management for grocery chains. Real-time shelf impact scoring, manufacturer recall push network, and full legal audit trail." />
+  <meta name="theme-color" content="#34d399" />
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800;900&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:          #080f12;
+      --surface:     #0d1e1c;
+      --surface2:    #13302b;
+      --border:      #163d37;
+      --accent:      #34d399;
+      --accent-dim:  #059669;
+      --text:        #edfdf8;
+      --muted:       #6aaf9e;
+      --danger:      #ff5c5c;
+      --warn:        #f5a623;
+      --info:        #38bdf8;
+    }
+
+    html { scroll-behavior: smooth; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Figtree', sans-serif;
+      overflow-x: hidden;
+      line-height: 1.6;
+    }
+
+    /* ── Noise texture overlay ── */
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 1000;
+      opacity: 0.025;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+    }
+
+    /* ── NAV ── */
+    nav {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 100;
+      padding: 0 40px;
+      height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(8,15,18,0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid rgba(22,61,55,0.6);
+      transition: background 0.3s;
+    }
+    .nav-logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .nav-logo-icon {
+      width: 32px; height: 32px;
+      background: var(--accent);
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .nav-logo-icon svg { color: #080f12; }
+    .nav-logo-text { font-weight: 800; font-size: 18px; color: var(--accent); letter-spacing: -0.01em; }
+    .nav-links { display: flex; align-items: center; gap: 32px; }
+    .nav-links a {
+      font-family: 'DM Mono', monospace;
+      font-size: 12px;
+      color: var(--muted);
+      text-decoration: none;
+      transition: color 0.15s;
+      letter-spacing: 0.03em;
+    }
+    .nav-links a:hover { color: var(--text); }
+    .nav-cta {
+      font-family: 'DM Mono', monospace;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 9px 20px;
+      background: var(--accent);
+      color: #080f12;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.15s;
+      letter-spacing: 0.02em;
+    }
+    .nav-cta:hover { background: #6ee7b7; transform: translateY(-1px); }
+
+    /* ── HERO ── */
+    .hero {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 120px 24px 80px;
+      position: relative;
+      overflow: hidden;
+    }
+    .hero::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 80% 60% at 50% -10%, rgba(52,211,153,0.14) 0%, transparent 60%),
+        radial-gradient(ellipse 40% 30% at 80% 80%, rgba(5,150,105,0.08) 0%, transparent 55%),
+        radial-gradient(ellipse 30% 20% at 10% 90%, rgba(52,211,153,0.05) 0%, transparent 50%);
+      pointer-events: none;
+    }
+
+    /* Grid lines */
+    .hero::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(22,61,55,0.25) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(22,61,55,0.25) 1px, transparent 1px);
+      background-size: 60px 60px;
+      mask-image: radial-gradient(ellipse 70% 60% at 50% 50%, black 20%, transparent 80%);
+    }
+
+    .hero-eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent);
+      background: rgba(52,211,153,0.08);
+      border: 1px solid rgba(52,211,153,0.2);
+      padding: 6px 14px;
+      border-radius: 20px;
+      margin-bottom: 28px;
+      position: relative;
+      z-index: 1;
+      animation: fadeUp 0.6s ease both;
+    }
+    .eyebrow-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.8); }
+    }
+
+    .hero-headline {
+      font-size: clamp(40px, 7vw, 80px);
+      font-weight: 900;
+      line-height: 1.05;
+      letter-spacing: -0.03em;
+      max-width: 900px;
+      position: relative;
+      z-index: 1;
+      animation: fadeUp 0.6s 0.1s ease both;
+    }
+    .hero-headline .accent { color: var(--accent); }
+    .hero-headline .dim { color: var(--muted); }
+
+    .hero-sub {
+      font-size: clamp(15px, 2vw, 19px);
+      color: var(--muted);
+      max-width: 580px;
+      margin: 20px auto 0;
+      line-height: 1.7;
+      font-weight: 400;
+      position: relative;
+      z-index: 1;
+      animation: fadeUp 0.6s 0.2s ease both;
+    }
+
+    .hero-actions {
+      display: flex;
+      gap: 14px;
+      margin-top: 40px;
+      flex-wrap: wrap;
+      justify-content: center;
+      position: relative;
+      z-index: 1;
+      animation: fadeUp 0.6s 0.3s ease both;
+    }
+    .btn-primary-lg {
+      font-family: 'DM Mono', monospace;
+      font-size: 14px;
+      font-weight: 700;
+      padding: 14px 28px;
+      background: var(--accent);
+      color: #080f12;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      letter-spacing: 0.02em;
+    }
+    .btn-primary-lg:hover { background: #6ee7b7; transform: translateY(-2px); box-shadow: 0 8px 24px rgba(52,211,153,0.25); }
+    .btn-ghost-lg {
+      font-family: 'DM Mono', monospace;
+      font-size: 13px;
+      font-weight: 500;
+      padding: 14px 24px;
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.15s;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn-ghost-lg:hover { border-color: var(--accent); color: var(--accent); }
+
+    .hero-trust {
+      margin-top: 48px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      color: var(--muted);
+      position: relative;
+      z-index: 1;
+      animation: fadeUp 0.6s 0.4s ease both;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .trust-divider { width: 1px; height: 14px; background: var(--border); }
+    .trust-item { display: flex; align-items: center; gap: 6px; }
+    .trust-check { color: var(--accent); }
+
+    /* ── PROBLEM STRIP ── */
+    .problem-strip {
+      background: rgba(255,92,92,0.04);
+      border-top: 1px solid rgba(255,92,92,0.15);
+      border-bottom: 1px solid rgba(255,92,92,0.15);
+      padding: 32px 24px;
+      text-align: center;
+    }
+    .problem-strip p {
+      font-size: 15px;
+      color: var(--muted);
+      max-width: 700px;
+      margin: 0 auto;
+      line-height: 1.8;
+    }
+    .problem-strip strong { color: var(--text); font-weight: 700; }
+    .problem-strip .danger { color: var(--danger); }
+
+    /* ── SECTION ── */
+    section { padding: 100px 24px; }
+    .section-inner { max-width: 1100px; margin: 0 auto; }
+    .section-label {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 14px;
+    }
+    .section-title {
+      font-size: clamp(28px, 4vw, 46px);
+      font-weight: 900;
+      letter-spacing: -0.025em;
+      line-height: 1.1;
+      margin-bottom: 16px;
+    }
+    .section-sub {
+      font-size: 16px;
+      color: var(--muted);
+      max-width: 540px;
+      line-height: 1.7;
+    }
+
+    /* ── FEATURES ── */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 2px;
+      margin-top: 60px;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+    }
+    .feature-card {
+      background: var(--surface);
+      padding: 36px 32px;
+      position: relative;
+      transition: background 0.2s;
+    }
+    .feature-card:hover { background: var(--surface2); }
+    .feature-card + .feature-card { border-left: 1px solid var(--border); }
+    .feature-card:nth-child(4), .feature-card:nth-child(5), .feature-card:nth-child(6) {
+      border-top: 1px solid var(--border);
+      border-left: none;
+    }
+    .feature-card:nth-child(5), .feature-card:nth-child(6) { border-left: 1px solid var(--border); }
+
+    .feature-num {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      color: var(--accent);
+      margin-bottom: 16px;
+      opacity: 0.7;
+    }
+    .feature-icon {
+      width: 44px; height: 44px;
+      border-radius: 10px;
+      background: rgba(52,211,153,0.08);
+      border: 1px solid rgba(52,211,153,0.15);
+      display: flex; align-items: center; justify-content: center;
+      margin-bottom: 18px;
+      color: var(--accent);
+    }
+    .feature-title {
+      font-size: 17px;
+      font-weight: 800;
+      letter-spacing: -0.01em;
+      margin-bottom: 10px;
+      line-height: 1.3;
+    }
+    .feature-desc {
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+    .feature-tag {
+      display: inline-block;
+      margin-top: 16px;
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      padding: 3px 10px;
+      border-radius: 20px;
+      background: rgba(52,211,153,0.08);
+      border: 1px solid rgba(52,211,153,0.15);
+      color: var(--accent);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    /* ── HOW IT WORKS ── */
+    .how-section { background: var(--surface); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+    .how-steps {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0;
+      margin-top: 60px;
+      position: relative;
+    }
+    .how-steps::before {
+      content: '';
+      position: absolute;
+      top: 22px;
+      left: calc(12.5% + 22px);
+      right: calc(12.5% + 22px);
+      height: 1px;
+      background: linear-gradient(90deg, var(--accent), var(--accent-dim), var(--accent-dim), var(--accent));
+      opacity: 0.3;
+    }
+    .how-step { padding: 0 24px; text-align: center; }
+    .how-step-num {
+      width: 44px; height: 44px;
+      border-radius: 50%;
+      background: var(--surface2);
+      border: 1.5px solid var(--accent);
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 20px;
+      font-family: 'DM Mono', monospace;
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--accent);
+      position: relative;
+      z-index: 1;
+    }
+    .how-step-title { font-size: 15px; font-weight: 700; margin-bottom: 8px; }
+    .how-step-desc { font-size: 12px; color: var(--muted); line-height: 1.6; }
+
+    /* ── STAT STRIP ── */
+    .stat-strip {
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      divide-x: var(--border);
+    }
+    .stat-item {
+      padding: 48px 32px;
+      text-align: center;
+      border-right: 1px solid var(--border);
+    }
+    .stat-item:last-child { border-right: none; }
+    .stat-num {
+      font-size: 48px;
+      font-weight: 900;
+      letter-spacing: -0.04em;
+      color: var(--accent);
+      line-height: 1;
+      margin-bottom: 8px;
+    }
+    .stat-label { font-size: 13px; color: var(--muted); line-height: 1.5; }
+
+    /* ── COMPLIANCE SECTION ── */
+    .compliance-cards {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin-top: 48px;
+    }
+    .comp-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px;
+      transition: border-color 0.2s;
+    }
+    .comp-card:hover { border-color: rgba(52,211,153,0.3); }
+    .comp-card-flag { font-size: 28px; margin-bottom: 14px; }
+    .comp-card-title { font-size: 15px; font-weight: 800; margin-bottom: 6px; }
+    .comp-card-sub { font-size: 12px; color: var(--muted); line-height: 1.6; }
+    .comp-card-items { margin-top: 14px; display: flex; flex-direction: column; gap: 7px; }
+    .comp-item-row { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); font-family: 'DM Mono', monospace; }
+    .comp-check { color: var(--accent); flex-shrink: 0; }
+
+    /* ── CTA SECTION ── */
+    .cta-section {
+      text-align: center;
+      padding: 120px 24px;
+      position: relative;
+      overflow: hidden;
+    }
+    .cta-section::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse 60% 50% at 50% 50%, rgba(52,211,153,0.08) 0%, transparent 70%);
+    }
+    .cta-section .section-title { position: relative; z-index: 1; }
+    .cta-section .section-sub { margin: 16px auto 0; position: relative; z-index: 1; }
+    .cta-section .hero-actions { position: relative; z-index: 1; }
+
+    /* ── REQUEST FORM MODAL ── */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(8,15,18,0.92);
+      backdrop-filter: blur(8px);
+      z-index: 500;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 40px;
+      width: 100%;
+      max-width: 480px;
+      position: relative;
+      box-shadow: 0 32px 80px rgba(0,0,0,0.5);
+      animation: modalIn 0.25s ease;
+    }
+    @keyframes modalIn {
+      from { opacity: 0; transform: translateY(16px) scale(0.98); }
+      to   { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    .modal-close {
+      position: absolute;
+      top: 16px; right: 16px;
+      background: none;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      padding: 6px;
+      font-size: 18px;
+      line-height: 1;
+      transition: color 0.15s;
+    }
+    .modal-close:hover { color: var(--text); }
+    .modal-title { font-size: 22px; font-weight: 800; margin-bottom: 6px; letter-spacing: -0.02em; }
+    .modal-sub { font-size: 13px; color: var(--muted); margin-bottom: 28px; line-height: 1.6; }
+    .field { margin-bottom: 16px; }
+    .field label {
+      display: block;
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    .field input, .field select, .field textarea {
+      width: 100%;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 11px 14px;
+      font-family: 'DM Mono', monospace;
+      font-size: 13px;
+      color: var(--text);
+      outline: none;
+      transition: border-color 0.15s;
+      resize: vertical;
+    }
+    .field input:focus, .field select:focus, .field textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(52,211,153,0.08);
+    }
+    .field select option { background: var(--surface2); }
+    .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .form-msg { font-size: 11px; padding: 10px 13px; border-radius: 8px; margin-bottom: 14px; display: none; }
+    .form-msg.error { background: rgba(255,92,92,0.08); border: 1px solid rgba(255,92,92,0.25); color: var(--danger); }
+    .form-msg.success { background: rgba(52,211,153,0.08); border: 1px solid rgba(52,211,153,0.25); color: var(--accent); }
+
+    /* ── FOOTER ── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 48px 40px 32px;
+    }
+    .footer-inner {
+      max-width: 1100px;
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 40px;
+      flex-wrap: wrap;
+    }
+    .footer-brand { max-width: 280px; }
+    .footer-logo { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; }
+    .footer-logo-icon { width: 28px; height: 28px; background: var(--accent); border-radius: 7px; display: flex; align-items: center; justify-content: center; }
+    .footer-logo-icon svg { color: #080f12; }
+    .footer-logo-text { font-weight: 800; font-size: 16px; color: var(--accent); }
+    .footer-brand p { font-size: 12px; color: var(--muted); line-height: 1.7; }
+    .footer-links { display: flex; gap: 48px; }
+    .footer-col h4 { font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-bottom: 14px; }
+    .footer-col a { display: block; font-size: 13px; color: var(--muted); text-decoration: none; margin-bottom: 10px; transition: color 0.15s; }
+    .footer-col a:hover { color: var(--text); }
+    .footer-bottom {
+      max-width: 1100px;
+      margin: 32px auto 0;
+      padding-top: 24px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      color: var(--muted);
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .footer-bottom a { color: var(--muted); text-decoration: none; }
+    .footer-bottom a:hover { color: var(--accent); }
+
+    /* ── ANIMATIONS ── */
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .fade-up { opacity: 0; animation: fadeUp 0.6s ease forwards; }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 900px) {
+      nav { padding: 0 20px; }
+      .nav-links { display: none; }
+      .features-grid { grid-template-columns: 1fr; }
+      .feature-card + .feature-card { border-left: none; border-top: 1px solid var(--border); }
+      .feature-card:nth-child(4), .feature-card:nth-child(5), .feature-card:nth-child(6) { border-left: none; }
+      .how-steps { grid-template-columns: repeat(2, 1fr); gap: 32px; }
+      .how-steps::before { display: none; }
+      .stats-grid { grid-template-columns: repeat(2, 1fr); }
+      .stat-item:nth-child(2) { border-right: none; }
+      .compliance-cards { grid-template-columns: 1fr; }
+      .footer-inner { flex-direction: column; }
+      .footer-links { gap: 32px; }
+    }
+    @media (max-width: 600px) {
+      section { padding: 72px 20px; }
+      .how-steps { grid-template-columns: 1fr; }
+      .stats-grid { grid-template-columns: 1fr 1fr; }
+      .stat-item { padding: 32px 20px; }
+      .field-row { grid-template-columns: 1fr; }
+      footer { padding: 40px 20px 24px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── NAV ── -->
+<nav>
+  <a href="#" class="nav-logo">
+    <div class="nav-logo-icon">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+    </div>
+    <span class="nav-logo-text">Batch'd</span>
+  </a>
+  <div class="nav-links">
+    <a href="#features">Features</a>
+    <a href="#how-it-works">How it works</a>
+    <a href="#compliance">Compliance</a>
+    <a href="https://app.batchdapp.com">Sign in</a>
+  </div>
+  <a href="#" class="nav-cta" onclick="openModal(); return false;">Request access</a>
+</nav>
+
+<!-- ── HERO ── -->
+<section class="hero">
+  <div class="hero-eyebrow">
+    <div class="eyebrow-dot"></div>
+    Enterprise Food Traceability & Recall Management
+  </div>
+  <h1 class="hero-headline">
+    When a recall fires,<br>
+    <span class="accent">every second counts.</span>
+  </h1>
+  <p class="hero-sub">
+    Batch'd connects manufacturers and retailers in a single traceability network — so when a recall fires, you know exactly what's on shelf, where, and in what quantity. Before anyone makes a phone call.
+  </p>
+  <div class="hero-actions">
+    <a href="#" class="btn-primary-lg" onclick="openModal(); return false;">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
+      Request a demo
+    </a>
+    <a href="#features" class="btn-ghost-lg">See how it works</a>
+  </div>
+  <div class="hero-trust">
+    <div class="trust-item"><span class="trust-check">✓</span> EU 178/2002 compliant</div>
+    <div class="trust-divider"></div>
+    <div class="trust-item"><span class="trust-check">✓</span> FSMA 204 ready</div>
+    <div class="trust-divider"></div>
+    <div class="trust-item"><span class="trust-check">✓</span> Mattilsynet aligned</div>
+    <div class="trust-divider"></div>
+    <div class="trust-item"><span class="trust-check">✓</span> Full legal audit trail</div>
+  </div>
+</section>
+
+<!-- ── PROBLEM STRIP ── -->
+<div class="problem-strip">
+  <p>
+    Today, when a food recall fires, retailers manually check spreadsheets and call suppliers.
+    <strong>The average grocery chain takes 6–12 hours</strong> to confirm what's affected.
+    <span class="danger">FDA requires Class I response within 24 hours.</span>
+    Batch'd closes that gap to minutes.
+  </p>
+</div>
+
+<!-- ── FEATURES ── -->
+<section id="features">
+  <div class="section-inner">
+    <div class="section-label">Why Batch'd</div>
+    <h2 class="section-title">The six features no other<br>retail tool has end-to-end</h2>
+    <p class="section-sub">Built specifically for the manufacturer ↔ retailer recall chain — not adapted from generic inventory software.</p>
+
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-num">01</div>
+        <div class="feature-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        </div>
+        <div class="feature-title">Recall push network</div>
+        <div class="feature-desc">Manufacturers push recalls directly into the Batch'd network — auto-matched to retailer scan histories. No other retail-facing tool does this end-to-end.</div>
+        <span class="feature-tag">Unique</span>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-num">02</div>
+        <div class="feature-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 5v3h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+        </div>
+        <div class="feature-title">Shelf impact score</div>
+        <div class="feature-desc">When a recall arrives, Batch'd instantly calculates: "Based on shipment records, you likely have 4 units of this product across 2 stores." No manual checking required.</div>
+        <span class="feature-tag">Instant clarity</span>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-num">03</div>
+        <div class="feature-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </div>
+        <div class="feature-title">Mock recall drills</div>
+        <div class="feature-desc">Run simulated recalls against retail partners. Both sides see a realistic workflow flagged as a drill. Response time, confirmation rate, and gap analysis all logged.</div>
+        <span class="feature-tag">FDA required</span>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-num">04</div>
+        <div class="feature-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        </div>
+        <div class="feature-title">Retailer confirmation chain</div>
+        <div class="feature-desc">When a recall fires, track notified → acknowledged → pulled from shelf → disposed → confirmed per store, with timestamps. This becomes your legal document.</div>
+        <span class="feature-tag">Legal audit trail</span>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-num">05</div>
+        <div class="feature-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/></svg>
+        </div>
+        <div class="feature-title">Lot serialisation at shipment</div>
+        <div class="feature-desc">Manufacturers log which lot codes went to which retailer locations on which delivery date. When a recall fires, Batch'd already knows the scope without waiting for stores to scan.</div>
+        <span class="feature-tag">Pre-emptive</span>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-num">06</div>
+        <div class="feature-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+        </div>
+        <div class="feature-title">Corporate traceability dashboard</div>
+        <div class="feature-desc">A food safety officer sees in real time: every lot code on shelf across all stores, any active recalls, stores with unacknowledged alerts, and compliance scores per location.</div>
+        <span class="feature-tag">Full visibility</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── HOW IT WORKS ── -->
+<section id="how-it-works" class="how-section">
+  <div class="section-inner">
+    <div class="section-label">How it works</div>
+    <h2 class="section-title">From scan to confirmed<br>removal in minutes</h2>
+    <div class="how-steps">
+      <div class="how-step">
+        <div class="how-step-num">1</div>
+        <div class="how-step-title">Manufacturer registers products</div>
+        <div class="how-step-desc">Products, lot codes, and shipment records logged in the manufacturer portal. Batch'd knows what went where before a recall is ever needed.</div>
+      </div>
+      <div class="how-step">
+        <div class="how-step-num">2</div>
+        <div class="how-step-title">Staff scan products on shelf</div>
+        <div class="how-step-desc">Store staff use the Batch'd scanning app to log products as they go on shelf. AI extracts lot codes from photos automatically.</div>
+      </div>
+      <div class="how-step">
+        <div class="how-step-num">3</div>
+        <div class="how-step-title">Recall fires instantly</div>
+        <div class="how-step-desc">Manufacturer pushes a recall. All connected retailers are notified immediately with shelf impact scores pre-calculated from shipment records.</div>
+      </div>
+      <div class="how-step">
+        <div class="how-step-num">4</div>
+        <div class="how-step-title">Full audit trail created</div>
+        <div class="how-step-desc">Each store acknowledges, confirms removal, and logs disposal. Every action timestamped. Legal documentation generated automatically.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── STATS ── -->
+<div class="stat-strip">
+  <div class="section-inner">
+    <div class="stats-grid">
+      <div class="stat-item">
+        <div class="stat-num">&lt;2h</div>
+        <div class="stat-label">Industry target for shelf removal after notification</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-num">24h</div>
+        <div class="stat-label">FDA Class I recall response requirement</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-num">100%</div>
+        <div class="stat-label">Of recalls require documented effectiveness checks</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-num">3,400+</div>
+        <div class="stat-label">Food products recalled in the US annually</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── COMPLIANCE ── -->
+<section id="compliance">
+  <div class="section-inner">
+    <div class="section-label">Regulatory compliance</div>
+    <h2 class="section-title">Built for the regulations<br>that matter most</h2>
+    <p class="section-sub">Batch'd aligns with the food safety frameworks your legal team already knows.</p>
+    <div class="compliance-cards">
+      <div class="comp-card">
+        <div class="comp-card-flag">🇪🇺</div>
+        <div class="comp-card-title">EU Regulation 178/2002</div>
+        <div class="comp-card-sub">The General Food Law — one step back, one step forward traceability across the EU food chain.</div>
+        <div class="comp-card-items">
+          <div class="comp-item-row"><span class="comp-check">✓</span> One step back / forward traceability</div>
+          <div class="comp-item-row"><span class="comp-check">✓</span> Lot code documentation at receiving</div>
+          <div class="comp-item-row"><span class="comp-check">✓</span> Rapid recall notification to authorities</div>
+          <div class="comp-item-row"><span class="comp-check">✓</span> Supplier documentation maintained</div>
+        </div>
+      </div>
+      <div class="comp-card">
+        <div class="comp-card-flag">🇺🇸</div>
+        <div class="comp-card-title">FSMA Section 204</div>
+        <div class="comp-card-sub">FDA Food Traceability Rule — Traceability Lot Codes and Key Data Elements for high-risk foods.</div>
+        <div class="comp-card-items">
+          <div class="comp-item-row"><span class="comp-check">✓</span> TLC capture at every Critical Tracking Event</div>
+          <div class="comp-item-row"><span class="comp-check">✓</span> KDE logging (ship from, receive, transform)</div>
+          <div class="comp-item-row"><span class="comp-check">✓</span> 24-hour FDA data request response</div>
+          <div class="comp-item-row"><span class="comp-check">✓</span> Exportable sortable spreadsheet format</div>
+        </div>
+      </div>
+      <div class="comp-card">
+        <div class="comp-card-flag">🇳🇴</div>
+        <div class="comp-card-title">Mattilsynet / RASFF</div>
+        <div class="comp-card-sub">Norwegian Food Safety Authority requirements and the EU Rapid Alert System for Food and Feed.</div>
+        <div class="comp-card-items">
+          <div class="comp-item-row"><span class="comp-check">✓</span> RASFF alert monitoring and matching</div>
+          <div class="comp-item-row"><span class="comp-check">✓</span> Norwegian retail chain workflow support</div>
+          <div class="comp-item-row"><span class="comp-check">✓</span> Mattilsynet recall reporting ready</div>
+          <div class="comp-item-row"><span class="comp-check">✓</span> Norwegian + English dual language</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── CTA ── -->
+<section class="cta-section">
+  <div class="section-inner">
+    <div class="section-label" style="text-align:center;">Get started</div>
+    <h2 class="section-title">Ready to close the recall gap?</h2>
+    <p class="section-sub" style="text-align:center;">Batch'd is available to enterprise grocery chains and food manufacturers. Request a demo and we'll show you how it works with your supply chain.</p>
+    <div class="hero-actions">
+      <a href="#" class="btn-primary-lg" onclick="openModal(); return false;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
+        Request a demo
+      </a>
+      <a href="https://app.batchdapp.com" class="btn-ghost-lg">Sign in to dashboard</a>
+    </div>
+  </div>
+</section>
+
+<!-- ── FOOTER ── -->
+<footer>
+  <div class="footer-inner">
+    <div class="footer-brand">
+      <div class="footer-logo">
+        <div class="footer-logo-icon">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+        </div>
+        <span class="footer-logo-text">Batch'd</span>
+      </div>
+      <p>Enterprise food traceability and recall management. Connecting manufacturers and retailers in a single compliance network.</p>
+    </div>
+    <div class="footer-links">
+      <div class="footer-col">
+        <h4>Product</h4>
+        <a href="#features">Features</a>
+        <a href="#how-it-works">How it works</a>
+        <a href="#compliance">Compliance</a>
+        <a href="https://app.batchdapp.com">Dashboard</a>
+      </div>
+      <div class="footer-col">
+        <h4>Access</h4>
+        <a href="https://app.batchdapp.com">Corporate login</a>
+        <a href="https://app.batchdapp.com/manufacturer.html">Manufacturer portal</a>
+        <a href="https://batchd-app.netlify.app">Scanning app</a>
+        <a href="#" onclick="openModal(); return false;">Request access</a>
+      </div>
+    </div>
+  </div>
+  <div class="footer-bottom">
+    <span>© 2026 Batch'd. All rights reserved.</span>
+    <span>Built for food safety professionals.</span>
+  </div>
+</footer>
+
+<!-- ── REQUEST ACCESS MODAL ── -->
+<div class="modal-overlay" id="modal" onclick="if(event.target===this)closeModal()">
+  <div class="modal-card">
+    <button class="modal-close" onclick="closeModal()">✕</button>
+    <div id="modal-body">
+      <div class="modal-title">Request access</div>
+      <div class="modal-sub">Tell us about your organisation and we'll be in touch within one business day.</div>
+      <div id="form-msg" class="form-msg"></div>
+      <div class="field-row">
+        <div class="field"><label>First name *</label><input id="f-first" type="text" placeholder="Anna" /></div>
+        <div class="field"><label>Last name *</label><input id="f-last" type="text" placeholder="Larsen" /></div>
+      </div>
+      <div class="field"><label>Work email *</label><input id="f-email" type="email" placeholder="anna@company.com" /></div>
+      <div class="field"><label>Organisation *</label><input id="f-org" type="text" placeholder="e.g. Rema 1000, Tine, Norgesgruppen" /></div>
+      <div class="field">
+        <label>Organisation type *</label>
+        <select id="f-type">
+          <option value="">— Select —</option>
+          <option value="retailer">Grocery retailer / chain</option>
+          <option value="manufacturer">Food manufacturer / brand</option>
+          <option value="distributor">Distributor / wholesaler</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div class="field"><label>Number of stores / locations</label><input id="f-stores" type="text" placeholder="e.g. 45 stores" /></div>
+      <div class="field"><label>Message <span style="font-size:10px;color:var(--muted);text-transform:none;letter-spacing:0;">(optional)</span></label>
+        <textarea id="f-msg" rows="3" placeholder="Anything you'd like us to know before the demo…"></textarea>
+      </div>
+      <button class="btn-primary-lg" style="width:100%;justify-content:center;margin-top:4px;" onclick="submitRequest()" id="btn-submit">
+        Send request →
+      </button>
+      <div style="text-align:center;margin-top:14px;font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">
+        Already have access? <a href="https://app.batchdapp.com" style="color:var(--accent);">Sign in</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function openModal() {
+  document.getElementById('modal').classList.add('open');
+  document.body.style.overflow = 'hidden';
+  setTimeout(() => document.getElementById('f-first')?.focus(), 100);
+}
+function closeModal() {
+  document.getElementById('modal').classList.remove('open');
+  document.body.style.overflow = '';
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+async function submitRequest() {
+  const first  = document.getElementById('f-first').value.trim();
+  const last   = document.getElementById('f-last').value.trim();
+  const email  = document.getElementById('f-email').value.trim();
+  const org    = document.getElementById('f-org').value.trim();
+  const type   = document.getElementById('f-type').value;
+  const stores = document.getElementById('f-stores').value.trim();
+  const msg    = document.getElementById('f-msg').value.trim();
+  const btn    = document.getElementById('btn-submit');
+  const msgEl  = document.getElementById('form-msg');
+
+  msgEl.style.display = 'none';
+
+  if (!first || !last)  { showFormMsg('Please enter your name.', 'error'); return; }
+  if (!email || !email.includes('@')) { showFormMsg('Please enter a valid work email.', 'error'); return; }
+  if (!org)   { showFormMsg('Please enter your organisation name.', 'error'); return; }
+  if (!type)  { showFormMsg('Please select your organisation type.', 'error'); return; }
+
+  btn.disabled = true;
+  btn.innerHTML = '<div style="width:16px;height:16px;border:2px solid rgba(8,15,18,0.3);border-top-color:#080f12;border-radius:50%;animation:spin 0.7s linear infinite;"></div> Sending…';
+
+  // Send to Resend via Netlify function
+  try {
+    await fetch('/.netlify/functions/send-invite', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'demo_request',
+        firstName: first,
+        lastName: last,
+        email,
+        organisation: org,
+        orgType: type,
+        stores,
+        message: msg,
+      }),
+    });
+  } catch(e) {
+    // Don't block on email failure — show success anyway
+    console.warn('Email send failed:', e);
+  }
+
+  // Show success
+  document.getElementById('modal-body').innerHTML = `
+    <div style="text-align:center;padding:20px 0;">
+      <div style="width:64px;height:64px;border-radius:50%;background:rgba(52,211,153,0.1);border:1.5px solid rgba(52,211,153,0.3);display:flex;align-items:center;justify-content:center;margin:0 auto 20px;">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+      </div>
+      <div style="font-size:22px;font-weight:800;margin-bottom:8px;letter-spacing:-0.02em;">Request received</div>
+      <div style="font-size:13px;color:var(--muted);line-height:1.7;margin-bottom:24px;">
+        Thanks, <strong style="color:var(--text);">${first}</strong>. We'll be in touch at<br>
+        <strong style="color:var(--accent);">${email}</strong> within one business day.
+      </div>
+      <button onclick="closeModal()" style="font-family:'DM Mono',monospace;font-size:12px;padding:10px 20px;border-radius:8px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;">Close</button>
+    </div>`;
+}
+
+function showFormMsg(txt, type) {
+  const el = document.getElementById('form-msg');
+  el.textContent = txt;
+  el.className = 'form-msg ' + type;
+  el.style.display = 'block';
+}
+
+// Scroll animations
+const observer = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      e.target.style.opacity = '1';
+      e.target.style.transform = 'translateY(0)';
+    }
+  });
+}, { threshold: 0.1 });
+
+document.querySelectorAll('.feature-card, .how-step, .stat-item, .comp-card').forEach(el => {
+  el.style.opacity = '0';
+  el.style.transform = 'translateY(24px)';
+  el.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+  observer.observe(el);
+});
+</script>
+</body>
+</html>
