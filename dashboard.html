@@ -744,21 +744,25 @@ async function renderRecalls() {
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading recalls…</div>`;
 
-  const [recallsRes, pushedRes, acksRes] = await Promise.all([
+  // Fetch separately to avoid RLS join conflicts
+  const [recallsRes, distRes, acksRes] = await Promise.all([
     sb.from('recalls').select('*').eq('organisation_id', _orgId).order('created_at', {ascending:false}),
-    sb.from('recall_distributions')
-      .select('*, recall_event_id, retailer_org_id, est_affected_units, distributed_at, recall_events!inner(id, product_name, lot_number, barcode, severity, reason, description, authority_reference, is_drill, published_at, source_org_id)')
-      .eq('retailer_org_id', _orgId)
-      .order('distributed_at', {ascending:false}),
-    sb.from('recall_acknowledgements')
-      .select('*, stores(name)')
-      .eq('organisation_id', _orgId)
-      .order('created_at', {ascending:false}),
+    sb.from('recall_distributions').select('*').eq('retailer_org_id', _orgId).order('distributed_at', {ascending:false}),
+    sb.from('recall_acknowledgements').select('*, stores(name)').eq('organisation_id', _orgId).order('created_at', {ascending:false}),
   ]);
 
-  const recalls  = recallsRes.data  || [];
-  const pushed   = pushedRes.data   || [];
-  const acks     = acksRes.data     || [];
+  const recalls = recallsRes.data || [];
+  const dists   = distRes.data   || [];
+  const acks    = acksRes.data   || [];
+
+  // Fetch recall events for each distribution
+  let pushed = [];
+  if (dists.length > 0) {
+    const eventIds = [...new Set(dists.map(d => d.recall_event_id))];
+    const { data: events } = await sb.from('recall_events').select('*').in('id', eventIds);
+    const eventMap = Object.fromEntries((events||[]).map(e => [e.id, e]));
+    pushed = dists.map(d => ({ ...d, recall_events: eventMap[d.recall_event_id] || null })).filter(d => d.recall_events);
+  }
   const badge    = document.getElementById('nav-recall-badge');
   const activePushed = pushed.filter(p => !p.recall_events?.is_drill).length;
   const active   = recalls.filter(r=>r.active).length + activePushed;
