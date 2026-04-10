@@ -288,6 +288,17 @@ async function initPortal(user) {
     .maybeSingle();
 
   if (!member) { showAuthMsg('No organisation found. Please sign up at batchdapp.com.'); return; }
+
+  // Route by role — non-manufacturers don't belong here
+  if (member.role === 'corp_admin' || member.role === 'store_manager') {
+    window.location.replace('https://app.batchdapp.com');
+    return;
+  }
+  if (member.role === 'staff') {
+    window.location.replace('https://batchd-app.netlify.app');
+    return;
+  }
+
   _orgId = member.organisation_id;
 
   const { data: org } = await sb.from('organisations').select('name').eq('id', _orgId).single();

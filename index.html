@@ -821,14 +821,36 @@ function renderStep5() {
         `}
       </div>
       <button class="btn-primary" onclick="goToDashboard()">
-        Open dashboard →
+        ${state.type === 'manufacturer' ? 'Open manufacturer portal →' : 'Open dashboard →'}
       </button>
     </div>
   `;
 }
 
-function goToDashboard() {
-  window.location.href = 'https://app.batchdapp.com';
+async function goToDashboard() {
+  // Route based on role
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) { window.location.href = 'https://app.batchdapp.com'; return; }
+    const { data: member } = await sb.from('organisation_members')
+      .select('role')
+      .eq('user_id', session.user.id)
+      .maybeSingle();
+    routeByRole(member?.role);
+  } catch(e) {
+    window.location.href = 'https://app.batchdapp.com';
+  }
+}
+
+function routeByRole(role) {
+  if (role === 'mfr_admin' || role === 'mfr_qa') {
+    window.location.href = 'https://app.batchdapp.com/manufacturer.html';
+  } else if (role === 'staff') {
+    window.location.href = 'https://batchd-app.netlify.app';
+  } else {
+    // corp_admin, store_manager, platform_admin → corporate dashboard
+    window.location.href = 'https://app.batchdapp.com';
+  }
 }
 
 // ── Sign in flow ───────────────────────────────────────────────
@@ -869,9 +891,13 @@ async function doSignIn() {
   btn.disabled = true;
   btn.innerHTML = '<div class="spinner"></div> Signing in…';
   try {
-    const { error } = await sb.auth.signInWithPassword({ email, password: pw });
+    const { data, error } = await sb.auth.signInWithPassword({ email, password: pw });
     if (error) throw error;
-    window.location.href = 'https://app.batchdapp.com';
+    const { data: member } = await sb.from('organisation_members')
+      .select('role')
+      .eq('user_id', data.user.id)
+      .maybeSingle();
+    routeByRole(member?.role);
   } catch(e) {
     msg.className = 'msg error';
     msg.textContent = e.message || 'Incorrect email or password.';
