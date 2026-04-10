@@ -441,13 +441,16 @@ function renderPush() {
           <div class="field-row">
             <div class="field">
               <label>Lot / batch number</label>
-              <input id="p-lot" type="text" placeholder="e.g. L2024-03-15A" />
+              <input id="p-lot" type="text" placeholder="e.g. L2024-03-15A" oninput="scheduleImpactPreview()" />
             </div>
             <div class="field">
               <label>Barcode (EAN/UPC)</label>
-              <input id="p-barcode" type="text" placeholder="e.g. 7038010013882" />
+              <input id="p-barcode" type="text" placeholder="e.g. 7038010013882" oninput="scheduleImpactPreview()" />
             </div>
           </div>
+
+          <!-- Shelf impact preview -->
+          <div id="impact-preview" style="display:none;margin-bottom:14px;"></div>
 
           <div class="field">
             <label>Severity *</label>
@@ -499,6 +502,82 @@ function renderPush() {
           </button>
         </div>
       </div>
+    </div>`;
+}
+
+let _impactTimer;
+function scheduleImpactPreview() {
+  clearTimeout(_impactTimer);
+  _impactTimer = setTimeout(calculateImpactPreview, 600);
+}
+
+async function calculateImpactPreview() {
+  const lot     = document.getElementById('p-lot')?.value.trim();
+  const barcode = document.getElementById('p-barcode')?.value.trim();
+  const preview = document.getElementById('impact-preview');
+  if (!preview) return;
+  if (!lot && !barcode) { preview.style.display = 'none'; return; }
+
+  preview.style.display = 'block';
+  preview.innerHTML = `<div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;"><div class="spinner"></div> Calculating shelf impact…</div>`;
+
+  // Query shipments matching this lot number or barcode
+  let query = sb.from('shipments')
+    .select('id, lot_number, barcode, quantity, unit, shipped_at, stores(name), organisations!shipments_retailer_id_fkey(name)')
+    .eq('manufacturer_id', _orgId);
+
+  if (lot && barcode) {
+    query = query.or(`lot_number.eq.${lot},barcode.eq.${barcode}`);
+  } else if (lot) {
+    query = query.eq('lot_number', lot);
+  } else {
+    query = query.eq('barcode', barcode);
+  }
+
+  const { data: matches } = await query;
+  const hits = matches || [];
+
+  if (hits.length === 0) {
+    preview.innerHTML = `
+      <div style="padding:12px 14px;background:rgba(106,175,158,0.06);border:1px solid var(--border);border-radius:8px;">
+        <div style="font-size:11px;color:var(--muted);">No shipment records found for this lot/barcode — shelf impact unknown. Recall will still be pushed to all trading partners.</div>
+      </div>`;
+    return;
+  }
+
+  // Group by store
+  const byStore = {};
+  hits.forEach(h => {
+    const key = h.stores?.name || 'Unknown store';
+    if (!byStore[key]) byStore[key] = { retailer: h.organisations?.name || '—', qty: 0, unit: h.unit, latest: h.shipped_at };
+    byStore[key].qty += h.quantity;
+    if (h.shipped_at > byStore[key].latest) byStore[key].latest = h.shipped_at;
+  });
+
+  const storeCount  = Object.keys(byStore).length;
+  const totalQty    = hits.reduce((s, h) => s + h.quantity, 0);
+  const unit        = hits[0]?.unit || 'units';
+
+  // Store breakdown HTML
+  const breakdown = Object.entries(byStore).map(([store, d]) => `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(22,61,55,0.4);">
+      <div>
+        <div style="font-size:11px;color:var(--text);font-weight:500;">${store}</div>
+        <div style="font-size:10px;color:var(--muted);">${d.retailer} · shipped ${new Date(d.latest).toLocaleDateString('en-GB')}</div>
+      </div>
+      <div style="font-size:11px;font-weight:600;color:var(--warn);">${d.qty} ${d.unit}</div>
+    </div>`).join('');
+
+  preview.innerHTML = `
+    <div style="background:rgba(245,166,35,0.06);border:1px solid rgba(245,166,35,0.3);border-radius:8px;overflow:hidden;">
+      <div style="padding:12px 14px;border-bottom:1px solid rgba(245,166,35,0.2);display:flex;align-items:center;justify-content:space-between;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <span style="font-size:12px;font-weight:700;color:var(--warn);">Shelf impact: ${totalQty} ${unit} across ${storeCount} store${storeCount!==1?'s':''}</span>
+        </div>
+        <span style="font-size:10px;color:var(--muted);">Based on shipment records</span>
+      </div>
+      <div style="padding:4px 14px 8px;">${breakdown}</div>
     </div>`;
 }
 
@@ -584,6 +663,27 @@ async function pushRecall() {
     const emailResult = emailRes.ok ? await emailRes.json() : { sent: 0 };
     const emailsSent = emailResult.sent || 0;
 
+    // Gather shelf impact for success screen
+    let impactSummary = '';
+    if (lot || barcode) {
+      let impactQuery = sb.from('shipments')
+        .select('quantity, unit, stores(name), organisations!shipments_retailer_id_fkey(name)')
+        .eq('manufacturer_id', _orgId);
+      if (lot && barcode) impactQuery = impactQuery.or(`lot_number.eq.${lot},barcode.eq.${barcode}`);
+      else if (lot) impactQuery = impactQuery.eq('lot_number', lot);
+      else impactQuery = impactQuery.eq('barcode', barcode);
+      const { data: impactData } = await impactQuery;
+      if (impactData?.length > 0) {
+        const totalQty   = impactData.reduce((s, h) => s + h.quantity, 0);
+        const unit       = impactData[0]?.unit || 'units';
+        const storeNames = [...new Set(impactData.map(h => h.stores?.name).filter(Boolean))];
+        impactSummary = `<div style="margin-top:10px;padding:10px 14px;background:rgba(245,166,35,0.08);border:1px solid rgba(245,166,35,0.25);border-radius:8px;font-size:11px;color:var(--warn);text-align:left;">
+          <strong>Shelf impact:</strong> ${totalQty} ${unit} across ${storeNames.length} store${storeNames.length!==1?'s':''}<br>
+          <span style="color:var(--muted);">${storeNames.join(' · ')}</span>
+        </div>`;
+      }
+    }
+
     // Show success
     const el = document.getElementById('main-content');
     el.innerHTML = `
@@ -596,6 +696,7 @@ async function pushRecall() {
             <strong style="color:var(--text);">${result.stores_notified}</strong> store${result.stores_notified!==1?'s':''} have acknowledgement records created<br>
             ${emailsSent > 0 ? `Email alerts sent to <strong style="color:var(--text);">${emailsSent}</strong> contact${emailsSent!==1?'s':''}` : 'No retailer email contacts found — check trading partners'}
           </div>
+          ${impactSummary}
           <div style="display:flex;gap:10px;justify-content:center;">
             <button class="btn-ghost" onclick="showPanel('acknowledgements')">View acknowledgements →</button>
             <button class="btn-ghost" onclick="showPanel('push')">Push another recall</button>
