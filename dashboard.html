@@ -402,6 +402,12 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
         Reports
       </button>
+      <div class="nav-section">Partners</div>
+      <button class="nav-item" onclick="showPanel('partners')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        Manufacturers
+        <span class="nav-badge" id="nav-partners-badge" style="display:none;">0</span>
+      </button>
       <div class="nav-section">Settings</div>
       <button class="nav-item" onclick="showPanel('settings')">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -555,13 +561,22 @@ async function initDashboard(user) {
     // Hide corp-only nav items
     document.querySelectorAll('.nav-item').forEach(el => {
       const onclick = el.getAttribute('onclick') || '';
-      if (onclick.includes("'stores'") || onclick.includes("'staff'") || onclick.includes("'reports'")) {
+      if (onclick.includes("'stores'") || onclick.includes("'staff'") || onclick.includes("'reports'") || onclick.includes("'partners'")) {
         el.style.display = 'none';
       }
     });
     // Update logo sub
     const logoSub = document.querySelector('.logo-sub');
     if (logoSub) logoSub.textContent = 'Store Manager';
+  }
+
+  // Load pending partner requests badge
+  if (_userRole !== 'store_manager') {
+    sb.from('trading_partners').select('id').eq('retailer_id', _orgId).eq('status', 'pending').then(({ data }) => {
+      const count = data?.length || 0;
+      const badge = document.getElementById('nav-partners-badge');
+      if (badge && count > 0) { badge.textContent = count; badge.style.display = 'inline-flex'; }
+    });
   }
 
   showPanel('overview');
@@ -571,12 +586,12 @@ async function initDashboard(user) {
 function showPanel(name) {
   _activePanel = name;
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-  const panels = { overview:'Dashboard', recalls:'Recalls', stores:'Stores', traceability:'Traceability', staff:'Staff', compliance:'Compliance', reports:'Reports', settings:'Settings' };
+  const panels = { overview:'Dashboard', recalls:'Recalls', stores:'Stores', traceability:'Traceability', staff:'Staff', compliance:'Compliance', reports:'Reports', settings:'Settings', partners:'Manufacturer Partners' };
   document.getElementById('topbar-title').textContent = panels[name] || name;
   document.querySelectorAll('.nav-item').forEach(el => {
     if (el.getAttribute('onclick')?.includes(`'${name}'`)) el.classList.add('active');
   });
-  const fns = { overview: renderOverview, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings };
+  const fns = { overview: renderOverview, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, partners: renderPartners };
   (fns[name] || renderComingSoon)(name);
 }
 
@@ -1453,6 +1468,99 @@ function renderComingSoon(name) {
       <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;color:var(--text);">${name} — coming soon</div>
       <div style="font-size:12px;">This module is in development.</div>
     </div>`;
+}
+
+// ── Manufacturer Partners ─────────────────────────────────────
+async function renderPartners() {
+  const el = document.getElementById('main-content');
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
+
+  const { data: requests } = await sb.from('trading_partners')
+    .select('*, organisations!trading_partners_manufacturer_id_fkey(name, contact_email)')
+    .eq('retailer_id', _orgId);
+
+  const all       = requests || [];
+  const pending   = all.filter(p => p.status === 'pending');
+  const confirmed = all.filter(p => p.status === 'active');
+
+  // Update badge
+  const badge = document.getElementById('nav-partners-badge');
+  if (badge) {
+    badge.textContent = pending.length;
+    badge.style.display = pending.length > 0 ? 'inline-flex' : 'none';
+  }
+
+  el.innerHTML = `
+    <div style="margin-bottom:16px;">
+      <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">${confirmed.length} manufacturer partner${confirmed.length!==1?'s':''}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:2px;">Manufacturers connected to your organisation — confirmed partners can send you recall notifications</div>
+    </div>
+
+    ${pending.length > 0 ? `
+    <div class="panel" style="margin-bottom:16px;border-color:rgba(245,166,35,0.3);">
+      <div class="panel-header" style="background:rgba(245,166,35,0.05);">
+        <div>
+          <div class="panel-title" style="color:var(--warn);">⚠ ${pending.length} pending connection request${pending.length!==1?'s':''}</div>
+          <div class="panel-sub">Review and accept manufacturer connection requests</div>
+        </div>
+      </div>
+      <div class="panel-body" style="padding:0 18px;">
+        ${pending.map(p => `
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid rgba(22,61,55,0.5);">
+            <div style="display:flex;align-items:center;gap:12px;">
+              <div style="width:36px;height:36px;border-radius:8px;background:rgba(245,166,35,0.1);border:1px solid rgba(245,166,35,0.2);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:var(--warn);">
+                ${(p.organisations?.name||'?')[0].toUpperCase()}
+              </div>
+              <div>
+                <div style="font-size:12px;font-weight:600;color:var(--text);">${p.organisations?.name||'Unknown manufacturer'}</div>
+                <div style="font-size:10px;color:var(--muted);margin-top:2px;">${p.organisations?.contact_email||'No email on file'} · Requested ${new Date(p.created_at).toLocaleDateString('en-GB')}</div>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;">
+              <button onclick="rejectPartner('${p.id}')" style="font-family:'DM Mono',monospace;font-size:11px;padding:7px 12px;border-radius:6px;border:1px solid rgba(255,92,92,0.3);background:rgba(255,92,92,0.08);color:var(--danger);cursor:pointer;">
+                Decline
+              </button>
+              <button onclick="acceptPartner('${p.id}')" style="font-family:'DM Mono',monospace;font-size:11px;padding:7px 14px;border-radius:6px;border:none;background:var(--accent);color:#080f12;font-weight:700;cursor:pointer;">
+                Accept →
+              </button>
+            </div>
+          </div>`).join('')}
+      </div>
+    </div>` : ''}
+
+    <div class="panel">
+      <div class="panel-header">
+        <div><div class="panel-title">Connected manufacturers</div><div class="panel-sub">You'll automatically receive recall alerts from these partners</div></div>
+      </div>
+      <div class="panel-body" ${confirmed.length > 0 ? 'style="padding:0 18px;"' : ''}>
+        ${confirmed.length === 0
+          ? `<div class="empty">No confirmed manufacturer partners yet.<br>When a manufacturer sends you a connection request, it will appear above.</div>`
+          : confirmed.map(p => `
+            <div style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid rgba(22,61,55,0.5);">
+              <div style="width:36px;height:36px;border-radius:8px;background:rgba(52,211,153,0.1);border:1px solid rgba(52,211,153,0.2);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:var(--accent);">
+                ${(p.organisations?.name||'?')[0].toUpperCase()}
+              </div>
+              <div style="flex:1;">
+                <div style="font-size:12px;font-weight:600;color:var(--text);">${p.organisations?.name||'—'}</div>
+                <div style="font-size:10px;color:var(--muted);margin-top:2px;">${p.organisations?.contact_email||'No email on file'} · Connected ${new Date(p.created_at).toLocaleDateString('en-GB')}</div>
+              </div>
+              <span class="status-pill s-confirmed">Active</span>
+            </div>`).join('')}
+      </div>
+    </div>`;
+}
+
+async function acceptPartner(id) {
+  const { error } = await sb.from('trading_partners').update({ status: 'active' }).eq('id', id);
+  if (error) { alert('Could not accept request: ' + error.message); return; }
+  renderPartners();
+}
+
+async function rejectPartner(id) {
+  if (!confirm('Decline this connection request?')) return;
+  const { error } = await sb.from('trading_partners').update({ status: 'rejected' }).eq('id', id);
+  if (error) { alert('Could not decline request: ' + error.message); return; }
+  renderPartners();
 }
 
 // ── Boot ───────────────────────────────────────────────────────
