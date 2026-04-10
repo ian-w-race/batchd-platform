@@ -612,7 +612,15 @@ async function renderOverview() {
     ]);
 
     const scans    = scansRes.data    || [];
-    const recalls  = recallsRes.data  || [];
+    const rawRecalls = recallsRes.data || [];
+    // Deduplicate pushed recalls — manufacturer push can create multiple rows per
+    // recall_event_id (one per store/distribution). Collapse them to one per event.
+    const recalls = [
+      ...rawRecalls.filter(r => !r.is_pushed),
+      ...[...new Map(
+        rawRecalls.filter(r => r.is_pushed).map(r => [r.recall_event_id || r.id, r])
+      ).values()]
+    ];
     const stores   = storesRes.data   || [];
     const shipments = shipmentsRes.data || [];
     const partners  = partnersRes.data  || [];
@@ -863,7 +871,9 @@ async function renderRecalls() {
   }
   const badge    = document.getElementById('nav-recall-badge');
   const activePushed = pushed.filter(p => !p.recall_events?.is_drill).length;
-  const active   = recalls.filter(r=>r.active).length + activePushed;
+  // Only count non-pushed recalls from the recalls table — pushed recalls are
+  // already represented in activePushed (via recall_events). Counting both = duplicates.
+  const active   = recalls.filter(r=>r.active && !r.is_pushed).length + activePushed;
   const unacknowledged = acks.filter(a => a.status === 'notified').length;
   if (active > 0) { badge.textContent = active; badge.style.display = 'inline'; }
 
