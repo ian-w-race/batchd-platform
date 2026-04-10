@@ -747,7 +747,7 @@ async function renderRecalls() {
   const [recallsRes, pushedRes, acksRes] = await Promise.all([
     sb.from('recalls').select('*').eq('organisation_id', _orgId).order('created_at', {ascending:false}),
     sb.from('recall_distributions')
-      .select('*, recall_events(product_name, lot_number, barcode, severity, reason, description, is_drill, published_at, source_org_id, organisations(name))')
+      .select('*, recall_events(product_name, lot_number, barcode, severity, reason, description, authority_reference, is_drill, published_at, source_org_id, organisations(name))')
       .eq('retailer_org_id', _orgId)
       .order('distributed_at', {ascending:false}),
     sb.from('recall_acknowledgements')
@@ -760,84 +760,138 @@ async function renderRecalls() {
   const pushed   = pushedRes.data   || [];
   const acks     = acksRes.data     || [];
   const badge    = document.getElementById('nav-recall-badge');
-  const active   = recalls.filter(r=>r.active).length + pushed.filter(p=>!p.recall_events?.is_drill).length;
+  const activePushed = pushed.filter(p => !p.recall_events?.is_drill).length;
+  const active   = recalls.filter(r=>r.active).length + activePushed;
   const unacknowledged = acks.filter(a => a.status === 'notified').length;
   if (active > 0) { badge.textContent = active; badge.style.display = 'inline'; }
+
+  const stepOrder = ['notified','acknowledged','pulled','disposed','confirmed'];
+  const stepLabels = { notified:'Notified', acknowledged:'Acknowledged', pulled:'Pulled from shelf', disposed:'Disposed', confirmed:'Confirmed ✓' };
+  const stepColors = { notified:'var(--muted)', acknowledged:'var(--info)', pulled:'var(--warn)', disposed:'var(--accent)', confirmed:'var(--accent)' };
 
   el.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
       <div>
         <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">${active} active recall${active!==1?'s':''}</div>
-        <div style="font-size:11px;color:var(--muted);margin-top:2px;">${recalls.length + pushed.length} total · ${unacknowledged} store${unacknowledged!==1?'s':''} unacknowledged</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px;">${recalls.length + pushed.length} total · ${unacknowledged} store${unacknowledged!==1?'s':''} awaiting acknowledgement</div>
       </div>
+      ${unacknowledged > 0 ? `
+      <div style="display:flex;align-items:center;gap:6px;background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.25);border-radius:8px;padding:8px 12px;">
+        <div style="width:7px;height:7px;border-radius:50%;background:var(--danger);animation:blink 1.2s ease-in-out infinite;"></div>
+        <span style="font-size:11px;color:var(--danger);">${unacknowledged} store${unacknowledged!==1?'s':''} require action</span>
+      </div>` : ''}
     </div>
 
     ${pushed.length > 0 ? `
-    <div class="panel" style="margin-bottom:16px;">
-      <div class="panel-header">
-        <div>
-          <div class="panel-title">Manufacturer recall alerts</div>
-          <div class="panel-sub">Pushed directly from your trading partners</div>
-        </div>
-        ${unacknowledged > 0 ? `<span style="font-size:10px;background:rgba(255,92,92,0.12);color:var(--danger);padding:4px 10px;border-radius:10px;">${unacknowledged} stores need acknowledgement</span>` : ''}
-      </div>
-      <div class="panel-body">
-        ${pushed.map(p => {
-          const ev = p.recall_events;
-          const isDrill = ev?.is_drill;
-          const mfrName = ev?.organisations?.name || 'Manufacturer';
-          const evAcks = acks.filter(a => a.recall_event_id === p.recall_event_id);
-          const allConfirmed = evAcks.length > 0 && evAcks.every(a => a.status === 'confirmed');
-          return `
-          <div style="margin-bottom:16px;padding:14px;background:var(--surface2);border:1px solid ${isDrill?'rgba(245,166,35,0.3)':'rgba(255,92,92,0.25)'};border-radius:10px;">
-            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:12px;">
+    <div style="margin-bottom:20px;">
+      <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;">Manufacturer recall alerts</div>
+      ${pushed.map(p => {
+        const ev = p.recall_events;
+        const isDrill = ev?.is_drill;
+        const mfrName = ev?.organisations?.name || 'Manufacturer';
+        const evAcks = acks.filter(a => a.recall_event_id === p.recall_event_id);
+        const allConfirmed = evAcks.length > 0 && evAcks.every(a => a.status === 'confirmed');
+        const anyPending = evAcks.some(a => a.status === 'notified');
+        const sevNum = ev?.severity?.split('_')[1] || 'ii';
+
+        return `
+        <div style="margin-bottom:14px;border:1px solid ${isDrill?'rgba(245,166,35,0.3)':anyPending?'rgba(255,92,92,0.3)':'var(--border)'};border-radius:12px;overflow:hidden;">
+
+          <!-- Recall header -->
+          <div style="padding:16px 18px;background:${isDrill?'rgba(245,166,35,0.04)':anyPending?'rgba(255,92,92,0.04)':'var(--surface)'};display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+            <div style="display:flex;align-items:flex-start;gap:12px;">
+              <div style="width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:5px;background:${isDrill?'var(--warn)':sevNum==='i'?'var(--danger)':sevNum==='ii'?'var(--warn)':'var(--muted)'};${sevNum==='i'&&!isDrill?'box-shadow:0 0 8px rgba(255,92,92,0.6);':''}"></div>
               <div>
-                <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
-                  <div class="recall-severity sev-${ev?.severity?.split('_')[1]||'ii'}"></div>
-                  <div style="font-size:13px;font-weight:600;color:var(--text);">${ev?.product_name||'—'}</div>
-                  ${isDrill ? `<span style="font-size:10px;background:rgba(245,166,35,0.12);color:var(--warn);padding:2px 8px;border-radius:10px;">Mock drill</span>` : ''}
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
+                  <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:14px;color:var(--text);">${ev?.product_name||'—'}</div>
+                  ${isDrill?`<span style="font-size:10px;background:rgba(245,166,35,0.12);color:var(--warn);padding:2px 8px;border-radius:10px;font-weight:600;">MOCK DRILL</span>`:''}
+                  ${!isDrill&&anyPending?`<span style="font-size:10px;background:rgba(255,92,92,0.12);color:var(--danger);padding:2px 8px;border-radius:10px;font-weight:600;">ACTION REQUIRED</span>`:''}
+                  ${allConfirmed?`<span style="font-size:10px;background:rgba(52,211,153,0.12);color:var(--accent);padding:2px 8px;border-radius:10px;font-weight:600;">✓ COMPLETE</span>`:''}
                 </div>
-                <div style="font-size:10px;color:var(--muted);">
-                  From: <strong style="color:var(--text);">${mfrName}</strong> · 
-                  ${ev?.lot_number?`Lot: ${ev.lot_number} · `:''}
-                  ${ev?.severity?.replace('_',' ')} · 
-                  ${ev?.reason}
+                <div style="font-size:11px;color:var(--muted);line-height:1.6;">
+                  From <strong style="color:var(--text);">${mfrName}</strong>
+                  ${ev?.lot_number?` · Lot: <strong style="color:var(--text);">${ev.lot_number}</strong>`:''}
+                  ${ev?.barcode?` · Barcode: <strong style="color:var(--text);">${ev.barcode}</strong>`:''}
+                  <br>${ev?.severity?.replace('_',' ')} · ${ev?.reason}
+                  ${ev?.authority_reference?` · Ref: <strong style="color:var(--text);">${ev.authority_reference}</strong>`:''}
                 </div>
               </div>
-              <span style="font-size:10px;padding:3px 10px;border-radius:10px;white-space:nowrap;${allConfirmed?'background:rgba(52,211,153,0.1);color:var(--accent)':'background:rgba(255,92,92,0.1);color:var(--danger)'}">
-                ${allConfirmed ? '✓ Confirmed' : 'Action needed'}
-              </span>
             </div>
-            ${ev?.description ? `<div style="font-size:11px;color:var(--muted);margin-bottom:12px;padding:8px 10px;background:var(--surface);border-radius:6px;line-height:1.5;">${ev.description}</div>` : ''}
-            <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px;">Store acknowledgements</div>
+            <div style="font-size:10px;color:var(--muted);white-space:nowrap;">
+              ${ev?.published_at ? new Date(ev.published_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : ''}
+            </div>
+          </div>
+
+          ${ev?.description?`
+          <div style="padding:10px 18px;background:var(--surface2);border-top:1px solid var(--border);border-bottom:1px solid var(--border);font-size:11px;color:var(--muted);line-height:1.6;">
+            ${ev.description}
+          </div>`:''}
+
+          <!-- Per-store acknowledgement chain -->
+          <div style="padding:14px 18px;background:var(--surface);">
+            <div style="font-size:10px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);margin-bottom:12px;">Store acknowledgement chain</div>
             ${evAcks.length === 0
-              ? `<div style="font-size:11px;color:var(--muted);">No store records yet — run a recall check on the scanning app.</div>`
-              : evAcks.map(a => `
-                <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">
-                  <div style="font-size:11px;color:var(--text);flex:1;">${a.stores?.name || 'Unknown store'}</div>
-                  <select onchange="updateAckStatus('${a.id}', this.value)" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-family:'DM Mono',monospace;font-size:10px;color:var(--text);cursor:pointer;">
-                    <option value="notified"    ${a.status==='notified'?'selected':''}>Notified</option>
-                    <option value="acknowledged"${a.status==='acknowledged'?'selected':''}>Acknowledged</option>
-                    <option value="pulled"      ${a.status==='pulled'?'selected':''}>Pulled from shelf</option>
-                    <option value="disposed"    ${a.status==='disposed'?'selected':''}>Disposed</option>
-                    <option value="confirmed"   ${a.status==='confirmed'?'selected':''}>Confirmed ✓</option>
-                  </select>
-                </div>`).join('')}
-          </div>`;}).join('')}
-      </div>
+              ? `<div style="font-size:11px;color:var(--muted);padding:8px 0;">No store records yet — stores will appear here once the product has been scanned.</div>`
+              : evAcks.map(a => {
+                const stepIdx = stepOrder.indexOf(a.status);
+                const isComplete = a.status === 'confirmed';
+                return `
+                <div style="padding:12px 0;border-bottom:1px solid rgba(22,61,55,0.5);">
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;">
+                    <div style="font-size:12px;font-weight:600;color:var(--text);">${a.stores?.name||'Unknown store'}</div>
+                    <div style="font-size:10px;color:${stepColors[a.status]||'var(--muted)'};">
+                      ${stepLabels[a.status]||a.status}
+                      ${a.acknowledged_at?` · ${new Date(a.acknowledged_at).toLocaleDateString('en-GB')}` :''}
+                    </div>
+                  </div>
+
+                  <!-- Progress bar -->
+                  <div style="display:flex;gap:3px;margin-bottom:10px;">
+                    ${stepOrder.map((s,i) => `
+                      <div style="flex:1;height:3px;border-radius:2px;background:${i<=stepIdx?stepColors[a.status]||'var(--accent)':'var(--border)'}"></div>
+                    `).join('')}
+                  </div>
+
+                  ${!isComplete ? `
+                  <!-- Action buttons -->
+                  <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+                    ${stepOrder.slice(stepIdx+1).map(nextStep => `
+                      <button onclick="advanceAckStatus('${a.id}','${nextStep}','${p.recall_event_id}')"
+                        style="font-family:'DM Mono',monospace;font-size:10px;padding:5px 12px;border-radius:6px;cursor:pointer;border:1px solid ${nextStep===stepOrder[stepIdx+1]?stepColors[nextStep]||'var(--border)':'var(--border)'};background:${nextStep===stepOrder[stepIdx+1]?`rgba(52,211,153,0.07)`:'none'};color:${nextStep===stepOrder[stepIdx+1]?stepColors[nextStep]||'var(--muted)':'var(--muted)'};">
+                        ${nextStep===stepOrder[stepIdx+1]?'→ ':''}${stepLabels[nextStep]}
+                      </button>`).join('')}
+                    ${a.status === 'pulled' ? `
+                    <div style="display:flex;align-items:center;gap:6px;margin-left:auto;">
+                      <input id="units-${a.id}" type="number" placeholder="Units pulled" min="0"
+                        style="width:110px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-family:'DM Mono',monospace;font-size:10px;color:var(--text);"
+                        value="${a.units_pulled||''}" />
+                      <button onclick="saveUnits('${a.id}')"
+                        style="font-family:'DM Mono',monospace;font-size:10px;padding:5px 10px;border-radius:6px;cursor:pointer;border:1px solid var(--border);background:none;color:var(--muted);">
+                        Save
+                      </button>
+                    </div>` : ''}
+                  </div>` : `
+                  <div style="font-size:10px;color:var(--accent);">
+                    ✓ Fully confirmed${a.units_pulled?` · ${a.units_pulled} units pulled`:''}${a.acknowledged_at?` · ${new Date(a.acknowledged_at).toLocaleDateString('en-GB')}`:''}
+                  </div>`}
+                </div>`;}).join('')}
+          </div>
+        </div>`;}).join('')}
     </div>` : ''}
 
     <div class="panel">
-      <div class="panel-header"><div class="panel-title">Internal recalls</div><div class="panel-sub">Manually logged by your team</div></div>
+      <div class="panel-header">
+        <div><div class="panel-title">Internal recalls</div><div class="panel-sub">Manually logged by your team</div></div>
+      </div>
       <div class="panel-body">
         ${recalls.filter(r=>!r.is_pushed).length === 0
-          ? `<div class="empty">No internal recalls logged. Pushed recalls from manufacturers appear in the section above.</div>`
+          ? `<div class="empty">No internal recalls logged. Pushed recalls from manufacturers appear above.</div>`
           : recalls.filter(r=>!r.is_pushed).map(r => `
             <div class="recall-item">
               <div class="recall-severity ${r.active?'sev-i':'sev-iii'}"></div>
               <div class="recall-info">
                 <div class="recall-name">${r.product_name}</div>
-                <div class="recall-meta">Lot: ${r.lot_number||'—'} · Barcode: ${r.barcode_number||'—'} · Source: ${r.source||'Manual'}</div>
+                <div class="recall-meta">Lot: ${r.lot_number||'—'} · Source: ${r.source||'Manual'} · ${r.created_at?new Date(r.created_at).toLocaleDateString('en-GB'):''}</div>
               </div>
               <span class="recall-status ${r.active?'status-active':'status-resolved'}">${r.active?'Active':'Resolved'}</span>
             </div>`).join('')}
@@ -845,15 +899,32 @@ async function renderRecalls() {
     </div>`;
 }
 
-async function updateAckStatus(ackId, status) {
+async function advanceAckStatus(ackId, status, recallEventId) {
+  const btn = event.target;
+  const origText = btn.textContent;
+  btn.disabled = true; btn.textContent = '…';
   const { error } = await sb.from('recall_acknowledgements').update({
     status,
     acknowledged_at: new Date().toISOString(),
     acknowledged_by: (await sb.auth.getUser()).data.user?.id,
   }).eq('id', ackId);
-  if (error) { showToast && showToast('Could not update status.', 'error'); return; }
-  // Refresh recalls panel
-  setTimeout(() => renderRecalls(), 300);
+  if (error) { btn.disabled = false; btn.textContent = origText; return; }
+  renderRecalls();
+}
+
+async function saveUnits(ackId) {
+  const val = parseInt(document.getElementById('units-' + ackId)?.value || '0');
+  await sb.from('recall_acknowledgements').update({ units_pulled: val }).eq('id', ackId);
+  renderRecalls();
+}
+
+async function updateAckStatus(ackId, status) {
+  await sb.from('recall_acknowledgements').update({
+    status,
+    acknowledged_at: new Date().toISOString(),
+    acknowledged_by: (await sb.auth.getUser()).data.user?.id,
+  }).eq('id', ackId);
+  renderRecalls();
 }
 
 // ── Stores panel ──────────────────────────────────────────────
