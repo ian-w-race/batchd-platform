@@ -745,23 +745,31 @@ async function renderRecalls() {
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading recalls…</div>`;
 
   // Fetch separately to avoid RLS join conflicts
-  const [recallsRes, distRes, acksRes] = await Promise.all([
+  const [recallsRes, acksRes] = await Promise.all([
     sb.from('recalls').select('*').eq('organisation_id', _orgId).order('created_at', {ascending:false}),
-    sb.from('recall_distributions').select('*').eq('retailer_org_id', _orgId).order('distributed_at', {ascending:false}),
     sb.from('recall_acknowledgements').select('*, stores(name)').eq('organisation_id', _orgId).order('created_at', {ascending:false}),
   ]);
 
   const recalls = recallsRes.data || [];
-  const dists   = distRes.data   || [];
   const acks    = acksRes.data   || [];
 
-  // Fetch recall events for each distribution
+  // Get all recall events distributed to this retailer
+  const { data: distData } = await sb.from('recall_distributions')
+    .select('recall_event_id, est_affected_units, distributed_at')
+    .eq('retailer_org_id', _orgId);
+
   let pushed = [];
-  if (dists.length > 0) {
-    const eventIds = [...new Set(dists.map(d => d.recall_event_id))];
-    const { data: events } = await sb.from('recall_events').select('*').in('id', eventIds);
-    const eventMap = Object.fromEntries((events||[]).map(e => [e.id, e]));
-    pushed = dists.map(d => ({ ...d, recall_events: eventMap[d.recall_event_id] || null })).filter(d => d.recall_events);
+  if (distData?.length > 0) {
+    const eventIds = [...new Set(distData.map(d => d.recall_event_id))];
+    const { data: events } = await sb.from('recall_events')
+      .select('*')
+      .in('id', eventIds)
+      .order('published_at', { ascending: false });
+    pushed = (events || []).map(ev => ({
+      recall_event_id: ev.id,
+      recall_events: ev,
+      ...distData.find(d => d.recall_event_id === ev.id),
+    }));
   }
   const badge    = document.getElementById('nav-recall-badge');
   const activePushed = pushed.filter(p => !p.recall_events?.is_drill).length;
