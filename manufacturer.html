@@ -235,7 +235,7 @@
         <div class="user-avatar" id="user-avatar">M</div>
         <div class="user-info">
           <div class="user-name" id="user-name">Loading…</div>
-          <div class="user-role">mfr_admin</div>
+          <div class="user-role" id="user-role-label">mfr_admin</div>
         </div>
         <button class="sign-out-btn" onclick="signOut()" title="Sign out">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
@@ -262,7 +262,7 @@ const SUPABASE_URL = 'https://lurxucdmrugikdlvvebc.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1cnh1Y2RtcnVnaWtkbHZ2ZWJjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTU5NTQsImV4cCI6MjA4OTgzMTk1NH0.ewNhBbF8nUzpF9Ve822D9t8VLwB_hjk27KuFFEXct0A';
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-let _session = null, _orgId = null, _orgName = '';
+let _session = null, _orgId = null, _orgName = '', _userRole = null;
 let _selectedSeverity = 'class_ii';
 let _isDrill = false;
 
@@ -314,6 +314,7 @@ async function initPortal(user) {
   }
 
   _orgId = member.organisation_id;
+  _userRole = member.role;
 
   const { data: org } = await sb.from('organisations').select('name').eq('id', _orgId).single();
   _orgName = org?.name || 'My Organisation';
@@ -324,14 +325,16 @@ async function initPortal(user) {
   const firstName = user.user_metadata?.first_name || user.email?.split('@')[0] || 'User';
   document.getElementById('user-name').textContent = firstName;
   document.getElementById('user-avatar').textContent = firstName[0].toUpperCase();
-  document.getElementById('topbar-sub').textContent = _orgName + ' · Manufacturer';
+  document.getElementById('topbar-sub').textContent = _orgName + ' · ' + (_userRole === 'corp_admin' ? 'Corp Admin' : 'Manufacturer');
+  const roleLabel = document.getElementById('user-role-label');
+  if (roleLabel) roleLabel.textContent = _userRole || 'mfr_admin';
 
   showPanel('overview');
 }
 
 // ── Panel router ───────────────────────────────────────────────
 function showPanel(name) {
-  const titles = { overview:'Dashboard', push:'Push a Recall', history:'Recall History', acknowledgements:'Acknowledgements', partners:'Trading Partners', shipments:'Shipments', products:'products', lots:'Lot Codes' };
+  const titles = { overview:'Dashboard', push:'Push a Recall', history:'Recall History', acknowledgements:'Acknowledgements', partners:'Trading Partners', shipments:'Shipments', products:'Products', lots:'Lot Codes' };
   document.getElementById('topbar-title').textContent = titles[name] || name;
   document.querySelectorAll('.nav-item').forEach(el => {
     el.classList.toggle('active', el.getAttribute('onclick')?.includes(`'${name}'`));

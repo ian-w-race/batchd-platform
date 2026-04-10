@@ -222,7 +222,7 @@
     .score-fill.green  { background: var(--accent); }
     .score-fill.amber  { background: var(--warn); }
     .score-fill.red    { background: var(--danger); }
-    .score-val { font-size: 10px; color: var(--muted); width: 28px; text-align: right; flex-shrink: 0; }
+    .score-val { font-size: 10px; color: var(--muted); width: 36px; text-align: right; flex-shrink: 0; }
     .scan-spark { display: flex; align-items: flex-end; gap: 2px; height: 20px; }
     .spark-bar { width: 4px; border-radius: 1px; background: var(--accent); opacity: 0.6; }
 
@@ -1036,29 +1036,123 @@ async function renderStores() {
   const { data: stores } = await sb.from('stores').select('*').eq('organisation_id', _orgId).order('name');
   const list = stores || [];
   el.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
       <div>
         <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">${list.filter(s=>s.active).length} active stores</div>
         <div style="font-size:11px;color:var(--muted);margin-top:2px;">${list.length} total locations for ${_orgName}</div>
       </div>
+      <button class="btn-primary" onclick="openStoreForm()">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Add store
+      </button>
     </div>
+
+    <!-- Add store form -->
+    <div id="store-form" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px;">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:12px;" id="store-form-label">Add new store</div>
+      <div id="store-form-msg" style="display:none;font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+        <div class="field" style="margin:0;"><label>Store name *</label><input id="sf-name" type="text" placeholder="e.g. Oslo - Grünerløkka" /></div>
+        <div class="field" style="margin:0;"><label>Store code</label><input id="sf-code" type="text" placeholder="e.g. OSL-GRU-01" /></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
+        <div class="field" style="margin:0;"><label>Address</label><input id="sf-address" type="text" placeholder="e.g. Thorvald Meyers gate 56, Oslo" /></div>
+        <div class="field" style="margin:0;">
+          <label>Status</label>
+          <select id="sf-active">
+            <option value="true">Active</option>
+            <option value="false">Inactive</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn-primary" onclick="saveStore()" id="btn-save-store" style="flex:1;justify-content:center;">Save store</button>
+        <button class="btn-ghost" onclick="closeStoreForm()">Cancel</button>
+      </div>
+    </div>
+
     <div class="panel">
-      <div class="panel-body">
+      <div class="panel-body" style="padding:${list.length===0?'18px':'0 18px'};">
         ${list.length === 0
-          ? `<div class="empty">No stores yet. Add your first store location to get started.</div>`
+          ? `<div class="empty">No stores yet.<br>Add your first store location to get started.</div>`
           : `<table class="store-table">
-              <thead><tr><th>Store name</th><th>Status</th><th>Store code</th><th>Address</th></tr></thead>
+              <thead><tr><th>Store name</th><th>Status</th><th>Store code</th><th>Address</th><th></th></tr></thead>
               <tbody>${list.map(s => `
                 <tr>
                   <td><div class="store-name">${s.name}</div></td>
                   <td><span class="recall-status ${s.active?'status-resolved':'status-pending'}">${s.active?'Active':'Inactive'}</span></td>
-                  <td style="color:var(--muted)">${s.store_code||'—'}</td>
-                  <td style="color:var(--muted)">${s.address||'—'}</td>
+                  <td style="color:var(--muted);font-size:11px;">${s.store_code||'—'}</td>
+                  <td style="color:var(--muted);font-size:11px;">${s.address||'—'}</td>
+                  <td style="text-align:right;">
+                    <button onclick="editStore('${s.id}','${s.name.replace(/'/g,"\\'")}','${(s.store_code||'').replace(/'/g,"\\'")}','${(s.address||'').replace(/'/g,"\\'")}',${s.active})"
+                      style="font-family:'DM Mono',monospace;font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);cursor:pointer;">
+                      Edit
+                    </button>
+                  </td>
                 </tr>`).join('')}
               </tbody>
             </table>`}
       </div>
     </div>`;
+}
+
+let _editingStoreId = null;
+
+function openStoreForm(id, name, code, address, active) {
+  _editingStoreId = id || null;
+  document.getElementById('store-form-label').textContent = id ? 'Edit store' : 'Add new store';
+  document.getElementById('sf-name').value    = name    || '';
+  document.getElementById('sf-code').value    = code    || '';
+  document.getElementById('sf-address').value = address || '';
+  document.getElementById('sf-active').value  = active !== undefined ? String(active) : 'true';
+  document.getElementById('store-form-msg').style.display = 'none';
+  document.getElementById('store-form').style.display = 'block';
+  setTimeout(() => document.getElementById('sf-name').focus(), 50);
+}
+
+function editStore(id, name, code, address, active) {
+  openStoreForm(id, name, code, address, active);
+  document.getElementById('store-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function closeStoreForm() {
+  document.getElementById('store-form').style.display = 'none';
+  _editingStoreId = null;
+}
+
+async function saveStore() {
+  const name    = document.getElementById('sf-name').value.trim();
+  const code    = document.getElementById('sf-code').value.trim();
+  const address = document.getElementById('sf-address').value.trim();
+  const active  = document.getElementById('sf-active').value === 'true';
+  const btn     = document.getElementById('btn-save-store');
+  const msgEl   = document.getElementById('store-form-msg');
+
+  if (!name) {
+    msgEl.textContent = 'Store name is required.';
+    msgEl.style.cssText = 'display:block;background:rgba(255,92,92,0.1);border:1px solid rgba(255,92,92,0.3);color:var(--danger);font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner" style="border-top-color:#080f12;"></div> Saving…';
+
+  const payload = { name, store_code: code||null, address: address||null, active, organisation_id: _orgId };
+
+  const { error } = _editingStoreId
+    ? await sb.from('stores').update(payload).eq('id', _editingStoreId)
+    : await sb.from('stores').insert(payload);
+
+  if (error) {
+    msgEl.textContent = error.message || 'Could not save store.';
+    msgEl.style.cssText = 'display:block;background:rgba(255,92,92,0.1);border:1px solid rgba(255,92,92,0.3);color:var(--danger);font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;';
+    btn.disabled = false;
+    btn.innerHTML = 'Save store';
+    return;
+  }
+
+  closeStoreForm();
+  renderStores();
 }
 
 // ── Traceability panel ────────────────────────────────────────
@@ -1369,22 +1463,103 @@ function renderReports() {
 }
 
 // ── Settings ───────────────────────────────────────────────────
-function renderSettings() {
+async function renderSettings() {
   const el = document.getElementById('main-content');
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
+
+  const { data: org } = await sb.from('organisations').select('*').eq('id', _orgId).single();
+
   el.innerHTML = `
     <div style="margin-bottom:16px;">
       <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Organisation settings</div>
       <div style="font-size:11px;color:var(--muted);margin-top:2px;">${_orgName}</div>
     </div>
-    <div class="panel" style="max-width:500px;">
-      <div class="panel-header"><div class="panel-title">Organisation details</div></div>
-      <div class="panel-body">
-        <div class="field"><label>Organisation name</label><input type="text" value="${_orgName}" readonly style="opacity:0.7;" /></div>
-        <div class="field"><label>Region</label><input type="text" value="${_orgRegion==='us'?'United States':'Norway / EU'}" readonly style="opacity:0.7;" /></div>
-        <div class="field"><label>Organisation ID</label><input type="text" value="${_orgId}" readonly style="opacity:0.5;font-size:10px;" /></div>
-        <div style="font-size:11px;color:var(--muted);margin-top:4px;">To update organisation settings, contact support or visit batchdapp.com.</div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:900px;">
+      <!-- Organisation details -->
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">Organisation details</div></div>
+        <div class="panel-body">
+          <div id="org-settings-msg" style="display:none;font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;"></div>
+          <div class="field"><label>Organisation name</label>
+            <input id="org-name-input" type="text" value="${org?.name||_orgName}" />
+          </div>
+          <div class="field"><label>Contact email</label>
+            <input id="org-email-input" type="email" value="${org?.contact_email||''}" placeholder="e.g. safety@yourcompany.com" />
+          </div>
+          <div class="field"><label>Region</label>
+            <select id="org-region-input">
+              <option value="no" ${_orgRegion!=='us'?'selected':''}>Norway / EU</option>
+              <option value="us" ${_orgRegion==='us'?'selected':''}>United States</option>
+            </select>
+          </div>
+          <div class="field" style="margin-bottom:4px;"><label>Organisation ID</label>
+            <input type="text" value="${_orgId}" readonly style="opacity:0.5;font-size:10px;" />
+          </div>
+          <button class="btn-primary" onclick="saveOrgSettings()" id="btn-save-org" style="margin-top:8px;">Save changes</button>
+        </div>
+      </div>
+
+      <!-- Account -->
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">Your account</div></div>
+        <div class="panel-body">
+          <div class="field"><label>Email</label>
+            <input type="text" value="${_session?.user?.email||''}" readonly style="opacity:0.7;" />
+          </div>
+          <div class="field"><label>Role</label>
+            <input type="text" value="${_userRole?.replace('_',' ')||'corp_admin'}" readonly style="opacity:0.7;text-transform:capitalize;" />
+          </div>
+          <div class="field" style="margin-bottom:4px;"><label>Organisation</label>
+            <input type="text" value="${_orgName}" readonly style="opacity:0.7;" />
+          </div>
+          <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
+            <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">Need to change your password or email? Visit your account settings.</div>
+            <a href="https://batchdapp.com" style="font-size:11px;color:var(--accent);text-decoration:none;">batchdapp.com →</a>
+          </div>
+        </div>
       </div>
     </div>`;
+}
+
+async function saveOrgSettings() {
+  const name   = document.getElementById('org-name-input').value.trim();
+  const email  = document.getElementById('org-email-input').value.trim();
+  const region = document.getElementById('org-region-input').value;
+  const btn    = document.getElementById('btn-save-org');
+  const msgEl  = document.getElementById('org-settings-msg');
+
+  if (!name) {
+    msgEl.textContent = 'Organisation name is required.';
+    msgEl.style.cssText = 'display:block;background:rgba(255,92,92,0.1);border:1px solid rgba(255,92,92,0.3);color:var(--danger);font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner" style="border-top-color:#080f12;"></div> Saving…';
+
+  const { error } = await sb.from('organisations').update({
+    name,
+    contact_email: email || null,
+    region,
+  }).eq('id', _orgId);
+
+  if (error) {
+    msgEl.textContent = error.message || 'Could not save settings.';
+    msgEl.style.cssText = 'display:block;background:rgba(255,92,92,0.1);border:1px solid rgba(255,92,92,0.3);color:var(--danger);font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;';
+    btn.disabled = false;
+    btn.innerHTML = 'Save changes';
+    return;
+  }
+
+  _orgName   = name;
+  _orgRegion = region;
+  document.getElementById('topbar-sub').textContent = _orgName + ' · ' + (_orgRegion === 'us' ? 'United States' : 'Norway / EU');
+
+  msgEl.textContent = '✓ Settings saved.';
+  msgEl.style.cssText = 'display:block;background:rgba(52,211,153,0.1);border:1px solid rgba(52,211,153,0.3);color:var(--accent);font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;';
+  btn.disabled = false;
+  btn.innerHTML = 'Save changes';
 }
 
 // ── Coming soon ────────────────────────────────────────────────
