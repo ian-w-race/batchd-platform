@@ -703,30 +703,157 @@ async function renderAcknowledgements() {
 async function renderPartners() {
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
+
   const { data: partners } = await sb.from('trading_partners')
     .select('*, organisations!trading_partners_retailer_id_fkey(name, contact_email)')
     .eq('manufacturer_id', _orgId);
   const list = partners || [];
+
+  const confirmed = list.filter(p => p.status === 'active');
+  const pending   = list.filter(p => p.status === 'pending');
+
   el.innerHTML = `
-    <div style="margin-bottom:16px;">
-      <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">${list.length} trading partner${list.length!==1?'s':''}</div>
-      <div style="font-size:11px;color:var(--muted);margin-top:2px;">Retail organisations connected to ${_orgName}</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+      <div>
+        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">${confirmed.length} confirmed partner${confirmed.length!==1?'s':''}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px;">Retail organisations connected to ${_orgName} — all confirmed partners receive recall notifications automatically</div>
+      </div>
+      <button class="btn-primary" onclick="openPartnerRequest()">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Request connection
+      </button>
     </div>
+
+    <!-- Connection request form -->
+    <div id="partner-request-form" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px;">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:12px;">Send connection request</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:14px;line-height:1.6;">Search for a retailer organisation by name. Once they accept, they'll automatically receive all your recall notifications.</div>
+      <div id="partner-req-msg" style="display:none;font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;"></div>
+      <div style="display:flex;gap:8px;margin-bottom:12px;">
+        <div class="field" style="margin:0;flex:1;"><label>Search retailer name</label><input id="partner-search-input" type="text" placeholder="e.g. Batch'd Admin" oninput="searchRetailers()" /></div>
+      </div>
+      <div id="partner-search-results" style="margin-bottom:12px;"></div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn-ghost" onclick="closePartnerRequest()">Cancel</button>
+      </div>
+    </div>
+
+    <!-- Pending requests -->
+    ${pending.length > 0 ? `
+    <div class="panel" style="margin-bottom:14px;">
+      <div class="panel-header">
+        <div><div class="panel-title">Pending requests</div><div class="panel-sub">Awaiting retailer acceptance</div></div>
+      </div>
+      <div class="panel-body" style="padding:0 18px;">
+        ${pending.map(p => `
+          <div class="recall-item">
+            <div class="sev-indicator" style="background:var(--warn)"></div>
+            <div class="recall-info">
+              <div class="recall-name">${p.organisations?.name||'—'}</div>
+              <div class="recall-meta">${p.organisations?.contact_email||'No email'} · Request sent ${new Date(p.created_at).toLocaleDateString('en-GB')}</div>
+            </div>
+            <span class="status-pill s-notified">Pending</span>
+          </div>`).join('')}
+      </div>
+    </div>` : ''}
+
+    <!-- Confirmed partners -->
     <div class="panel">
-      <div class="panel-body">
-        ${list.length === 0
-          ? `<div class="empty">No trading partners yet.<br>Partners are automatically created when retailers scan your products.</div>`
-          : list.map(p => `
+      <div class="panel-header">
+        <div><div class="panel-title">Confirmed partners</div><div class="panel-sub">Recall notifications go to all confirmed partners automatically</div></div>
+      </div>
+      <div class="panel-body" ${confirmed.length > 0 ? 'style="padding:0 18px;"' : ''}>
+        ${confirmed.length === 0
+          ? `<div class="empty">No confirmed partners yet.<br>Send a connection request to a retailer to get started.</div>`
+          : confirmed.map(p => `
             <div class="recall-item">
               <div class="sev-indicator" style="background:var(--accent)"></div>
               <div class="recall-info">
                 <div class="recall-name">${p.organisations?.name||'—'}</div>
-                <div class="recall-meta">${p.organisations?.contact_email||'—'} · Status: ${p.status}</div>
+                <div class="recall-meta">${p.organisations?.contact_email||'No email'} · Connected ${new Date(p.created_at).toLocaleDateString('en-GB')}</div>
               </div>
-              <span class="recall-badge badge-ack">${p.status}</span>
+              <span class="status-pill s-confirmed">Active</span>
             </div>`).join('')}
       </div>
     </div>`;
+}
+
+function openPartnerRequest() {
+  document.getElementById('partner-request-form').style.display = 'block';
+  document.getElementById('partner-req-msg').style.display = 'none';
+  document.getElementById('partner-search-results').innerHTML = '';
+  document.getElementById('partner-search-input').value = '';
+  setTimeout(() => document.getElementById('partner-search-input').focus(), 50);
+}
+
+function closePartnerRequest() {
+  document.getElementById('partner-request-form').style.display = 'none';
+}
+
+let _searchTimeout;
+function searchRetailers() {
+  clearTimeout(_searchTimeout);
+  _searchTimeout = setTimeout(async () => {
+    const query = document.getElementById('partner-search-input').value.trim();
+    const resultsEl = document.getElementById('partner-search-results');
+    if (query.length < 2) { resultsEl.innerHTML = ''; return; }
+
+    resultsEl.innerHTML = `<div style="display:flex;align-items:center;gap:8px;color:var(--muted);font-size:11px;"><div class="spinner"></div> Searching…</div>`;
+
+    // Get existing partner retailer IDs to exclude
+    const { data: existing } = await sb.from('trading_partners').select('retailer_id').eq('manufacturer_id', _orgId);
+    const existingIds = (existing || []).map(p => p.retailer_id);
+
+    const { data: orgs } = await sb.from('organisations')
+      .select('id, name, contact_email, type')
+      .ilike('name', `%${query}%`)
+      .eq('type', 'retailer')
+      .neq('id', _orgId);
+
+    const available = (orgs || []).filter(o => !existingIds.includes(o.id));
+
+    if (available.length === 0) {
+      resultsEl.innerHTML = `<div style="font-size:11px;color:var(--muted);padding:8px 0;">No retailer organisations found matching "${query}"</div>`;
+      return;
+    }
+
+    resultsEl.innerHTML = available.map(o => `
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;margin-bottom:6px;">
+        <div>
+          <div style="font-size:12px;font-weight:600;color:var(--text);">${o.name}</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:2px;">${o.contact_email||'No email on file'}</div>
+        </div>
+        <button class="btn-primary" style="font-size:11px;padding:7px 12px;" onclick="sendPartnerRequest('${o.id}', '${o.name.replace(/'/g,"\\'")}')">
+          Send request
+        </button>
+      </div>`).join('');
+  }, 300);
+}
+
+async function sendPartnerRequest(retailerId, retailerName) {
+  const msgEl = document.getElementById('partner-req-msg');
+  msgEl.style.display = 'none';
+
+  const { data: { session } } = await sb.auth.getSession();
+
+  const { error } = await sb.from('trading_partners').insert({
+    manufacturer_id: _orgId,
+    retailer_id: retailerId,
+    status: 'pending',
+    invited_by: session.user.id,
+  });
+
+  if (error) {
+    msgEl.textContent = error.message || 'Could not send request.';
+    msgEl.style.display = 'block';
+    msgEl.style.background = 'rgba(255,92,92,0.1)';
+    msgEl.style.border = '1px solid rgba(255,92,92,0.3)';
+    msgEl.style.color = 'var(--danger)';
+    return;
+  }
+
+  closePartnerRequest();
+  renderPartners();
 }
 
 // ── Boot ───────────────────────────────────────────────────────
