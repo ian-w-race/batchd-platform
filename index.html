@@ -1,6 +1,18 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<script>
+// Domain-based routing — this file is index.html (scanning app)
+// batchdapp.com and app.batchdapp.com both serve the corporate dashboard
+(function() {
+  const host = window.location.hostname;
+  if (host === 'batchdapp.com' || host === 'www.batchdapp.com' || host === 'app.batchdapp.com') {
+    window.location.replace('/dashboard.html');
+    return;
+  }
+  // batchd-app.netlify.app or localhost — scanning app, stay here
+})();
+</script>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
@@ -3007,6 +3019,15 @@
   <!-- SETTINGS VIEW -->
   <div class="settings-view" id="view-settings">
 
+    <!-- Corp admin shortcut — shown only for corp_admin role -->
+    <div id="corp-admin-banner" style="display:none;background:rgba(52,211,153,0.07);border:1px solid rgba(52,211,153,0.25);border-radius:12px;padding:14px 18px;align-items:center;justify-content:space-between;gap:12px;">
+      <div>
+        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:13px;color:var(--accent);">Corporate Dashboard</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px;">Access recalls, compliance, stores and staff management</div>
+      </div>
+      <a href="https://app.batchdapp.com" style="font-family:'DM Mono',monospace;font-size:11px;font-weight:700;padding:8px 14px;border-radius:8px;background:var(--accent);color:#080f12;text-decoration:none;white-space:nowrap;">Open dashboard →</a>
+    </div>
+
     <!-- Active Recalls -->
     <div class="settings-section">
       <div class="settings-section-header">
@@ -4301,6 +4322,8 @@ let activeStoreFilter = null;
 let recallMode = false;
 let currentUser = null;
 let _currentOrgId = null;
+let _currentUserRole = null;
+let _currentStoreId = null; // UUID of selected store — set when store dropdown changes
 let todayScanCount = 0;
 let offlineQueue = [];
 let autoRecallCode = null; // active recall code from recalls table
@@ -4351,10 +4374,26 @@ async function showApp(user) {
   try {
     // Load organisation_id for this user — used in all scan inserts
     const { data: member } = await sb.from('organisation_members')
-      .select('organisation_id')
+      .select('organisation_id, role')
       .eq('user_id', user.id)
       .maybeSingle();
-    if (member) _currentOrgId = member.organisation_id;
+    if (member) {
+      _currentOrgId = member.organisation_id;
+      _currentUserRole = member.role || null;
+    }
+
+    // Auto-populate user_settings on first login so recall prefs and region are set
+    // This ensures invited staff (who never went through onboarding) get defaults
+    sb.from('user_settings').select('user_id').eq('user_id', user.id).maybeSingle().then(({ data: existing }) => {
+      if (!existing) {
+        sb.from('user_settings').upsert({
+          user_id:              user.id,
+          recall_source:        'both',
+          recall_lookback_days: 180,
+          region:               'no', // default to Norway/EU — can be changed in settings
+        }, { onConflict: 'user_id' }).catch(e => console.warn('user_settings init failed:', e));
+      }
+    }).catch(e => console.warn('user_settings check failed:', e));
 
     loadStoresFromDB();
     loadTodayScanCount();
@@ -4534,7 +4573,16 @@ async function signOut() {
 // ── STORES FROM DB ───────────────────────────────────────────
 async function loadStoresFromDB() {
   try {
-    const { data, error } = await sb.from('stores').select('name').eq('active', true).order('name');
+    // Filter by organisation_id so staff only see their own org's stores
+    let query = sb.from('stores').select('id, name').eq('active', true).order('name');
+    if (_currentOrgId) query = query.eq('organisation_id', _currentOrgId);
+    const { data, error } = await query;
+    // Build a map of store name -> id for use when saving scans
+    if (data && data.length) {
+      window._storeIdMap = {};
+      data.forEach(s => { if (s.id && s.name) window._storeIdMap[s.name] = s.id; });
+    }
+
     if (error || !data || !data.length) {
       // Fall back to hardcoded list
       populateStoreDropdownWithList(_userRegion === 'us'
@@ -4657,6 +4705,8 @@ document.addEventListener('click', function(e) {
 });
 
 function stbUpdateStore(storeName) {
+  // Update store ID for scan inserts
+  _currentStoreId = (window._storeIdMap && storeName) ? (window._storeIdMap[storeName] || null) : null;
   const sq  = document.getElementById('stb-store-pill');
   const dot = document.getElementById('stb-store-dot');
   if (storeName) {
@@ -5851,11 +5901,27 @@ async function checkPrePlacementRecall() {
   const barcodeNum  = document.getElementById('field-barcode').value.trim();
 
   try {
-    const { data: recalls } = await sb.from('recalls')
-      .select('product_name, lot_number, batch_number, barcode_number, description, source')
-      .eq('active', true);
+    // Check both recall sources: manual/FDA/RASFF recalls + manufacturer-pushed recall_events
+    const [recallsRes, eventsRes] = await Promise.all([
+      sb.from('recalls').select('product_name, lot_number, batch_number, barcode_number, description, source').eq('active', true),
+      _currentOrgId
+        ? sb.from('recall_distributions')
+            .select('recall_event_id, recall_events!inner(product_name, lot_number, barcode, reason, is_drill)')
+            .eq('retailer_org_id', _currentOrgId)
+            .eq('recall_events.is_drill', false)
+        : Promise.resolve({ data: [] }),
+    ]);
 
-    if (!recalls || !recalls.length) return;
+    const pushedRecalls = (eventsRes.data || []).map(d => ({
+      product_name:   d.recall_events.product_name,
+      lot_number:     d.recall_events.lot_number,
+      barcode_number: d.recall_events.barcode,
+      description:    d.recall_events.reason,
+      source:         'manufacturer_push',
+    }));
+
+    const recalls = [...(recallsRes.data || []), ...pushedRecalls];
+    if (!recalls.length) return;
 
     const matches = recalls.filter(r => {
       const lotMatch      = r.lot_number     && lotNum      && lotNum.toLowerCase().includes(r.lot_number.toLowerCase());
@@ -6629,6 +6695,7 @@ async function saveRecord() {
     lot_number:      lotUnavailSave ? null : (lotNum || null),
     batch_number:    null,
     store_name:      storeName   || null,
+    store_id:        _currentStoreId || null,
     shelf_location:  shelfLocation || null,
     quantity:        quantity,
     scanned_by:      currentUser?.email || null,
@@ -6935,9 +7002,11 @@ async function loadSettings() {
 }
 
 function renderSettingsForRole() {
-  // Recall Source and Add Manual Recall sections are manager-only
-  // and live exclusively in the Manager tab — not in Settings.
-  // This function is kept as a no-op for compatibility.
+  // Show corporate dashboard shortcut for corp_admin users
+  const banner = document.getElementById('corp-admin-banner');
+  if (banner && _currentUserRole === 'corp_admin') {
+    banner.style.display = 'flex';
+  }
 }
 
 
@@ -7015,8 +7084,32 @@ let loginRecallMatches = [];
 
 async function checkRecallsOnLogin(silent = false) {
   try {
-    const { data: recalls } = await sb.from('recalls').select('*').eq('active', true);
-    if (!recalls || !recalls.length) return;
+    // Load both recall sources in parallel:
+    // 1. recalls table — FDA/RASFF/manual recalls
+    // 2. recall_events — manufacturer-pushed recalls distributed to this org
+    const [recallsRes, eventsRes] = await Promise.all([
+      sb.from('recalls').select('*').eq('active', true),
+      _currentOrgId
+        ? sb.from('recall_distributions')
+            .select('recall_event_id, recall_events!inner(id, product_name, lot_number, barcode, severity, reason, is_drill, published_at)')
+            .eq('retailer_org_id', _currentOrgId)
+            .eq('recall_events.is_drill', false)
+        : Promise.resolve({ data: [] }),
+    ]);
+
+    // Normalise recall_events into the same shape as recalls
+    const pushedRecalls = (eventsRes.data || []).map(d => ({
+      id:             d.recall_events.id,
+      product_name:   d.recall_events.product_name,
+      lot_number:     d.recall_events.lot_number,
+      barcode_number: d.recall_events.barcode,
+      description:    d.recall_events.reason,
+      source:         'manufacturer_push',
+      active:         true,
+    }));
+
+    const recalls = [...(recallsRes.data || []), ...pushedRecalls];
+    if (!recalls.length) return;
 
     // Load recent scans for this check
     const cutoff = new Date(Date.now() - recallLookbackDays * 24 * 60 * 60 * 1000).toISOString();
