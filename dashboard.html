@@ -451,6 +451,7 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 let _session = null, _orgId = null, _orgName = '', _orgRegion = 'no';
+let _userRole = 'corp_admin', _storeId = null, _storeName = '';
 let _activePanel = 'overview';
 
 // ── Clock ──────────────────────────────────────────────────────
@@ -517,7 +518,9 @@ async function initDashboard(user) {
     return;
   }
 
-  _orgId = member.organisation_id;
+  _orgId    = member.organisation_id;
+  _userRole = member.role;
+  _storeId  = member.store_id || null;
 
   const { data: org } = await sb.from('organisations')
     .select('name, region')
@@ -526,6 +529,12 @@ async function initDashboard(user) {
 
   _orgName   = org?.name || 'My Organisation';
   _orgRegion = org?.region || 'no';
+
+  // If store manager, load store name
+  if (_storeId) {
+    const { data: store } = await sb.from('stores').select('name').eq('id', _storeId).single();
+    _storeName = store?.name || 'My Store';
+  }
 
   // Show app
   document.getElementById('auth-gate').style.display = 'none';
@@ -537,7 +546,23 @@ async function initDashboard(user) {
   document.getElementById('user-name').textContent  = firstName + (lastName ? ' ' + lastName : '');
   document.getElementById('user-role').textContent  = member.role.replace('_', ' ');
   document.getElementById('user-avatar').textContent = firstName[0].toUpperCase();
-  document.getElementById('topbar-sub').textContent  = _orgName + ' · ' + (_orgRegion === 'us' ? 'United States' : 'Norway / EU');
+  document.getElementById('topbar-sub').textContent  = _userRole === 'store_manager'
+    ? `${_storeName} · ${_orgName}`
+    : _orgName + ' · ' + (_orgRegion === 'us' ? 'United States' : 'Norway / EU');
+
+  // Adjust sidebar for store managers
+  if (_userRole === 'store_manager') {
+    // Hide corp-only nav items
+    document.querySelectorAll('.nav-item').forEach(el => {
+      const onclick = el.getAttribute('onclick') || '';
+      if (onclick.includes("'stores'") || onclick.includes("'staff'") || onclick.includes("'reports'")) {
+        el.style.display = 'none';
+      }
+    });
+    // Update logo sub
+    const logoSub = document.querySelector('.logo-sub');
+    if (logoSub) logoSub.textContent = 'Store Manager';
+  }
 
   showPanel('overview');
 }
@@ -557,6 +582,7 @@ function showPanel(name) {
 
 // ── Overview dashboard ────────────────────────────────────────
 async function renderOverview() {
+  if (_userRole === 'store_manager') { return renderStoreManagerOverview(); }
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
 
@@ -975,7 +1001,12 @@ async function renderStores() {
 async function renderTraceability() {
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading scan history…</div>`;
-  const { data: scans } = await sb.from('scans').select('*').eq('organisation_id', _orgId).order('created_at', {ascending:false}).limit(50);
+
+  let query = sb.from('scans').select('*').eq('organisation_id', _orgId).order('created_at', {ascending:false}).limit(100);
+  if (_userRole === 'store_manager' && _storeName) {
+    query = query.eq('store_name', _storeName);
+  }
+  const { data: scans } = await query;
   const list = scans || [];
   el.innerHTML = `
     <div style="margin-bottom:16px;">
@@ -1293,6 +1324,128 @@ function renderSettings() {
 }
 
 // ── Coming soon ────────────────────────────────────────────────
+// ── Store manager overview ────────────────────────────────────
+async function renderStoreManagerOverview() {
+  const el = document.getElementById('main-content');
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
+  document.getElementById('topbar-title').textContent = _storeName || 'My Store';
+
+  try {
+    // Scope all queries to this store
+    const storeName = _storeName;
+    const today = new Date().toISOString().split('T')[0];
+
+    const [scansRes, acksRes] = await Promise.all([
+      sb.from('scans').select('*').eq('organisation_id', _orgId).eq('store_name', storeName).order('created_at', { ascending: false }),
+      sb.from('recall_acknowledgements').select('*, recall_events(product_name, lot_number, severity, reason, is_drill)').eq('organisation_id', _orgId).eq('store_id', _storeId || '00000000-0000-0000-0000-000000000000'),
+    ]);
+
+    const scans      = scansRes.data || [];
+    const acks       = acksRes.data  || [];
+    const scansToday = scans.filter(s => s.created_at?.startsWith(today)).length;
+    const escalated  = scans.filter(s => s.manager_escalated && !s.recall_resolved).length;
+    const onShelf    = scans.filter(s => !s.removed_from_shelf_at).length;
+    const pendingAcks = acks.filter(a => a.status === 'notified').length;
+
+    // Last 7 days sparkline
+    const last7 = Array.from({length:7}, (_,i) => {
+      const d = new Date(); d.setDate(d.getDate()-(6-i));
+      return d.toISOString().split('T')[0];
+    });
+    const scansByDay = last7.map(d => scans.filter(s => s.created_at?.startsWith(d)).length);
+    const maxDay = Math.max(...scansByDay, 1);
+
+    // Recent scans
+    const recent = scans.slice(0, 8);
+
+    el.innerHTML = `
+      ${pendingAcks > 0 ? `
+      <div style="background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.25);border-radius:10px;padding:12px 16px;display:flex;align-items:center;gap:12px;margin-bottom:20px;">
+        <div style="width:8px;height:8px;border-radius:50%;background:var(--danger);animation:blink 1.2s ease-in-out infinite;flex-shrink:0;"></div>
+        <div style="font-size:12px;color:var(--danger);flex:1;"><strong>${pendingAcks} recall${pendingAcks!==1?'s':''}</strong> require acknowledgement at ${storeName}.</div>
+        <button onclick="showPanel('recalls')" style="font-size:11px;color:var(--danger);border:1px solid rgba(255,92,92,0.4);border-radius:6px;padding:5px 12px;background:none;cursor:pointer;">View →</button>
+      </div>` : ''}
+
+      <div class="kpi-grid">
+        <div class="kpi-card blue">
+          <div class="kpi-label">Scans today</div>
+          <div class="kpi-value">${scansToday}</div>
+          <div class="kpi-sub">${scans.length} total at ${storeName}</div>
+        </div>
+        <div class="kpi-card green">
+          <div class="kpi-label">Products on shelf</div>
+          <div class="kpi-value accent">${onShelf}</div>
+          <div class="kpi-sub">Currently tracked</div>
+        </div>
+        <div class="kpi-card ${escalated>0?'amber':'green'}">
+          <div class="kpi-label">Escalated items</div>
+          <div class="kpi-value ${escalated>0?'warn':''}">${escalated}</div>
+          <div class="kpi-sub">Awaiting resolution</div>
+        </div>
+        <div class="kpi-card ${pendingAcks>0?'red':'green'}">
+          <div class="kpi-label">Recall alerts</div>
+          <div class="kpi-value ${pendingAcks>0?'danger':'accent'}">${pendingAcks}</div>
+          <div class="kpi-sub">${acks.length} total received</div>
+        </div>
+      </div>
+
+      <div class="two-col">
+        <div class="panel">
+          <div class="panel-header">
+            <div><div class="panel-title">Recent scans</div><div class="panel-sub">${storeName}</div></div>
+            <button class="panel-action" onclick="showPanel('traceability')">All scans →</button>
+          </div>
+          <div class="panel-body">
+            ${recent.length === 0
+              ? `<div class="empty">No scans yet at ${storeName}.</div>`
+              : recent.map(s => `
+                <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(22,61,55,0.5);">
+                  <div style="flex:1;min-width:0;">
+                    <div style="font-size:12px;color:var(--text);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${s.product_name||'—'}</div>
+                    <div style="font-size:10px;color:var(--muted);">Lot: ${s.lot_number||'—'} · ${s.created_at?new Date(s.created_at).toLocaleDateString('en-GB'):''}</div>
+                  </div>
+                  ${s.recall_resolved?`<span style="font-size:10px;background:rgba(52,211,153,0.1);color:var(--accent);padding:2px 7px;border-radius:8px;">Resolved</span>`
+                  :s.removed_from_shelf_at?`<span style="font-size:10px;background:rgba(245,166,35,0.1);color:var(--warn);padding:2px 7px;border-radius:8px;">Removed</span>`
+                  :`<span style="font-size:10px;background:rgba(106,175,158,0.1);color:var(--muted);padding:2px 7px;border-radius:8px;">On shelf</span>`}
+                </div>`).join('')}
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:14px;">
+          <div class="panel">
+            <div class="panel-header"><div class="panel-title">7-day scan activity</div></div>
+            <div class="panel-body">
+              <div style="display:flex;align-items:flex-end;gap:4px;height:48px;margin-bottom:6px;">
+                ${scansByDay.map(v => `
+                  <div style="flex:1;border-radius:2px;background:var(--accent);opacity:${0.4+0.6*(v/maxDay)};height:${Math.max(4,Math.round(44*(v/maxDay)))}px;"></div>`).join('')}
+              </div>
+              <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--muted);">
+                ${last7.map(d=>`<div>${new Date(d).toLocaleDateString('en-GB',{weekday:'narrow'})}</div>`).join('')}
+              </div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header"><div class="panel-title">Recall acknowledgements</div></div>
+            <div class="panel-body">
+              ${acks.length === 0
+                ? `<div style="font-size:11px;color:var(--muted);">No recalls received yet.</div>`
+                : acks.slice(0,4).map(a => `
+                  <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid rgba(22,61,55,0.4);">
+                    <div style="width:6px;height:6px;border-radius:50%;flex-shrink:0;background:${a.status==='confirmed'?'var(--accent)':a.status==='notified'?'var(--danger)':'var(--warn)'}"></div>
+                    <div style="flex:1;font-size:11px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${a.recall_events?.product_name||'—'}</div>
+                    <span style="font-size:10px;color:${a.status==='confirmed'?'var(--accent)':a.status==='notified'?'var(--danger)':'var(--warn)'};">${a.status}</span>
+                  </div>`).join('')}
+              ${acks.length > 4 ? `<div style="font-size:10px;color:var(--muted);padding-top:8px;cursor:pointer;" onclick="showPanel('recalls')">View all ${acks.length} →</div>` : ''}
+            </div>
+          </div>
+        </div>
+      </div>`;
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error: ${e.message}</div>`;
+  }
+}
+
 function renderComingSoon(name) {
   document.getElementById('main-content').innerHTML = `
     <div style="display:flex;align-items:center;justify-content:center;height:300px;flex-direction:column;gap:12px;color:var(--muted);">
