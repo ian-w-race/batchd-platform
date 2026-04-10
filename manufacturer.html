@@ -219,6 +219,11 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
         Acknowledgements
       </button>
+      <div class="nav-section">Logistics</div>
+      <button class="nav-item" onclick="showPanel('shipments')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 5v3h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+        Shipments
+      </button>
       <div class="nav-section">Partners</div>
       <button class="nav-item" onclick="showPanel('partners')">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
@@ -326,12 +331,12 @@ async function initPortal(user) {
 
 // ── Panel router ───────────────────────────────────────────────
 function showPanel(name) {
-  const titles = { overview:'Dashboard', push:'Push a Recall', history:'Recall History', acknowledgements:'Acknowledgements', partners:'Trading Partners' };
+  const titles = { overview:'Dashboard', push:'Push a Recall', history:'Recall History', acknowledgements:'Acknowledgements', partners:'Trading Partners', shipments:'Shipments', products:'products', lots:'Lot Codes' };
   document.getElementById('topbar-title').textContent = titles[name] || name;
   document.querySelectorAll('.nav-item').forEach(el => {
     el.classList.toggle('active', el.getAttribute('onclick')?.includes(`'${name}'`));
   });
-  const fns = { overview: renderOverview, push: renderPush, history: renderHistory, acknowledgements: renderAcknowledgements, partners: renderPartners, products: renderProducts, lots: renderLots };
+  const fns = { overview: renderOverview, push: renderPush, history: renderHistory, acknowledgements: renderAcknowledgements, partners: renderPartners, products: renderProducts, lots: renderLots, shipments: renderShipments };
   (fns[name] || (() => {}))();
 }
 
@@ -853,6 +858,261 @@ async function sendPartnerRequest(retailerId, retailerName) {
 
   closePartnerRequest();
   renderPartners();
+}
+
+// ── Shipments ─────────────────────────────────────────────────
+async function renderShipments() {
+  const el = document.getElementById('main-content');
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
+
+  // Load trading partners (confirmed only), products, shipment history in parallel
+  const [partnersRes, productsRes, shipmentsRes] = await Promise.all([
+    sb.from('trading_partners')
+      .select('retailer_id, organisations!trading_partners_retailer_id_fkey(id, name)')
+      .eq('manufacturer_id', _orgId)
+      .eq('status', 'active'),
+    sb.from('products').select('id, name').eq('manufacturer_id', _orgId).order('name'),
+    sb.from('shipments')
+      .select('*, products(name), organisations!shipments_retailer_id_fkey(name), stores(name)')
+      .eq('manufacturer_id', _orgId)
+      .order('shipped_at', { ascending: false })
+      .limit(50),
+  ]);
+
+  const partners  = partnersRes.data  || [];
+  const products  = productsRes.data  || [];
+  const shipments = shipmentsRes.data || [];
+
+  el.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+      <div>
+        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">${shipments.length} shipment${shipments.length!==1?'s':''} logged</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px;">Lot codes shipped to retail partners — used to calculate shelf impact when a recall fires</div>
+      </div>
+      ${partners.length > 0 && products.length > 0
+        ? `<button class="btn-primary" onclick="openShipmentForm()">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Log shipment
+          </button>`
+        : `<div style="font-size:11px;color:var(--warn);">${partners.length === 0 ? '⚠ Add a trading partner first' : '⚠ Register products first'}</div>`}
+    </div>
+
+    <!-- Shipment form -->
+    <div id="shipment-form" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px;">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:12px;">Log new shipment</div>
+      <div id="shipment-msg" style="display:none;font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;"></div>
+
+      <!-- Row 1: Partner → Store -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+        <div class="field" style="margin:0;">
+          <label>Retailer partner *</label>
+          <select id="s-partner" onchange="loadStoresForPartner()">
+            <option value="">— Select retailer —</option>
+            ${partners.map(p => `<option value="${p.organisations.id}">${p.organisations.name}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field" style="margin:0;">
+          <label>Store *</label>
+          <select id="s-store" disabled>
+            <option value="">— Select retailer first —</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Row 2: Product → Lot code -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+        <div class="field" style="margin:0;">
+          <label>Product *</label>
+          <select id="s-product" onchange="loadLotsForProduct()">
+            <option value="">— Select product —</option>
+            ${products.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field" style="margin:0;">
+          <label>Lot code *</label>
+          <select id="s-lot" disabled>
+            <option value="">— Select product first —</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Row 3: Quantity + Unit + Shipped date -->
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px;">
+        <div class="field" style="margin:0;"><label>Quantity *</label><input id="s-qty" type="number" min="1" placeholder="e.g. 48" /></div>
+        <div class="field" style="margin:0;">
+          <label>Unit *</label>
+          <select id="s-unit">
+            <option value="units">Units</option>
+            <option value="cases">Cases</option>
+            <option value="pallets">Pallets</option>
+            <option value="kg">kg</option>
+            <option value="lbs">lbs</option>
+          </select>
+        </div>
+        <div class="field" style="margin:0;"><label>Shipped date *</label><input id="s-date" type="date" /></div>
+      </div>
+
+      <!-- Row 4: Reference + Notes -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
+        <div class="field" style="margin:0;"><label>Reference / PO number</label><input id="s-ref" type="text" placeholder="e.g. PO-2026-0042" /></div>
+        <div class="field" style="margin:0;"><label>Notes</label><input id="s-notes" type="text" placeholder="Optional" /></div>
+      </div>
+
+      <div style="display:flex;gap:8px;">
+        <button class="btn-primary" onclick="saveShipment()" id="btn-save-shipment" style="flex:1;justify-content:center;">Log shipment</button>
+        <button class="btn-ghost" onclick="closeShipmentForm()">Cancel</button>
+      </div>
+    </div>
+
+    <!-- Shipment history -->
+    <div class="panel">
+      <div class="panel-header">
+        <div><div class="panel-title">Shipment history</div><div class="panel-sub">Most recent 50 shipments</div></div>
+      </div>
+      <div class="panel-body" style="padding:${shipments.length===0?'18px':'0 18px'};">
+        ${shipments.length === 0
+          ? `<div class="empty">No shipments logged yet.<br>Log a shipment to enable accurate shelf impact scoring on recalls.</div>`
+          : `<table style="width:100%;border-collapse:collapse;">
+              <thead><tr>
+                <th style="font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);text-align:left;padding:12px 8px 12px 0;border-bottom:1px solid var(--border);">Product / Lot</th>
+                <th style="font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);text-align:left;padding:12px 8px;border-bottom:1px solid var(--border);">Retailer / Store</th>
+                <th style="font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);text-align:left;padding:12px 8px;border-bottom:1px solid var(--border);">Qty</th>
+                <th style="font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);text-align:left;padding:12px 8px;border-bottom:1px solid var(--border);">Shipped</th>
+                <th style="font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);text-align:left;padding:12px 8px;border-bottom:1px solid var(--border);">Ref</th>
+              </tr></thead>
+              <tbody>
+                ${shipments.map(s => `
+                  <tr>
+                    <td style="padding:10px 8px 10px 0;border-bottom:1px solid rgba(22,61,55,0.5);">
+                      <div style="font-size:12px;font-weight:600;color:var(--text);">${s.products?.name||'—'}</div>
+                      <div style="font-size:10px;color:var(--muted);margin-top:2px;font-family:'DM Mono',monospace;">${s.lot_number||'—'}</div>
+                    </td>
+                    <td style="padding:10px 8px;border-bottom:1px solid rgba(22,61,55,0.5);">
+                      <div style="font-size:11px;color:var(--text);">${s.organisations?.name||'—'}</div>
+                      <div style="font-size:10px;color:var(--muted);margin-top:2px;">${s.stores?.name||'—'}</div>
+                    </td>
+                    <td style="padding:10px 8px;border-bottom:1px solid rgba(22,61,55,0.5);font-size:11px;color:var(--text);">${s.quantity} ${s.unit}</td>
+                    <td style="padding:10px 8px;border-bottom:1px solid rgba(22,61,55,0.5);font-size:11px;color:var(--muted);">${s.shipped_at ? new Date(s.shipped_at).toLocaleDateString('en-GB') : '—'}</td>
+                    <td style="padding:10px 8px;border-bottom:1px solid rgba(22,61,55,0.5);font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${s.reference_document||'—'}</td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>`}
+      </div>
+    </div>`;
+
+  // Set today as default shipped date
+  document.getElementById('s-date').value = new Date().toISOString().split('T')[0];
+}
+
+function openShipmentForm() {
+  document.getElementById('shipment-form').style.display = 'block';
+  document.getElementById('shipment-msg').style.display = 'none';
+  document.getElementById('s-date').value = new Date().toISOString().split('T')[0];
+}
+
+function closeShipmentForm() {
+  document.getElementById('shipment-form').style.display = 'none';
+}
+
+async function loadStoresForPartner() {
+  const retailerId = document.getElementById('s-partner').value;
+  const storeEl    = document.getElementById('s-store');
+  storeEl.innerHTML = '<option value="">— Loading… —</option>';
+  storeEl.disabled = true;
+  if (!retailerId) { storeEl.innerHTML = '<option value="">— Select retailer first —</option>'; return; }
+
+  const { data: stores } = await sb.from('stores')
+    .select('id, name')
+    .eq('organisation_id', retailerId)
+    .order('name');
+
+  if (!stores || stores.length === 0) {
+    storeEl.innerHTML = '<option value="">— No stores found —</option>';
+    return;
+  }
+  storeEl.innerHTML = '<option value="">— Select store —</option>' +
+    stores.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+  storeEl.disabled = false;
+}
+
+async function loadLotsForProduct() {
+  const productId = document.getElementById('s-product').value;
+  const lotEl     = document.getElementById('s-lot');
+  lotEl.innerHTML = '<option value="">— Loading… —</option>';
+  lotEl.disabled  = true;
+  if (!productId) { lotEl.innerHTML = '<option value="">— Select product first —</option>'; return; }
+
+  const { data: lots } = await sb.from('product_lots')
+    .select('id, lot_number, production_date, expiry_date')
+    .eq('product_id', productId)
+    .eq('manufacturer_id', _orgId)
+    .order('lot_number');
+
+  if (!lots || lots.length === 0) {
+    lotEl.innerHTML = '<option value="">— No lots registered —</option>';
+    return;
+  }
+  lotEl.innerHTML = '<option value="">— Select lot —</option>' +
+    lots.map(l => `<option value="${l.lot_number}">${l.lot_number}${l.expiry_date ? ' (exp ' + new Date(l.expiry_date).toLocaleDateString('en-GB') + ')' : ''}</option>`).join('');
+  lotEl.disabled = false;
+}
+
+async function saveShipment() {
+  const retailerId = document.getElementById('s-partner').value;
+  const storeId    = document.getElementById('s-store').value;
+  const productId  = document.getElementById('s-product').value;
+  const lotNumber  = document.getElementById('s-lot').value;
+  const qty        = document.getElementById('s-qty').value;
+  const unit       = document.getElementById('s-unit').value;
+  const date       = document.getElementById('s-date').value;
+  const ref        = document.getElementById('s-ref').value.trim();
+  const notes      = document.getElementById('s-notes').value.trim();
+  const btn        = document.getElementById('btn-save-shipment');
+
+  if (!retailerId) { showShipmentMsg('Please select a retailer partner.', 'error'); return; }
+  if (!storeId)    { showShipmentMsg('Please select a store.', 'error'); return; }
+  if (!productId)  { showShipmentMsg('Please select a product.', 'error'); return; }
+  if (!lotNumber)  { showShipmentMsg('Please select a lot code.', 'error'); return; }
+  if (!qty || qty < 1) { showShipmentMsg('Please enter a valid quantity.', 'error'); return; }
+  if (!date)       { showShipmentMsg('Please enter a shipped date.', 'error'); return; }
+
+  // Get barcode from product
+  const { data: product } = await sb.from('products').select('barcode').eq('id', productId).single();
+
+  btn.disabled = true; btn.innerHTML = '<div class="spinner" style="border-top-color:#080f12;"></div> Saving…';
+
+  const { error } = await sb.from('shipments').insert({
+    manufacturer_id:    _orgId,
+    retailer_id:        retailerId,
+    store_id:           storeId,
+    product_id:         productId,
+    lot_number:         lotNumber,
+    barcode:            product?.barcode || null,
+    quantity:           parseInt(qty),
+    unit:               unit,
+    shipped_at:         new Date(date).toISOString(),
+    reference_document: ref || null,
+    notes:              notes || null,
+  });
+
+  if (error) {
+    showShipmentMsg(error.message || 'Could not log shipment.', 'error');
+    btn.disabled = false; btn.innerHTML = 'Log shipment';
+    return;
+  }
+
+  closeShipmentForm();
+  renderShipments();
+}
+
+function showShipmentMsg(txt, type) {
+  const el = document.getElementById('shipment-msg');
+  if (!el) return;
+  el.textContent = txt;
+  el.style.display = 'block';
+  el.style.background = type === 'error' ? 'rgba(255,92,92,0.1)' : 'rgba(52,211,153,0.1)';
+  el.style.border     = type === 'error' ? '1px solid rgba(255,92,92,0.3)' : '1px solid rgba(52,211,153,0.3)';
+  el.style.color      = type === 'error' ? 'var(--danger)' : 'var(--accent)';
 }
 
 // ── Boot ───────────────────────────────────────────────────────
