@@ -602,24 +602,36 @@ async function renderOverview() {
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
 
   try {
-    const [scansRes, recallsRes, storesRes] = await Promise.all([
+    const [scansRes, recallsRes, storesRes, shipmentsRes, partnersRes, acksRes] = await Promise.all([
       sb.from('scans').select('id, created_at, store_name, recall_resolved, removed_from_shelf_at, manager_escalated').eq('organisation_id', _orgId),
       sb.from('recalls').select('id, product_name, lot_number, active, source, created_at').eq('organisation_id', _orgId),
       sb.from('stores').select('id, name, active').eq('organisation_id', _orgId),
+      sb.from('shipments').select('id, lot_number, quantity, unit, shipped_at, stores(name), organisations!shipments_manufacturer_id_fkey(name), products(name)').eq('retailer_id', _orgId).order('shipped_at', { ascending: false }).limit(100),
+      sb.from('trading_partners').select('id, status').eq('retailer_id', _orgId),
+      sb.from('recall_acknowledgements').select('status').eq('organisation_id', _orgId),
     ]);
 
-    const scans   = scansRes.data   || [];
-    const recalls = recallsRes.data || [];
-    const stores  = storesRes.data  || [];
+    const scans    = scansRes.data    || [];
+    const recalls  = recallsRes.data  || [];
+    const stores   = storesRes.data   || [];
+    const shipments = shipmentsRes.data || [];
+    const partners  = partnersRes.data  || [];
+    const acks      = acksRes.data      || [];
 
-    const activeRecalls  = recalls.filter(r => r.active).length;
-    const totalScans     = scans.length;
-    const today          = new Date().toISOString().split('T')[0];
-    const scansToday     = scans.filter(s => s.created_at?.startsWith(today)).length;
-    const escalated      = scans.filter(s => s.manager_escalated && !s.recall_resolved).length;
-    const activeStores   = stores.filter(s => s.active).length;
+    const activeRecalls   = recalls.filter(r => r.active).length;
+    const totalScans      = scans.length;
+    const today           = new Date().toISOString().split('T')[0];
+    const scansToday      = scans.filter(s => s.created_at?.startsWith(today)).length;
+    const escalated       = scans.filter(s => s.manager_escalated && !s.recall_resolved).length;
+    const activeStores    = stores.filter(s => s.active).length;
+    const confirmedPartners = partners.filter(p => p.status === 'active').length;
 
-    // Scan activity last 7 days for sparklines
+    // Shelf exposure — unique lot/product combos currently shipped in
+    const activeLots = [...new Map(shipments.map(s => [`${s.lot_number}|${s.products?.name}`, s])).values()];
+    const recalledLotNumbers = new Set(recalls.filter(r => r.active && r.lot_number).map(r => r.lot_number));
+    const exposedLots = activeLots.filter(s => recalledLotNumbers.has(s.lot_number));
+
+    // Scan activity last 7 days
     const last7 = Array.from({length:7}, (_,i) => {
       const d = new Date(); d.setDate(d.getDate() - (6-i));
       return d.toISOString().split('T')[0];
@@ -627,11 +639,16 @@ async function renderOverview() {
     const scansByDay = last7.map(d => scans.filter(s => s.created_at?.startsWith(d)).length);
     const maxDay = Math.max(...scansByDay, 1);
 
-    // Compliance score (simple calculation from resolved recalls and scan coverage)
+    // Compliance score
     const resolvedRate = recalls.length > 0
       ? Math.round((recalls.filter(r => !r.active).length / recalls.length) * 100) : 100;
+    const ackRate = acks.length > 0
+      ? Math.round((acks.filter(a => a.status !== 'notified').length / acks.length) * 100) : 100;
+    const partnerScore = confirmedPartners > 0 ? 100 : 0;
+    const shipmentScore = shipments.length > 0 ? 100 : 20;
+    const overallCompliance = Math.round((resolvedRate + ackRate + partnerScore + shipmentScore) / 4);
 
-    // Store compliance scores (based on recent scan activity)
+    // Store compliance scores
     const storeScores = stores.slice(0,6).map(store => {
       const storeScans = scans.filter(s => s.store_name === store.name);
       const recentScans = storeScans.filter(s => {
@@ -643,10 +660,14 @@ async function renderOverview() {
     });
 
     el.innerHTML = `
-      ${activeRecalls > 0 ? `
-      <div class="alert-banner">
+      ${activeRecalls > 0 || exposedLots.length > 0 ? `
+      <div class="alert-banner" style="${exposedLots.length > 0 ? 'border-color:rgba(255,92,92,0.4);background:rgba(255,92,92,0.06);' : ''}">
         <div class="alert-dot"></div>
-        <div class="alert-text"><strong>${activeRecalls} active recall${activeRecalls>1?'s':''}</strong> require immediate attention across your store network.</div>
+        <div class="alert-text">
+          ${exposedLots.length > 0
+            ? `<strong>${exposedLots.length} recalled lot${exposedLots.length>1?'s':''} detected on shelf</strong> — immediate removal required across your store network.`
+            : `<strong>${activeRecalls} active recall${activeRecalls>1?'s':''}</strong> require immediate attention across your store network.`}
+        </div>
         <button class="alert-action" onclick="showPanel('recalls')">View recalls →</button>
       </div>` : ''}
 
@@ -657,11 +678,11 @@ async function renderOverview() {
           <div class="kpi-sub">${recalls.length} total on record</div>
           ${activeRecalls>0 ? '<span class="kpi-trend down">⚠ Action needed</span>' : '<span class="kpi-trend up">✓ All clear</span>'}
         </div>
-        <div class="kpi-card blue">
-          <div class="kpi-label">Total scans</div>
-          <div class="kpi-value">${totalScans.toLocaleString()}</div>
-          <div class="kpi-sub">${scansToday} today across all stores</div>
-          <span class="kpi-trend up">↑ Active</span>
+        <div class="kpi-card ${exposedLots.length>0?'red':'blue'}">
+          <div class="kpi-label">Lots on shelf</div>
+          <div class="kpi-value ${exposedLots.length>0?'danger':''}">${activeLots.length}</div>
+          <div class="kpi-sub">${exposedLots.length > 0 ? `<span style="color:var(--danger);">⚠ ${exposedLots.length} under active recall</span>` : `${shipments.length} shipments tracked`}</div>
+          ${exposedLots.length>0 ? '<span class="kpi-trend down">⚠ Exposure risk</span>' : '<span class="kpi-trend flat">→ All clear</span>'}
         </div>
         <div class="kpi-card amber">
           <div class="kpi-label">Escalated items</div>
@@ -672,8 +693,8 @@ async function renderOverview() {
         <div class="kpi-card green">
           <div class="kpi-label">Active stores</div>
           <div class="kpi-value accent">${activeStores}</div>
-          <div class="kpi-sub">${stores.length} total locations</div>
-          <span class="kpi-trend flat">→ Stable</span>
+          <div class="kpi-sub">${confirmedPartners} manufacturer partner${confirmedPartners!==1?'s':''}</div>
+          <span class="kpi-trend flat">→ ${stores.length} total locations</span>
         </div>
       </div>
 
@@ -710,10 +731,10 @@ async function renderOverview() {
             </div>
             <div class="panel-body">
               <div class="fsma-score">
-                <div class="fsma-ring" style="--pct:${resolvedRate}">
-                  <div class="fsma-ring-val">${resolvedRate}%</div>
+                <div class="fsma-ring" style="--pct:${overallCompliance}">
+                  <div class="fsma-ring-val">${overallCompliance}%</div>
                 </div>
-                <div class="fsma-label">${resolvedRate>=80?'Good standing':'Needs improvement'}</div>
+                <div class="fsma-label">${overallCompliance>=80?'Good standing':overallCompliance>=50?'Needs improvement':'Action required'}</div>
               </div>
             </div>
           </div>
@@ -735,42 +756,70 @@ async function renderOverview() {
         </div>
       </div>
 
+      <!-- Shelf exposure + Active recalls row -->
       <div class="two-col">
         <div class="panel">
           <div class="panel-header">
-            <div><div class="panel-title">Active recalls</div><div class="panel-sub">Requires immediate action</div></div>
-            <button class="panel-action" onclick="showPanel('recalls')">Manage →</button>
+            <div><div class="panel-title">Products on shelf</div><div class="panel-sub">Incoming shipments from manufacturer partners</div></div>
+            <button class="panel-action" onclick="showPanel('partners')">Partners →</button>
           </div>
-          <div class="panel-body">
-            ${recalls.filter(r=>r.active).length === 0
-              ? `<div class="empty"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg><br>No active recalls — all clear</div>`
-              : recalls.filter(r=>r.active).slice(0,4).map(r => `
-                <div class="recall-item">
-                  <div class="recall-severity sev-i"></div>
-                  <div class="recall-info">
-                    <div class="recall-name">${r.product_name}</div>
-                    <div class="recall-meta">Lot: ${r.lot_number||'—'} · ${r.source||'Manual'} · ${new Date(r.created_at||Date.now()).toLocaleDateString('en-GB')}</div>
-                  </div>
-                  <span class="recall-status status-active">Active</span>
-                </div>`).join('')}
+          <div class="panel-body" style="padding:${activeLots.length===0?'18px':'0 18px'};">
+            ${activeLots.length === 0
+              ? `<div class="empty">No shipment data yet.<br>Connect a manufacturer partner to see what's on shelf.</div>`
+              : activeLots.slice(0,5).map(s => {
+                  const isRecalled = recalledLotNumbers.has(s.lot_number);
+                  return `
+                  <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(22,61,55,0.5);">
+                    <div style="width:6px;height:6px;border-radius:50%;flex-shrink:0;background:${isRecalled?'var(--danger)':'var(--accent)'};${isRecalled?'box-shadow:0 0 6px rgba(255,92,92,0.5);':''}"></div>
+                    <div style="flex:1;min-width:0;">
+                      <div style="font-size:12px;color:var(--text);font-weight:500;">${s.products?.name||'—'}</div>
+                      <div style="font-size:10px;color:var(--muted);margin-top:1px;">Lot: ${s.lot_number} · ${s.stores?.name||'—'} · ${s.organisations?.name||'—'}</div>
+                    </div>
+                    ${isRecalled
+                      ? `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(255,92,92,0.12);color:var(--danger);white-space:nowrap;">⚠ Recalled</span>`
+                      : `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(52,211,153,0.1);color:var(--accent);white-space:nowrap;">On shelf</span>`}
+                  </div>`}).join('')}
+            ${activeLots.length > 5 ? `<div style="font-size:10px;color:var(--muted);padding-top:8px;">${activeLots.length - 5} more lots tracked</div>` : ''}
           </div>
         </div>
 
-        <div class="panel">
-          <div class="panel-header"><div class="panel-title">Compliance checklist</div><div class="panel-sub">Key requirements status</div></div>
-          <div class="panel-body">
-            <div class="compliance-grid">
-              ${[
-                { label:'Recall response plan', val: recalls.length>0?100:20, color:'var(--accent)' },
-                { label:'Store scan coverage', val: Math.min(100, activeStores>0?70+scansToday*3:10), color:'var(--accent)' },
-                { label:'Escalation handling', val: escalated===0?100:Math.max(20,100-escalated*15), color: escalated>0?'var(--warn)':'var(--accent)' },
-                { label:`${_orgRegion==='us'?'FSMA 204':'Mattilsynet'} readiness`, val: resolvedRate, color: resolvedRate>=80?'var(--accent)':'var(--warn)' },
-              ].map(c => `
-                <div class="comp-item">
-                  <div class="comp-label">${c.label}</div>
-                  <div class="comp-value" style="color:${c.color}">${c.val}%</div>
-                  <div class="comp-bar"><div class="comp-fill" style="width:${c.val}%;background:${c.color}"></div></div>
-                </div>`).join('')}
+        <div style="display:flex;flex-direction:column;gap:14px;">
+          <div class="panel">
+            <div class="panel-header">
+              <div><div class="panel-title">Active recalls</div><div class="panel-sub">Requires immediate action</div></div>
+              <button class="panel-action" onclick="showPanel('recalls')">Manage →</button>
+            </div>
+            <div class="panel-body">
+              ${recalls.filter(r=>r.active).length === 0
+                ? `<div class="empty"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg><br>No active recalls — all clear</div>`
+                : recalls.filter(r=>r.active).slice(0,3).map(r => `
+                  <div class="recall-item">
+                    <div class="recall-severity sev-i"></div>
+                    <div class="recall-info">
+                      <div class="recall-name">${r.product_name}</div>
+                      <div class="recall-meta">Lot: ${r.lot_number||'—'} · ${r.source||'Manual'} · ${new Date(r.created_at||Date.now()).toLocaleDateString('en-GB')}</div>
+                    </div>
+                    <span class="recall-status status-active">Active</span>
+                  </div>`).join('')}
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header"><div class="panel-title">Compliance checklist</div><div class="panel-sub">Key requirements status</div></div>
+            <div class="panel-body">
+              <div class="compliance-grid">
+                ${[
+                  { label: 'Recall response rate',    val: resolvedRate,   color: resolvedRate>=80?'var(--accent)':'var(--warn)' },
+                  { label: 'Acknowledgement rate',    val: ackRate,        color: ackRate>=80?'var(--accent)':'var(--warn)' },
+                  { label: 'Manufacturer partners',   val: partnerScore,   color: partnerScore===100?'var(--accent)':'var(--warn)' },
+                  { label: 'Shipment data coverage',  val: shipmentScore,  color: shipmentScore===100?'var(--accent)':'var(--warn)' },
+                ].map(c => `
+                  <div class="comp-item">
+                    <div class="comp-label">${c.label}</div>
+                    <div class="comp-value" style="color:${c.color}">${c.val}%</div>
+                    <div class="comp-bar"><div class="comp-fill" style="width:${c.val}%;background:${c.color}"></div></div>
+                  </div>`).join('')}
+              </div>
             </div>
           </div>
         </div>
