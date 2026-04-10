@@ -805,30 +805,46 @@ function renderStep5() {
       <div class="success-title">You're all set, ${state.firstName}!</div>
       <div class="success-sub">
         <strong style="color:var(--text)">${state.orgName}</strong> is now live on Batch'd.<br>
-        Check your email to verify your account, then you're ready to go.
+        ${isRetailer
+          ? 'Your corporate dashboard is ready. Invite your stores and staff to get started.'
+          : 'Your manufacturer portal is ready. Register your products and connect with retail partners.'}
       </div>
       <div class="next-steps">
         ${isRetailer ? `
-        <div class="next-step"><div class="next-step-num">1</div>Verify your email address</div>
-        <div class="next-step"><div class="next-step-num">2</div>Add your first store location</div>
-        <div class="next-step"><div class="next-step-num">3</div>Invite your store managers and staff</div>
-        <div class="next-step"><div class="next-step-num">4</div>Staff download the Batch'd scanning app</div>
+        <div class="next-step"><div class="next-step-num">1</div>Open your dashboard and add your stores</div>
+        <div class="next-step"><div class="next-step-num">2</div>Invite store managers via the Staff tab</div>
+        <div class="next-step"><div class="next-step-num">3</div>Staff install the Batch'd scanning app</div>
+        <div class="next-step"><div class="next-step-num">4</div>Scans appear live in your dashboard</div>
         ` : `
-        <div class="next-step"><div class="next-step-num">1</div>Verify your email address</div>
-        <div class="next-step"><div class="next-step-num">2</div>Register your products and lot codes</div>
-        <div class="next-step"><div class="next-step-num">3</div>Connect with your retail trading partners</div>
-        <div class="next-step"><div class="next-step-num">4</div>Run your first mock recall drill</div>
+        <div class="next-step"><div class="next-step-num">1</div>Register your products and lot codes</div>
+        <div class="next-step"><div class="next-step-num">2</div>Connect with your retail trading partners</div>
+        <div class="next-step"><div class="next-step-num">3</div>Run a mock recall drill to test readiness</div>
+        <div class="next-step"><div class="next-step-num">4</div>Push real recalls instantly when needed</div>
         `}
       </div>
       <button class="btn-primary" onclick="goToDashboard()">
-        ${state.type === 'manufacturer' ? 'Open manufacturer portal →' : 'Open dashboard →'}
+        ${isRetailer ? 'Open corporate dashboard →' : 'Open manufacturer portal →'}
       </button>
+      <div style="margin-top:14px;font-size:11px;color:var(--muted);">
+        ${isRetailer
+          ? `Or <a href="https://batchd-app.netlify.app" style="color:var(--accent);">open the scanning app</a> to start logging products`
+          : `Questions? <a href="mailto:ian.w.race@gmail.com" style="color:var(--accent);">Contact support</a>`}
+      </div>
     </div>
   `;
 }
 
 async function goToDashboard() {
-  // Route based on role
+  // Use known type first for instant routing, fall back to role lookup
+  if (state.type === 'manufacturer') {
+    window.location.href = 'https://app.batchdapp.com/manufacturer.html';
+    return;
+  }
+  if (state.type === 'retailer') {
+    window.location.href = 'https://app.batchdapp.com';
+    return;
+  }
+  // Fallback — look up role from DB
   try {
     const { data: { session } } = await sb.auth.getSession();
     if (!session) { window.location.href = 'https://app.batchdapp.com'; return; }
