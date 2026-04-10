@@ -747,7 +747,7 @@ async function renderRecalls() {
   const [recallsRes, pushedRes, acksRes] = await Promise.all([
     sb.from('recalls').select('*').eq('organisation_id', _orgId).order('created_at', {ascending:false}),
     sb.from('recall_distributions')
-      .select('*, recall_events(product_name, lot_number, barcode, severity, reason, description, authority_reference, is_drill, published_at, source_org_id, organisations(name))')
+      .select('*, recall_event_id, retailer_org_id, est_affected_units, distributed_at, recall_events!inner(id, product_name, lot_number, barcode, severity, reason, description, authority_reference, is_drill, published_at, source_org_id)')
       .eq('retailer_org_id', _orgId)
       .order('distributed_at', {ascending:false}),
     sb.from('recall_acknowledgements')
@@ -788,7 +788,7 @@ async function renderRecalls() {
       ${pushed.map(p => {
         const ev = p.recall_events;
         const isDrill = ev?.is_drill;
-        const mfrName = ev?.organisations?.name || 'Manufacturer';
+        const mfrName = ev?.organisations?.name || _orgName;
         const evAcks = acks.filter(a => a.recall_event_id === p.recall_event_id);
         const allConfirmed = evAcks.length > 0 && evAcks.every(a => a.status === 'confirmed');
         const anyPending = evAcks.some(a => a.status === 'notified');
