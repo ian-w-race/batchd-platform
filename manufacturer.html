@@ -521,21 +521,19 @@ async function calculateImpactPreview() {
   preview.style.display = 'block';
   preview.innerHTML = `<div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;"><div class="spinner"></div> Calculating shelf impact…</div>`;
 
-  // Query shipments matching this lot number or barcode
-  let query = sb.from('shipments')
-    .select('id, lot_number, barcode, quantity, unit, shipped_at, stores(name), organisations!shipments_retailer_id_fkey(name)')
-    .eq('manufacturer_id', _orgId);
-
-  if (lot && barcode) {
-    query = query.or(`lot_number.eq.${lot},barcode.eq.${barcode}`);
-  } else if (lot) {
-    query = query.eq('lot_number', lot);
-  } else {
-    query = query.eq('barcode', barcode);
+  // Query shipments — use separate queries to avoid .or() interpolation issues with spaces/special chars
+  const shipmentSelect = 'id, lot_number, barcode, quantity, unit, shipped_at, stores(name), organisations!shipments_retailer_id_fkey(name)';
+  let hits = [];
+  if (lot) {
+    const { data } = await sb.from('shipments').select(shipmentSelect).eq('manufacturer_id', _orgId).eq('lot_number', lot);
+    hits = [...hits, ...(data||[])];
   }
-
-  const { data: matches } = await query;
-  const hits = matches || [];
+  if (barcode) {
+    const { data } = await sb.from('shipments').select(shipmentSelect).eq('manufacturer_id', _orgId).eq('barcode', barcode);
+    // Deduplicate by id
+    const existingIds = new Set(hits.map(h=>h.id));
+    hits = [...hits, ...(data||[]).filter(h=>!existingIds.has(h.id))];
+  }
 
   if (hits.length === 0) {
     preview.innerHTML = `
@@ -583,9 +581,15 @@ async function calculateImpactPreview() {
 
 function selectSev(sev) {
   _selectedSeverity = sev;
-  renderPush();
-  // Restore field values
-  document.getElementById('p-product').focus();
+  // Update button styles without re-rendering the whole form
+  document.querySelectorAll('.sev-btn').forEach(btn => {
+    btn.className = 'sev-btn';
+  });
+  const sevMap = { class_i: 'active-i', class_ii: 'active-ii', class_iii: 'active-iii' };
+  const btns = document.querySelectorAll('.sev-btn');
+  if (sev === 'class_i'   && btns[0]) btns[0].classList.add('active-i');
+  if (sev === 'class_ii'  && btns[1]) btns[1].classList.add('active-ii');
+  if (sev === 'class_iii' && btns[2]) btns[2].classList.add('active-iii');
 }
 
 function toggleDrill() {
