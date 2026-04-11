@@ -1445,31 +1445,500 @@ async function renderCompliance() {
 // ── Reports ────────────────────────────────────────────────────
 function renderReports() {
   const el = document.getElementById('main-content');
+  const isUS = _orgRegion === 'us';
   el.innerHTML = `
-    <div style="margin-bottom:16px;">
+    <div style="margin-bottom:20px;">
       <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Reports & exports</div>
-      <div style="font-size:11px;color:var(--muted);margin-top:2px;">Generate compliance and audit reports for ${_orgName}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:2px;">Live data reports for ${_orgName} — view on screen or download as CSV</div>
     </div>
     <div class="two-col">
       ${[
-        { title:'Audit report', sub:'Full traceability audit for regulators', icon:'📋' },
-        { title:'Recall history', sub:'Complete recall log with resolutions', icon:'⚠️' },
-        { title:'Staff activity', sub:'Scan and action log by employee', icon:'👤' },
-        { title:'Store compliance', sub:'Per-store compliance scores and gaps', icon:'🏪' },
-        { title:'Exposure notice', sub:'Customer-facing recall notification', icon:'📢' },
-        { title:'FSMA 204 export', sub:'KDE/CTE records in FDA format', icon:'🇺🇸' },
+        { key:'audit',      title:'Audit trail',        sub:'Full traceability scan log for regulators',         icon:'📋', color:'var(--accent)' },
+        { key:'recalls',    title:'Recall history',      sub:'Complete recall log with store response status',    icon:'⚠️', color:'var(--danger)' },
+        { key:'staff',      title:'Staff activity',      sub:'Scan and action log per employee',                  icon:'👤', color:'var(--info)'   },
+        { key:'stores',     title:'Store compliance',    sub:'Per-store scan activity and compliance scores',     icon:'🏪', color:'var(--warn)'   },
+        { key:'exposure',   title:'Exposure notice',     sub:'Customer-facing recall notification template',      icon:'📢', color:'var(--danger)' },
+        { key:'fsma',       title:isUS?'FSMA 204 export':'EU traceability export', sub:isUS?'KDE/CTE records in FDA format':'One-step-back/forward records for Mattilsynet', icon:isUS?'🇺🇸':'🇪🇺', color:'var(--muted)' },
       ].map(r => `
-        <div class="panel" style="cursor:pointer;" onmouseenter="this.style.borderColor='var(--muted)'" onmouseleave="this.style.borderColor='var(--border)'">
+        <div class="panel" style="cursor:default;">
           <div class="panel-body" style="display:flex;align-items:center;gap:14px;">
-            <div style="font-size:24px;">${r.icon}</div>
-            <div style="flex:1;">
+            <div style="width:40px;height:40px;border-radius:10px;background:rgba(52,211,153,0.06);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;">${r.icon}</div>
+            <div style="flex:1;min-width:0;">
               <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:13px;color:var(--text);margin-bottom:2px;">${r.title}</div>
-              <div style="font-size:11px;color:var(--muted);">${r.sub}</div>
+              <div style="font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${r.sub}</div>
             </div>
-            <div style="color:var(--muted);font-size:12px;">→</div>
+            <div style="display:flex;gap:6px;flex-shrink:0;">
+              <button onclick="runReport('${r.key}')"
+                style="font-family:'DM Mono',monospace;font-size:11px;padding:6px 12px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);cursor:pointer;transition:all 0.15s;"
+                onmouseenter="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'"
+                onmouseleave="this.style.borderColor='var(--border)';this.style.color='var(--text)'">
+                View →
+              </button>
+              <button onclick="downloadReport('${r.key}')"
+                style="font-family:'DM Mono',monospace;font-size:11px;padding:6px 12px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;transition:all 0.15s;"
+                onmouseenter="this.style.borderColor='var(--muted)';this.style.color='var(--text)'"
+                onmouseleave="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">
+                ↓ CSV
+              </button>
+            </div>
           </div>
         </div>`).join('')}
     </div>`;
+}
+
+// ── CSV helper ─────────────────────────────────────────────────
+function downloadCSV(filename, headers, rows) {
+  const escape = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+  const csv = [headers, ...rows].map(r => r.map(escape).join(',')).join('\n');
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ── Report back-button header ──────────────────────────────────
+function reportHeader(title, sub, csvKey) {
+  return `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px;">
+      <div style="display:flex;align-items:center;gap:12px;">
+        <button onclick="renderReports()"
+          style="font-family:'DM Mono',monospace;font-size:11px;padding:6px 12px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;">
+          ← Reports
+        </button>
+        <div>
+          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">${title}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:1px;">${sub}</div>
+        </div>
+      </div>
+      <button onclick="downloadReport('${csvKey}')"
+        style="font-family:'DM Mono',monospace;font-size:11px;padding:7px 14px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);cursor:pointer;display:flex;align-items:center;gap:6px;">
+        ↓ Download CSV
+      </button>
+    </div>`;
+}
+
+// ── Fetch report data (shared) ─────────────────────────────────
+async function fetchReportData(key) {
+  switch(key) {
+    case 'audit': {
+      const { data } = await sb.from('scans')
+        .select('*')
+        .eq('organisation_id', _orgId)
+        .order('created_at', { ascending: false })
+        .limit(500);
+      return data || [];
+    }
+    case 'recalls': {
+      const [recallsRes, distRes] = await Promise.all([
+        sb.from('recalls').select('*').eq('organisation_id', _orgId).order('created_at', { ascending: false }),
+        sb.from('recall_distributions').select('recall_event_id, est_affected_units, distributed_at').eq('retailer_org_id', _orgId),
+      ]);
+      let pushed = [];
+      const distData = distRes.data || [];
+      if (distData.length > 0) {
+        const ids = [...new Set(distData.map(d => d.recall_event_id))];
+        const { data: events } = await sb.from('recall_events').select('*').in('id', ids).order('published_at', { ascending: false });
+        pushed = (events || []).map(ev => ({ ...ev, _type: 'pushed', _dist: distData.find(d => d.recall_event_id === ev.id) }));
+      }
+      const internal = (recallsRes.data || []).filter(r => !r.is_pushed).map(r => ({ ...r, _type: 'internal' }));
+      return [...pushed, ...internal];
+    }
+    case 'staff': {
+      const { data } = await sb.from('scans')
+        .select('scanned_by, created_at, product_name, lot_number, store_name, recall_resolved, removed_from_shelf_at, manager_escalated')
+        .eq('organisation_id', _orgId)
+        .order('created_at', { ascending: false })
+        .limit(500);
+      return data || [];
+    }
+    case 'stores': {
+      const [storesRes, scansRes] = await Promise.all([
+        sb.from('stores').select('id, name, store_code, active').eq('organisation_id', _orgId).order('name'),
+        sb.from('scans').select('store_name, created_at, recall_resolved, removed_from_shelf_at, manager_escalated').eq('organisation_id', _orgId),
+      ]);
+      const stores = storesRes.data || [];
+      const scans  = scansRes.data  || [];
+      const now = Date.now();
+      return stores.map(store => {
+        const ss = scans.filter(s => s.store_name === store.name);
+        const recent7  = ss.filter(s => (now - new Date(s.created_at)) < 7  * 86400000).length;
+        const recent30 = ss.filter(s => (now - new Date(s.created_at)) < 30 * 86400000).length;
+        const resolved = ss.filter(s => s.recall_resolved).length;
+        const escalated = ss.filter(s => s.manager_escalated).length;
+        const score = Math.min(100, 60 + recent7 * 4);
+        return { ...store, totalScans: ss.length, recent7, recent30, resolved, escalated, score };
+      });
+    }
+    case 'exposure': {
+      const distRes = await sb.from('recall_distributions').select('recall_event_id').eq('retailer_org_id', _orgId);
+      const ids = [...new Set((distRes.data || []).map(d => d.recall_event_id))];
+      if (ids.length === 0) return [];
+      const { data } = await sb.from('recall_events').select('*').in('id', ids).eq('is_drill', false).order('published_at', { ascending: false });
+      return data || [];
+    }
+    case 'fsma': {
+      const { data } = await sb.from('scans')
+        .select('*')
+        .eq('organisation_id', _orgId)
+        .order('created_at', { ascending: false })
+        .limit(500);
+      return data || [];
+    }
+  }
+}
+
+// ── View report on screen ──────────────────────────────────────
+async function runReport(key) {
+  const el = document.getElementById('main-content');
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading report…</div>`;
+  const data = await fetchReportData(key);
+  const isUS = _orgRegion === 'us';
+
+  if (key === 'audit') {
+    const rows = data;
+    el.innerHTML = reportHeader('Audit trail', `${rows.length} scan records · ${_orgName}`, 'audit') + `
+      <div class="panel">
+        <div class="panel-body" style="padding:0;">
+          <table class="store-table" style="width:100%;">
+            <thead><tr>
+              <th style="padding:12px 18px;">Date</th>
+              <th style="padding:12px 18px;">Product</th>
+              <th style="padding:12px 18px;">Lot / Barcode</th>
+              <th style="padding:12px 18px;">Store</th>
+              <th style="padding:12px 18px;">Staff</th>
+              <th style="padding:12px 18px;">Qty</th>
+              <th style="padding:12px 18px;">Status</th>
+            </tr></thead>
+            <tbody>
+              ${rows.length === 0 ? `<tr><td colspan="7"><div class="empty">No scans recorded yet.</div></td></tr>` :
+              rows.map(s => `
+                <tr>
+                  <td style="padding:9px 18px;font-size:11px;color:var(--muted);white-space:nowrap;">${s.created_at ? new Date(s.created_at).toLocaleDateString('en-GB') : '—'}</td>
+                  <td style="padding:9px 18px;"><div style="font-size:12px;font-weight:500;color:var(--text);">${s.product_name||'—'}</div></td>
+                  <td style="padding:9px 18px;font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${s.lot_number||'—'}${s.barcode_number?'<br>'+s.barcode_number:''}</td>
+                  <td style="padding:9px 18px;font-size:11px;color:var(--muted);">${s.store_name||'—'}</td>
+                  <td style="padding:9px 18px;font-size:11px;color:var(--muted);">${s.scanned_by||'—'}</td>
+                  <td style="padding:9px 18px;font-size:11px;color:var(--muted);">${s.quantity||'—'}</td>
+                  <td style="padding:9px 18px;">
+                    ${s.recall_resolved
+                      ? `<span class="recall-status status-resolved">Resolved</span>`
+                      : s.removed_from_shelf_at
+                        ? `<span class="recall-status status-pending">Removed</span>`
+                        : `<span class="recall-status" style="background:rgba(106,175,158,0.1);color:var(--muted);">On shelf</span>`}
+                  </td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+
+  else if (key === 'recalls') {
+    el.innerHTML = reportHeader('Recall history', `${data.length} recall events · ${_orgName}`, 'recalls') + `
+      <div class="panel">
+        <div class="panel-body" style="padding:0;">
+          <table class="store-table" style="width:100%;">
+            <thead><tr>
+              <th style="padding:12px 18px;">Date</th>
+              <th style="padding:12px 18px;">Product</th>
+              <th style="padding:12px 18px;">Lot</th>
+              <th style="padding:12px 18px;">Source</th>
+              <th style="padding:12px 18px;">Severity / Reason</th>
+              <th style="padding:12px 18px;">Status</th>
+            </tr></thead>
+            <tbody>
+              ${data.length === 0 ? `<tr><td colspan="6"><div class="empty">No recalls on record.</div></td></tr>` :
+              data.map(r => {
+                const isPushed = r._type === 'pushed';
+                const isActive = isPushed ? true : r.active;
+                const date = isPushed ? (r.published_at || r.created_at) : r.created_at;
+                return `
+                <tr>
+                  <td style="padding:9px 18px;font-size:11px;color:var(--muted);white-space:nowrap;">${date ? new Date(date).toLocaleDateString('en-GB') : '—'}</td>
+                  <td style="padding:9px 18px;font-size:12px;font-weight:500;color:var(--text);">${r.product_name||'—'}</td>
+                  <td style="padding:9px 18px;font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">${r.lot_number||'—'}</td>
+                  <td style="padding:9px 18px;">
+                    <span style="font-size:10px;padding:2px 8px;border-radius:10px;${isPushed?'background:rgba(56,189,248,0.1);color:var(--info);':'background:rgba(106,175,158,0.1);color:var(--muted);'}">
+                      ${isPushed ? 'Manufacturer' : (r.source||'Manual')}
+                    </span>
+                  </td>
+                  <td style="padding:9px 18px;font-size:11px;color:var(--muted);">${isPushed ? (r.severity||'—')+' · '+(r.reason||'—') : '—'}</td>
+                  <td style="padding:9px 18px;">
+                    <span class="recall-status ${isActive?'status-active':'status-resolved'}">${isActive?'Active':'Resolved'}</span>
+                  </td>
+                </tr>`;}).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+
+  else if (key === 'staff') {
+    // Group by staff member
+    const byStaff = {};
+    data.forEach(s => {
+      const name = s.scanned_by || 'Unknown';
+      if (!byStaff[name]) byStaff[name] = { name, scans:[], resolved:0, escalated:0, removed:0 };
+      byStaff[name].scans.push(s);
+      if (s.recall_resolved) byStaff[name].resolved++;
+      if (s.manager_escalated) byStaff[name].escalated++;
+      if (s.removed_from_shelf_at) byStaff[name].removed++;
+    });
+    const staffRows = Object.values(byStaff).sort((a,b) => b.scans.length - a.scans.length);
+    const lastScan = s => s.scans.reduce((latest, sc) => sc.created_at > latest ? sc.created_at : latest, '');
+
+    el.innerHTML = reportHeader('Staff activity', `${staffRows.length} team members · ${data.length} total scans`, 'staff') + `
+      <div class="panel">
+        <div class="panel-body" style="padding:0;">
+          <table class="store-table" style="width:100%;">
+            <thead><tr>
+              <th style="padding:12px 18px;">Staff member</th>
+              <th style="padding:12px 18px;">Total scans</th>
+              <th style="padding:12px 18px;">Recalls resolved</th>
+              <th style="padding:12px 18px;">Items removed</th>
+              <th style="padding:12px 18px;">Escalations</th>
+              <th style="padding:12px 18px;">Last active</th>
+            </tr></thead>
+            <tbody>
+              ${staffRows.length === 0 ? `<tr><td colspan="6"><div class="empty">No staff activity recorded.</div></td></tr>` :
+              staffRows.map(s => `
+                <tr>
+                  <td style="padding:9px 18px;font-size:12px;font-weight:500;color:var(--text);">${s.name}</td>
+                  <td style="padding:9px 18px;font-size:13px;font-weight:700;color:var(--accent);">${s.scans.length}</td>
+                  <td style="padding:9px 18px;font-size:12px;color:${s.resolved>0?'var(--accent)':'var(--muted)'};">${s.resolved}</td>
+                  <td style="padding:9px 18px;font-size:12px;color:${s.removed>0?'var(--warn)':'var(--muted)'};">${s.removed}</td>
+                  <td style="padding:9px 18px;font-size:12px;color:${s.escalated>0?'var(--danger)':'var(--muted)'};">${s.escalated}</td>
+                  <td style="padding:9px 18px;font-size:11px;color:var(--muted);">${lastScan(s) ? new Date(lastScan(s)).toLocaleDateString('en-GB') : '—'}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+
+  else if (key === 'stores') {
+    el.innerHTML = reportHeader('Store compliance', `${data.length} stores · based on scan activity`, 'stores') + `
+      <div class="panel">
+        <div class="panel-body" style="padding:0;">
+          <table class="store-table" style="width:100%;">
+            <thead><tr>
+              <th style="padding:12px 18px;">Store</th>
+              <th style="padding:12px 18px;">Code</th>
+              <th style="padding:12px 18px;">Status</th>
+              <th style="padding:12px 18px;">Compliance</th>
+              <th style="padding:12px 18px;">7-day scans</th>
+              <th style="padding:12px 18px;">30-day scans</th>
+              <th style="padding:12px 18px;">Recalls resolved</th>
+              <th style="padding:12px 18px;">Escalations</th>
+            </tr></thead>
+            <tbody>
+              ${data.length === 0 ? `<tr><td colspan="8"><div class="empty">No stores configured.</div></td></tr>` :
+              data.map(s => `
+                <tr>
+                  <td style="padding:9px 18px;font-size:12px;font-weight:500;color:var(--text);">${s.name}</td>
+                  <td style="padding:9px 18px;font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">${s.store_code||'—'}</td>
+                  <td style="padding:9px 18px;"><span class="recall-status ${s.active?'status-resolved':'status-pending'}">${s.active?'Active':'Inactive'}</span></td>
+                  <td style="padding:9px 18px;">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                      <div style="width:60px;height:4px;border-radius:2px;background:var(--border);overflow:hidden;">
+                        <div style="height:100%;border-radius:2px;width:${s.score}%;background:${s.score>=80?'var(--accent)':s.score>=60?'var(--warn)':'var(--danger)'};"></div>
+                      </div>
+                      <span style="font-size:11px;color:${s.score>=80?'var(--accent)':s.score>=60?'var(--warn)':'var(--danger)'};">${s.score}%</span>
+                    </div>
+                  </td>
+                  <td style="padding:9px 18px;font-size:12px;font-weight:600;color:var(--text);">${s.recent7}</td>
+                  <td style="padding:9px 18px;font-size:12px;color:var(--muted);">${s.recent30}</td>
+                  <td style="padding:9px 18px;font-size:12px;color:${s.resolved>0?'var(--accent)':'var(--muted)'};">${s.resolved}</td>
+                  <td style="padding:9px 18px;font-size:12px;color:${s.escalated>0?'var(--danger)':'var(--muted)'};">${s.escalated}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+
+  else if (key === 'exposure') {
+    const recalls = data;
+    if (recalls.length === 0) {
+      el.innerHTML = reportHeader('Exposure notice', 'Customer-facing recall notification', 'exposure') + `
+        <div class="panel"><div class="panel-body"><div class="empty">No active manufacturer recalls to generate a notice for.</div></div></div>`;
+      return;
+    }
+    const r = recalls[0]; // most recent
+    const noticeText = `PRODUCT RECALL NOTICE\n\n${_orgName} is notifying customers of a recall affecting the following product:\n\nProduct: ${r.product_name}\nLot number: ${r.lot_number||'See packaging'}\n${r.barcode?'Barcode: '+r.barcode+'\n':''}\nReason: ${r.reason||'See below'}\n${r.description?'\nDetails:\n'+r.description+'\n':''}\nWhat to do:\nIf you have purchased this product, do not consume it. Return it to the place of purchase for a full refund.\n\nFor questions, contact us at ${_orgName}.\n\nIssued: ${new Date().toLocaleDateString('en-GB')}`;
+
+    el.innerHTML = reportHeader('Exposure notice', 'Customer-facing recall notification template', 'exposure') + `
+      <div style="margin-bottom:12px;font-size:11px;color:var(--muted);">
+        Showing notice for most recent recall. Copy the text below or download as CSV for your records.
+      </div>
+      ${recalls.length > 1 ? `
+      <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+        ${recalls.map((r,i) => `
+          <button onclick="runReport('exposure')"
+            style="font-family:'DM Mono',monospace;font-size:10px;padding:5px 10px;border-radius:6px;border:1px solid ${i===0?'var(--accent)':'var(--border)'};background:${i===0?'rgba(52,211,153,0.08)':'none'};color:${i===0?'var(--accent)':'var(--muted)'};cursor:pointer;">
+            ${r.product_name}
+          </button>`).join('')}
+      </div>` : ''}
+      <div class="panel" style="margin-bottom:14px;border-color:rgba(255,92,92,0.2);">
+        <div class="panel-header" style="background:rgba(255,92,92,0.03);">
+          <div>
+            <div class="panel-title" style="color:var(--danger);">🚨 ${r.product_name}</div>
+            <div class="panel-sub">Lot: ${r.lot_number||'—'} · ${r.severity||'—'} · ${r.reason||'—'}</div>
+          </div>
+          <span style="font-size:10px;color:var(--muted);">${r.published_at ? new Date(r.published_at).toLocaleDateString('en-GB') : ''}</span>
+        </div>
+        <div class="panel-body">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">Notice text — copy and use in customer communications:</div>
+          <textarea id="notice-text" readonly
+            style="width:100%;min-height:220px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px;font-family:'DM Mono',monospace;font-size:11px;color:var(--text);line-height:1.7;resize:vertical;outline:none;">${noticeText}</textarea>
+          <button onclick="document.getElementById('notice-text').select();document.execCommand('copy');this.textContent='Copied ✓';setTimeout(()=>this.textContent='Copy text',2000);"
+            style="margin-top:10px;font-family:'DM Mono',monospace;font-size:11px;padding:7px 14px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);cursor:pointer;">
+            Copy text
+          </button>
+        </div>
+      </div>`;
+  }
+
+  else if (key === 'fsma') {
+    const rows = isUS
+      ? data
+      : data; // same scans table, different column emphasis
+    el.innerHTML = reportHeader(
+      isUS ? 'FSMA 204 export' : 'EU traceability export',
+      isUS ? `Key Data Elements · ${rows.length} records` : `One-step-back/forward records · ${rows.length} scans`,
+      'fsma'
+    ) + `
+      <div style="margin-bottom:14px;padding:12px 16px;background:rgba(56,189,248,0.05);border:1px solid rgba(56,189,248,0.15);border-radius:8px;font-size:11px;color:var(--muted);line-height:1.6;">
+        ${isUS
+          ? '📋 These records satisfy FSMA 204 Key Data Element (KDE) requirements for Critical Tracking Events (CTEs). Download CSV for submission or audit.'
+          : '📋 These records satisfy EU Regulation 178/2002 one-step-back / one-step-forward traceability requirements. Download CSV for Mattilsynet audit.'}
+      </div>
+      <div class="panel">
+        <div class="panel-body" style="padding:0;">
+          <table class="store-table" style="width:100%;">
+            <thead><tr>
+              <th style="padding:12px 18px;">Date</th>
+              <th style="padding:12px 18px;">Product</th>
+              <th style="padding:12px 18px;">${isUS?'TLC / Lot':'Partinummer / Lot'}</th>
+              <th style="padding:12px 18px;">Barcode</th>
+              <th style="padding:12px 18px;">Supplier</th>
+              <th style="padding:12px 18px;">Store (CTE location)</th>
+              <th style="padding:12px 18px;">Ref doc</th>
+              <th style="padding:12px 18px;">${isUS?'FTL?':'Status'}</th>
+            </tr></thead>
+            <tbody>
+              ${rows.length === 0 ? `<tr><td colspan="8"><div class="empty">No scan records found.</div></td></tr>` :
+              rows.map(s => `
+                <tr>
+                  <td style="padding:9px 18px;font-size:11px;color:var(--muted);white-space:nowrap;">${s.created_at ? new Date(s.created_at).toLocaleDateString('en-GB') : '—'}</td>
+                  <td style="padding:9px 18px;font-size:12px;font-weight:500;color:var(--text);">${s.product_name||'—'}</td>
+                  <td style="padding:9px 18px;font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${s.lot_number||'—'}${s.batch_number?'<br>'+s.batch_number:''}</td>
+                  <td style="padding:9px 18px;font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${s.barcode_number||'—'}</td>
+                  <td style="padding:9px 18px;font-size:11px;color:var(--muted);">${s.supplier_name||'—'}</td>
+                  <td style="padding:9px 18px;font-size:11px;color:var(--muted);">${s.store_name||'—'}</td>
+                  <td style="padding:9px 18px;font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${s.reference_document||'—'}</td>
+                  <td style="padding:9px 18px;">
+                    ${isUS
+                      ? (s.is_ftl ? `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(56,189,248,0.1);color:var(--info);">FTL ✓</span>` : `<span style="font-size:10px;color:var(--muted);">—</span>`)
+                      : (s.recall_resolved ? `<span class="recall-status status-resolved">Resolved</span>` : `<span class="recall-status" style="background:rgba(106,175,158,0.1);color:var(--muted);">On shelf</span>`)}
+                  </td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+}
+
+// ── Download report as CSV ─────────────────────────────────────
+async function downloadReport(key) {
+  const btn = event?.target;
+  const orig = btn?.textContent;
+  if (btn) { btn.textContent = '…'; btn.disabled = true; }
+
+  const data = await fetchReportData(key);
+  const date = new Date().toISOString().split('T')[0];
+  const isUS = _orgRegion === 'us';
+
+  try {
+    if (key === 'audit') {
+      downloadCSV(`batchd-audit-trail-${date}.csv`,
+        ['Date','Time','Product','Lot Number','Batch Number','Barcode','Store','Scanned By','Quantity','Shelf Location','Supplier','Status','Recall Resolved','Recall Resolved By','Recall Resolved At','Removed From Shelf At'],
+        data.map(s => [
+          s.created_at ? new Date(s.created_at).toLocaleDateString('en-GB') : '',
+          s.created_at ? new Date(s.created_at).toLocaleTimeString('en-GB') : '',
+          s.product_name, s.lot_number, s.batch_number, s.barcode_number,
+          s.store_name, s.scanned_by, s.quantity, s.shelf_location, s.supplier_name,
+          s.recall_resolved ? 'Resolved' : s.removed_from_shelf_at ? 'Removed' : 'On shelf',
+          s.recall_resolved ? 'Yes' : 'No', s.recall_resolved_by,
+          s.recall_resolved_at ? new Date(s.recall_resolved_at).toLocaleDateString('en-GB') : '',
+          s.removed_from_shelf_at ? new Date(s.removed_from_shelf_at).toLocaleDateString('en-GB') : '',
+        ])
+      );
+    } else if (key === 'recalls') {
+      downloadCSV(`batchd-recall-history-${date}.csv`,
+        ['Date','Product','Lot Number','Barcode','Source','Severity','Reason','Authority Reference','Status','Is Drill'],
+        data.map(r => {
+          const isPushed = r._type === 'pushed';
+          const d = isPushed ? (r.published_at||r.created_at) : r.created_at;
+          return [
+            d ? new Date(d).toLocaleDateString('en-GB') : '',
+            r.product_name, r.lot_number, r.barcode||'',
+            isPushed ? 'Manufacturer push' : (r.source||'Manual'),
+            r.severity||'', r.reason||'', r.authority_reference||'',
+            isPushed ? 'Active' : (r.active ? 'Active' : 'Resolved'),
+            r.is_drill ? 'Yes' : 'No',
+          ];
+        })
+      );
+    } else if (key === 'staff') {
+      downloadCSV(`batchd-staff-activity-${date}.csv`,
+        ['Staff Member','Total Scans','Recalls Resolved','Items Removed','Escalations','Last Active'],
+        (() => {
+          const byStaff = {};
+          data.forEach(s => {
+            const name = s.scanned_by || 'Unknown';
+            if (!byStaff[name]) byStaff[name] = { name, count:0, resolved:0, removed:0, escalated:0, last:'' };
+            byStaff[name].count++;
+            if (s.recall_resolved) byStaff[name].resolved++;
+            if (s.removed_from_shelf_at) byStaff[name].removed++;
+            if (s.manager_escalated) byStaff[name].escalated++;
+            if (s.created_at > byStaff[name].last) byStaff[name].last = s.created_at;
+          });
+          return Object.values(byStaff).sort((a,b) => b.count - a.count).map(s => [
+            s.name, s.count, s.resolved, s.removed, s.escalated,
+            s.last ? new Date(s.last).toLocaleDateString('en-GB') : '',
+          ]);
+        })()
+      );
+    } else if (key === 'stores') {
+      downloadCSV(`batchd-store-compliance-${date}.csv`,
+        ['Store','Store Code','Status','Compliance Score','7-Day Scans','30-Day Scans','Total Scans','Recalls Resolved','Escalations'],
+        data.map(s => [s.name, s.store_code||'', s.active?'Active':'Inactive', s.score+'%', s.recent7, s.recent30, s.totalScans, s.resolved, s.escalated])
+      );
+    } else if (key === 'exposure') {
+      downloadCSV(`batchd-exposure-notice-${date}.csv`,
+        ['Product','Lot Number','Barcode','Severity','Reason','Description','Authority Reference','Published'],
+        data.map(r => [r.product_name, r.lot_number, r.barcode||'', r.severity||'', r.reason||'', r.description||'', r.authority_reference||'', r.published_at ? new Date(r.published_at).toLocaleDateString('en-GB') : ''])
+      );
+    } else if (key === 'fsma') {
+      downloadCSV(`batchd-${isUS?'fsma204':'eu-traceability'}-${date}.csv`,
+        isUS
+          ? ['Date','Time','Product Name','Lot Number (TLC)','Batch Number','Barcode','Supplier','Store (CTE Location)','Shelf Location','Quantity','Unit','Reference Document','Is FTL','FTL Category','Scanned By']
+          : ['Dato','Tid','Produktnavn','Partinummer','Batchnummer','Strekkode','Leverandør','Butikk','Hylle','Antall','Enhet','Referansedokument','Skannet av'],
+        data.map(s => [
+          s.created_at ? new Date(s.created_at).toLocaleDateString('en-GB') : '',
+          s.created_at ? new Date(s.created_at).toLocaleTimeString('en-GB') : '',
+          s.product_name, s.lot_number, s.batch_number, s.barcode_number,
+          s.supplier_name, s.store_name, s.shelf_location, s.quantity, '',
+          s.reference_document, isUS ? (s.is_ftl ? 'Yes' : 'No') : '', isUS ? (s.ftl_category||'') : '', s.scanned_by,
+        ])
+      );
+    }
+  } finally {
+    if (btn) { btn.textContent = orig; btn.disabled = false; }
+  }
 }
 
 // ── Settings ───────────────────────────────────────────────────
