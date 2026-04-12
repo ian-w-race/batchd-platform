@@ -887,6 +887,14 @@ async function renderRecalls() {
       .select('*')
       .in('id', eventIds)
       .order('published_at', { ascending: false });
+
+    // Fetch manufacturer org names separately — avoids FK name guessing
+    const sourceOrgIds = [...new Set((events||[]).map(e => e.source_org_id).filter(Boolean))];
+    const orgNameMap = {};
+    if (sourceOrgIds.length > 0) {
+      const { data: orgs } = await sb.from('organisations').select('id, name').in('id', sourceOrgIds);
+      (orgs || []).forEach(o => { orgNameMap[o.id] = o.name; });
+    }
     pushed = (events || []).map(ev => ({
       recall_event_id: ev.id,
       recall_events: ev,
@@ -924,7 +932,7 @@ async function renderRecalls() {
       ${pushed.map(p => {
         const ev = p.recall_events;
         const isDrill = ev?.is_drill;
-        const mfrName = ev?.organisations?.name || _orgName;
+        const mfrName = orgNameMap[ev?.source_org_id] || 'Unknown manufacturer';
         const evAcks = acks.filter(a => a.recall_event_id === p.recall_event_id);
         const allConfirmed = evAcks.length > 0 && evAcks.every(a => a.status === 'confirmed');
         const anyPending = evAcks.some(a => a.status === 'notified');
