@@ -389,6 +389,10 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         Traceability
       </button>
+      <button class="nav-item" onclick="showPanel('shipments')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 5v3h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+        Shipments
+      </button>
       <button class="nav-item" onclick="showPanel('staff')">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         Staff
@@ -561,7 +565,7 @@ async function initDashboard(user) {
     // Hide corp-only nav items
     document.querySelectorAll('.nav-item').forEach(el => {
       const onclick = el.getAttribute('onclick') || '';
-      if (onclick.includes("'stores'") || onclick.includes("'staff'") || onclick.includes("'reports'") || onclick.includes("'partners'")) {
+      if (onclick.includes("'stores'") || onclick.includes("'staff'") || onclick.includes("'reports'") || onclick.includes("'partners'") || onclick.includes("'shipments'")) {
         el.style.display = 'none';
       }
     });
@@ -586,12 +590,12 @@ async function initDashboard(user) {
 function showPanel(name) {
   _activePanel = name;
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-  const panels = { overview:'Dashboard', recalls:'Recalls', stores:'Stores', traceability:'Traceability', staff:'Staff', compliance:'Compliance', reports:'Reports', settings:'Settings', partners:'Manufacturer Partners' };
+  const panels = { overview:'Dashboard', recalls:'Recalls', stores:'Stores', traceability:'Traceability', shipments:'Incoming Shipments', staff:'Staff', compliance:'Compliance', reports:'Reports', settings:'Settings', partners:'Manufacturer Partners' };
   document.getElementById('topbar-title').textContent = panels[name] || name;
   document.querySelectorAll('.nav-item').forEach(el => {
     if (el.getAttribute('onclick')?.includes(`'${name}'`)) el.classList.add('active');
   });
-  const fns = { overview: renderOverview, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, partners: renderPartners };
+  const fns = { overview: renderOverview, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, shipments: renderShipments, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, partners: renderPartners };
   (fns[name] || renderComingSoon)(name);
 }
 
@@ -1171,7 +1175,10 @@ async function renderTraceability() {
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading scan history…</div>`;
 
   let query = sb.from('scans').select('*').eq('organisation_id', _orgId).order('created_at', {ascending:false}).limit(100);
-  if (_userRole === 'store_manager' && _storeName) {
+  if (_userRole === 'store_manager' && _storeId) {
+    query = query.eq('store_id', _storeId);
+  } else if (_userRole === 'store_manager' && _storeName) {
+    // Fallback for older scans that may not have store_id populated
     query = query.eq('store_name', _storeName);
   }
   const { data: scans } = await query;
@@ -1200,6 +1207,96 @@ async function renderTraceability() {
                   : '<span class="recall-status" style="background:rgba(106,175,158,0.1);color:var(--muted)">On shelf</span>'}
                 </td>
               </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+// ── Shipments panel ───────────────────────────────────────────
+async function renderShipments() {
+  const el = document.getElementById('main-content');
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading shipments…</div>`;
+
+  const { data: shipments } = await sb.from('shipments')
+    .select('*, products(name), stores(name), organisations!shipments_manufacturer_id_fkey(name)')
+    .eq('retailer_id', _orgId)
+    .order('shipped_at', { ascending: false })
+    .limit(200);
+
+  const list = shipments || [];
+  const recalledRes = await sb.from('recalls').select('lot_number').eq('organisation_id', _orgId).eq('active', true);
+  const recalledLots = new Set((recalledRes.data || []).map(r => r.lot_number).filter(Boolean));
+
+  // Summary stats
+  const totalQty     = list.reduce((s, sh) => s + (sh.quantity || 0), 0);
+  const manufacturers = new Set(list.map(s => s.organisations?.name).filter(Boolean)).size;
+  const recalledShipments = list.filter(s => recalledLots.has(s.lot_number)).length;
+
+  el.innerHTML = `
+    <div style="margin-bottom:20px;display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+      <div>
+        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Incoming shipments</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px;">All lot codes shipped to your stores by manufacturer partners</div>
+      </div>
+      <div style="display:flex;gap:10px;">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 16px;text-align:center;">
+          <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:20px;color:var(--text);">${list.length}</div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;">Shipments</div>
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 16px;text-align:center;">
+          <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:20px;color:var(--text);">${manufacturers}</div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;">Manufacturers</div>
+        </div>
+        ${recalledShipments > 0 ? `
+        <div style="background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.25);border-radius:8px;padding:10px 16px;text-align:center;">
+          <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:20px;color:var(--danger);">${recalledShipments}</div>
+          <div style="font-size:10px;color:var(--danger);text-transform:uppercase;letter-spacing:0.06em;">Under Recall</div>
+        </div>` : ''}
+      </div>
+    </div>
+
+    ${recalledShipments > 0 ? `
+    <div class="alert-banner" style="margin-bottom:16px;">
+      <div class="alert-dot"></div>
+      <div class="alert-text"><strong>${recalledShipments} shipment${recalledShipments!==1?'s':''} under active recall</strong> — check Recalls panel for store-level response status.</div>
+      <button class="alert-action" onclick="showPanel('recalls')">View recalls →</button>
+    </div>` : ''}
+
+    <div class="panel">
+      <div class="panel-body" style="padding:0;">
+        <table class="store-table" style="width:100%;">
+          <thead><tr>
+            <th style="padding:12px 18px;">Product / Lot</th>
+            <th style="padding:12px 18px;">Manufacturer</th>
+            <th style="padding:12px 18px;">Store</th>
+            <th style="padding:12px 18px;">Qty</th>
+            <th style="padding:12px 18px;">Shipped</th>
+            <th style="padding:12px 18px;">Ref doc</th>
+            <th style="padding:12px 18px;">Status</th>
+          </tr></thead>
+          <tbody>
+            ${list.length === 0
+              ? `<tr><td colspan="7"><div class="empty">No shipments received yet.<br>When a manufacturer partner logs a shipment to your stores, it will appear here.</div></td></tr>`
+              : list.map(s => {
+                  const isRecalled = recalledLots.has(s.lot_number);
+                  return `
+                  <tr>
+                    <td style="padding:10px 18px;">
+                      <div style="font-size:12px;font-weight:500;color:var(--text);">${s.products?.name||'—'}</div>
+                      <div style="font-size:10px;color:var(--muted);margin-top:2px;font-family:'DM Mono',monospace;">${s.lot_number||'—'}${s.barcode?' · '+s.barcode:''}</div>
+                    </td>
+                    <td style="padding:10px 18px;font-size:11px;color:var(--muted);">${s.organisations?.name||'—'}</td>
+                    <td style="padding:10px 18px;font-size:11px;color:var(--muted);">${s.stores?.name||'—'}</td>
+                    <td style="padding:10px 18px;font-size:12px;font-weight:600;color:var(--text);">${s.quantity||'—'} ${s.unit||''}</td>
+                    <td style="padding:10px 18px;font-size:11px;color:var(--muted);white-space:nowrap;">${s.shipped_at ? new Date(s.shipped_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : '—'}</td>
+                    <td style="padding:10px 18px;font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${s.reference_document||'—'}</td>
+                    <td style="padding:10px 18px;">
+                      ${isRecalled
+                        ? `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(255,92,92,0.12);color:var(--danger);white-space:nowrap;">⚠ Recalled</span>`
+                        : `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(52,211,153,0.1);color:var(--accent);white-space:nowrap;">On shelf</span>`}
+                    </td>
+                  </tr>`;}).join('')}
           </tbody>
         </table>
       </div>
@@ -2223,7 +2320,7 @@ async function renderStoreManagerOverview() {
     const today = new Date().toISOString().split('T')[0];
 
     const [scansRes, acksRes] = await Promise.all([
-      sb.from('scans').select('*').eq('organisation_id', _orgId).eq('store_name', storeName).order('created_at', { ascending: false }),
+      sb.from('scans').select('*').eq('organisation_id', _orgId).eq(_storeId ? 'store_id' : 'store_name', _storeId || storeName).order('created_at', { ascending: false }),
       sb.from('recall_acknowledgements').select('*, recall_events(product_name, lot_number, severity, reason, is_drill)').eq('organisation_id', _orgId).eq('store_id', _storeId || '00000000-0000-0000-0000-000000000000'),
     ]);
 
