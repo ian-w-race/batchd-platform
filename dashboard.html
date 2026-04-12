@@ -1399,47 +1399,216 @@ function showInvMsg(txt, type) {
 async function renderCompliance() {
   const el = document.getElementById('main-content');
   const isUS = _orgRegion === 'us';
-  el.innerHTML = `
-    <div style="margin-bottom:16px;">
-      <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Compliance centre</div>
-      <div style="font-size:11px;color:var(--muted);margin-top:2px;">${isUS ? 'FSMA 204 · FDA · USDA' : 'EU Regulation 178/2002 · Mattilsynet · RASFF'}</div>
-    </div>
-    <div class="two-col">
-      <div class="panel">
-        <div class="panel-header"><div class="panel-title">${isUS?'FSMA 204 requirements':'EU traceability requirements'}</div></div>
-        <div class="panel-body">
-          ${[
-            isUS ? 'Critical Tracking Events (CTEs) documented' : 'One step back, one step forward traceability',
-            isUS ? 'Key Data Elements (KDEs) per product' : 'Lot code documentation at receiving',
-            isUS ? 'Food Traceability List (FTL) products identified' : 'Recall response within 2–4 hours',
-            isUS ? 'Records available within 24 hours' : 'Supplier documentation maintained',
-            isUS ? 'Recall drill conducted within 12 months' : 'RASFF alert monitoring active',
-          ].map((req, i) => `
-            <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(22,61,55,0.5);">
-              <div style="width:16px;height:16px;border-radius:50%;background:rgba(52,211,153,0.15);border:1px solid rgba(52,211,153,0.3);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:9px;color:var(--accent);">✓</div>
-              <div style="font-size:11px;color:var(--muted);">${req}</div>
-            </div>`).join('')}
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading compliance data…</div>`;
+
+  try {
+    const now = Date.now();
+    const days30 = new Date(now - 30 * 86400000).toISOString();
+    const days365 = new Date(now - 365 * 86400000).toISOString();
+
+    const [scansRes, storesRes, acksRes, drillsRes, partnersRes, membersRes] = await Promise.all([
+      sb.from('scans').select('lot_number, supplier_name, is_ftl, created_at, store_name, recall_resolved').eq('organisation_id', _orgId),
+      sb.from('stores').select('id, name, active').eq('organisation_id', _orgId),
+      sb.from('recall_acknowledgements').select('status, acknowledged_at, created_at').eq('organisation_id', _orgId),
+      sb.from('mock_recall_drills').select('id, created_at').eq('retailer_org_id', _orgId).gte('created_at', days365),
+      sb.from('trading_partners').select('status').eq('retailer_id', _orgId),
+      sb.from('organisation_members').select('user_id, role').eq('organisation_id', _orgId),
+    ]);
+
+    const scans   = scansRes.data   || [];
+    const stores  = storesRes.data  || [];
+    const acks    = acksRes.data    || [];
+    const drills  = drillsRes.data  || [];
+    const partners = partnersRes.data || [];
+    const members  = membersRes.data  || [];
+
+    const activeStores      = stores.filter(s => s.active);
+    const confirmedPartners = partners.filter(p => p.status === 'active').length;
+    const acksProgressed    = acks.filter(a => a.status !== 'notified').length;
+    const drillInYear       = drills.length > 0;
+    const recentScans       = scans.filter(s => s.created_at >= days30);
+
+    // ── Score calculations ─────────────────────────────────────
+    // Documentation: % of scans with lot_number
+    const docScore = scans.length === 0 ? 0
+      : Math.round((scans.filter(s => s.lot_number).length / scans.length) * 100);
+
+    // Traceability: % of scans with supplier_name (one-step-back)
+    const traceScore = scans.length === 0 ? 0
+      : Math.round((scans.filter(s => s.supplier_name).length / scans.length) * 100);
+
+    // Recall readiness: composite
+    let recallScore = 20; // baseline for being on Batch'd
+    if (confirmedPartners > 0)  recallScore += 25; // connected to manufacturers
+    if (acks.length > 0)        recallScore += 20; // has received recall alerts
+    if (acksProgressed > 0)     recallScore += 20; // has actually responded to recalls
+    if (drillInYear)            recallScore += 15; // conducted a drill
+    recallScore = Math.min(100, recallScore);
+
+    // Store coverage: % of active stores with a scan in last 30 days
+    const storeNames30 = new Set(recentScans.map(s => s.store_name).filter(Boolean));
+    const coverageScore = activeStores.length === 0 ? 0
+      : Math.round((activeStores.filter(s => storeNames30.has(s.name)).length / activeStores.length) * 100);
+
+    const scoreColor = v => v >= 80 ? 'var(--accent)' : v >= 50 ? 'var(--warn)' : 'var(--danger)';
+
+    // ── Checklist requirements ─────────────────────────────────
+    const ftlScans = scans.filter(s => s.is_ftl).length;
+    const lotScans = scans.filter(s => s.lot_number).length;
+    const supplierScans = scans.filter(s => s.supplier_name).length;
+
+    const requirements = isUS ? [
+      {
+        label: 'Critical Tracking Events (CTEs) documented',
+        pass: scans.length > 0,
+        detail: scans.length > 0 ? `${scans.length} scan records on file` : 'No scan records yet — start scanning products',
+      },
+      {
+        label: 'Key Data Elements (KDEs) per product',
+        pass: lotScans > 0,
+        detail: lotScans > 0 ? `${lotScans} of ${scans.length} scans have lot codes (${Math.round(lotScans/Math.max(scans.length,1)*100)}%)` : 'No lot codes recorded yet',
+      },
+      {
+        label: 'Food Traceability List (FTL) products identified',
+        pass: ftlScans > 0,
+        detail: ftlScans > 0 ? `${ftlScans} FTL product scans on record` : 'No FTL products marked — check scanning app settings',
+      },
+      {
+        label: 'Records retrievable within 24 hours',
+        pass: true,
+        detail: 'All records stored in Batch\'d and instantly queryable',
+      },
+      {
+        label: 'Recall drill conducted within 12 months',
+        pass: drillInYear,
+        detail: drillInYear ? `${drills.length} drill${drills.length!==1?'s':''} completed — last: ${new Date(drills[0].created_at).toLocaleDateString('en-GB')}` : 'No drills on record — run one from the scanning app',
+      },
+    ] : [
+      {
+        label: 'One step back, one step forward traceability',
+        pass: scans.length > 0 && supplierScans > 0,
+        detail: supplierScans > 0 ? `${supplierScans} scans with supplier data (one step back)` : scans.length > 0 ? 'Scans exist but supplier names not recorded — add in scanning app' : 'No scan records yet',
+      },
+      {
+        label: 'Lot code documentation at receiving',
+        pass: lotScans > 0,
+        detail: lotScans > 0 ? `${lotScans} of ${scans.length} scans have lot codes (${Math.round(lotScans/Math.max(scans.length,1)*100)}%)` : 'No lot codes recorded yet',
+      },
+      {
+        label: 'Recall response chain active',
+        pass: acksProgressed > 0,
+        detail: acksProgressed > 0 ? `${acksProgressed} recall acknowledgement${acksProgressed!==1?'s':''} progressed beyond notified` : acks.length > 0 ? `${acks.length} recall${acks.length!==1?'s':''} received — none acknowledged yet` : 'No recall events received yet',
+      },
+      {
+        label: 'Supplier documentation maintained',
+        pass: supplierScans > 0,
+        detail: supplierScans > 0 ? `${supplierScans} scans include supplier name` : 'No supplier names recorded — add in scanning app',
+      },
+      {
+        label: 'Manufacturer recall network connected',
+        pass: confirmedPartners > 0,
+        detail: confirmedPartners > 0 ? `${confirmedPartners} confirmed manufacturer partner${confirmedPartners!==1?'s':''}` : 'No manufacturer partners connected — accept requests in Manufacturers panel',
+      },
+    ];
+
+    const overallScore = Math.round((docScore + traceScore + recallScore + coverageScore) / 4);
+
+    el.innerHTML = `
+      <div style="margin-bottom:20px;display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+        <div>
+          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Compliance centre</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">${isUS ? 'FSMA 204 · FDA · USDA' : 'EU Regulation 178/2002 · Mattilsynet · RASFF'}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 18px;">
+          <div>
+            <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:2px;">Overall readiness</div>
+            <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:28px;color:${scoreColor(overallScore)};line-height:1;">${overallScore}%</div>
+          </div>
+          <div style="width:52px;height:52px;border-radius:50%;background:conic-gradient(${scoreColor(overallScore)} 0deg,${scoreColor(overallScore)} ${overallScore*3.6}deg,var(--border) ${overallScore*3.6}deg);display:flex;align-items:center;justify-content:center;position:relative;">
+            <div style="width:38px;height:38px;border-radius:50%;background:var(--surface);"></div>
+          </div>
         </div>
       </div>
-      <div class="panel">
-        <div class="panel-header"><div class="panel-title">Audit readiness</div></div>
-        <div class="panel-body">
-          <div class="compliance-grid">
-            ${[
-              { label:'Documentation', val:85, color:'var(--accent)' },
-              { label:'Staff training', val:72, color:'var(--warn)' },
-              { label:'Recall readiness', val:90, color:'var(--accent)' },
-              { label:'Traceability', val:78, color:'var(--accent)' },
-            ].map(c => `
-              <div class="comp-item">
-                <div class="comp-label">${c.label}</div>
-                <div class="comp-value" style="color:${c.color}">${c.val}%</div>
-                <div class="comp-bar"><div class="comp-fill" style="width:${c.val}%;background:${c.color}"></div></div>
+
+      <div class="two-col" style="margin-bottom:20px;">
+        <!-- Audit readiness scores -->
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title">Audit readiness</div>
+            <div class="panel-sub">Calculated from live data</div>
+          </div>
+          <div class="panel-body">
+            <div class="compliance-grid">
+              ${[
+                { label: 'Documentation',    val: docScore,      detail: `${lotScans}/${scans.length} scans have lot codes` },
+                { label: 'Store coverage',   val: coverageScore, detail: `${storeNames30.size}/${activeStores.length} stores active (30d)` },
+                { label: 'Recall readiness', val: recallScore,   detail: `${confirmedPartners} partner${confirmedPartners!==1?'s':''} · ${acksProgressed} acks progressed` },
+                { label: 'Traceability',     val: traceScore,    detail: `${supplierScans}/${scans.length} scans have supplier` },
+              ].map(c => `
+                <div class="comp-item">
+                  <div class="comp-label">${c.label}</div>
+                  <div class="comp-value" style="color:${scoreColor(c.val)}">${c.val}%</div>
+                  <div class="comp-bar" style="margin-bottom:4px;"><div class="comp-fill" style="width:${c.val}%;background:${scoreColor(c.val)}"></div></div>
+                  <div style="font-size:9px;color:var(--muted);line-height:1.4;">${c.detail}</div>
+                </div>`).join('')}
+            </div>
+          </div>
+        </div>
+
+        <!-- Requirements checklist -->
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title">${isUS ? 'FSMA 204 requirements' : 'EU 178/2002 requirements'}</div>
+            <div class="panel-sub">${requirements.filter(r=>r.pass).length} of ${requirements.length} met</div>
+          </div>
+          <div class="panel-body" style="padding:0 18px;">
+            ${requirements.map(r => `
+              <div style="display:flex;align-items:flex-start;gap:10px;padding:11px 0;border-bottom:1px solid rgba(22,61,55,0.5);">
+                <div style="width:18px;height:18px;border-radius:50%;flex-shrink:0;margin-top:1px;
+                  background:${r.pass ? 'rgba(52,211,153,0.15)' : 'rgba(255,92,92,0.12)'};
+                  border:1px solid ${r.pass ? 'rgba(52,211,153,0.3)' : 'rgba(255,92,92,0.3)'};
+                  display:flex;align-items:center;justify-content:center;font-size:9px;
+                  color:${r.pass ? 'var(--accent)' : 'var(--danger)'};">
+                  ${r.pass ? '✓' : '✗'}
+                </div>
+                <div>
+                  <div style="font-size:11px;color:${r.pass ? 'var(--text)' : 'var(--muted)'};">${r.label}</div>
+                  <div style="font-size:10px;color:${r.pass ? 'var(--muted)' : 'var(--warn)'};margin-top:2px;line-height:1.4;">${r.detail}</div>
+                </div>
               </div>`).join('')}
           </div>
         </div>
       </div>
-    </div>`;
+
+      <!-- Drill history -->
+      <div class="panel">
+        <div class="panel-header">
+          <div><div class="panel-title">Mock recall drill history</div><div class="panel-sub">Last 12 months · ${isUS ? 'FDA recommends annual drills' : 'Best practice: at least one drill per year'}</div></div>
+        </div>
+        <div class="panel-body">
+          ${drills.length === 0
+            ? `<div class="empty">No mock recall drills on record.<br>Run a drill from the scanning app — Manager Dashboard → Mock Recall Drill.</div>`
+            : `<table class="store-table" style="width:100%;">
+                <thead><tr>
+                  <th>Date</th>
+                  <th>Drill ID</th>
+                  <th>Result</th>
+                </tr></thead>
+                <tbody>
+                  ${drills.map(d => `
+                    <tr>
+                      <td style="font-size:11px;color:var(--muted);">${new Date(d.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}</td>
+                      <td style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${d.id.slice(0,8)}…</td>
+                      <td><span class="recall-status status-resolved">Completed</span></td>
+                    </tr>`).join('')}
+                </tbody>
+              </table>`}
+        </div>
+      </div>`;
+
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading compliance data: ${e.message}</div>`;
+  }
 }
 
 // ── Reports ────────────────────────────────────────────────────
