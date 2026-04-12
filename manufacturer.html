@@ -625,6 +625,31 @@ async function pushRecall() {
   if (!reason)  { showPushMsg('Reason for recall is required.', 'error'); return; }
   if (!lot && !barcode) { showPushMsg('Please enter at least a lot number or barcode so retailers can identify the product.', 'warn'); return; }
 
+  // ── Duplicate guard ────────────────────────────────────────────
+  // Check for an existing recall_event with the same product + lot from this org
+  // in the last 7 days. Prevents the multi-push bug that created 5 duplicate recalls.
+  {
+    const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    let dupQuery = sb.from('recall_events')
+      .select('id, product_name, lot_number, created_at, is_drill')
+      .eq('source_org_id', _orgId)
+      .eq('product_name', product)
+      .gte('created_at', since)
+      .order('created_at', { ascending: false });
+    if (lot) dupQuery = dupQuery.eq('lot_number', lot);
+    const { data: dupes } = await dupQuery;
+
+    if (dupes && dupes.length > 0) {
+      const last = dupes[0];
+      const lastDate = new Date(last.created_at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+      const isDupe = confirm(
+        `⚠ Duplicate detected\n\nA recall for "${last.product_name}"${last.lot_number ? ' / lot ' + last.lot_number : ''} was already pushed on ${lastDate}.\n\nPushing again will create a duplicate alert for all retailers.\n\nClick OK only if this is intentional (e.g. a correction or different affected market).`
+      );
+      if (!isDupe) return;
+    }
+  }
+  // ── End duplicate guard ────────────────────────────────────────
+
   if (!confirm(`${_isDrill ? '[DRILL] ' : ''}Push recall for "${product}" to all affected retail partners?\n\nThis will send immediate email alerts.`)) return;
 
   btn.disabled = true;
