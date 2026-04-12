@@ -270,6 +270,9 @@ let _session = null, _orgId = null, _orgName = '', _userRole = null;
 let _selectedSeverity = 'class_ii';
 let _isDrill = false;
 
+// Draft state for Push Recall form — persists across panel switches
+let _pushDraft = { product: '', lot: '', barcode: '', reason: '', description: '', authority: '' };
+
 // ── Auth ───────────────────────────────────────────────────────
 async function doAuth() {
   const email = document.getElementById('auth-email').value.trim();
@@ -451,17 +454,17 @@ function renderPush() {
 
           <div class="field">
             <label>Product name *</label>
-            <input id="p-product" type="text" placeholder="e.g. Tine Helmelk 1L" />
+            <input id="p-product" type="text" placeholder="e.g. Tine Helmelk 1L" value="${_pushDraft.product}" oninput="_pushDraft.product=this.value" />
           </div>
 
           <div class="field-row">
             <div class="field">
               <label>Lot / batch number</label>
-              <input id="p-lot" type="text" placeholder="e.g. L2024-03-15A" oninput="scheduleImpactPreview()" />
+              <input id="p-lot" type="text" placeholder="e.g. L2024-03-15A" value="${_pushDraft.lot}" oninput="_pushDraft.lot=this.value;scheduleImpactPreview()" />
             </div>
             <div class="field">
               <label>Barcode (EAN/UPC)</label>
-              <input id="p-barcode" type="text" placeholder="e.g. 7038010013882" oninput="scheduleImpactPreview()" />
+              <input id="p-barcode" type="text" placeholder="e.g. 7038010013882" value="${_pushDraft.barcode}" oninput="_pushDraft.barcode=this.value;scheduleImpactPreview()" />
             </div>
           </div>
 
@@ -491,17 +494,17 @@ function renderPush() {
 
           <div class="field">
             <label>Reason for recall *</label>
-            <input id="p-reason" type="text" placeholder="e.g. Undeclared allergen — milk" />
+            <input id="p-reason" type="text" placeholder="e.g. Undeclared allergen — milk" value="${_pushDraft.reason}" oninput="_pushDraft.reason=this.value" />
           </div>
 
           <div class="field">
             <label>Description / additional details</label>
-            <textarea id="p-description" rows="3" placeholder="Include any additional context for retailers — affected date ranges, affected markets, recommended customer action, etc."></textarea>
+            <textarea id="p-description" rows="3" placeholder="Include any additional context for retailers — affected date ranges, affected markets, recommended customer action, etc." oninput="_pushDraft.description=this.value">${_pushDraft.description}</textarea>
           </div>
 
           <div class="field">
             <label>Authority reference <span style="color:var(--muted);font-size:10px;">optional</span></label>
-            <input id="p-authority" type="text" placeholder="e.g. RASFF 2026.1234 or FDA recall #123" />
+            <input id="p-authority" type="text" placeholder="e.g. RASFF 2026.1234 or FDA recall #123" value="${_pushDraft.authority}" oninput="_pushDraft.authority=this.value" />
           </div>
 
           <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:16px;font-size:11px;color:var(--muted);line-height:1.6;">
@@ -729,7 +732,8 @@ async function pushRecall() {
       }
     }
 
-    // Show success
+    // Show success — clear draft since recall was pushed successfully
+    _pushDraft = { product: '', lot: '', barcode: '', reason: '', description: '', authority: '' };
     const el = document.getElementById('main-content');
     el.innerHTML = `
       <div style="max-width:500px;">

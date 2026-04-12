@@ -1498,14 +1498,32 @@ async function renderStaff() {
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading staff…</div>`;
   try {
 
-  const [membersRes, storesRes] = await Promise.all([
+  const [membersRes, storesRes, acceptedInvRes] = await Promise.all([
     sb.from('organisation_members').select('user_id, role, joined_at, store_id').eq('organisation_id', _orgId),
     sb.from('stores').select('id, name').eq('organisation_id', _orgId).eq('active', true),
-    sb.from('invitations').select('id, email, role, accepted, created_at, expires_at').eq('organisation_id', _orgId).eq('accepted', false)
+    sb.from('invitations').select('email, role').eq('organisation_id', _orgId).eq('accepted', true),
   ]);
 
-  const members = membersRes.data || [];
-  const stores  = storesRes.data || [];
+  const members     = membersRes.data     || [];
+  const stores      = storesRes.data      || [];
+  const acceptedInv = acceptedInvRes.data || [];
+
+  // Build email lookup by role — best proxy available without admin API access
+  // Multiple people may share a role, so we track which emails we've assigned
+  const emailsByRole = {};
+  acceptedInv.forEach(inv => {
+    if (!emailsByRole[inv.role]) emailsByRole[inv.role] = [];
+    emailsByRole[inv.role].push(inv.email);
+  });
+  const usedEmails = {};
+  const getEmail = (role) => {
+    if (!emailsByRole[role]?.length) return null;
+    const key = role;
+    usedEmails[key] = (usedEmails[key] || 0);
+    const email = emailsByRole[role][usedEmails[key]] || null;
+    usedEmails[key]++;
+    return email;
+  };
 
   const now = new Date();
   const { data: allPending } = await sb.from('invitations')
@@ -1584,18 +1602,30 @@ async function renderStaff() {
 
     <!-- Active members -->
     <div class="panel">
-      <div class="panel-header"><div class="panel-title">Active members</div></div>
+      <div class="panel-header">
+        <div class="panel-title">Active members</div>
+        <div class="panel-sub">${members.length} member${members.length!==1?'s':''}</div>
+      </div>
       <div class="panel-body">
         ${members.length === 0
           ? `<div class="empty">No members yet. Invite your first team member above.</div>`
-          : members.map(m => `
-            <div class="activity-item">
-              <div class="user-avatar" style="width:28px;height:28px;font-size:11px;flex-shrink:0;background:var(--accent-dim);border-radius:50%;display:flex;align-items:center;justify-content:center;">${m.role[0].toUpperCase()}</div>
-              <div class="activity-text">
-                <strong>${m.role.replace('_',' ')}</strong>
-                <span style="font-size:10px;color:var(--muted);margin-left:6px;">Joined ${m.joined_at ? new Date(m.joined_at).toLocaleDateString('en-GB') : '—'}</span>
-              </div>
-            </div>`).join('')}
+          : members.map(m => {
+              const email = getEmail(m.role);
+              const store = stores.find(s => s.id === m.store_id);
+              const roleLabel = m.role.replace(/_/g,' ');
+              const initial = roleLabel[0].toUpperCase();
+              return `
+              <div class="activity-item">
+                <div class="user-avatar" style="width:32px;height:32px;font-size:12px;flex-shrink:0;background:var(--accent-dim);border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;">${initial}</div>
+                <div class="activity-text" style="flex:1;min-width:0;">
+                  <div style="font-size:12px;font-weight:600;color:var(--text);">${email || '—'}</div>
+                  <div style="font-size:10px;color:var(--muted);margin-top:2px;">
+                    ${roleLabel}${store ? ` · ${store.name}` : ''}
+                    ${m.joined_at ? ` · Joined ${new Date(m.joined_at).toLocaleDateString('en-GB')}` : ''}
+                  </div>
+                </div>
+                <span class="recall-status status-resolved" style="flex-shrink:0;">Active</span>
+              </div>`;}).join('')}
       </div>
     </div>
 
@@ -1895,10 +1925,13 @@ async function renderCompliance() {
       <div class="panel">
         <div class="panel-header">
           <div><div class="panel-title">Mock recall drill history</div><div class="panel-sub">Last 12 months · ${isUS ? 'FDA recommends annual drills' : 'Best practice: at least one drill per year'}</div></div>
+          <a href="https://batchd-app.netlify.app" target="_blank">
+            <button class="panel-action">Run a drill ↗</button>
+          </a>
         </div>
         <div class="panel-body">
           ${drills.length === 0
-            ? `<div class="empty">No mock recall drills on record.<br>Run a drill from the scanning app — Manager Dashboard → Mock Recall Drill.</div>`
+            ? `<div class="empty">No mock recall drills on record.<br>Open the scanning app → Manager Dashboard → Mock Recall Drill to run your first drill.</div>`
             : `<table class="store-table" style="width:100%;">
                 <thead><tr>
                   <th>Date</th>
