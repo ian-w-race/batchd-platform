@@ -224,6 +224,10 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 5v3h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
         Shipments
       </button>
+      <button class="nav-item" onclick="showPanel('patterns')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12h20M12 2v20M4.93 4.93l14.14 14.14M19.07 4.93L4.93 19.07"/></svg>
+        Pattern Library
+      </button>
       <div class="nav-section">Partners</div>
       <button class="nav-item" onclick="showPanel('partners')">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
@@ -339,7 +343,7 @@ function showPanel(name) {
   document.querySelectorAll('.nav-item').forEach(el => {
     el.classList.toggle('active', el.getAttribute('onclick')?.includes(`'${name}'`));
   });
-  const fns = { overview: renderOverview, push: renderPush, history: renderHistory, acknowledgements: renderAcknowledgements, partners: renderPartners, products: renderProducts, lots: renderLots, shipments: renderShipments };
+  const fns = { overview: renderOverview, push: renderPush, history: renderHistory, acknowledgements: renderAcknowledgements, partners: renderPartners, products: renderProducts, lots: renderLots, shipments: renderShipments, patterns: renderPatterns };
   (fns[name] || (() => {}))();
 }
 
@@ -1246,6 +1250,113 @@ function showShipmentMsg(txt, type) {
   el.style.background = type === 'error' ? 'rgba(255,92,92,0.1)' : 'rgba(52,211,153,0.1)';
   el.style.border     = type === 'error' ? '1px solid rgba(255,92,92,0.3)' : '1px solid rgba(52,211,153,0.3)';
   el.style.color      = type === 'error' ? 'var(--danger)' : 'var(--accent)';
+}
+
+// ── Pattern Library ────────────────────────────────────────────
+async function renderPatterns() {
+  const el = document.getElementById('main-content');
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading pattern library…</div>`;
+
+  // Get patterns for products belonging to this manufacturer's org
+  // Patterns are keyed by product_name/product_key — match against our products
+  const [patternsRes, productsRes] = await Promise.all([
+    sb.from('code_patterns').select('*').order('scan_count', { ascending: false }),
+    sb.from('products').select('name, barcode').eq('organisation_id', _orgId),
+  ]);
+
+  const allPatterns = patternsRes.data || [];
+  const myProducts  = productsRes.data || [];
+
+  // Match patterns to manufacturer's products by normalised name or barcode
+  const myProductNames = new Set(myProducts.map(p => p.name?.toLowerCase().trim()));
+  const myBarcodes     = new Set(myProducts.map(p => p.barcode).filter(Boolean));
+
+  const matched = allPatterns.filter(p =>
+    myProductNames.has(p.product_name?.toLowerCase().trim()) ||
+    myProductNames.has(p.product_key?.toLowerCase().trim())  ||
+    (p.barcode_number && myBarcodes.has(p.barcode_number))
+  );
+  const unmatched = allPatterns.filter(p => !matched.includes(p));
+
+  const confColor = c => c === 'high' ? 'var(--accent)' : c === 'medium' ? 'var(--warn)' : 'var(--danger)';
+  const confBg    = c => c === 'high' ? 'rgba(52,211,153,0.1)' : c === 'medium' ? 'rgba(245,166,35,0.1)' : 'rgba(255,92,92,0.1)';
+
+  const patternTable = (rows, emptyMsg) => rows.length === 0
+    ? `<div class="empty">${emptyMsg}</div>`
+    : `<table style="width:100%;border-collapse:collapse;">
+        <thead><tr>
+          <th style="font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);text-align:left;padding:12px 0 12px;border-bottom:1px solid var(--border);">Product</th>
+          <th style="font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);text-align:left;padding:12px 8px;border-bottom:1px solid var(--border);">Lot format</th>
+          <th style="font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);text-align:left;padding:12px 8px;border-bottom:1px solid var(--border);">Label location</th>
+          <th style="font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);text-align:left;padding:12px 8px;border-bottom:1px solid var(--border);">Scans</th>
+          <th style="font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);text-align:left;padding:12px 8px;border-bottom:1px solid var(--border);">Confidence</th>
+          <th style="font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);text-align:left;padding:12px 8px;border-bottom:1px solid var(--border);">Since</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map(p => `
+            <tr>
+              <td style="padding:10px 0;border-bottom:1px solid rgba(22,61,55,0.5);">
+                <div style="font-size:12px;font-weight:600;color:var(--text);">${p.product_name||'—'}</div>
+                ${p.barcode_number ? `<div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:1px;">${p.barcode_number}</div>` : ''}
+              </td>
+              <td style="padding:10px 8px;border-bottom:1px solid rgba(22,61,55,0.5);font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;max-width:160px;">${p.lot_format||'—'}</td>
+              <td style="padding:10px 8px;border-bottom:1px solid rgba(22,61,55,0.5);font-size:10px;color:var(--muted);max-width:220px;line-height:1.5;">
+                ${p.label_hint ? p.label_hint.replace(/Label text observed:.*?(?=\.|Found|$)/s,'').trim().slice(0,140)+(p.label_hint.length>140?'…':'') : '—'}
+              </td>
+              <td style="padding:10px 8px;border-bottom:1px solid rgba(22,61,55,0.5);">
+                <span style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;color:var(--text);">${p.scan_count||0}</span>
+              </td>
+              <td style="padding:10px 8px;border-bottom:1px solid rgba(22,61,55,0.5);">
+                <span style="font-size:10px;padding:2px 8px;border-radius:10px;background:${confBg(p.confidence_level)};color:${confColor(p.confidence_level)};text-transform:capitalize;">
+                  ${p.confidence_level||'—'}
+                </span>
+              </td>
+              <td style="padding:10px 8px;border-bottom:1px solid rgba(22,61,55,0.5);font-size:11px;color:var(--muted);white-space:nowrap;">
+                ${p.created_at ? new Date(p.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : '—'}
+              </td>
+            </tr>`).join('')}
+        </tbody>
+      </table>`;
+
+  el.innerHTML = `
+    <div style="margin-bottom:20px;">
+      <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">OCR Pattern Library</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:2px;">Packaging intelligence learned by the Batch'd scanning app from retailer scans</div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px;">
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 18px;">
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px;">Your products with patterns</div>
+        <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:26px;color:var(--accent);">${matched.length}</div>
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 18px;">
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px;">Total scans driving patterns</div>
+        <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:26px;color:var(--text);">${matched.reduce((s,p)=>s+(p.scan_count||0),0)}</div>
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 18px;">
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px;">High confidence patterns</div>
+        <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:26px;color:var(--text);">${matched.filter(p=>p.confidence_level==='high').length}</div>
+      </div>
+    </div>
+
+    <div style="margin-bottom:20px;padding:12px 16px;background:rgba(56,189,248,0.05);border:1px solid rgba(56,189,248,0.15);border-radius:8px;font-size:11px;color:var(--muted);line-height:1.6;">
+      📍 These patterns are learned automatically as retailers scan your products. Each scan confirms where the lot code appears on your packaging, making future reads faster and more accurate. <strong style="color:var(--text);">High confidence</strong> means the system reliably identifies the lot code location on first attempt.
+    </div>
+
+    ${matched.length > 0 ? `
+    <div style="margin-bottom:8px;font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);">Your products</div>
+    <div class="panel" style="margin-bottom:20px;">
+      <div class="panel-body">${patternTable(matched, 'No patterns matched to your registered products yet.')}</div>
+    </div>` : `
+    <div class="panel" style="margin-bottom:20px;">
+      <div class="panel-body"><div class="empty">No patterns matched to your registered products yet.<br>Patterns build automatically as retailers scan your products in the Batch'd scanning app.</div></div>
+    </div>`}
+
+    ${unmatched.length > 0 ? `
+    <div style="margin-bottom:8px;font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);">All other products in network</div>
+    <div class="panel">
+      <div class="panel-body">${patternTable(unmatched, '')}</div>
+    </div>` : ''}`;
 }
 
 // ── Boot ───────────────────────────────────────────────────────
