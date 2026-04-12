@@ -206,6 +206,25 @@
     .status-resolved { background: rgba(52,211,153,0.1); color: var(--accent); }
     .status-pending  { background: rgba(245,166,35,0.12); color: var(--warn); }
 
+    /* status-pill — used in Partners panel */
+    .status-pill { font-size: 10px; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
+    .s-confirmed { background: rgba(52,211,153,0.15); color: var(--accent); }
+    .s-notified  { background: rgba(106,175,158,0.1); color: var(--muted); }
+    .s-pending   { background: rgba(245,166,35,0.12); color: var(--warn); }
+
+    /* Select elements — match input styling */
+    .field select {
+      width: 100%; background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 8px; padding: 10px 12px; font-family: 'DM Mono', monospace;
+      font-size: 13px; color: var(--text); outline: none; transition: border-color 0.15s;
+      cursor: pointer; appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236aaf9e' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 12px center;
+      padding-right: 32px;
+    }
+    .field select:focus { border-color: var(--accent); }
+    .field select option { background: var(--surface2); color: var(--text); }
+
     /* ── Store table ── */
     .store-table { width: 100%; border-collapse: collapse; }
     .store-table th {
@@ -845,6 +864,7 @@ async function renderOverview() {
 async function renderRecalls() {
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading recalls…</div>`;
+  try {
 
   // Fetch separately to avoid RLS join conflicts
   const [recallsRes, acksRes] = await Promise.all([
@@ -1013,6 +1033,9 @@ async function renderRecalls() {
             </div>`).join('')}
       </div>
     </div>`;
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading recalls: ${e.message}</div>`;
+  }
 }
 
 async function advanceAckStatus(ackId, status, recallEventId) {
@@ -1047,6 +1070,7 @@ async function updateAckStatus(ackId, status) {
 async function renderStores() {
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading stores…</div>`;
+  try {
   const { data: stores } = await sb.from('stores').select('*').eq('organisation_id', _orgId).order('name');
   const list = stores || [];
   el.innerHTML = `
@@ -1108,6 +1132,9 @@ async function renderStores() {
             </table>`}
       </div>
     </div>`;
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading stores: ${e.message}</div>`;
+  }
 }
 
 let _editingStoreId = null;
@@ -1174,9 +1201,10 @@ async function renderTraceability(tab) {
   const el = document.getElementById('main-content');
   const activeTab = tab || 'scans';
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
+  try {
 
   if (activeTab === 'scans') {
-    let query = sb.from('scans').select('*').eq('organisation_id', _orgId).order('created_at', {ascending:false}).limit(100);
+    let query = sb.from('scans').select('*').eq('organisation_id', _orgId).order('created_at', {ascending:false}).limit(500);
     if (_userRole === 'store_manager' && _storeId) {
       query = query.eq('store_id', _storeId);
     } else if (_userRole === 'store_manager' && _storeName) {
@@ -1184,9 +1212,28 @@ async function renderTraceability(tab) {
     }
     const { data: scans } = await query;
     const list = scans || [];
+    window._traceAllScans = list;
 
     el.innerHTML = `
       ${traceabilityHeader(activeTab)}
+      <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+        <input id="trace-search" type="text" placeholder="Search product or lot…"
+          style="flex:1;min-width:160px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-family:'DM Mono',monospace;font-size:12px;color:var(--text);outline:none;"
+          oninput="filterTraceability()" onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border)'" />
+        <select id="trace-store" onchange="filterTraceability()"
+          style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-family:'DM Mono',monospace;font-size:12px;color:var(--text);outline:none;cursor:pointer;">
+          <option value="">All stores</option>
+          ${[...new Set(list.map(s=>s.store_name).filter(Boolean))].sort().map(s=>`<option value="${s}">${s}</option>`).join('')}
+        </select>
+        <select id="trace-status" onchange="filterTraceability()"
+          style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-family:'DM Mono',monospace;font-size:12px;color:var(--text);outline:none;cursor:pointer;">
+          <option value="">All statuses</option>
+          <option value="shelf">On shelf</option>
+          <option value="removed">Removed</option>
+          <option value="resolved">Resolved</option>
+        </select>
+        <span id="trace-count" style="font-size:11px;color:var(--muted);align-self:center;white-space:nowrap;">${list.length} records</span>
+      </div>
       <div class="panel">
         <div class="panel-body" style="padding:0;">
           <table class="store-table" style="width:100%;">
@@ -1198,21 +1245,8 @@ async function renderTraceability(tab) {
               <th style="padding:12px 18px;">Date</th>
               <th style="padding:12px 18px;">Status</th>
             </tr></thead>
-            <tbody>
-              ${list.length === 0 ? `<tr><td colspan="6"><div class="empty">No scans recorded yet.</div></td></tr>` :
-              list.map(s => `
-                <tr>
-                  <td style="padding:10px 18px;"><div class="store-name">${s.product_name||'—'}</div></td>
-                  <td style="padding:10px 18px;color:var(--muted);font-size:10px;">${s.lot_number||'—'}<br>${s.barcode_number||''}</td>
-                  <td style="padding:10px 18px;color:var(--muted)">${s.store_name||'—'}</td>
-                  <td style="padding:10px 18px;color:var(--muted)">${s.scanned_by||'—'}</td>
-                  <td style="padding:10px 18px;color:var(--muted)">${s.created_at ? new Date(s.created_at).toLocaleDateString('en-GB') : '—'}</td>
-                  <td style="padding:10px 18px;">
-                    ${s.recall_resolved ? '<span class="recall-status status-resolved">Resolved</span>'
-                    : s.removed_from_shelf_at ? '<span class="recall-status status-pending">Removed</span>'
-                    : '<span class="recall-status" style="background:rgba(106,175,158,0.1);color:var(--muted)">On shelf</span>'}
-                  </td>
-                </tr>`).join('')}
+            <tbody id="trace-tbody">
+              ${renderTraceRows(list)}
             </tbody>
           </table>
         </div>
@@ -1285,7 +1319,50 @@ async function renderTraceability(tab) {
           </table>
         </div>
       </div>`;
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading traceability data: ${e.message}</div>`;
   }
+}
+
+function renderTraceRows(list) {
+  if (list.length === 0) return `<tr><td colspan="6"><div class="empty">No scans found.</div></td></tr>`;
+  return list.map(s => `
+    <tr>
+      <td style="padding:10px 18px;"><div class="store-name">${s.product_name||'—'}</div></td>
+      <td style="padding:10px 18px;color:var(--muted);font-size:10px;">${s.lot_number||'—'}${s.barcode_number?'<br>'+s.barcode_number:''}</td>
+      <td style="padding:10px 18px;color:var(--muted)">${s.store_name||'—'}</td>
+      <td style="padding:10px 18px;color:var(--muted)">${s.scanned_by||'—'}</td>
+      <td style="padding:10px 18px;color:var(--muted)">${s.created_at ? new Date(s.created_at).toLocaleDateString('en-GB') : '—'}</td>
+      <td style="padding:10px 18px;">
+        ${s.recall_resolved ? '<span class="recall-status status-resolved">Resolved</span>'
+        : s.removed_from_shelf_at ? '<span class="recall-status status-pending">Removed</span>'
+        : '<span class="recall-status" style="background:rgba(106,175,158,0.1);color:var(--muted)">On shelf</span>'}
+      </td>
+    </tr>`).join('');
+}
+
+function filterTraceability() {
+  const search  = (document.getElementById('trace-search')?.value || '').toLowerCase();
+  const store   = document.getElementById('trace-store')?.value  || '';
+  const status  = document.getElementById('trace-status')?.value || '';
+  const all     = window._traceAllScans || [];
+  const filtered = all.filter(s => {
+    const matchSearch = !search ||
+      (s.product_name||'').toLowerCase().includes(search) ||
+      (s.lot_number||'').toLowerCase().includes(search) ||
+      (s.barcode_number||'').toLowerCase().includes(search) ||
+      (s.scanned_by||'').toLowerCase().includes(search);
+    const matchStore = !store || s.store_name === store;
+    const matchStatus = !status ||
+      (status === 'resolved' && s.recall_resolved) ||
+      (status === 'removed'  && !s.recall_resolved && s.removed_from_shelf_at) ||
+      (status === 'shelf'    && !s.recall_resolved && !s.removed_from_shelf_at);
+    return matchSearch && matchStore && matchStatus;
+  });
+  const tbody = document.getElementById('trace-tbody');
+  const count = document.getElementById('trace-count');
+  if (tbody) tbody.innerHTML = renderTraceRows(filtered);
+  if (count) count.textContent = `${filtered.length} of ${all.length} records`;
 }
 
 function traceabilityHeader(activeTab) {
@@ -1325,6 +1402,7 @@ async function deletePattern(id, btn) {
 async function renderShipments() {
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading shipments…</div>`;
+  try {
 
   const { data: shipments } = await sb.from('shipments')
     .select('*, products(name), stores(name), organisations!shipments_manufacturer_id_fkey(name)')
@@ -1409,12 +1487,16 @@ async function renderShipments() {
         </table>
       </div>
     </div>`;
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading shipments: ${e.message}</div>`;
+  }
 }
 
 // ── Staff panel ───────────────────────────────────────────────
 async function renderStaff() {
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading staff…</div>`;
+  try {
 
   const [membersRes, storesRes] = await Promise.all([
     sb.from('organisation_members').select('user_id, role, joined_at, store_id').eq('organisation_id', _orgId),
@@ -1425,11 +1507,16 @@ async function renderStaff() {
   const members = membersRes.data || [];
   const stores  = storesRes.data || [];
 
-  const { data: pending } = await sb.from('invitations')
+  const now = new Date();
+  const { data: allPending } = await sb.from('invitations')
     .select('id, email, role, accepted, created_at, expires_at')
     .eq('organisation_id', _orgId)
     .eq('accepted', false)
     .order('created_at', { ascending: false });
+
+  // Split into active and expired — fix #13
+  const pending = (allPending || []).filter(i => new Date(i.expires_at) > now);
+  const expired = (allPending || []).filter(i => new Date(i.expires_at) <= now);
 
   el.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
@@ -1510,7 +1597,26 @@ async function renderStaff() {
               </div>
             </div>`).join('')}
       </div>
-    </div>`;
+    </div>
+
+    ${expired.length > 0 ? `
+    <div class="panel" style="margin-top:14px;border-color:rgba(255,92,92,0.2);">
+      <div class="panel-header"><div class="panel-title" style="color:var(--danger);">Expired invitations</div><div class="panel-sub">${expired.length} invitation${expired.length!==1?'s':''} — links no longer work</div></div>
+      <div class="panel-body">
+        ${expired.map(inv => `
+          <div class="activity-item">
+            <div class="activity-dot" style="background:var(--danger);"></div>
+            <div class="activity-text">
+              <strong>${inv.email}</strong> — ${inv.role.replace('_',' ')}
+              <span style="font-size:10px;color:var(--muted);margin-left:6px;">Expired ${new Date(inv.expires_at).toLocaleDateString('en-GB')}</span>
+            </div>
+            <span class="recall-status status-active">Expired</span>
+          </div>`).join('')}
+      </div>
+    </div>` : ''}`;
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading staff: ${e.message}</div>`;
+  }
 }
 
 function openInviteForm() {
@@ -2319,7 +2425,7 @@ async function downloadReport(key) {
 async function renderSettings() {
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
-
+  try {
   const { data: org } = await sb.from('organisations').select('*').eq('id', _orgId).single();
 
   el.innerHTML = `
@@ -2373,6 +2479,9 @@ async function renderSettings() {
         </div>
       </div>
     </div>`;
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading settings: ${e.message}</div>`;
+  }
 }
 
 async function saveOrgSettings() {
@@ -2551,7 +2660,7 @@ function renderComingSoon(name) {
 async function renderPartners() {
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
-
+  try {
   const { data: requests } = await sb.from('trading_partners')
     .select('*, organisations!trading_partners_manufacturer_id_fkey(name, contact_email)')
     .eq('retailer_id', _orgId);
@@ -2625,6 +2734,9 @@ async function renderPartners() {
             </div>`).join('')}
       </div>
     </div>`;
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading partners: ${e.message}</div>`;
+  }
 }
 
 async function acceptPartner(id) {

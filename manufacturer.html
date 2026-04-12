@@ -351,12 +351,15 @@ function showPanel(name) {
 async function renderOverview() {
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
-
-  const [eventsRes, acksRes] = await Promise.all([
+  try {
+  const [eventsRes, acksRes, productsRes, partnersRes, shipmentsRes] = await Promise.all([
     sb.from('recall_events').select('*').eq('source_org_id', _orgId).order('created_at', { ascending: false }),
     sb.from('recall_acknowledgements').select('status, recall_event_id').in('recall_event_id',
       (await sb.from('recall_events').select('id').eq('source_org_id', _orgId)).data?.map(e => e.id) || []
     ),
+    sb.from('products').select('id').eq('manufacturer_id', _orgId),
+    sb.from('trading_partners').select('status').eq('manufacturer_id', _orgId),
+    sb.from('shipments').select('id').eq('manufacturer_id', _orgId),
   ]);
 
   const events = eventsRes.data || [];
@@ -365,28 +368,31 @@ async function renderOverview() {
   const drills      = events.filter(e => e.is_drill).length;
   const confirmed   = acks.filter(a => a.status === 'confirmed').length;
   const pending     = acks.filter(a => a.status === 'notified').length;
+  const productCount  = (productsRes.data || []).length;
+  const partnerCount  = (partnersRes.data || []).filter(p => p.status === 'active').length;
+  const shipmentCount = (shipmentsRes.data || []).length;
 
   el.innerHTML = `
-    <div class="kpi-grid">
-      <div class="kpi-card red">
+    <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);">
+      <div class="kpi-card ${liveRecalls>0?'red':'green'}">
         <div class="kpi-label">Live recalls issued</div>
         <div class="kpi-value" style="color:${liveRecalls>0?'var(--danger)':'var(--text)'}">${liveRecalls}</div>
         <div class="kpi-sub">${events.length} total recall events</div>
       </div>
-      <div class="kpi-card amber">
-        <div class="kpi-label">Mock drills run</div>
-        <div class="kpi-value">${drills}</div>
-        <div class="kpi-sub">Recall preparedness tests</div>
-      </div>
       <div class="kpi-card green">
-        <div class="kpi-label">Stores confirmed</div>
-        <div class="kpi-value" style="color:var(--accent)">${confirmed}</div>
-        <div class="kpi-sub">Full disposal confirmed</div>
+        <div class="kpi-label">Products registered</div>
+        <div class="kpi-value" style="color:var(--accent)">${productCount}</div>
+        <div class="kpi-sub">${shipmentCount} shipment${shipmentCount!==1?'s':''} logged</div>
       </div>
       <div class="kpi-card blue">
+        <div class="kpi-label">Retail partners</div>
+        <div class="kpi-value">${partnerCount}</div>
+        <div class="kpi-sub">${drills} mock drill${drills!==1?'s':''} run</div>
+      </div>
+      <div class="kpi-card ${pending>0?'amber':'green'}">
         <div class="kpi-label">Awaiting response</div>
-        <div class="kpi-value">${pending}</div>
-        <div class="kpi-sub">Stores yet to acknowledge</div>
+        <div class="kpi-value" style="color:${pending>0?'var(--warn)':'var(--accent)'}">${pending}</div>
+        <div class="kpi-sub">${confirmed} store${confirmed!==1?'s':''} fully confirmed</div>
       </div>
     </div>
 
@@ -416,6 +422,9 @@ async function renderOverview() {
             </div>`).join('')}
       </div>
     </div>`;
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading dashboard: ${e.message}</div>`;
+  }
 }
 
 // ── Push recall form ───────────────────────────────────────────
@@ -757,6 +766,7 @@ function showPushMsg(txt, type) {
 async function renderHistory() {
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
+  try {
   const { data: events } = await sb.from('recall_events').select('*').eq('source_org_id', _orgId).order('created_at', { ascending: false });
   const list = events || [];
   el.innerHTML = `
@@ -782,13 +792,16 @@ async function renderHistory() {
           </div>`).join('')}
       </div>
     </div>`;
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading recall history: ${e.message}</div>`;
+  }
 }
 
 // ── Acknowledgements ───────────────────────────────────────────
 async function renderAcknowledgements() {
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
-
+  try {
   const { data: events } = await sb.from('recall_events').select('id, product_name, is_drill, created_at').eq('source_org_id', _orgId).order('created_at', { ascending: false });
   const eventIds = (events || []).map(e => e.id);
 
@@ -839,13 +852,16 @@ async function renderAcknowledgements() {
         </table>
       </div>
     </div>`;
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading acknowledgements: ${e.message}</div>`;
+  }
 }
 
 // ── Trading partners ───────────────────────────────────────────
 async function renderPartners() {
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
-
+  try {
   const { data: partners } = await sb.from('trading_partners')
     .select('*, organisations!trading_partners_retailer_id_fkey(name, contact_email)')
     .eq('manufacturer_id', _orgId);
@@ -918,6 +934,9 @@ async function renderPartners() {
             </div>`).join('')}
       </div>
     </div>`;
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading partners: ${e.message}</div>`;
+  }
 }
 
 function openPartnerRequest() {
@@ -1001,6 +1020,7 @@ async function sendPartnerRequest(retailerId, retailerName) {
 async function renderShipments() {
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
+  try {
 
   // Load trading partners (confirmed only), products, shipment history in parallel
   const [partnersRes, productsRes, shipmentsRes] = await Promise.all([
@@ -1139,6 +1159,9 @@ async function renderShipments() {
 
   // Set today as default shipped date
   document.getElementById('s-date').value = new Date().toISOString().split('T')[0];
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading shipments: ${e.message}</div>`;
+  }
 }
 
 function openShipmentForm() {
@@ -1386,7 +1409,7 @@ let _editingProductId = null;
 async function renderProducts() {
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading products…</div>`;
-
+  try {
   const { data: products } = await sb.from('products')
     .select('*')
     .eq('manufacturer_id', _orgId)
@@ -1480,6 +1503,9 @@ async function renderProducts() {
             </table>`}
       </div>
     </div>`;
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading products: ${e.message}</div>`;
+  }
 }
 
 function openProductForm() {
@@ -1558,7 +1584,7 @@ function showProductMsg(txt, type) {
 async function renderLots() {
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading lots…</div>`;
-
+  try {
   const [productsRes, lotsRes] = await Promise.all([
     sb.from('products').select('id, name').eq('manufacturer_id', _orgId).order('name'),
     sb.from('product_lots').select('*, products(name)').eq('manufacturer_id', _orgId).order('created_at', {ascending:false}),
@@ -1640,6 +1666,9 @@ async function renderLots() {
             </table>`}
       </div>
     </div>`}`;
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading lot codes: ${e.message}</div>`;
+  }
 }
 
 function openLotForm() {
