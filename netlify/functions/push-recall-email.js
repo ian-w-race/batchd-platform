@@ -116,25 +116,33 @@ exports.handler = async (event) => {
     : `🚨 Recall alert: ${productName} — Immediate action required`;
 
   const results = await Promise.allSettled(
-    retailerEmails.map(email =>
-      fetch('https://api.resend.com/emails', {
+    retailerEmails.map(async email => {
+      const res = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${RESEND_KEY}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          from: "Batch'd Recalls <recalls@batchdapp.com>",
+          from: "Batch'd <invite@batchdapp.com>",
           to: [email],
           subject,
           html,
         }),
-      })
-    )
+      });
+      if (!res.ok) {
+        const err = await res.text();
+        throw new Error(`Resend rejected ${email}: ${res.status} ${err}`);
+      }
+      return email;
+    })
   );
 
   const sent   = results.filter(r => r.status === 'fulfilled').length;
   const failed = results.filter(r => r.status === 'rejected').length;
+  if (failed > 0) {
+    results.filter(r => r.status === 'rejected').forEach(r => console.error(r.reason?.message));
+  }
 
   return {
     statusCode: 200,
