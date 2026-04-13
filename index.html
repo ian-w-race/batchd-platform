@@ -7530,14 +7530,18 @@ async function fetchFDARecalls() {
   let added = 0;
   for (const r of results) {
     const { data: existing } = await sb.from('recalls')
-      .select('id').eq('description', r.recall_number || r.product_description?.slice(0,80)).maybeSingle();
+      .select('id')
+      .eq('description', r.recall_number || r.product_description?.slice(0,80))
+      .eq('organisation_id', _currentOrgId)
+      .maybeSingle();
     if (existing) continue;
     const { error } = await sb.from('recalls').insert({
-      product_name: r.product_description?.slice(0, 120) || 'FDA Recall',
-      lot_number: r.code_info || null,
-      description: (r.reason_for_recall || '').slice(0, 200) + (r.recall_number ? ` [${r.recall_number}]` : ''),
-      source: 'fda',
-      active: true
+      product_name:    r.product_description?.slice(0, 120) || 'FDA Recall',
+      lot_number:      r.code_info || null,
+      description:     (r.reason_for_recall || '').slice(0, 200) + (r.recall_number ? ` [${r.recall_number}]` : ''),
+      source:          'fda',
+      active:          true,
+      organisation_id: _currentOrgId,
     });
     if (!error) added++;
   }
@@ -7545,12 +7549,9 @@ async function fetchFDARecalls() {
 }
 
 async function fetchRASFFRecalls() {
-  const feedUrl = 'https://webgate.ec.europa.eu/rasff-window/backend/public/consumer/rss/';
-  const proxyUrl = 'https://api.allorigins.win/get?url=' + encodeURIComponent(feedUrl);
-  const resp = await fetch(proxyUrl);
+  const resp = await fetch('/.netlify/functions/recall-feeds?source=rasff');
   if (!resp.ok) throw new Error('RASFF proxy error ' + resp.status);
-  const json = await resp.json();
-  const xml = json.contents;
+  const xml = await resp.text();
   const parser = new DOMParser();
   const doc = parser.parseFromString(xml, 'text/xml');
   const items = Array.from(doc.querySelectorAll('item'));
@@ -7559,13 +7560,14 @@ async function fetchRASFFRecalls() {
     const title = item.querySelector('title')?.textContent?.trim() || 'RASFF Alert';
     const desc  = item.querySelector('description')?.textContent?.trim() || '';
     const { data: existing } = await sb.from('recalls')
-      .select('id').eq('description', title.slice(0,80)).maybeSingle();
+      .select('id').eq('description', title.slice(0,80)).eq('organisation_id', _currentOrgId).maybeSingle();
     if (existing) continue;
     const { error } = await sb.from('recalls').insert({
-      product_name: title.slice(0, 120),
-      description: (desc.replace(/<[^>]+>/g,'')).slice(0, 200),
-      source: 'rasff',
-      active: true
+      product_name:    title.slice(0, 120),
+      description:     (desc.replace(/<[^>]+>/g,'')).slice(0, 200),
+      source:          'rasff',
+      active:          true,
+      organisation_id: _currentOrgId,
     });
     if (!error) added++;
   }
@@ -7573,73 +7575,57 @@ async function fetchRASFFRecalls() {
 }
 
 async function fetchMattilsynetRecalls() {
-  // Mattilsynet RSS feed — filtered for tilbaketrekkinger (withdrawals) and tilbakekallinger (recalls)
-  // Both the main RSS feed and the dedicated recall RSS are tried via CORS proxy
-  const feedUrl = 'https://www.mattilsynet.no/rss/subscription';
-  const proxyUrl = 'https://api.allorigins.win/get?url=' + encodeURIComponent(feedUrl);
-
   let added = 0;
   try {
-    const resp = await fetch(proxyUrl);
-    if (!resp.ok) throw new Error('Mattilsynet proxy error ' + resp.status);
-    const json = await resp.json();
-    const xml = json.contents;
+    const resp = await fetch('/.netlify/functions/recall-feeds?source=mattilsynet_rss');
+    if (!resp.ok) throw new Error('Mattilsynet RSS proxy error ' + resp.status);
+    const xml = await resp.text();
     if (!xml) throw new Error('Empty Mattilsynet feed');
     const parser = new DOMParser();
     const doc = parser.parseFromString(xml, 'text/xml');
     const items = Array.from(doc.querySelectorAll('item'));
 
     for (const item of items.slice(0, 30)) {
-      // Filter to recall/withdrawal items only
-      // The feed uses <nl:extra1>Tilbaketrekking</nl:extra1> or <nl:extra1>Tilbakekalling</nl:extra1>
       const extra1 = item.querySelector('extra1')?.textContent?.trim() ||
                      item.getElementsByTagName('extra1')[0]?.textContent?.trim() || '';
       const title = item.querySelector('title')?.textContent?.trim() || '';
-
       const isRecall = /tilbaketrekk|tilbakekall/i.test(extra1) ||
                        /tilbaketrekk|tilbakekall|recall|trekkes|kalles tilbake/i.test(title);
       if (!isRecall) continue;
-
       const desc = item.querySelector('description')?.textContent?.trim() || '';
       const link = item.querySelector('link')?.textContent?.trim() || '';
-
-      // Deduplicate by title
       const { data: existing } = await sb.from('recalls')
-        .select('id').ilike('product_name', title.slice(0, 80)).maybeSingle();
+        .select('id').ilike('product_name', title.slice(0, 80)).eq('organisation_id', _currentOrgId).maybeSingle();
       if (existing) continue;
-
       const { error } = await sb.from('recalls').insert({
-        product_name: title.slice(0, 120),
-        description: (desc.replace(/<[^>]+>/g, '')).slice(0, 200) + (link ? ` [mattilsynet.no]` : ''),
-        source: 'mattilsynet',
-        active: true
+        product_name:    title.slice(0, 120),
+        description:     (desc.replace(/<[^>]+>/g, '')).slice(0, 200) + (link ? ' [mattilsynet.no]' : ''),
+        source:          'mattilsynet',
+        active:          true,
+        organisation_id: _currentOrgId,
       });
       if (!error) added++;
     }
   } catch(e) {
     console.warn('Mattilsynet RSS failed, trying tilbakekallinger page:', e);
-    // Fallback: fetch the tilbakekallinger page and scrape visible titles
     try {
-      const pageUrl = 'https://www.mattilsynet.no/tilbakekallinger';
-      const proxyPage = 'https://api.allorigins.win/get?url=' + encodeURIComponent(pageUrl);
-      const resp2 = await fetch(proxyPage);
+      const resp2 = await fetch('/.netlify/functions/recall-feeds?source=mattilsynet_page');
       if (!resp2.ok) throw new Error('page proxy error');
-      const json2 = await resp2.json();
-      const html = json2.contents || '';
-      // Extract recall titles from the list — they appear as link text in <a href="/tilbakekallinger/...">
+      const html = await resp2.text();
       const matches = [...html.matchAll(/href="\/tilbakekallinger\/([^"]+)"[^>]*>([^<]{10,})</g)];
       for (const m of matches.slice(0, 15)) {
-        const slug = m[1];
+        const slug  = m[1];
         const title = m[2].trim();
         if (!title || title.length < 10) continue;
         const { data: existing } = await sb.from('recalls')
-          .select('id').ilike('product_name', title.slice(0, 80)).maybeSingle();
+          .select('id').ilike('product_name', title.slice(0, 80)).eq('organisation_id', _currentOrgId).maybeSingle();
         if (existing) continue;
         const { error } = await sb.from('recalls').insert({
-          product_name: title.slice(0, 120),
-          description: `Mattilsynet tilbakekalling. mattilsynet.no/tilbakekallinger/${slug}`,
-          source: 'mattilsynet',
-          active: true
+          product_name:    title.slice(0, 120),
+          description:     `Mattilsynet tilbakekalling. mattilsynet.no/tilbakekallinger/${slug}`,
+          source:          'mattilsynet',
+          active:          true,
+          organisation_id: _currentOrgId,
         });
         if (!error) added++;
       }
@@ -7656,7 +7642,7 @@ async function loadHistory() {
   grid.innerHTML = `<div class="empty-state"><div class="spinner" style="margin:0 auto;"></div><p style="margin-top:12px;">${t('hist.loadingRecords')}</p></div>`;
   const [scansRes, recallsRes] = await Promise.all([
     sb.from('scans').select('*').order('created_at', { ascending: false }),
-    sb.from('recalls').select('*').eq('active', true)
+    sb.from('recalls').select('*').eq('active', true).eq('organisation_id', _currentOrgId)
   ]);
   if (scansRes.error) { grid.innerHTML = '<div class="empty-state"><h3>Error loading records</h3><p>' + scansRes.error.message + '</p></div>'; return; }
   allRecords = scansRes.data || [];
@@ -7669,7 +7655,7 @@ async function loadHistory() {
 // ── AUTO RECALL CHECK ────────────────────────────────────────
 async function checkActiveRecalls() {
   try {
-    const { data } = await sb.from('recalls').select('*').eq('active', true);
+    const { data } = await sb.from('recalls').select('*').eq('active', true).eq('organisation_id', _currentOrgId);
     if (!data || !data.length) { document.getElementById('auto-recall-banner').style.display = 'none'; return; }
 
     // Check each active recall against recent scans (last 30 days)
@@ -8227,17 +8213,18 @@ async function submitQuickAddRecall() {
   try {
     // Duplicate check
     if (lot) {
-      const { data: existing } = await sb.from('recalls').select('id').ilike('product_name', product).eq('lot_number', lot).eq('active', true).limit(1);
+      const { data: existing } = await sb.from('recalls').select('id').ilike('product_name', product).eq('lot_number', lot).eq('active', true).eq('organisation_id', _currentOrgId).limit(1);
       if (existing?.length) { msgEl.style.color='var(--warn)'; msgEl.textContent='~ This product + lot is already an active recall.'; return; }
     }
 
     const { error } = await sb.from('recalls').insert({
-      product_name:   product,
-      lot_number:     lot     || null,
-      barcode_number: barcode || null,
-      description:    reason,
-      source:         'manual',
-      active:         true
+      product_name:    product,
+      lot_number:      lot     || null,
+      barcode_number:  barcode || null,
+      description:     reason,
+      source:          'manual',
+      active:          true,
+      organisation_id: _currentOrgId,
     });
     if (error) throw error;
 
@@ -8266,7 +8253,7 @@ async function runQuickCheck() {
   if (!q) { el.innerHTML = ''; return; }
 
   try {
-    const { data: recalls } = await sb.from('recalls').select('*').eq('active', true);
+    const { data: recalls } = await sb.from('recalls').select('*').eq('active', true).eq('organisation_id', _currentOrgId);
     if (!recalls || !recalls.length) {
       el.innerHTML = '<span style="color:var(--accent);">✓ No active recalls in system.</span>';
       return;
@@ -8500,7 +8487,7 @@ async function buildShiftSummary() {
     if (error) throw error;
 
     // Fetch active recalls for cross-check
-    const { data: recalls } = await sb.from('recalls').select('product_name, lot_number, batch_number, barcode_number').eq('active', true);
+    const { data: recalls } = await sb.from('recalls').select('product_name, lot_number, batch_number, barcode_number').eq('active', true).eq('organisation_id', _currentOrgId);
     const activeRecalls = recalls || [];
 
     // Compute stats
@@ -8665,7 +8652,7 @@ async function generateAuditReport() {
     const { data, error } = await query;
     if (error) throw error;
 
-    const { data: recalls } = await sb.from('recalls').select('*').eq('active', true);
+    const { data: recalls } = await sb.from('recalls').select('*').eq('active', true).eq('organisation_id', _currentOrgId);
     _auditData    = data || [];
     _auditRecalls = recalls || [];
     _auditParams  = { from, to, store };
