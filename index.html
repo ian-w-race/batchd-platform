@@ -1,23 +1,22 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<script>
-// Domain-based routing — this file is index.html (scanning app)
-// batchdapp.com and app.batchdapp.com both serve the corporate dashboard
-(function() {
-  const host = window.location.hostname;
-  if (host === 'batchdapp.com' || host === 'www.batchdapp.com' || host === 'app.batchdapp.com') {
-    window.location.replace('/dashboard.html');
-    return;
-  }
-  // batchd-app.netlify.app or localhost — scanning app, stay here
-})();
-</script>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
 <meta http-equiv="Pragma" content="no-cache" />
 <meta http-equiv="Expires" content="0" />
+<script>
+  // Domain detection routing — runs before anything else
+  (function() {
+    const h = window.location.hostname;
+    if (h === 'admin.batchdapp.com') {
+      window.location.replace('/admin.html');
+    } else if (h === 'batchdapp.com' || h === 'www.batchdapp.com' || h === 'app.batchdapp.com') {
+      window.location.replace('/dashboard.html');
+    }
+  })();
+</script>
 <title>Batch'd — Product Scan Tracker</title>
 
 <!-- PWA meta tags -->
@@ -2446,6 +2445,7 @@
     </nav>
     <div class="user-info">
       <span class="user-email" id="region-header-badge" onclick="showView('settings')" style="font-size:10px;font-family:'DM Mono',monospace;font-weight:700;padding:2px 8px;border-radius:4px;border:1px solid rgba(52,211,153,0.25);background:rgba(52,211,153,0.08);color:var(--accent);cursor:pointer;letter-spacing:0.06em;" title="Click to change region">🇳🇴 NOR</span>
+      <span id="offline-badge" style="display:none;font-size:10px;font-family:'DM Mono',monospace;font-weight:700;padding:2px 8px;border-radius:4px;border:1px solid rgba(245,166,35,0.4);background:rgba(245,166,35,0.1);color:var(--warn);letter-spacing:0.06em;" title="Offline — scans will sync when connection returns">⚡ Offline</span>
       <span id="user-email"></span>
       <button class="btn-signout" onclick="signOut()" data-i18n="nav.signout">Sign out</button>
     </div>
@@ -3193,6 +3193,9 @@
       FSMA 204 (USA)
       <span id="mgr-fsma-badge" style="display:none;position:absolute;top:5px;right:5px;width:7px;height:7px;background:#3b82f6;border-radius:50%;"></span>
     </button>
+    <button class="mgr-tab" id="mgr-tab-patterns" onclick="switchMgrTab('patterns')">
+      OCR Patterns
+    </button>
   </div>
 
   <!-- Cross-Store Panel -->
@@ -3670,6 +3673,17 @@
         <div id="gs1-log-summary" style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;"></div>
       </div>
       <div id="gs1-log" style="display:flex;flex-direction:column;gap:4px;max-height:300px;overflow-y:auto;"></div>
+    </div>
+  </div><!-- end GS1 panel -->
+
+  <!-- OCR Pattern Library Panel -->
+  <div id="mgr-panel-patterns" style="display:none;">
+    <div style="margin-bottom:16px;">
+      <div style="font-size:16px;font-weight:700;color:var(--text);font-family:'Figtree',sans-serif;">OCR Pattern Library</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:2px;">Packaging intelligence learned from scans — lot code locations and formats per product</div>
+    </div>
+    <div id="mgr-patterns-output">
+      <div style="font-size:13px;color:var(--muted);padding:20px 0;text-align:center;font-family:'DM Mono',monospace;">Loading patterns…</div>
     </div>
   </div>
 
@@ -5609,7 +5623,7 @@ async function loadMultiStoreOverview() {
     const { data, error } = await query;
     if (error) throw error;
 
-    const { data: recalls } = await sb.from('recalls').select('product_name, lot_number, barcode_number').eq('active', true);
+    const { data: recalls } = await sb.from('recalls').select('product_name, lot_number, barcode_number').eq('active', true).eq('organisation_id', _currentOrgId);
     const activeRecalls = recalls || [];
 
     if (!data || !data.length) {
@@ -5903,7 +5917,7 @@ async function checkPrePlacementRecall() {
   try {
     // Check both recall sources: manual/FDA/RASFF recalls + manufacturer-pushed recall_events
     const [recallsRes, eventsRes] = await Promise.all([
-      sb.from('recalls').select('product_name, lot_number, batch_number, barcode_number, description, source').eq('active', true),
+      sb.from('recalls').select('product_name, lot_number, batch_number, barcode_number, description, source').eq('active', true).eq('organisation_id', _currentOrgId),
       _currentOrgId
         ? sb.from('recall_distributions')
             .select('recall_event_id, recall_events!inner(product_name, lot_number, barcode, reason, is_drill)')
@@ -6857,6 +6871,15 @@ async function syncOfflineQueue() {
 
 window.addEventListener('online', syncOfflineQueue);
 
+// ── Offline indicator ─────────────────────────────────────────
+function updateOfflineBadge() {
+  const badge = document.getElementById('offline-badge');
+  if (badge) badge.style.display = navigator.onLine ? 'none' : 'inline';
+}
+window.addEventListener('online',  updateOfflineBadge);
+window.addEventListener('offline', updateOfflineBadge);
+updateOfflineBadge(); // set initial state
+
 // Re-check recalls when the browser tab becomes visible (user returns to app)
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && currentUser) {
@@ -7002,9 +7025,9 @@ async function loadSettings() {
 }
 
 function renderSettingsForRole() {
-  // Show corporate dashboard shortcut for corp_admin users
+  // Show corporate dashboard shortcut for corp_admin and store_manager roles
   const banner = document.getElementById('corp-admin-banner');
-  if (banner && _currentUserRole === 'corp_admin') {
+  if (banner && (_currentUserRole === 'corp_admin' || _currentUserRole === 'store_manager')) {
     banner.style.display = 'flex';
   }
 }
@@ -7088,7 +7111,7 @@ async function checkRecallsOnLogin(silent = false) {
     // 1. recalls table — FDA/RASFF/manual recalls
     // 2. recall_events — manufacturer-pushed recalls distributed to this org
     const [recallsRes, eventsRes] = await Promise.all([
-      sb.from('recalls').select('*').eq('active', true),
+      sb.from('recalls').select('*').eq('active', true).eq('organisation_id', _currentOrgId),
       _currentOrgId
         ? sb.from('recall_distributions')
             .select('recall_event_id, recall_events!inner(id, product_name, lot_number, barcode, severity, reason, is_drill, published_at)')
@@ -7115,6 +7138,7 @@ async function checkRecallsOnLogin(silent = false) {
     const cutoff = new Date(Date.now() - recallLookbackDays * 24 * 60 * 60 * 1000).toISOString();
     const { data: recentScans } = await sb.from('scans')
       .select('id,product_name,lot_number,batch_number,barcode_number,store_name,created_at')
+      .eq('organisation_id', _currentOrgId)
       .gte('created_at', cutoff)
       .order('created_at', { ascending: false });
 
@@ -12515,7 +12539,7 @@ function mgrViewStoreScans(storeName) {
 
 function switchMgrTab(tab) {
   _mgrActiveTab = tab;
-  ['stores','storemgmt','staff','recalls','audit','escalated','gs1','fsma'].forEach(t => {
+  ['stores','storemgmt','staff','recalls','audit','escalated','gs1','fsma','patterns'].forEach(t => {
     document.getElementById('mgr-tab-' + t)?.classList.toggle('active', t === tab);
     const panel = document.getElementById('mgr-panel-' + t);
     if (panel) panel.style.display = t === tab ? 'block' : 'none';
@@ -12525,6 +12549,7 @@ function switchMgrTab(tab) {
   if (tab === 'fsma') { renderFsmaReadiness(); renderRegQuickRef(); }
   if (tab === 'escalated') loadMgrEscalated();
   if (tab === 'storemgmt') loadStoreMgmt();
+  if (tab === 'patterns') loadMgrPatterns();
   if (tab !== 'gs1') gs1StopScanner();
 }
 
@@ -12534,6 +12559,94 @@ function toggleEscalatedTab() {
   } else {
     switchMgrTab('escalated');
   }
+}
+
+// ── OCR PATTERN LIBRARY ───────────────────────────────────────
+async function loadMgrPatterns() {
+  const el = document.getElementById('mgr-patterns-output');
+  if (!el) return;
+  el.innerHTML = `<div style="font-size:13px;color:var(--muted);padding:20px 0;text-align:center;font-family:'DM Mono',monospace;"><div class="spinner" style="margin:0 auto 8px;"></div>Loading patterns…</div>`;
+
+  try {
+    const { data: patterns, error } = await sb.from('code_patterns')
+      .select('*')
+      .eq('organisation_id', _currentOrgId)
+      .order('scan_count', { ascending: false });
+    if (error) throw error;
+    const list = patterns || [];
+
+    const confColor = c => c === 'high' ? 'var(--accent)' : c === 'medium' ? 'var(--warn)' : 'var(--danger)';
+    const confBg    = c => c === 'high' ? 'rgba(52,211,153,0.1)' : c === 'medium' ? 'rgba(245,166,35,0.1)' : 'rgba(255,92,92,0.1)';
+
+    if (list.length === 0) {
+      el.innerHTML = `
+        <div style="text-align:center;padding:40px 20px;color:var(--muted);font-family:'DM Mono',monospace;">
+          <div style="font-size:32px;margin-bottom:12px;opacity:0.4;">📍</div>
+          <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:6px;">No patterns learned yet</div>
+          <div style="font-size:12px;line-height:1.6;">Patterns are built automatically as staff scan products.<br>After a few scans of the same product, its lot code location is remembered.</div>
+        </div>`;
+      return;
+    }
+
+    el.innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;margin-bottom:16px;">
+        <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;">
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:4px;">Products</div>
+          <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:22px;color:var(--accent);">${list.length}</div>
+        </div>
+        <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;">
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:4px;">Total scans</div>
+          <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:22px;color:var(--text);">${list.reduce((s,p)=>s+(p.scan_count||0),0)}</div>
+        </div>
+        <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;">
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:4px;">High confidence</div>
+          <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:22px;color:var(--text);">${list.filter(p=>p.confidence_level==='high').length}</div>
+        </div>
+      </div>
+
+      <div style="margin-bottom:12px;padding:10px 14px;background:rgba(56,189,248,0.05);border:1px solid rgba(56,189,248,0.15);border-radius:8px;font-size:11px;color:var(--muted);line-height:1.6;">
+        📍 Each entry records where the lot code lives on a product's packaging so future OCR reads are faster and more accurate.
+      </div>
+
+      ${list.map(p => `
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:8px;">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
+            <div>
+              <div style="font-size:13px;font-weight:600;color:var(--text);font-family:'Figtree',sans-serif;">${p.product_name||'—'}</div>
+              ${p.barcode_number ? `<div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:2px;">${p.barcode_number}</div>` : ''}
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+              <span style="font-size:10px;padding:2px 8px;border-radius:10px;background:${confBg(p.confidence_level)};color:${confColor(p.confidence_level)};text-transform:capitalize;">${p.confidence_level||'—'}</span>
+              <span style="font-size:11px;color:var(--muted);">${p.scan_count||0} scan${(p.scan_count||0)!==1?'s':''}</span>
+              <button onclick="deleteMgrPattern('${p.id}', this)"
+                style="font-family:'DM Mono',monospace;font-size:10px;padding:3px 8px;border-radius:6px;border:1px solid rgba(255,92,92,0.3);background:rgba(255,92,92,0.07);color:var(--danger);cursor:pointer;">
+                Delete
+              </button>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <div style="background:var(--surface2);border-radius:6px;padding:8px 10px;">
+              <div style="font-size:9px;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:3px;">Lot format</div>
+              <div style="font-size:11px;color:var(--text);font-family:'DM Mono',monospace;">${p.lot_format||'—'}</div>
+            </div>
+            <div style="background:var(--surface2);border-radius:6px;padding:8px 10px;">
+              <div style="font-size:9px;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:3px;">Label location</div>
+              <div style="font-size:11px;color:var(--muted);line-height:1.4;">${p.label_hint ? p.label_hint.replace(/Label text observed:.*?(?=\.|Found|embossed|bottom|top|gable|stamped|$)/s,'').trim().slice(0,100)+(p.label_hint.length>100?'…':'') : '—'}</div>
+            </div>
+          </div>
+          ${p.code_a ? `<div style="margin-top:8px;font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">Example: <span style="color:var(--text);">${p.code_a}</span>${p.code_b?' / '+p.code_b:''}</div>` : ''}
+        </div>`).join('')}`;
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:16px;">Error: ${e.message}</div>`;
+  }
+}
+
+async function deleteMgrPattern(id, btn) {
+  if (!confirm('Delete this learned pattern? The scanning app will re-learn it from future scans.')) return;
+  btn.disabled = true; btn.textContent = '…';
+  const { error } = await sb.from('code_patterns').delete().eq('id', id);
+  if (error) { btn.disabled = false; btn.textContent = 'Delete'; alert('Error: ' + error.message); return; }
+  loadMgrPatterns();
 }
 
 // ── STORE MANAGEMENT ─────────────────────────────────────────
