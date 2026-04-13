@@ -18,7 +18,7 @@
 <meta name="description" content="Retail food recall tracking — scan products, extract lot numbers, get instant recall alerts." />
 
 <!-- Inline PWA manifest (avoids needing a separate file on Netlify) -->
-<link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22Batch%27d%20%E2%80%94%20Recall%20Tracker%22%2C%22short_name%22%3A%22Batch%27d%22%2C%22start_url%22%3A%22%2F%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23080f12%22%2C%22theme_color%22%3A%22%2334d399%22%2C%22orientation%22%3A%22portrait%22%2C%22icons%22%3A%5B%7B%22src%22%3A%22https%3A%2F%2Fbatchd-app.netlify.app%2Ficon-192.png%22%2C%22sizes%22%3A%22192x192%22%2C%22type%22%3A%22image%2Fpng%22%7D%2C%7B%22src%22%3A%22https%3A%2F%2Fbatchd-app.netlify.app%2Ficon-512.png%22%2C%22sizes%22%3A%22512x512%22%2C%22type%22%3A%22image%2Fpng%22%7D%5D%7D" />
+<link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22Batch%27d%20%E2%80%94%20Recall%20Tracker%22%2C%22short_name%22%3A%22Batch%27d%22%2C%22start_url%22%3A%22%2F%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23040c0e%22%2C%22theme_color%22%3A%22%2334d399%22%2C%22orientation%22%3A%22portrait%22%2C%22icons%22%3A%5B%5D%7D" />
 <script src="https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js"></script>
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -12116,6 +12116,49 @@ function initMode() {
   setTimeout(() => setPhase1Mode('label'), 300);
 }
 
+// ── MANAGER ROLE ─────────────────────────────────────────────
+
+async function fetchUserProfile() {
+  if (!currentUser) return;
+  try {
+    const { data, error } = await sb
+      .from('user_profiles')
+      .select('is_manager')
+      .eq('id', currentUser.id)
+      .maybeSingle();
+    console.log('[fetchUserProfile] id:', currentUser.id, 'data:', JSON.stringify(data), 'error:', error?.message);
+    if (error) throw error;
+    if (!data) {
+      // Row missing — auto-create it (is_manager defaults to false; admin sets true via Supabase)
+      console.warn('[fetchUserProfile] No profile row found — attempting upsert');
+      const { error: upsertErr } = await sb.from('user_profiles').upsert({
+        id: currentUser.id,
+        email: currentUser.email,
+        is_manager: false
+      }, { onConflict: 'id' });
+      if (upsertErr) console.warn('[fetchUserProfile] upsert failed:', upsertErr.message);
+      // Re-read after upsert in case the row already existed with is_manager:true
+      const { data: reread } = await sb.from('user_profiles').select('is_manager').eq('id', currentUser.id).maybeSingle();
+      console.log('[fetchUserProfile] re-read after upsert:', JSON.stringify(reread));
+      const isManager = reread?.is_manager === true;
+      currentUser.isManager = isManager;
+      applyManagerUI(isManager);
+      renderSettingsForRole();
+      return;
+    }
+    const isManager = data?.is_manager === true;
+    console.log('[fetchUserProfile] isManager:', isManager);
+    currentUser.isManager = isManager;
+    applyManagerUI(isManager);
+    renderSettingsForRole();
+  } catch(e) {
+    console.warn('[fetchUserProfile] error:', e.message);
+    currentUser.isManager = false;
+    applyManagerUI(false);
+    renderSettingsForRole();
+  }
+}
+
 // ── UTILS ─────────────────────────────────────────────────────
 </script>
 <!-- Mobile bottom nav -->
@@ -12181,49 +12224,6 @@ function setMobileNav(view) {
   if (btn) btn.classList.add('active');
 }
 
-
-// ── MANAGER ROLE ─────────────────────────────────────────────
-
-async function fetchUserProfile() {
-  if (!currentUser) return;
-  try {
-    const { data, error } = await sb
-      .from('user_profiles')
-      .select('is_manager')
-      .eq('id', currentUser.id)
-      .maybeSingle();
-    console.log('[fetchUserProfile] id:', currentUser.id, 'data:', JSON.stringify(data), 'error:', error?.message);
-    if (error) throw error;
-    if (!data) {
-      // Row missing — auto-create it (is_manager defaults to false; admin sets true via Supabase)
-      console.warn('[fetchUserProfile] No profile row found — attempting upsert');
-      const { error: upsertErr } = await sb.from('user_profiles').upsert({
-        id: currentUser.id,
-        email: currentUser.email,
-        is_manager: false
-      }, { onConflict: 'id' });
-      if (upsertErr) console.warn('[fetchUserProfile] upsert failed:', upsertErr.message);
-      // Re-read after upsert in case the row already existed with is_manager:true
-      const { data: reread } = await sb.from('user_profiles').select('is_manager').eq('id', currentUser.id).maybeSingle();
-      console.log('[fetchUserProfile] re-read after upsert:', JSON.stringify(reread));
-      const isManager = reread?.is_manager === true;
-      currentUser.isManager = isManager;
-      applyManagerUI(isManager);
-      renderSettingsForRole();
-      return;
-    }
-    const isManager = data?.is_manager === true;
-    console.log('[fetchUserProfile] isManager:', isManager);
-    currentUser.isManager = isManager;
-    applyManagerUI(isManager);
-    renderSettingsForRole();
-  } catch(e) {
-    console.warn('[fetchUserProfile] error:', e.message);
-    currentUser.isManager = false;
-    applyManagerUI(false);
-    renderSettingsForRole();
-  }
-}
 
 function applyManagerUI(isManager) {
   const desktopBtn = document.getElementById('nav-btn-manager');
