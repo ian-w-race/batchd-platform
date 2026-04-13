@@ -7668,12 +7668,21 @@ async function checkActiveRecalls() {
     const { data } = await sb.from('recalls').select('*').eq('active', true).eq('organisation_id', _currentOrgId);
     if (!data || !data.length) { document.getElementById('auto-recall-banner').style.display = 'none'; return; }
 
+    // Deduplicate by product_name + lot_number
+    const seenKeys = new Set();
+    const uniqueData = data.filter(r => {
+      const key = `${(r.product_name||'').toLowerCase().trim()}|${(r.lot_number||'').toLowerCase().trim()}`;
+      if (seenKeys.has(key)) return false;
+      seenKeys.add(key);
+      return true;
+    });
+
     // Check each active recall against recent scans (last 30 days)
     const cutoff = new Date(Date.now() - recallLookbackDays * 24 * 60 * 60 * 1000);
     const recentRecords = allRecords.filter(r => new Date(r.created_at) > cutoff);
 
     let matchedRecalls = [];
-    for (const recall of data) {
+    for (const recall of uniqueData) {
       let exactCount = 0, possibleCount = 0;
       for (const r of recentRecords) {
         const { level } = recallMatchLevel(r, recall);
