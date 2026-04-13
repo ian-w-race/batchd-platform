@@ -6,19 +6,6 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
 <meta http-equiv="Pragma" content="no-cache" />
 <meta http-equiv="Expires" content="0" />
-<script>
-  // Domain detection routing — runs before anything else
-  (function() {
-    const h = window.location.hostname;
-    if (h === 'admin.batchdapp.com') {
-      window.location.replace('/admin.html');
-    } else if (h === 'manufacturer.batchdapp.com') {
-      window.location.replace('/manufacturer.html');
-    } else if (h === 'corporate.batchdapp.com' || h === 'batchdapp.com' || h === 'www.batchdapp.com' || h === 'app.batchdapp.com') {
-      window.location.replace('/dashboard.html');
-    }
-  })();
-</script>
 <title>Batch'd — Product Scan Tracker</title>
 
 <!-- PWA meta tags -->
@@ -2639,6 +2626,9 @@
           </div>
         </div>
 
+        <!-- GS1 Digital Link / GS1-128 full-capture banner — shown when lot was read directly from barcode -->
+        <div id="gs1-full-capture-banner" style="display:none;margin:10px 16px 0;padding:12px 14px;background:rgba(52,211,153,0.08);border:1px solid rgba(52,211,153,0.3);border-radius:10px;color:var(--accent);"></div>
+
         <div class="flow-phase-body">
 
           <!-- Mode toggle -->
@@ -3027,7 +3017,7 @@
         <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:13px;color:var(--accent);">Corporate Dashboard</div>
         <div style="font-size:11px;color:var(--muted);margin-top:2px;">Access recalls, compliance, stores and staff management</div>
       </div>
-      <a href="https://corporate.batchdapp.com" style="font-family:'DM Mono',monospace;font-size:11px;font-weight:700;padding:8px 14px;border-radius:8px;background:var(--accent);color:#080f12;text-decoration:none;white-space:nowrap;">Open dashboard →</a>
+      <a href="https://app.batchdapp.com" style="font-family:'DM Mono',monospace;font-size:11px;font-weight:700;padding:8px 14px;border-radius:8px;background:var(--accent);color:#080f12;text-decoration:none;white-space:nowrap;">Open dashboard →</a>
     </div>
 
     <!-- Active Recalls -->
@@ -5823,12 +5813,38 @@ function goToPhase(n) {
   } else if (n === 2) {
     // Show location hint from prefetched pattern or brand knowledge
     const productName = document.getElementById('field-product-name').value.trim();
-    const barcode = document.getElementById('field-barcode').value.trim();
+    const barcode = document.getElementById('field-store').value ? document.getElementById('field-barcode').value.trim() : document.getElementById('field-barcode').value.trim();
     (async () => {
       const ctx = _prefetchedPattern ||
         await lookupLearnedPattern(productName, barcode || null, null, null);
       showLocationHint(ctx, productName);
     })();
+
+    // ── GS1 Digital Link banner ────────────────────────────
+    // If Phase 1 captured a full TLC from barcode, show confirmation banner
+    // instead of prompting the camera again
+    const gs1Banner = document.getElementById('gs1-full-capture-banner');
+    if (_gs1FullCapture && _gs1FullCapture.lot) {
+      if (gs1Banner) {
+        const expiryPart = _gs1FullCapture.expiry ? ` · ${currentLang==='no'?'Best før':'Exp'}: ${_gs1FullCapture.expiry}` : '';
+        const typePart = _gs1FullCapture.isDigitalLink ? 'GS1 Digital Link' : 'GS1-128';
+        gs1Banner.innerHTML = `
+          <div style="display:flex;align-items:flex-start;gap:10px;">
+            <div style="font-size:18px;line-height:1;flex-shrink:0;">✓</div>
+            <div>
+              <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:2px;">${typePart} — ${currentLang==='no'?'Partinummer kodet i strekkoden':'Lot code captured from barcode'}</div>
+              <div style="font-size:11px;color:var(--text);font-family:'DM Mono',monospace;margin-bottom:1px;">${currentLang==='no'?'Parti':'Lot'}: <strong>${esc(_gs1FullCapture.lot)}</strong>${expiryPart}</div>
+              <div style="font-size:10px;color:var(--muted);margin-top:3px;">${currentLang==='no'?'Bekreft eller rediger feltene nedenfor':'Confirm or edit the fields below — no photo needed'}</div>
+            </div>
+          </div>`;
+        gs1Banner.style.display = 'block';
+      }
+      // Don't start camera — lot is already filled, camera not needed
+      return;
+    } else {
+      if (gs1Banner) gs1Banner.style.display = 'none';
+    }
+
     setTimeout(() => {
       if (currentMode === 'barcode') startBarcodeScanner();
       else startOcrCamera();
@@ -6129,6 +6145,7 @@ let phase1Mode = 'label'; // label is the reliable default; barcode is the fast-
 let p1ZXingControls = null;
 let p1DetectedBarcode = null;
 let _prefetchedPattern = null;
+let _gs1FullCapture = null; // set when a GS1 DL or GS1-128 with lot is scanned in Phase 1
 
 function setPhase1Mode(mode) {
   phase1Mode = mode;
@@ -6186,6 +6203,8 @@ async function startP1BarcodeScanner() {
     ZXing.BarcodeFormat.CODE_39,
     ZXing.BarcodeFormat.ITF,
     ZXing.BarcodeFormat.RSS_14,
+    ZXing.BarcodeFormat.QR_CODE,      // GS1 Digital Link (QR)
+    ZXing.BarcodeFormat.DATA_MATRIX,  // GS1 Digital Link (DataMatrix)
   ]);
   hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
   hints.set(ZXing.DecodeHintType.CHARACTER_SET, 'UTF-8');
@@ -6260,23 +6279,89 @@ async function handleP1BarcodeDetected(barcode) {
   document.getElementById('p1-analyzing-text').textContent = currentLang==='no'?'Slår opp produkt…':'Looking up product…';
   document.getElementById('field-barcode').value = barcode;
 
-  const productName = await lookupProductName(barcode);
+  // ── GS1 Digital Link or GS1-128 with lot encoded ──────────
+  const gs1 = parseGS1(barcode);
+  const dl  = gs1._digitalLink || null; // present only for URL-format Digital Link
+
+  // Determine the GTIN to look up: prefer AI(01) from DL, else the barcode itself
+  const lookupCode = (dl?.gtin) || (gs1.all['01']) || barcode;
+  const productName = await lookupProductName(lookupCode);
   document.getElementById('p1-analyzing').style.display = 'none';
 
   if (productName) {
     document.getElementById('p1-product-found').innerHTML =
       `<strong style="color:var(--accent);">✓</strong> <strong>${esc(productName)}</strong>`;
     setProductNameFilled(productName);
-    _prefetchedPattern = await lookupLearnedPattern(productName, barcode, null, null);
-    // Feature 3: prompt employee to check for secondary barcode with lot code
-    showSecondBarcodePrompt();
-  } else {
-    // Product not in any database — auto-switch to Photo Label so the AI
-    // can identify it from the label, barcode is already captured
+    _prefetchedPattern = await lookupLearnedPattern(productName, lookupCode, null, null);
+  } else if (!gs1.lot) {
+    // No product found and no lot in the code — standard fallback
     showToast('Barcode not in database — switching to label photo for identification.', 'warn', 4000);
     document.getElementById('p1-product-notfound').style.display = 'none';
     document.getElementById('field-product-name').placeholder = 'AI will identify from label…';
-    // Short delay so the toast is readable before camera switches
+    setTimeout(() => setPhase1Mode('label'), 1200);
+    return;
+  }
+
+  // ── Full TLC capture: lot (and optionally expiry) from the barcode ──
+  if (gs1.lot) {
+    // Pre-fill lot and expiry into Phase 2 fields so they're ready
+    document.getElementById('field-lot').value = gs1.lot;
+    document.getElementById('field-lot').classList.add('auto-filled');
+
+    const expiryRaw = dl?.expiry || gs1.all['17'] || null;
+    if (expiryRaw) {
+      const ef = document.getElementById('field-expiry');
+      if (ef) {
+        ef.value = formatGS1Expiry(expiryRaw);
+        ef.classList.add('auto-filled');
+      }
+    }
+
+    // Show a "full TLC" banner in Phase 2 so staff know it's pre-filled
+    _gs1FullCapture = {
+      lot: gs1.lot,
+      expiry: expiryRaw ? formatGS1Expiry(expiryRaw) : null,
+      gtin: dl?.gtin || gs1.all['01'] || null,
+      isDigitalLink: !!dl,
+    };
+
+    // If product name is known, skip Phase 2 entirely — jump straight to Phase 3
+    if (productName) {
+      const label = dl
+        ? (currentLang === 'no' ? '✓ GS1 Digital Link — fullstendig TLC lest fra QR-kode' : '✓ GS1 Digital Link — full TLC captured from 2D barcode')
+        : (currentLang === 'no' ? '✓ Strekkodenummer inneholder parti-/batchkode' : '✓ Barcode contains lot/batch — skipping to review');
+      showToast(label, 'success', 4000);
+      // Brief pause so the toast is readable, then go straight to Phase 3
+      setTimeout(() => {
+        dismissSecondBarcode();
+        stopP1BarcodeScanner();
+        // Transition through Phase 2 silently so fields are initialised
+        currentPhase = 1; // reset so goToPhase(2) runs its logic
+        goToPhase(2);
+        // Then immediately advance to Phase 3 — the lot field is already filled
+        setTimeout(() => goToPhase(3), 80);
+      }, 600);
+      return;
+    }
+
+    // Product not identified but lot is known — go to Phase 2, show banner
+    showToast(
+      currentLang === 'no' ? '✓ Partinummer lest — bekreft produkt' : '✓ Lot code captured — confirm product name',
+      'success', 3500
+    );
+    showSecondBarcodePrompt();
+    return;
+  }
+
+  // ── Standard 1D barcode (no lot encoded) ──────────────────
+  if (productName) {
+    _prefetchedPattern = _prefetchedPattern || await lookupLearnedPattern(productName, barcode, null, null);
+    // Feature 3: prompt employee to check for secondary barcode with lot code
+    showSecondBarcodePrompt();
+  } else {
+    showToast('Barcode not in database — switching to label photo for identification.', 'warn', 4000);
+    document.getElementById('p1-product-notfound').style.display = 'none';
+    document.getElementById('field-product-name').placeholder = 'AI will identify from label…';
     setTimeout(() => setPhase1Mode('label'), 1200);
   }
 }
@@ -6434,6 +6519,8 @@ function startZXing(vid) {
     ZXing.BarcodeFormat.CODE_39,
     ZXing.BarcodeFormat.ITF,
     ZXing.BarcodeFormat.RSS_14,
+    ZXing.BarcodeFormat.QR_CODE,      // GS1 Digital Link (QR)
+    ZXing.BarcodeFormat.DATA_MATRIX,  // GS1 Digital Link (DataMatrix)
   ];
   hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, formats);
   hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
@@ -6618,6 +6705,9 @@ function retakeBarcode() {
   hideRegionConfirmation();
   hideLotFormatHint();
   _pendingOcrResult = null;
+  _gs1FullCapture = null;
+  const gs1Banner = document.getElementById('gs1-full-capture-banner');
+  if (gs1Banner) gs1Banner.style.display = 'none';
   barcodeBlob = null;
   detectedBarcode = null;
   document.getElementById('barcode-captured').style.display = 'none';
@@ -6916,6 +7006,7 @@ function resetForm() {
   stopP1BarcodeScanner();
   p1DetectedBarcode = null;
   _prefetchedPattern = null;
+  _gs1FullCapture = null;
   document.getElementById('p1-barcode-result').style.display = 'none';
   document.getElementById('p1-product-found').textContent = '';
   document.getElementById('p1-product-notfound').style.display = 'none';
@@ -9286,6 +9377,11 @@ function setMode(mode) {
     ? 'Point camera at the barcode — will detect in real time'
     : 'Photograph the printed lot/batch text — AI will read it';
 
+  // If user manually switches mode, clear GS1 full-capture state — they want to re-scan
+  _gs1FullCapture = null;
+  const gs1Banner = document.getElementById('gs1-full-capture-banner');
+  if (gs1Banner) gs1Banner.style.display = 'none';
+
   // Reset capture state and restart camera for new mode
   barcodeBlob = null;
   detectedBarcode = null;
@@ -10568,14 +10664,13 @@ function getPackagingTip(productName) {
 }
 
 // ── AI CODE EXTRACTOR ────────────────────────────────────────
-// Multi-pass extraction with:
-// - Full image pass 1 (standard)
-// - Full image pass 2 (verification/adversarial)
-// - Top-third crop pass (flap/gable codes)
-// - Bottom-third crop pass (seam/base codes)
-// - Inverted grayscale pass if all others failed (laser etch)
+// 2-call pipeline (optimised for claude-sonnet-4):
+// - Pass 0: haiku localise_lot  → finds crop region (fast, cheap)
+// - Pass 1: sonnet extract_codes → localised crop if found, else full image
+// - Pass 2: sonnet adversarial   → ONLY if Pass 1 returns lot=null (rare)
+// - Inverted grayscale fallback  → ONLY if still nothing (laser-etched codes)
 // - Post-extraction validation against false-positive patterns
-// - EU "date as lot" detection (no explicit lot = use best-before date)
+// - EU/US "date as lot" detection (no explicit lot = use best-before/pack date)
 
 async function extractCodesFromImage(blob, learnedContext) {
   try {
@@ -10589,51 +10684,35 @@ async function extractCodesFromImage(blob, learnedContext) {
       if (subEl) subEl.innerHTML = `${tip.icon} ${tip.tip}`;
     }
 
-    // ── PASS 0: LOT CODE LOCALISATION ───────────────────────
-    // Ask Claude to find WHERE on the image the lot code is before running full OCR.
-    // Returns a crop fraction [yStart, yEnd] that we use to generate a tight crop.
-    // Falls back gracefully if localisation fails — pipeline continues with fixed crops.
+    // ── PASS 0: LOT CODE LOCALISATION (haiku) ───────────────
+    // Finds WHERE on the image the lot code is. Fast and cheap.
+    // Falls back gracefully — pipeline continues with full image if it fails.
     let localisedCrop = null;
     try {
-      const locBlob = await preprocessImage(blob, 800); // small, fast
+      const locBlob = await preprocessImage(blob, 800); // small for haiku
       const locB64  = await blobToBase64(locBlob);
       const locData = await callOcrFunction('localise_lot', locB64, { isUSRegion });
       const locText = (locData.content?.[0]?.text || '').replace(/```json|```/g,'').trim();
       const loc = JSON.parse(locText);
       if (loc.found && typeof loc.y_start === 'number' && typeof loc.y_end === 'number') {
-        // Add 10% padding, clamp to [0,1]
         const pad = 0.08;
         const yS = Math.max(0, loc.y_start - pad);
         const yE = Math.min(1, loc.y_end   + pad);
-        // Only use if it's a meaningful region (not the whole image)
-        if (yE - yS < 0.85) {
+        if (yE - yS < 0.85) { // only use if it's a meaningful sub-region
           localisedCrop = { yStart: yS, yEnd: yE };
-            }
+        }
       }
     } catch(e) {
-      console.warn('[Localise] pass failed, continuing without crop:', e.message);
+      console.warn('[Pass 0] Localise failed, using full image:', e.message);
     }
 
-    // ── PREPARE IMAGES IN PARALLEL ──────────────────────────
-    // If localisation found a region, use a tight crop of that area as an extra pass.
-    // Otherwise fall back to the standard top/bottom fixed crops.
-    const locCropBlob = localisedCrop
-      ? cropBlob(blob, localisedCrop.yStart, localisedCrop.yEnd, 2000)
-      : null;
-
-    const [fullProcessed, topCrop, bottomCrop, locProcessed] = await Promise.all([
-      preprocessImage(blob, 2800),
-      localisedCrop ? null : cropBlob(blob, 0, 0.40, 1800),    // skip if localised
-      localisedCrop ? null : cropBlob(blob, 0.60, 1.0, 1800),  // skip if localised
-      locCropBlob || Promise.resolve(null),
-    ]);
-
-    const [b64Full, b64Top, b64Bottom, b64Loc] = await Promise.all([
-      blobToBase64(fullProcessed),
-      topCrop    ? blobToBase64(topCrop)    : Promise.resolve(null),
-      bottomCrop ? blobToBase64(bottomCrop) : Promise.resolve(null),
-      locProcessed ? blobToBase64(locProcessed) : Promise.resolve(null),
-    ]);
+    // ── PREPARE PRIMARY IMAGE ────────────────────────────────
+    // If localised: use a tight crop at high resolution — focused and precise.
+    // If not localised: use the full image at high resolution.
+    const primaryBlob = localisedCrop
+      ? await cropBlob(blob, localisedCrop.yStart, localisedCrop.yEnd, 2400)
+      : await preprocessImage(blob, 2800);
+    const b64Primary = await blobToBase64(primaryBlob);
 
     // Build context hint from learned patterns
     let contextHint = '';
@@ -10756,67 +10835,43 @@ STRICTLY IGNORE:
 
 OCR CONFUSION PAIRS: 0↔O, 1↔I↔l↔7, 8↔B, 5↔S, 2↔Z, 6↔G, 9↔q`;
 
-    const jsonSchema = `\nRespond ONLY with valid JSON, no markdown:
-{"lot": "exact code or null", "batch": "exact code or null", "expiry": "best-before or expiry date as printed or null", "lot_confidence": "high|medium|low", "batch_confidence": "high|medium|low|na", "lot_is_date": false, "location_hint": "where on pack", "raw": "all visible text (max 200 chars)"}`;
+    const jsonSchema = `\nRespond ONLY with valid JSON, no markdown:\n{"lot": "exact code or null", "batch": "exact code or null", "expiry": "best-before or expiry date as printed or null", "lot_confidence": "high|medium|low", "batch_confidence": "high|medium|low|na", "lot_is_date": false, "location_hint": "where on pack", "raw": "all visible text (max 200 chars)"}`;
 
-    // Compact crop prompts — region-aware, no need to repeat full coreInstructions
-    const cropPromptTop = isUSRegion
-      ? `US food packaging — TOP portion only. Lot/TLC codes on cartons are often on the SHORT END FLAP or TOP PANEL near "PACK DATE" / "LOT" / "BEST BY". GS1-128 barcodes: look for AI(10). Extract any lot/TLC code you see.${contextHint}${jsonSchema}`
-      : `Norwegian/EU food packaging — TOP portion only. Lot codes on cartons and dairy products are often stamped on the GABLE FLAP or TOP EDGE near "Holdbar til" / "Best før" / "OFTE GOD ETTER". Tine dairy: code right of "GOD" = lot. Extract any production/lot code you see.${contextHint}${jsonSchema}`;
+    // ── PASS 1: PRIMARY EXTRACTION (sonnet) ──────────────────
+    // Single focused pass on the best available image.
+    // Localised crop when haiku found the region; full image otherwise.
+    const cropNote = localisedCrop
+      ? (isUSRegion
+          ? `This is a TIGHT CROP of US food packaging, focused on the region most likely to contain the Traceability Lot Code (TLC). Extract the lot/batch/TLC code with high precision.`
+          : `This is a TIGHT CROP of Norwegian/EU food packaging, focused on the region most likely to contain the lot or batch number. Extract the lot/batch code with high precision.`)
+      : '';
+    const pass1Prompt = cropNote
+      ? `${cropNote}${contextHint}\n\n${coreInstructions}${jsonSchema}`
+      : `${coreInstructions}${jsonSchema}`;
 
-    const cropPromptBottom = isUSRegion
-      ? `US food packaging — BOTTOM portion only. Lot/TLC codes on cans, bottles and bags are often ink-jetted on the BOTTOM BASE, BOTTOM RIM, or BACK PANEL heat seal. Julian dates (YYYYDDD) are common. Extract any lot/TLC code you see.${contextHint}${jsonSchema}`
-      : `Norwegian/EU food packaging — BOTTOM portion only. Lot codes on bottles, bags, and pouches are often ink-jetted at the BASE SEAM or BOTTOM EDGE. Tubes: check crimped end. Extract any production/lot code you see.${contextHint}${jsonSchema}`;
+    const pass1 = await callOcrApi(b64Primary, pass1Prompt);
+    console.log(`[Pass 1] ${localisedCrop ? 'localised crop' : 'full image'}:`, pass1);
 
-    const cropPromptLoc = isUSRegion
-      ? `This is a TIGHT CROP of US food packaging, focused on the region most likely to contain a Traceability Lot Code (TLC). Extract the lot/batch/TLC code with high precision. Common US formats: Julian YYYYDDD, 6-digit+letter, GS1 AI(10), compound alphanumeric.${contextHint}${jsonSchema}`
-      : `This is a TIGHT CROP of Norwegian/EU food packaging, focused on the region most likely to contain a lot or batch number. Extract the lot/batch code with high precision.${contextHint}${jsonSchema}`;
+    // ── PASS 2: ADVERSARIAL (sonnet, conditional) ────────────
+    // Only runs when Pass 1 found nothing at all.
+    // Avoids wasting a call when Pass 1 has any result, even low confidence.
+    let pass2 = { lot: null, batch: null, lot_confidence: 'low', lot_is_date: false, raw: '' };
 
-    // ── PASS 1, 3, 4 IN PARALLEL ────────────────────────────
-    // Pass 1 (full image) + either the localised crop OR top+bottom fixed crops
-    const parallelPasses = [
-      callOcrApi(b64Full, coreInstructions + jsonSchema),
-      b64Loc    ? callOcrApi(b64Loc,    cropPromptLoc)    : Promise.resolve({ lot: null, batch: null, lot_confidence: 'low', raw: '' }),
-      b64Top    ? callOcrApi(b64Top,    cropPromptTop)    : Promise.resolve({ lot: null, batch: null, lot_confidence: 'low', raw: '' }),
-      b64Bottom ? callOcrApi(b64Bottom, cropPromptBottom) : Promise.resolve({ lot: null, batch: null, lot_confidence: 'low', raw: '' }),
-    ];
-    const [pass1, passLoc, pass3, pass4] = await Promise.all(parallelPasses);
-
-    if (localisedCrop) console.log('Pass 0 (localised crop):', passLoc);
-    console.log('Pass 1 (full):', pass1);
-    if (!localisedCrop) { console.log('Pass 3 (top):', pass3); console.log('Pass 4 (bottom):', pass4); }
-
-    // ── SMART EARLY EXIT ─────────────────────────────────────
-    // If pass1 already has high confidence and a valid lot, skip pass2 entirely
-    const pass1Valid = pass1.lot && validateLotCode(pass1.lot).valid;
-    const pass1High  = pass1Valid && pass1.lot_confidence === 'high';
-
-    // If the localised crop agrees with pass1, that's very high confidence
-    const locAgrees = pass1Valid && passLoc.lot && codesAreSimilar(pass1.lot, passLoc.lot);
-
-    // Also check if fixed crops agree with pass1
-    const cropsAgree = pass1Valid && (
-      locAgrees ||
-      (pass3.lot && codesAreSimilar(pass1.lot, pass3.lot)) ||
-      (pass4.lot && codesAreSimilar(pass1.lot, pass4.lot))
-    );
-
-    let pass2 = { lot: null, batch: null, lot_confidence: 'low', raw: '' };
-
-    if (!pass1High && !cropsAgree) {
-      // Only run adversarial pass if pass1 wasn't confident or crops didn't confirm
+    if (!pass1.lot) {
+      // Need the full image for adversarial — re-process if we only have a crop
+      const b64Full = localisedCrop ? await blobToBase64(await preprocessImage(blob, 2800)) : b64Primary;
       pass2 = await callOcrApi(b64Full,
         isUSRegion
-          ? `Re-examine this US food packaging independently. A prior read ${pass1.lot ? `returned lot/TLC "${pass1.lot}"` : 'found no lot code'}. Your job: verify or find what was missed.\n\nFocus on:\n- Faint inkjet dot-matrix codes near the use-by or best-by date\n- Codes on seams, flaps, or base edges\n- Any "LOT", "L#", "BATCH", "PACK DATE" followed by alphanumerics\n- Julian dates: YYYYDDD or YYDDD (7 or 5 digits)\n- GS1-128 AI(10) in a barcode string\n${contextHint}${jsonSchema}`
-          : `Re-examine this Norwegian/EU food packaging independently. A prior read ${pass1.lot ? `returned lot "${pass1.lot}"` : 'found no lot code'}. Your job: verify or find what was missed.\n\nFocus on:\n- Faint inkjet dot-matrix codes near the expiry date\n- Codes on seams, flaps, or base edges\n- Any "L" or "Parti" followed by alphanumerics\n- TINE: code right of "GOD ETTER"\n- Fish/meat trays: code near "Siste forbruksdag"\n${contextHint}${jsonSchema}`);
-    } else {
+          ? `Re-examine this US food packaging independently. A prior read found no lot code. Your job: find what was missed.\n\nFocus on:\n- Faint inkjet dot-matrix codes near the use-by or best-by date\n- Codes on seams, flaps, or base edges\n- Any "LOT", "L#", "BATCH", "PACK DATE" followed by alphanumerics\n- Julian dates: YYYYDDD or YYDDD (7 or 5 digits)\n- GS1-128 AI(10) in a barcode string\n${contextHint}${jsonSchema}`
+          : `Re-examine this Norwegian/EU food packaging independently. A prior read found no lot code. Your job: find what was missed.\n\nFocus on:\n- Faint inkjet dot-matrix codes near the expiry date\n- Codes on seams, flaps, or base edges\n- Any "L" or "Parti" followed by alphanumerics\n- TINE: code right of "GOD ETTER"\n- Fish/meat trays: code near "Siste forbruksdag"\n${contextHint}${jsonSchema}`);
+      console.log('[Pass 2] adversarial:', pass2);
     }
 
-    // ── COLLECT AND RECONCILE ────────────────────────────────
-    const allLots    = [pass1.lot, passLoc.lot, pass2.lot, pass3.lot, pass4.lot].filter(Boolean);
-    const allBatches = [pass1.batch, passLoc.batch, pass2.batch, pass3.batch, pass4.batch].filter(Boolean);
+    // ── RECONCILE ────────────────────────────────────────────
+    const allLots    = [pass1.lot, pass2.lot].filter(Boolean);
+    const allBatches = [pass1.batch, pass2.batch].filter(Boolean);
 
-    const validLots = allLots.filter(c => validateLotCode(c).valid);
+    const validLots    = allLots.filter(c => validateLotCode(c).valid);
     const validBatches = allBatches.filter(c => validateLotCode(c).valid);
 
     console.log('Valid lot candidates:', validLots);
@@ -10824,69 +10879,59 @@ OCR CONFUSION PAIRS: 0↔O, 1↔I↔l↔7, 8↔B, 5↔S, 2↔Z, 6↔G, 9↔q`;
     let finalLot = null, finalBatch = null, finalConfidence = 'low', reconcileNote = '';
 
     if (validLots.length === 0 && allLots.length > 0) {
+      // Something was found but didn't pass validation — surface it anyway at low confidence
       finalLot = pass1.lot || pass2.lot;
       finalConfidence = 'low';
       reconcileNote = `⚠ Detected "${finalLot}" but it may not be a lot code — please verify`;
     } else if (validLots.length === 1) {
       finalLot = validLots[0];
-      finalConfidence = 'medium';
-      reconcileNote = `Found by one pass`;
+      // Single pass found it — trust sonnet-4's confidence rating
+      finalConfidence = pass1.lot === finalLot ? (pass1.lot_confidence || 'medium') : 'medium';
+      reconcileNote = `Found by ${pass1.lot ? 'primary' : 'adversarial'} pass`;
     } else if (validLots.length >= 2) {
       const upper = validLots.map(c => c.toUpperCase());
-      const allSame = upper.every(c => c === upper[0]);
-      if (allSame) {
+      if (upper[0] === upper[1]) {
         finalLot = validLots[0];
         finalConfidence = 'high';
-        reconcileNote = `${validLots.length} passes agreed on "${finalLot}"`;
+        reconcileNote = `Both passes agreed on "${finalLot}"`;
+      } else if (codesAreSimilar(validLots[0], validLots[1])) {
+        finalLot = validLots[0]; // primary wins on tie-break
+        finalConfidence = 'medium';
+        reconcileNote = `Minor OCR variation — passes read ${validLots.join(' / ')} — using "${finalLot}"`;
       } else {
-        const freq = {};
-        for (const c of upper) freq[c] = (freq[c] || 0) + 1;
-        const majority = Object.entries(freq).sort((a,b) => b[1]-a[1])[0];
-        const originalCase = validLots.find(c => c.toUpperCase() === majority[0]);
-        finalLot = originalCase;
-        if (majority[1] >= 2) {
-          finalConfidence = 'high';
-          reconcileNote = `Majority (${majority[1]}/${validLots.length} passes) agreed on "${finalLot}"`;
-        } else {
-          const similar = validLots.filter(c => codesAreSimilar(c, validLots[0]));
-          if (similar.length === validLots.length) {
-            finalConfidence = 'medium';
-            reconcileNote = `Minor OCR variation — passes read ${validLots.join(' / ')} — using "${finalLot}"`;
-          } else {
-            finalConfidence = 'low';
-            reconcileNote = `⚠ Passes disagreed: ${validLots.slice(0,3).join(' vs ')} — please verify`;
-          }
-        }
+        finalLot = validLots[0]; // primary pass wins
+        finalConfidence = 'low';
+        reconcileNote = `⚠ Passes disagreed: ${validLots.join(' vs ')} — please verify`;
       }
     }
 
-    // EU date-as-lot fallback
+    // EU/US date-as-lot fallback
     if (!finalLot) {
-      const dateCandidate = [pass1, pass2, pass3, pass4].find(p => p.lot_is_date && p.lot);
+      const dateCandidate = [pass1, pass2].find(p => p.lot_is_date && p.lot);
       if (dateCandidate) {
         finalLot = dateCandidate.lot;
         finalConfidence = 'medium';
-        reconcileNote = `No explicit lot code found — using best-before date as traceability identifier (EU Directive 89/396)`;
+        reconcileNote = isUSRegion
+          ? `No explicit TLC found — using pack/production date as traceability identifier (FSMA 204)`
+          : `No explicit lot code found — using best-before date as traceability identifier (EU Directive 89/396)`;
       }
     }
 
     // Batch reconciliation
     const validBatchList = validBatches.filter(c => c !== finalLot);
     if (validBatchList.length > 0) {
-      const bFreq = {};
-      for (const c of validBatchList.map(x => x.toUpperCase())) bFreq[c] = (bFreq[c] || 0) + 1;
-      const topBatch = Object.entries(bFreq).sort((a,b) => b[1]-a[1])[0];
-      finalBatch = validBatchList.find(c => c.toUpperCase() === topBatch[0]);
+      finalBatch = validBatchList[0]; // take first valid batch
     }
 
-    // Inverted grayscale fallback — only if still nothing (laser-etched codes)
+    // ── INVERTED GRAYSCALE FALLBACK ──────────────────────────
+    // Only for laser-etched / very low contrast codes. Rare but important.
     let lassoNote = '';
     if (!finalLot) {
       const inverted = await invertGrayscaleBlob(blob, 2000);
       const b64Inv = await blobToBase64(inverted);
       const passInv = await callOcrApi(b64Inv,
         `This image has been converted to inverted grayscale to reveal laser-etched or very low-contrast codes. Look for any alphanumeric sequence that could be a production/lot code on ${isUSRegion ? 'US' : 'Norwegian/EU'} food packaging.${contextHint}${jsonSchema}`);
-      console.log('Inverted pass:', passInv);
+      console.log('[Inverted]:', passInv);
       if (passInv.lot && validateLotCode(passInv.lot).valid) {
         finalLot = passInv.lot;
         finalBatch = finalBatch || passInv.batch || null;
@@ -10895,13 +10940,12 @@ OCR CONFUSION PAIRS: 0↔O, 1↔I↔l↔7, 8↔B, 5↔S, 2↔Z, 6↔G, 9↔q`;
       }
     }
 
-    const rawText = [pass1.raw, passLoc.raw, pass2.raw].filter(Boolean).join(' | ').slice(0, 400);
-    const locationHint = [pass1.location_hint, passLoc.location_hint, pass2.location_hint, pass3.location_hint, pass4.location_hint]
+    const rawText = [pass1.raw, pass2.raw].filter(Boolean).join(' | ').slice(0, 400);
+    const locationHint = [pass1.location_hint, pass2.location_hint]
       .find(h => h && h.length > 3) || (localisedCrop ? `y=${localisedCrop.yStart.toFixed(2)}–${localisedCrop.yEnd.toFixed(2)} (auto-localised)` : '');
 
-    // Collect expiry date — take first non-null expiry from any pass
-    const finalExpiry = [pass1.expiry, passLoc.expiry, pass2.expiry, pass3.expiry, pass4.expiry]
-      .find(e => e && e.length > 3) || null;
+    // Collect expiry date — take first non-null expiry from either pass
+    const finalExpiry = [pass1.expiry, pass2.expiry].find(e => e && e.length > 3) || null;
 
     return {
       code_a: finalLot,
@@ -10962,12 +11006,78 @@ function codesAreSimilar(a, b) {
   return diffs <= 1;
 }
 
+// ── GS1 DIGITAL LINK PARSER ───────────────────────────────────
+// Parses GS1 Digital Link URLs encoded in QR / DataMatrix codes.
+// Format: https://[domain]/[path]/01/{gtin}/10/{lot}/17/{expiry}
+// Brands may host on their own domain — we match by path structure only.
+function parseGS1DigitalLink(raw) {
+  const result = { gtin: null, lot: null, expiry: null, serial: null, all: {}, isDigitalLink: false };
+  if (!raw) return result;
+
+  let url;
+  try { url = new URL(raw); } catch(e) { return result; }
+
+  // Walk path segments looking for AI code / value pairs
+  // e.g. /somebase/01/09506000134352/10/ABC123/17/260101
+  const parts = url.pathname.split('/').filter(Boolean);
+  const AI_KEYS = { '00':'sscc','01':'gtin','02':'content','10':'lot','17':'expiry','21':'serial','22':'cpv' };
+
+  for (let i = 0; i < parts.length - 1; i++) {
+    const ai = parts[i];
+    if (AI_KEYS[ai]) {
+      const val = decodeURIComponent(parts[i + 1]);
+      result.all[ai] = val;
+      if (ai === '01') result.gtin = val.replace(/^0+(?=\d{13}$)/, ''); // normalise to 13-digit EAN if possible
+      if (ai === '10') result.lot = val;
+      if (ai === '17') result.expiry = val; // YYMMDD
+      if (ai === '21') result.serial = val;
+      result.isDigitalLink = true;
+      i++; // consume the value segment
+    }
+  }
+
+  // Also check query string for compressed/redirected forms: ?lot=X&exp=Y
+  const p = url.searchParams;
+  if (p.get('10') && !result.lot)     { result.lot = p.get('10');    result.all['10'] = result.lot;    result.isDigitalLink = true; }
+  if (p.get('17') && !result.expiry)  { result.expiry = p.get('17'); result.all['17'] = result.expiry; result.isDigitalLink = true; }
+  if (p.get('01') && !result.gtin)    { result.gtin = p.get('01');   result.all['01'] = result.gtin;   result.isDigitalLink = true; }
+
+  return result;
+}
+
+// Format a GS1 DL expiry date (YYMMDD) into a human-readable region date string
+function formatGS1Expiry(yymmdd) {
+  if (!yymmdd || yymmdd.length < 6) return yymmdd;
+  const yy = yymmdd.slice(0, 2);
+  const mm = yymmdd.slice(2, 4);
+  const dd = yymmdd.slice(4, 6);
+  const year = parseInt(yy) > 50 ? '19' + yy : '20' + yy;
+  // Use region date format
+  const isUS = (typeof currentRegion !== 'undefined' && currentRegion === 'us') ||
+               (typeof userSettings !== 'undefined' && userSettings?.region === 'us');
+  if (isUS) return `${mm}/${dd}/${year}`;
+  return `${dd}.${mm}.${year}`;
+}
+
 // ── GS1 BARCODE PARSER ────────────────────────────────────────
 // Parses GS1-128 / GS1 DataBar Application Identifiers from a raw barcode string.
 // Handles both human-readable "(AI)value" format and raw concatenated format.
+// Also handles GS1 Digital Link URLs via parseGS1DigitalLink().
 function parseGS1(raw) {
   const result = { lot: null, batch: null, all: {} };
   if (!raw) return result;
+
+  // ── GS1 Digital Link URL — check first ────────────────────
+  if (raw.startsWith('http://') || raw.startsWith('https://')) {
+    const dl = parseGS1DigitalLink(raw);
+    if (dl.isDigitalLink) {
+      result.lot   = dl.lot;
+      result.batch = dl.lot;
+      result.all   = dl.all;
+      result._digitalLink = dl; // attach full DL result for upstream callers
+      return result;
+    }
+  }
 
   // GS1 AI definitions: AI -> fixed length of value (null = variable, terminated by FNC1/next AI)
   const AI_LENGTHS = {
@@ -13607,26 +13717,39 @@ function gs1RenderResult(raw, parsed, hasLot) {
 
   const ais = Object.entries(parsed.all);
   const isPlainEAN = ais.length === 0 || (ais.length === 1 && ais[0][0] === '01');
+  const isDL = !!(parsed._digitalLink?.isDigitalLink);
 
   const borderColor = hasLot ? 'rgba(52,211,153,0.4)' : 'rgba(245,166,35,0.35)';
   const bgColor     = hasLot ? 'rgba(52,211,153,0.06)' : 'rgba(245,166,35,0.06)';
   const statusIcon  = hasLot ? '✓' : '—';
-  const statusLabel = hasLot
-    ? 'Lot code encoded — OCR can be skipped for this product'
-    : isPlainEAN
-      ? 'Plain EAN barcode — no lot data encoded, OCR required'
-      : 'GS1 data found but no lot/batch number (AI 10)';
+  const statusLabel = isDL
+    ? 'GS1 Digital Link (2D barcode) — ' + (hasLot ? 'lot code encoded' : 'no lot found in URL')
+    : hasLot
+      ? 'Lot code encoded — OCR can be skipped for this product'
+      : isPlainEAN
+        ? 'Plain EAN barcode — no lot data encoded, OCR required'
+        : 'GS1 data found but no lot/batch number (AI 10)';
   const statusColor = hasLot ? 'var(--accent)' : 'var(--warn)';
+  const dlDomain = isDL ? (() => { try { return new URL(raw).hostname; } catch(e) { return ''; } })() : '';
 
   el.innerHTML = `
     <div style="border:1px solid ${borderColor};background:${bgColor};border-radius:12px;padding:16px;margin-bottom:12px;">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
         <div style="width:32px;height:32px;border-radius:50%;background:${hasLot ? 'rgba(52,211,153,0.15)' : 'rgba(245,166,35,0.12)'};display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;">${statusIcon}</div>
         <div>
-          <div style="font-size:13px;font-weight:700;color:${statusColor};">${statusLabel}</div>
-          <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);margin-top:2px;word-break:break-all;">${esc(raw.slice(0,60))}${raw.length > 60 ? '…' : ''}</div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <div style="font-size:13px;font-weight:700;color:${statusColor};">${statusLabel}</div>
+            ${isDL ? `<span style="font-size:9px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.08em;padding:2px 7px;border-radius:4px;background:rgba(56,189,248,0.12);color:#38bdf8;border:1px solid rgba(56,189,248,0.3);">GS1 DIGITAL LINK</span>` : ''}
+          </div>
+          <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);margin-top:2px;word-break:break-all;">${isDL ? esc(dlDomain) : esc(raw.slice(0,60))}${!isDL && raw.length > 60 ? '…' : ''}</div>
         </div>
       </div>
+
+      ${isDL ? `
+      <div style="background:rgba(56,189,248,0.06);border:1px solid rgba(56,189,248,0.2);border-radius:8px;padding:10px 14px;margin-bottom:12px;">
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.07em;color:#38bdf8;margin-bottom:4px;">Digital Link URL</div>
+        <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);word-break:break-all;line-height:1.5;">${esc(raw)}</div>
+      </div>` : ''}
 
       ${hasLot ? `
       <div style="background:rgba(52,211,153,0.1);border:1px solid rgba(52,211,153,0.3);border-radius:8px;padding:10px 14px;margin-bottom:12px;">
@@ -13640,10 +13763,12 @@ function gs1RenderResult(raw, parsed, hasLot) {
         ${ais.map(([ai, val], i) => {
           const label = GS1_AI_LABELS[ai] || GS1_AI_LABELS[ai.slice(0,3)] || GS1_AI_LABELS[ai.slice(0,2)] || `AI (${ai})`;
           const isLot = ai === '10';
+          const isExpiry = ai === '17';
+          const displayVal = isExpiry ? `${val} → ${formatGS1Expiry(val)}` : val;
           return `<div style="display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;padding:8px 12px;${i < ais.length-1 ? 'border-bottom:1px solid var(--border);' : ''}${isLot ? 'background:rgba(52,211,153,0.06);' : ''}">
             <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);background:var(--surface2);padding:2px 6px;border-radius:4px;">${ai}</span>
             <span style="font-size:12px;color:${isLot ? 'var(--accent)' : 'var(--text)'};">${esc(label)}</span>
-            <span style="font-family:'DM Mono',monospace;font-size:12px;font-weight:600;color:${isLot ? 'var(--accent)' : 'var(--text)'};">${esc(val)}</span>
+            <span style="font-family:'DM Mono',monospace;font-size:12px;font-weight:600;color:${isLot ? 'var(--accent)' : 'var(--text)'};">${esc(displayVal)}</span>
           </div>`;
         }).join('')}
       </div>` : `
