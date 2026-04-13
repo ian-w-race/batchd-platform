@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Batch'd — Admin</title>
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700;800;900&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:       #080f12;
+      --surface:  #0d1e1c;
+      --surface2: #13302b;
+      --border:   #163d37;
+      --accent:   #34d399;
+      --accent-dim:#059669;
+      --text:     #edfdf8;
+      --muted:    #6aaf9e;
+      --danger:   #ff5c5c;
+      --warn:     #f5a623;
+      --info:     #38bdf8;
+      --radius:   12px;
+    }
+    html, body { min-height: 100vh; background: var(--bg); color: var(--text); font-family: 'DM Mono', monospace; }
+    body::before {
+      content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background:
+        radial-gradient(ellipse 60% 40% at 10% 0%, rgba(52,211,153,0.07) 0%, transparent 60%),
+        radial-gradient(ellipse 40% 30% at 90% 100%, rgba(5,150,105,0.06) 0%, transparent 55%);
+    }
+
+    /* ── Auth ── */
+    .auth-gate { position: fixed; inset: 0; background: var(--bg); z-index: 200; display: flex; align-items: center; justify-content: center; }
+    .auth-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 36px; width: 100%; max-width: 360px; }
+    .auth-logo { display: flex; align-items: center; gap: 10px; margin-bottom: 24px; }
+    .auth-logo-icon { width: 32px; height: 32px; background: var(--accent); border-radius: 8px; display: flex; align-items: center; justify-content: center; }
+    .auth-logo-text { font-family: 'Figtree', sans-serif; font-weight: 800; font-size: 18px; color: var(--accent); }
+    .auth-badge { font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); background: var(--surface2); border: 1px solid var(--border); padding: 2px 7px; border-radius: 4px; margin-left: 4px; }
+    .auth-title { font-family: 'Figtree', sans-serif; font-weight: 700; font-size: 18px; margin-bottom: 4px; }
+    .auth-sub { font-size: 11px; color: var(--muted); margin-bottom: 24px; }
+    .field { margin-bottom: 14px; }
+    .field label { display: block; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 5px; }
+    .field input {
+      width: 100%; background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 8px; padding: 10px 12px; font-family: 'DM Mono', monospace;
+      font-size: 13px; color: var(--text); outline: none; transition: border-color 0.15s;
+    }
+    .field input:focus { border-color: var(--accent); }
+    .auth-btn { width: 100%; background: var(--accent); color: #080f12; border: none; border-radius: 8px; padding: 12px; font-family: 'DM Mono', monospace; font-size: 13px; font-weight: 700; cursor: pointer; transition: all 0.15s; display: flex; align-items: center; justify-content: center; gap: 8px; }
+    .auth-btn:hover { background: #6ee7b7; }
+    .auth-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .auth-msg { font-size: 11px; padding: 9px 12px; border-radius: 6px; margin-bottom: 12px; background: rgba(255,92,92,0.1); border: 1px solid rgba(255,92,92,0.3); color: var(--danger); display: none; }
+
+    /* ── Layout ── */
+    .app { display: flex; min-height: 100vh; position: relative; z-index: 1; }
+    .sidebar { width: 220px; flex-shrink: 0; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; position: fixed; top: 0; left: 0; bottom: 0; z-index: 100; }
+    .sidebar-logo { padding: 20px 18px 16px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); }
+    .logo-icon { width: 32px; height: 32px; background: var(--accent); border-radius: 8px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .logo-text { font-family: 'Figtree', sans-serif; font-weight: 800; font-size: 17px; color: var(--accent); }
+    .logo-sub { font-size: 9px; color: var(--danger); letter-spacing: 0.12em; text-transform: uppercase; margin-top: 1px; font-weight: 700; }
+    .sidebar-nav { flex: 1; padding: 12px 10px; display: flex; flex-direction: column; gap: 2px; }
+    .nav-section { font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); padding: 10px 8px 4px; }
+    .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; cursor: pointer; font-size: 12px; color: var(--muted); transition: all 0.15s; border: none; background: none; width: 100%; text-align: left; }
+    .nav-item:hover { background: var(--surface2); color: var(--text); }
+    .nav-item.active { background: rgba(52,211,153,0.1); color: var(--accent); }
+    .nav-item svg { flex-shrink: 0; opacity: 0.7; }
+    .nav-item.active svg { opacity: 1; }
+    .sidebar-footer { padding: 12px 10px; border-top: 1px solid var(--border); }
+    .user-chip { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; background: var(--surface2); }
+    .user-avatar { width: 28px; height: 28px; border-radius: 50%; background: var(--danger); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: white; flex-shrink: 0; }
+    .user-name { font-size: 11px; color: var(--text); font-weight: 500; }
+    .user-role { font-size: 9px; color: var(--danger); letter-spacing: 0.05em; }
+    .sign-out-btn { background: none; border: none; cursor: pointer; color: var(--muted); padding: 2px; transition: color 0.15s; margin-left: auto; }
+    .sign-out-btn:hover { color: var(--danger); }
+
+    /* ── Main ── */
+    .main { margin-left: 220px; flex: 1; display: flex; flex-direction: column; min-height: 100vh; }
+    .topbar { padding: 16px 28px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; background: rgba(8,15,18,0.8); backdrop-filter: blur(8px); position: sticky; top: 0; z-index: 50; }
+    .topbar-title { font-family: 'Figtree', sans-serif; font-weight: 700; font-size: 16px; }
+    .topbar-sub { font-size: 11px; color: var(--muted); margin-top: 1px; }
+    .content { padding: 24px 28px; flex: 1; }
+
+    /* ── Components ── */
+    .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin-bottom: 16px; }
+    .panel-header { padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+    .panel-title { font-family: 'Figtree', sans-serif; font-weight: 700; font-size: 13px; }
+    .panel-sub { font-size: 10px; color: var(--muted); margin-top: 1px; }
+    .panel-body { padding: 16px 18px; }
+    .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 20px; }
+    .kpi-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; position: relative; overflow: hidden; }
+    .kpi-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; }
+    .kpi-card.green::before { background: var(--accent); }
+    .kpi-card.blue::before { background: var(--info); }
+    .kpi-card.amber::before { background: var(--warn); }
+    .kpi-card.red::before { background: var(--danger); }
+    .kpi-label { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+    .kpi-value { font-family: 'Figtree', sans-serif; font-weight: 800; font-size: 28px; line-height: 1; margin-bottom: 4px; }
+    .kpi-sub { font-size: 10px; color: var(--muted); }
+    .btn-primary { background: var(--accent); color: #080f12; border: none; border-radius: 8px; padding: 9px 16px; font-family: 'DM Mono', monospace; font-size: 12px; font-weight: 700; cursor: pointer; transition: all 0.15s; display: inline-flex; align-items: center; gap: 6px; }
+    .btn-primary:hover { background: #6ee7b7; }
+    .btn-ghost { background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 8px; padding: 7px 14px; font-family: 'DM Mono', monospace; font-size: 11px; cursor: pointer; transition: all 0.15s; }
+    .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+    .btn-danger { background: rgba(255,92,92,0.1); border: 1px solid rgba(255,92,92,0.3); color: var(--danger); border-radius: 8px; padding: 7px 14px; font-family: 'DM Mono', monospace; font-size: 11px; cursor: pointer; transition: all 0.15s; }
+    .btn-danger:hover { background: rgba(255,92,92,0.2); }
+    .spinner { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .empty { text-align: center; padding: 32px 16px; color: var(--muted); font-size: 12px; }
+    .badge { font-size: 10px; padding: 2px 8px; border-radius: 10px; font-weight: 600; display: inline-block; }
+    .badge-trial   { background: rgba(245,166,35,0.12); color: var(--warn); }
+    .badge-active  { background: rgba(52,211,153,0.12); color: var(--accent); }
+    .badge-churned { background: rgba(255,92,92,0.12); color: var(--danger); }
+    .badge-retailer    { background: rgba(56,189,248,0.1); color: var(--info); }
+    .badge-manufacturer { background: rgba(52,211,153,0.1); color: var(--accent); }
+    table { width: 100%; border-collapse: collapse; }
+    th { font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); text-align: left; padding: 0 0 10px; border-bottom: 1px solid var(--border); }
+    td { padding: 11px 0; border-bottom: 1px solid rgba(22,61,55,0.5); font-size: 11px; vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    .field select { width: 100%; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-family: 'DM Mono', monospace; font-size: 13px; color: var(--text); outline: none; cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236aaf9e' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px; }
+    .field select:focus { border-color: var(--accent); }
+    textarea { width: 100%; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-family: 'DM Mono', monospace; font-size: 12px; color: var(--text); outline: none; resize: vertical; }
+    textarea:focus { border-color: var(--accent); }
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 500; display: flex; align-items: center; justify-content: center; padding: 24px; backdrop-filter: blur(4px); }
+    .modal { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; width: 100%; max-width: 520px; }
+    .modal-title { font-family: 'Figtree', sans-serif; font-weight: 700; font-size: 15px; margin-bottom: 4px; }
+    .modal-sub { font-size: 11px; color: var(--muted); margin-bottom: 20px; }
+    .msg { font-size: 11px; padding: 9px 12px; border-radius: 6px; margin-bottom: 12px; }
+    .msg.error { background: rgba(255,92,92,0.1); border: 1px solid rgba(255,92,92,0.3); color: var(--danger); }
+    .msg.success { background: rgba(52,211,153,0.1); border: 1px solid rgba(52,211,153,0.3); color: var(--accent); }
+  </style>
+</head>
+<body>
+
+<!-- Auth gate -->
+<div class="auth-gate" id="auth-gate">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <div class="auth-logo-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#080f12" stroke-width="2.5"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></div>
+      <span class="auth-logo-text">Batch'd</span>
+      <span class="auth-badge">Admin</span>
+    </div>
+    <div class="auth-title">Internal dashboard</div>
+    <div class="auth-sub">Restricted access — Batch'd team only.</div>
+    <div class="auth-msg" id="auth-msg"></div>
+    <div class="field"><label>Email</label><input id="auth-email" type="email" placeholder="you@batchd.no" onkeydown="if(event.key==='Enter')doAuth()" /></div>
+    <div class="field"><label>Password</label><input id="auth-pw" type="password" placeholder="••••••••" onkeydown="if(event.key==='Enter')doAuth()" /></div>
+    <button class="auth-btn" id="auth-btn" onclick="doAuth()">Sign in →</button>
+  </div>
+</div>
+
+<!-- App shell -->
+<div class="app" id="app-shell" style="display:none;">
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#080f12" stroke-width="2.5"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></div>
+      <div><div class="logo-text">Batch'd</div><div class="logo-sub">⚡ Admin</div></div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section">Overview</div>
+      <button class="nav-item active" onclick="showPanel('overview')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+        Overview
+      </button>
+      <div class="nav-section">Customers</div>
+      <button class="nav-item" onclick="showPanel('customers')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        All customers
+      </button>
+      <button class="nav-item" onclick="showPanel('create')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Create org
+      </button>
+      <div class="nav-section">Demo</div>
+      <button class="nav-item" onclick="showPanel('demo')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        Demo environment
+      </button>
+      <div class="nav-section">Requests</div>
+      <button class="nav-item" onclick="showPanel('requests')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+        Demo requests
+      </button>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="user-chip">
+        <div class="user-avatar" id="user-avatar">I</div>
+        <div style="flex:1;min-width:0;">
+          <div class="user-name" id="user-name">Loading…</div>
+          <div class="user-role">Batch'd Admin</div>
+        </div>
+        <button class="sign-out-btn" onclick="signOut()" title="Sign out">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        </button>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <div class="topbar-title" id="topbar-title">Overview</div>
+        <div class="topbar-sub" id="topbar-sub">Batch'd internal admin</div>
+      </div>
+      <div style="font-size:11px;color:var(--muted);" id="topbar-time"></div>
+    </div>
+    <div class="content" id="main-content">
+      <div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>
+    </div>
+  </main>
+</div>
+
+<!-- Create org modal -->
+<div class="modal-overlay" id="create-modal" style="display:none;" onclick="if(event.target===this)closeCreateModal()">
+  <div class="modal">
+    <div class="modal-title">Create new organisation</div>
+    <div class="modal-sub">Creates the org and sends an invitation to the first admin.</div>
+    <div id="create-msg" style="display:none;" class="msg"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+      <div class="field" style="margin:0;"><label>Organisation name *</label><input id="c-name" type="text" placeholder="e.g. Rema 1000 AS" /></div>
+      <div class="field" style="margin:0;"><label>Type *</label>
+        <select id="c-type">
+          <option value="retailer">Retailer</option>
+          <option value="manufacturer">Manufacturer</option>
+        </select>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+      <div class="field" style="margin:0;"><label>Region *</label>
+        <select id="c-region">
+          <option value="no">Norway / EU</option>
+          <option value="us">United States</option>
+        </select>
+      </div>
+      <div class="field" style="margin:0;"><label>Plan</label>
+        <select id="c-plan">
+          <option value="trial">Trial</option>
+          <option value="active">Active</option>
+        </select>
+      </div>
+    </div>
+    <div class="field" style="margin-bottom:12px;"><label>Contact email *</label><input id="c-email" type="email" placeholder="admin@company.com" /></div>
+    <div class="field" style="margin-bottom:12px;"><label>First admin email * <span style="color:var(--muted);font-size:10px;">invitation will be sent here</span></label><input id="c-admin-email" type="email" placeholder="admin@company.com" /></div>
+    <div class="field" style="margin-bottom:16px;"><label>Notes <span style="color:var(--muted);font-size:10px;">internal only</span></label><textarea id="c-notes" rows="2" placeholder="e.g. Contacted via LinkedIn, 12 stores in Oslo region"></textarea></div>
+    <div style="display:flex;gap:8px;">
+      <button class="btn-primary" onclick="createOrg()" id="btn-create-org" style="flex:1;justify-content:center;">Create organisation →</button>
+      <button class="btn-ghost" onclick="closeCreateModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Org detail modal -->
+<div class="modal-overlay" id="org-modal" style="display:none;" onclick="if(event.target===this)closeOrgModal()">
+  <div class="modal" style="max-width:600px;" id="org-modal-content">
+  </div>
+</div>
+
+<script>
+const SUPABASE_URL = 'https://lurxucdmrugikdlvvebc.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1cnh1Y2RtcnVnaWtkbHZ2ZWJjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTU5NTQsImV4cCI6MjA4OTgzMTk1NH0.ewNhBbF8nUzpF9Ve822D9t8VLwB_hjk27KuFFEXct0A';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const BATCHED_ADMIN_USER_ID = '97da19d3-3daa-4f7a-bd9c-53e7ac8f8a5c';
+
+let _session = null;
+
+// ── Clock ──
+function updateClock() {
+  const now = new Date();
+  const el = document.getElementById('topbar-time');
+  if (el) el.textContent = now.toLocaleDateString('en-GB', { weekday:'short', day:'numeric', month:'short' }) + ' · ' + now.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+}
+setInterval(updateClock, 1000); updateClock();
+
+// ── Auth ──
+async function doAuth() {
+  const email = document.getElementById('auth-email').value.trim();
+  const pw    = document.getElementById('auth-pw').value;
+  const msg   = document.getElementById('auth-msg');
+  const btn   = document.getElementById('auth-btn');
+  msg.style.display = 'none';
+  if (!email || !pw) { showAuthMsg('Please enter your email and password.'); return; }
+  btn.disabled = true; btn.innerHTML = '<div class="spinner"></div> Signing in…';
+  try {
+    const { data, error } = await sb.auth.signInWithPassword({ email, password: pw });
+    if (error) throw error;
+    // Verify this user is a Batch'd admin
+    const { data: member } = await sb.from('organisation_members')
+      .select('is_batched_admin')
+      .eq('user_id', data.user.id)
+      .eq('is_batched_admin', true)
+      .single();
+    if (!member) throw new Error('Access denied — not a Batch\'d admin account.');
+    _session = data.session;
+    initAdmin(data.user);
+  } catch(e) {
+    showAuthMsg(e.message || 'Sign in failed.');
+    btn.disabled = false; btn.innerHTML = 'Sign in →';
+  }
+}
+
+function showAuthMsg(txt) {
+  const el = document.getElementById('auth-msg');
+  el.textContent = txt; el.style.display = 'block';
+}
+
+async function signOut() {
+  await sb.auth.signOut();
+  location.reload();
+}
+
+function initAdmin(user) {
+  document.getElementById('auth-gate').style.display = 'none';
+  document.getElementById('app-shell').style.display = 'flex';
+  const name = user.user_metadata?.first_name || user.email?.split('@')[0] || 'Admin';
+  document.getElementById('user-name').textContent = name;
+  document.getElementById('user-avatar').textContent = name[0].toUpperCase();
+  showPanel('overview');
+}
+
+// ── Panel router ──
+function showPanel(name) {
+  document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(el => {
+    if (el.getAttribute('onclick')?.includes(`'${name}'`)) el.classList.add('active');
+  });
+  const titles = { overview:'Overview', customers:'All customers', create:'Create org', demo:'Demo environment', requests:'Demo requests' };
+  document.getElementById('topbar-title').textContent = titles[name] || name;
+  const fns = { overview: renderOverview, customers: renderCustomers, create: renderCreate, demo: renderDemo, requests: renderRequests };
+  (fns[name] || (() => {}))();
+}
+
+// ── Overview ──
+async function renderOverview() {
+  const el = document.getElementById('main-content');
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
+  try {
+    const { data: orgs } = await sb.from('organisations').select('id, type, plan, created_at').eq('is_internal', false);
+    const list = orgs || [];
+    const retailers     = list.filter(o => o.type === 'retailer').length;
+    const manufacturers = list.filter(o => o.type === 'manufacturer').length;
+    const trials        = list.filter(o => o.plan === 'trial').length;
+    const active        = list.filter(o => o.plan === 'active').length;
+
+    // Recent signups (last 30 days)
+    const cutoff = new Date(Date.now() - 30 * 86400000).toISOString();
+    const recent = list.filter(o => o.created_at >= cutoff).length;
+
+    el.innerHTML = `
+      <div class="kpi-grid">
+        <div class="kpi-card green">
+          <div class="kpi-label">Total customers</div>
+          <div class="kpi-value" style="color:var(--accent)">${list.length}</div>
+          <div class="kpi-sub">${recent} added in last 30 days</div>
+        </div>
+        <div class="kpi-card blue">
+          <div class="kpi-label">Retailers</div>
+          <div class="kpi-value">${retailers}</div>
+          <div class="kpi-sub">Corporate chains</div>
+        </div>
+        <div class="kpi-card green">
+          <div class="kpi-label">Manufacturers</div>
+          <div class="kpi-value">${manufacturers}</div>
+          <div class="kpi-sub">Brand / supplier orgs</div>
+        </div>
+        <div class="kpi-card amber">
+          <div class="kpi-label">On trial</div>
+          <div class="kpi-value" style="color:var(--warn)">${trials}</div>
+          <div class="kpi-sub">${active} active paid</div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div class="panel">
+          <div class="panel-header">
+            <div><div class="panel-title">Quick actions</div></div>
+          </div>
+          <div class="panel-body" style="display:flex;flex-direction:column;gap:8px;">
+            <button class="btn-primary" onclick="showPanel('create')" style="width:100%;justify-content:center;">
+              + Create new organisation
+            </button>
+            <button class="btn-ghost" onclick="showPanel('customers')" style="width:100%;justify-content:center;">
+              View all customers →
+            </button>
+            <button class="btn-ghost" onclick="showPanel('demo')" style="width:100%;justify-content:center;">
+              Manage demo environment →
+            </button>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">Platform health</div></div>
+          <div class="panel-body" style="display:flex;flex-direction:column;gap:10px;">
+            ${await getPlatformHealth()}
+          </div>
+        </div>
+      </div>`;
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error: ${e.message}</div>`;
+  }
+}
+
+async function getPlatformHealth() {
+  try {
+    const [scansRes, recallsRes] = await Promise.all([
+      sb.from('scans').select('id', { count: 'exact', head: true }),
+      sb.from('recall_events').select('id', { count: 'exact', head: true }),
+    ]);
+    const rows = [
+      { label: 'Total scans in system', val: scansRes.count ?? '—' },
+      { label: 'Total recall events', val: recallsRes.count ?? '—' },
+      { label: 'Database', val: 'Supabase · lurxucdm…', ok: true },
+      { label: 'Email', val: 'Resend · invite@batchdapp.com', ok: true },
+    ];
+    return rows.map(r => `
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(22,61,55,0.4);">
+        <div style="font-size:11px;color:var(--muted);">${r.label}</div>
+        <div style="font-size:11px;font-weight:600;color:${r.ok !== undefined ? 'var(--accent)' : 'var(--text)'};">${r.val}</div>
+      </div>`).join('');
+  } catch(e) { return `<div style="color:var(--danger);font-size:11px;">Could not load health data</div>`; }
+}
+
+// ── Customers ──
+async function renderCustomers() {
+  const el = document.getElementById('main-content');
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
+  try {
+    const { data: orgs } = await sb.from('organisations')
+      .select('*')
+      .eq('is_internal', false)
+      .order('created_at', { ascending: false });
+    const list = orgs || [];
+
+    // Get member + store counts per org
+    const orgIds = list.map(o => o.id);
+    const [membersRes, storesRes] = await Promise.all([
+      orgIds.length > 0 ? sb.from('organisation_members').select('organisation_id').in('organisation_id', orgIds) : Promise.resolve({ data: [] }),
+      orgIds.length > 0 ? sb.from('stores').select('organisation_id').eq('active', true).in('organisation_id', orgIds) : Promise.resolve({ data: [] }),
+    ]);
+    const memberCounts = {};
+    const storeCounts  = {};
+    (membersRes.data || []).forEach(m => { memberCounts[m.organisation_id] = (memberCounts[m.organisation_id] || 0) + 1; });
+    (storesRes.data  || []).forEach(s => { storeCounts[s.organisation_id]  = (storeCounts[s.organisation_id]  || 0) + 1; });
+
+    el.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+        <div>
+          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">${list.length} organisation${list.length!==1?'s':''}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">All customer orgs — excludes internal Batch'd orgs</div>
+        </div>
+        <button class="btn-primary" onclick="openCreateModal()">+ Create org</button>
+      </div>
+      <div class="panel">
+        <div class="panel-body" style="padding:0 18px;">
+          ${list.length === 0
+            ? `<div class="empty">No customer organisations yet.<br>Create your first one above.</div>`
+            : `<table>
+                <thead><tr>
+                  <th style="padding:12px 0;">Organisation</th>
+                  <th style="padding:12px 8px;">Type</th>
+                  <th style="padding:12px 8px;">Plan</th>
+                  <th style="padding:12px 8px;">Members</th>
+                  <th style="padding:12px 8px;">Stores</th>
+                  <th style="padding:12px 8px;">Region</th>
+                  <th style="padding:12px 8px;">Created</th>
+                  <th style="padding:12px 8px;"></th>
+                </tr></thead>
+                <tbody>
+                  ${list.map(o => `
+                    <tr>
+                      <td>
+                        <div style="font-size:12px;font-weight:600;color:var(--text);">${o.name}</div>
+                        <div style="font-size:10px;color:var(--muted);margin-top:1px;">${o.contact_email||'—'}</div>
+                      </td>
+                      <td style="padding:11px 8px;"><span class="badge badge-${o.type}">${o.type}</span></td>
+                      <td style="padding:11px 8px;"><span class="badge badge-${o.plan||'trial'}">${o.plan||'trial'}</span></td>
+                      <td style="padding:11px 8px;color:var(--muted);">${memberCounts[o.id]||0}</td>
+                      <td style="padding:11px 8px;color:var(--muted);">${storeCounts[o.id]||0}</td>
+                      <td style="padding:11px 8px;color:var(--muted);">${o.region==='us'?'🇺🇸 US':'🇳🇴 NO'}</td>
+                      <td style="padding:11px 8px;color:var(--muted);white-space:nowrap;">${new Date(o.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}</td>
+                      <td style="padding:11px 8px;text-align:right;">
+                        <button onclick="openOrgModal('${o.id}')" class="btn-ghost" style="font-size:10px;padding:5px 10px;">Manage →</button>
+                      </td>
+                    </tr>`).join('')}
+                </tbody>
+              </table>`}
+        </div>
+      </div>`;
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error: ${e.message}</div>`;
+  }
+}
+
+// ── Create org panel ──
+function renderCreate() {
+  openCreateModal();
+  // Navigate back to customers once done
+  showPanel('customers');
+}
+
+function openCreateModal() {
+  document.getElementById('create-modal').style.display = 'flex';
+  setTimeout(() => document.getElementById('c-name').focus(), 50);
+}
+
+function closeCreateModal() {
+  document.getElementById('create-modal').style.display = 'none';
+  document.getElementById('create-msg').style.display = 'none';
+  ['c-name','c-email','c-admin-email','c-notes'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+}
+
+async function createOrg() {
+  const name       = document.getElementById('c-name').value.trim();
+  const type       = document.getElementById('c-type').value;
+  const region     = document.getElementById('c-region').value;
+  const plan       = document.getElementById('c-plan').value;
+  const email      = document.getElementById('c-email').value.trim();
+  const adminEmail = document.getElementById('c-admin-email').value.trim();
+  const notes      = document.getElementById('c-notes').value.trim();
+  const btn        = document.getElementById('btn-create-org');
+  const msgEl      = document.getElementById('create-msg');
+
+  msgEl.style.display = 'none';
+  if (!name)       { showCreateMsg('Organisation name is required.', 'error'); return; }
+  if (!email)      { showCreateMsg('Contact email is required.', 'error'); return; }
+  if (!adminEmail) { showCreateMsg('First admin email is required.', 'error'); return; }
+
+  btn.disabled = true; btn.innerHTML = '<div class="spinner" style="border-top-color:#080f12;"></div> Creating…';
+
+  try {
+    // 1. Create the org
+    const { data: org, error: orgErr } = await sb.from('organisations').insert({
+      name,
+      type,
+      region,
+      billing_status: plan === 'active' ? 'active' : 'trial',
+      plan,
+      contact_email: email,
+      notes: notes || null,
+      is_internal: false,
+      trial_expires_at: plan === 'trial' ? new Date(Date.now() + 30 * 86400000).toISOString() : null,
+    }).select().single();
+    if (orgErr) throw orgErr;
+
+    // 2. Send invitation to first admin via Netlify function
+    const role = type === 'manufacturer' ? 'mfr_admin' : 'corp_admin';
+    const { data: inv, error: invErr } = await sb.rpc('send_invitation', {
+      p_organisation_id: org.id,
+      p_email: adminEmail,
+      p_role: role,
+      p_store_id: null,
+    });
+    if (invErr) throw invErr;
+
+    const inviteUrl = `https://batchdapp.com/join?token=${inv.token}`;
+    await fetch('/.netlify/functions/send-invite', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        to: adminEmail,
+        orgName: name,
+        inviterEmail: 'ian.w.race@gmail.com',
+        role: role.replace('_', ' '),
+        inviteUrl,
+      }),
+    });
+
+    showCreateMsg(`✓ Organisation created and invitation sent to ${adminEmail}`, 'success');
+    btn.disabled = false; btn.innerHTML = 'Create organisation →';
+    setTimeout(() => { closeCreateModal(); showPanel('customers'); }, 2000);
+
+  } catch(e) {
+    showCreateMsg('Error: ' + (e.message || 'Could not create organisation.'), 'error');
+    btn.disabled = false; btn.innerHTML = 'Create organisation →';
+  }
+}
+
+function showCreateMsg(txt, type) {
+  const el = document.getElementById('create-msg');
+  el.textContent = txt;
+  el.className = `msg ${type}`;
+  el.style.display = 'block';
+}
+
+// ── Org detail modal ──
+async function openOrgModal(orgId) {
+  document.getElementById('org-modal').style.display = 'flex';
+  document.getElementById('org-modal-content').innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);padding:20px;"><div class="spinner"></div> Loading…</div>`;
+
+  try {
+    const [orgRes, membersRes, storesRes, scansRes] = await Promise.all([
+      sb.from('organisations').select('*').eq('id', orgId).single(),
+      sb.from('organisation_members').select('user_id, role, joined_at').eq('organisation_id', orgId),
+      sb.from('stores').select('id, name, active').eq('organisation_id', orgId),
+      sb.from('scans').select('id, created_at').eq('organisation_id', orgId).order('created_at', { ascending: false }).limit(100),
+    ]);
+
+    const org     = orgRes.data;
+    const members = membersRes.data || [];
+    const stores  = storesRes.data  || [];
+    const scans   = scansRes.data   || [];
+    const lastScan = scans[0]?.created_at;
+    const scans30  = scans.filter(s => (Date.now() - new Date(s.created_at)) < 30 * 86400000).length;
+
+    document.getElementById('org-modal-content').innerHTML = `
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px;">
+        <div>
+          <div class="modal-title">${org.name}</div>
+          <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
+            <span class="badge badge-${org.type}">${org.type}</span>
+            <span class="badge badge-${org.plan||'trial'}">${org.plan||'trial'}</span>
+            <span style="font-size:10px;color:var(--muted);">${org.region==='us'?'🇺🇸 United States':'🇳🇴 Norway / EU'}</span>
+          </div>
+        </div>
+        <button onclick="closeOrgModal()" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;padding:0;line-height:1;">✕</button>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px;">
+        <div style="background:var(--surface2);border-radius:8px;padding:12px;text-align:center;">
+          <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:22px;">${members.length}</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:2px;">Members</div>
+        </div>
+        <div style="background:var(--surface2);border-radius:8px;padding:12px;text-align:center;">
+          <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:22px;">${stores.filter(s=>s.active).length}</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:2px;">Active stores</div>
+        </div>
+        <div style="background:var(--surface2);border-radius:8px;padding:12px;text-align:center;">
+          <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:22px;">${scans30}</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:2px;">Scans (30d)</div>
+        </div>
+      </div>
+
+      <div style="margin-bottom:16px;padding:12px 14px;background:var(--surface2);border-radius:8px;font-size:11px;line-height:1.8;">
+        <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Contact</span><span>${org.contact_email||'—'}</span></div>
+        <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Created</span><span>${new Date(org.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}</span></div>
+        <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Last scan</span><span>${lastScan ? new Date(lastScan).toLocaleDateString('en-GB') : 'Never'}</span></div>
+        ${org.trial_expires_at ? `<div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Trial expires</span><span style="color:${new Date(org.trial_expires_at)<new Date()?'var(--danger)':'var(--warn)'};">${new Date(org.trial_expires_at).toLocaleDateString('en-GB')}</span></div>` : ''}
+        ${org.notes ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);color:var(--muted);">${org.notes}</div>` : ''}
+      </div>
+
+      <!-- Plan control -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">
+        <div class="field" style="margin:0;">
+          <label>Plan status</label>
+          <select id="org-plan-${org.id}" onchange="updateOrgPlan('${org.id}', this.value)">
+            <option value="trial"   ${org.plan==='trial'  ?'selected':''}>Trial</option>
+            <option value="active"  ${org.plan==='active' ?'selected':''}>Active</option>
+            <option value="churned" ${org.plan==='churned'?'selected':''}>Churned</option>
+          </select>
+        </div>
+        <div style="display:flex;align-items:flex-end;">
+          <button onclick="sendAdminInvite('${org.id}','${org.name.replace(/'/g,"\\'")}')" class="btn-ghost" style="width:100%;justify-content:center;">
+            Invite admin →
+          </button>
+        </div>
+      </div>
+
+      <button onclick="closeOrgModal()" class="btn-ghost" style="width:100%;justify-content:center;">Close</button>`;
+
+  } catch(e) {
+    document.getElementById('org-modal-content').innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error: ${e.message}<br><button onclick="closeOrgModal()" class="btn-ghost" style="margin-top:12px;">Close</button></div>`;
+  }
+}
+
+function closeOrgModal() {
+  document.getElementById('org-modal').style.display = 'none';
+}
+
+async function updateOrgPlan(orgId, plan) {
+  const { error } = await sb.from('organisations').update({ plan, billing_status: plan === 'active' ? 'active' : plan }).eq('id', orgId);
+  if (error) { alert('Could not update plan: ' + error.message); }
+}
+
+async function sendAdminInvite(orgId, orgName) {
+  const email = prompt(`Send admin invitation for ${orgName}\n\nEnter email address:`);
+  if (!email || !email.includes('@')) return;
+
+  const { data: org } = await sb.from('organisations').select('type').eq('id', orgId).single();
+  const role = org?.type === 'manufacturer' ? 'mfr_admin' : 'corp_admin';
+
+  try {
+    const { data: inv, error } = await sb.rpc('send_invitation', {
+      p_organisation_id: orgId,
+      p_email: email,
+      p_role: role,
+      p_store_id: null,
+    });
+    if (error) throw error;
+    const inviteUrl = `https://batchdapp.com/join?token=${inv.token}`;
+    await fetch('/.netlify/functions/send-invite', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to: email, orgName, inviterEmail: 'ian.w.race@gmail.com', role: role.replace('_',' '), inviteUrl }),
+    });
+    alert(`✓ Invitation sent to ${email}`);
+  } catch(e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+// ── Demo environment ──
+async function renderDemo() {
+  const el = document.getElementById('main-content');
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
+
+  try {
+    const { data: demoOrg } = await sb.from('organisations')
+      .select('*')
+      .eq('name', "Batch'd Demo")
+      .single();
+
+    if (!demoOrg) {
+      el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Demo org not found. Run the setup SQL first.</div>`;
+      return;
+    }
+
+    const [scansRes, recallsRes, membersRes] = await Promise.all([
+      sb.from('scans').select('id', { count: 'exact', head: true }).eq('organisation_id', demoOrg.id),
+      sb.from('recalls').select('id', { count: 'exact', head: true }).eq('organisation_id', demoOrg.id),
+      sb.from('organisation_members').select('user_id, role').eq('organisation_id', demoOrg.id),
+    ]);
+
+    el.innerHTML = `
+      <div style="margin-bottom:20px;">
+        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Demo environment</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px;">Managed sandbox for prospect demonstrations</div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">Demo org status</div></div>
+          <div class="panel-body">
+            <div style="display:flex;flex-direction:column;gap:8px;font-size:11px;margin-bottom:16px;">
+              <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(22,61,55,0.4);">
+                <span style="color:var(--muted);">Org ID</span>
+                <span style="font-family:'DM Mono',monospace;font-size:10px;">${demoOrg.id.slice(0,8)}…</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(22,61,55,0.4);">
+                <span style="color:var(--muted);">Scans</span>
+                <span style="font-weight:600;">${scansRes.count ?? 0}</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(22,61,55,0.4);">
+                <span style="color:var(--muted);">Recalls</span>
+                <span style="font-weight:600;">${recallsRes.count ?? 0}</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;padding:6px 0;">
+                <span style="color:var(--muted);">Members</span>
+                <span style="font-weight:600;">${membersRes.data?.length ?? 0}</span>
+              </div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <button class="btn-primary" onclick="seedDemoData('${demoOrg.id}')" style="width:100%;justify-content:center;" id="btn-seed">
+                ↺ Seed demo data
+              </button>
+              <button class="btn-danger" onclick="resetDemo('${demoOrg.id}')" style="width:100%;justify-content:center;" id="btn-reset">
+                🗑 Reset all demo data
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">Demo access</div></div>
+          <div class="panel-body">
+            <div style="margin-bottom:14px;padding:12px;background:var(--surface2);border-radius:8px;font-size:11px;line-height:1.8;">
+              <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:8px;">Share with prospects</div>
+              <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">URL</span><span>app.batchdapp.com</span></div>
+              <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Email</span><span>demo@batchdapp.com</span></div>
+              <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Password</span><span style="font-family:'DM Mono',monospace;">Batchd2026!</span></div>
+            </div>
+            <div style="font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:12px;">
+              The demo account resets automatically every 24 hours. Use "Seed demo data" before a sales call to ensure it's in a clean, populated state.
+            </div>
+            <div id="demo-msg" style="display:none;" class="msg"></div>
+          </div>
+        </div>
+      </div>`;
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error: ${e.message}</div>`;
+  }
+}
+
+async function resetDemo(orgId) {
+  if (!confirm('Reset ALL demo data? This deletes all scans, recalls, stores, and members from the demo org. Cannot be undone.')) return;
+  const btn = document.getElementById('btn-reset');
+  btn.disabled = true; btn.textContent = 'Resetting…';
+  const msgEl = document.getElementById('demo-msg');
+  try {
+    // Delete in dependency order
+    await sb.from('scans').delete().eq('organisation_id', orgId);
+    await sb.from('recalls').delete().eq('organisation_id', orgId);
+    await sb.from('recall_acknowledgements').delete().eq('organisation_id', orgId);
+    await sb.from('stores').delete().eq('organisation_id', orgId);
+    await sb.from('organisation_members').delete().eq('organisation_id', orgId);
+    await sb.from('invitations').delete().eq('organisation_id', orgId);
+    msgEl.textContent = '✓ Demo data reset successfully.';
+    msgEl.className = 'msg success';
+    msgEl.style.display = 'block';
+    renderDemo();
+  } catch(e) {
+    msgEl.textContent = 'Error: ' + e.message;
+    msgEl.className = 'msg error';
+    msgEl.style.display = 'block';
+    btn.disabled = false; btn.textContent = '🗑 Reset all demo data';
+  }
+}
+
+async function seedDemoData(orgId) {
+  const btn = document.getElementById('btn-seed');
+  const msgEl = document.getElementById('demo-msg');
+  btn.disabled = true; btn.textContent = 'Seeding…';
+  msgEl.style.display = 'none';
+  try {
+    // Seed stores
+    const stores = [
+      { name: 'Oslo - Grünerløkka', store_code: 'OSL-GRU-01', address: 'Thorvald Meyers gate 56, Oslo', active: true, organisation_id: orgId },
+      { name: 'Oslo - Majorstuen',  store_code: 'OSL-MAJ-02', address: 'Bogstadveien 12, Oslo',         active: true, organisation_id: orgId },
+      { name: 'Bergen - Sentrum',   store_code: 'BGN-SEN-01', address: 'Strandgaten 8, Bergen',          active: true, organisation_id: orgId },
+    ];
+    const { data: insertedStores } = await sb.from('stores').insert(stores).select();
+
+    // Seed scans across stores
+    const products = [
+      { name: 'Tine Helmelk 1L',       lot: 'T31-5',          barcode: '7038010013882' },
+      { name: 'Nordfjord Kjøttdeig',   lot: 'L2260326',       barcode: '7033245001234' },
+      { name: 'Kavli Tubeost',         lot: 'K2026-04',       barcode: '7022400123456' },
+      { name: 'Grandiosa Original',    lot: 'G26-108',        barcode: '7020655004305' },
+      { name: 'Vilje Olivenolje',      lot: 'L.25308 3A',     barcode: '7090010012345' },
+      { name: 'Q Fersk Sjokolademelk', lot: 'T28-3',          barcode: '7038010022884' },
+      { name: 'Lerøy Laks',            lot: 'LR-2026-04-08',  barcode: '7070668001234' },
+    ];
+    const now = new Date();
+    const scans = [];
+    products.forEach((p, pi) => {
+      (insertedStores || []).forEach((store, si) => {
+        for (let i = 0; i < 3; i++) {
+          const d = new Date(now - (pi * 3 + si + i) * 86400000 * 0.5);
+          scans.push({
+            product_name: p.name,
+            lot_number: p.lot,
+            barcode_number: p.barcode,
+            store_name: store.name,
+            store_id: store.id,
+            scanned_by: ['Anna Hansen', 'Lars Berg', 'Kari Nilsen'][si % 3],
+            organisation_id: orgId,
+            created_at: d.toISOString(),
+            quantity: Math.floor(Math.random() * 20) + 2,
+            shelf_location: ['Dairy', 'Meat', 'Frozen', 'Bakery', 'Oils'][pi % 5],
+          });
+        }
+      });
+    });
+    await sb.from('scans').insert(scans);
+
+    // Seed a recall
+    await sb.from('recalls').insert({
+      product_name: 'Vilje Olivenolje',
+      lot_number: 'L.25308 3A',
+      barcode_number: '7090010012345',
+      description: 'Undeclared allergen — possible cross-contamination with peanuts during bottling.',
+      active: true,
+      organisation_id: orgId,
+      source: 'Mattilsynet',
+    });
+
+    msgEl.textContent = `✓ Demo seeded — ${scans.length} scans, ${stores.length} stores, 1 active recall.`;
+    msgEl.className = 'msg success';
+    msgEl.style.display = 'block';
+    btn.disabled = false; btn.textContent = '↺ Seed demo data';
+    renderDemo();
+  } catch(e) {
+    msgEl.textContent = 'Error: ' + e.message;
+    msgEl.className = 'msg error';
+    msgEl.style.display = 'block';
+    btn.disabled = false; btn.textContent = '↺ Seed demo data';
+  }
+}
+
+// ── Demo requests ──
+async function renderRequests() {
+  const el = document.getElementById('main-content');
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
+  el.innerHTML = `
+    <div style="margin-bottom:16px;">
+      <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Demo requests</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:2px;">Inbound requests from batchd.no</div>
+    </div>
+    <div class="panel">
+      <div class="panel-body">
+        <div class="empty">
+          Demo requests arrive by email at ian.w.race@gmail.com.<br>
+          Once the batchd.no form is upgraded, submissions will appear here automatically.
+        </div>
+      </div>
+    </div>`;
+}
+
+// ── Boot ──
+(async () => {
+  const { data: { session } } = await sb.auth.getSession();
+  if (session) {
+    // Verify admin access
+    const { data: member } = await sb.from('organisation_members')
+      .select('is_batched_admin')
+      .eq('user_id', session.user.id)
+      .eq('is_batched_admin', true)
+      .single();
+    if (member) {
+      _session = session;
+      initAdmin(session.user);
+    }
+  }
+})();
+</script>
+</body>
+</html>
