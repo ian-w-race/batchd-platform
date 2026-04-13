@@ -4298,7 +4298,7 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 // Anthropic API calls are proxied through a Netlify serverless function.
 // The API key is stored as a Netlify environment variable — never in client code.
 async function callOcrFunction(task, imageB64, extra) {
-  const resp = await fetch('https://batchd-app.netlify.app/.netlify/functions/ocr', {
+  const resp = await fetch('/.netlify/functions/ocr', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ task, image: imageB64, extra: extra || {} }),
@@ -7222,6 +7222,16 @@ async function checkRecallsOnLogin(silent = false) {
     const recalls = [...(recallsRes.data || []), ...pushedRecalls];
     if (!recalls.length) return;
 
+    // Deduplicate by product_name + lot_number — duplicate DB rows from repeated
+    // feed fetches would otherwise generate multiple identical alerts
+    const seenRecallKeys = new Set();
+    const uniqueRecalls = recalls.filter(r => {
+      const key = `${(r.product_name||'').toLowerCase().trim()}|${(r.lot_number||'').toLowerCase().trim()}`;
+      if (seenRecallKeys.has(key)) return false;
+      seenRecallKeys.add(key);
+      return true;
+    });
+
     // Load recent scans for this check
     const cutoff = new Date(Date.now() - recallLookbackDays * 24 * 60 * 60 * 1000).toISOString();
     const { data: recentScans } = await sb.from('scans')
@@ -7233,7 +7243,7 @@ async function checkRecallsOnLogin(silent = false) {
     if (!recentScans || !recentScans.length) return;
 
     loginRecallMatches = [];
-    for (const recall of recalls) {
+    for (const recall of uniqueRecalls) {
       const exactScans    = recentScans.filter(r => recallMatchLevel(r, recall).level === 'exact');
       const possibleScans = recentScans.filter(r => recallMatchLevel(r, recall).level === 'possible');
       if (exactScans.length || possibleScans.length) {
