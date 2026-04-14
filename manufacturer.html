@@ -27,7 +27,7 @@
     /* Sidebar */
     .sidebar { width: 220px; flex-shrink: 0; background: var(--surface); border-right: 1px solid var(--border);
       display: flex; flex-direction: column; position: fixed; top: 0; left: 0; bottom: 0; z-index: 100; }
-    .sidebar-logo { padding: 20px 18px 16px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); }
+    .sidebar-logo { height: 54px; box-sizing: border-box; padding: 0 18px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
     .logo-icon { width: 32px; height: 32px; background: var(--accent); border-radius: 8px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
     .logo-icon svg { color: #080f12; }
     .logo-text { font-family: 'Figtree', sans-serif; font-weight: 800; font-size: 17px; color: var(--accent); line-height: 1; }
@@ -49,7 +49,7 @@
 
     /* Main */
     .main { margin-left: 220px; flex: 1; display: flex; flex-direction: column; min-height: 100vh; }
-    .topbar { padding: 16px 28px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; background: var(--bg); backdrop-filter: blur(8px); position: sticky; top: 0; z-index: 99; }
+    .topbar { height: 54px; box-sizing: border-box; padding: 0 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; background: var(--bg); backdrop-filter: blur(8px); position: sticky; top: 0; z-index: 99; }
       background: rgba(8,15,18,0.8); backdrop-filter: blur(8px); position: sticky; top: 0; z-index: 50; }
     .topbar-title { font-family: 'Figtree', sans-serif; font-weight: 700; font-size: 16px; color: var(--text); }
     .topbar-sub { font-size: 11px; color: var(--muted); margin-top: 1px; }
@@ -1423,6 +1423,21 @@ function triageOpenDetail(id) {
 }
 
 function renderTriageForm(el) {
+  const REGIONS = {
+    US:{label:'State',required:true,opts:'Alabama,Alaska,Arizona,Arkansas,California,Colorado,Connecticut,Delaware,Florida,Georgia,Hawaii,Idaho,Illinois,Indiana,Iowa,Kansas,Kentucky,Louisiana,Maine,Maryland,Massachusetts,Michigan,Minnesota,Mississippi,Missouri,Montana,Nebraska,Nevada,New Hampshire,New Jersey,New Mexico,New York,North Carolina,North Dakota,Ohio,Oklahoma,Oregon,Pennsylvania,Rhode Island,South Carolina,South Dakota,Tennessee,Texas,Utah,Vermont,Virginia,Washington,West Virginia,Wisconsin,Wyoming,DC'.split(',')},
+    CA:{label:'Province',required:true,opts:'Alberta,British Columbia,Manitoba,New Brunswick,Newfoundland and Labrador,Northwest Territories,Nova Scotia,Nunavut,Ontario,Prince Edward Island,Quebec,Saskatchewan,Yukon'.split(',')},
+    AU:{label:'State',required:true,opts:'Australian Capital Territory,New South Wales,Northern Territory,Queensland,South Australia,Tasmania,Victoria,Western Australia'.split(',')},
+    DE:{label:'State (Bundesland)',required:false,opts:'Baden-Württemberg,Bavaria,Berlin,Brandenburg,Bremen,Hamburg,Hesse,Lower Saxony,Mecklenburg-Vorpommern,North Rhine-Westphalia,Rhineland-Palatinate,Saarland,Saxony,Saxony-Anhalt,Schleswig-Holstein,Thuringia'.split(',')},
+    NO:{label:'Fylke',required:false,opts:'Agder,Innlandet,Møre og Romsdal,Nordland,Oslo,Rogaland,Troms og Finnmark,Trøndelag,Vestfold og Telemark,Vestland,Viken'.split(',')},
+    SE:{label:'Län',required:false,opts:'Blekinge,Dalarna,Gävleborg,Gotland,Halland,Jämtland,Jönköping,Kalmar,Kronoberg,Norrbotten,Örebro,Östergötland,Skåne,Södermanland,Stockholm,Uppsala,Värmland,Västerbotten,Västernorrland,Västmanland,Västra Götaland'.split(',')},
+    GB:{label:'Nation / Region',required:false,opts:['England','Scotland','Wales','Northern Ireland']},
+    FR:{label:'Région',required:false,opts:'Auvergne-Rhône-Alpes,Bourgogne-Franche-Comté,Bretagne,Centre-Val de Loire,Corse,Grand Est,Hauts-de-France,Île-de-France,Normandie,Nouvelle-Aquitaine,Occitanie,Pays de la Loire,Provence-Alpes-Côte d'Azur'.split(',')},
+    MX:{label:'State',required:false,opts:'Aguascalientes,Baja California,Baja California Sur,Campeche,Chiapas,Chihuahua,Coahuila,Colima,Durango,Guanajuato,Guerrero,Hidalgo,Jalisco,Mexico City,Michoacán,Morelos,Nayarit,Nuevo León,Oaxaca,Puebla,Querétaro,Quintana Roo,San Luis Potosí,Sinaloa,Sonora,Tabasco,Tamaulipas,Tlaxcala,Veracruz,Yucatán,Zacatecas,State of Mexico'.split(',')}
+  };
+  const COUNTRIES = [['NO','Norway'],['SE','Sweden'],['DK','Denmark'],['FI','Finland'],['DE','Germany'],['NL','Netherlands'],['BE','Belgium'],['FR','France'],['IT','Italy'],['ES','Spain'],['GB','United Kingdom'],['US','United States'],['CA','Canada'],['AU','Australia'],['NZ','New Zealand'],['AT','Austria'],['CH','Switzerland'],['PL','Poland'],['CZ','Czech Republic'],['HU','Hungary'],['RO','Romania'],['BG','Bulgaria'],['HR','Croatia'],['SK','Slovakia'],['SI','Slovenia'],['LT','Lithuania'],['LV','Latvia'],['EE','Estonia'],['IE','Ireland'],['PT','Portugal'],['GR','Greece'],['CN','China'],['JP','Japan'],['KR','South Korea'],['IN','India'],['BR','Brazil'],['MX','Mexico'],['AR','Argentina'],['ZA','South Africa'],['NG','Nigeria'],['EG','Egypt'],['SA','Saudi Arabia'],['AE','United Arab Emirates'],['TR','Turkey'],['RU','Russia'],['UA','Ukraine'],['IL','Israel'],['SG','Singapore'],['MY','Malaysia'],['TH','Thailand'],['ID','Indonesia'],['PH','Philippines'],['VN','Vietnam'],['PK','Pakistan'],['BD','Bangladesh']];
+
+  const countryOpts = COUNTRIES.map(([c,n]) => `<option value="${n}">${n}</option>`).join('');
+
   el.innerHTML = `
     <div style="max-width:680px;">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px;">
@@ -1436,59 +1451,109 @@ function renderTriageForm(el) {
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;display:flex;flex-direction:column;gap:18px;">
 
         <div style="background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.2);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--info);line-height:1.5;">
-          Fill this in while on the call. Batch'd will triage the complaint automatically and create a timestamped record.
+          Fill this in while on the call. Batch'd will triage the complaint automatically and create a timestamped audit record.
         </div>
 
+        <div style="font-size:10px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--border);padding-bottom:6px;">Contact</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
           <div>
             <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Caller name</label>
-            <input id="tc-name" type="text" placeholder="Full name" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;">
+            <input id="tc-name" type="text" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;">
           </div>
           <div>
-            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Phone number</label>
-            <input id="tc-phone" type="text" placeholder="+1 555 000 0000" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;">
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Email address <span style="opacity:0.6;">(follow-up sent if provided)</span></label>
+            <input id="tc-email" type="email" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;">
           </div>
         </div>
-
         <div>
-          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Email address <span style="opacity:0.6;">(optional — follow-up email sent automatically if provided)</span></label>
-          <input id="tc-email" type="email" placeholder="caller@email.com" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;">
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Phone number <span style="opacity:0.6;">(include country code)</span></label>
+          <input id="tc-phone" type="tel" placeholder="+47 123 45 678" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;">
         </div>
 
+        <div style="font-size:10px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--border);padding-bottom:6px;">Product</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
           <div>
             <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Product name</label>
-            <input id="tc-product" type="text" placeholder="e.g. Grandiosa Original 485g" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;">
+            <input id="tc-product" type="text" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;">
           </div>
           <div>
-            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Lot / batch number</label>
-            <input id="tc-lot" type="text" placeholder="e.g. L2024-0441" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;font-family:'DM Mono',monospace;box-sizing:border-box;">
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Barcode / EAN / UPC <span style="opacity:0.6;">(optional)</span></label>
+            <input id="tc-barcode" type="text" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;font-family:'DM Mono',monospace;box-sizing:border-box;">
           </div>
         </div>
-
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
           <div>
-            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Store where purchased</label>
-            <input id="tc-store" type="text" placeholder="e.g. Meny Grünerløkka" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;">
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Lot / batch number <span style="opacity:0.6;">(optional)</span></label>
+            <input id="tc-lot" type="text" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;font-family:'DM Mono',monospace;box-sizing:border-box;">
           </div>
           <div>
-            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Date of incident</label>
-            <input id="tc-date" type="date" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;">
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Best before / use by date <span style="opacity:0.6;">(optional)</span></label>
+            <input id="tc-bestbefore" type="date" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;">
           </div>
         </div>
 
-        <div>
-          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Does the caller still have the product?</label>
-          <div style="display:flex;gap:10px;">
-            <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;"><input type="radio" name="tc-has-product" value="true" style="accent-color:var(--accent);"> Yes</label>
-            <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;"><input type="radio" name="tc-has-product" value="false" style="accent-color:var(--accent);"> No</label>
-            <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;"><input type="radio" name="tc-has-product" value="" checked style="accent-color:var(--accent);"> Unknown</label>
+        <div style="font-size:10px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--border);padding-bottom:6px;">Purchase Location</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+          <div>
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Country *</label>
+            <select id="tc-country" onchange="tcUpdateState(this.value)" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;">
+              <option value="">Select country</option>${countryOpts}
+            </select>
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Store / retailer name</label>
+            <input id="tc-store" type="text" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;">
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+          <div>
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">City / town</label>
+            <input id="tc-city" type="text" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;">
+          </div>
+          <div id="tc-state-wrap" style="display:none;">
+            <label id="tc-state-label" style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">State / region</label>
+            <select id="tc-state" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;"><option value="">Select</option></select>
           </div>
         </div>
 
+        <div style="font-size:10px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--border);padding-bottom:6px;">Health and Safety</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+          <div>
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Anyone affected?</label>
+            <select id="tc-affected" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;">
+              <option value=""></option>
+              <option>Just me</option><option>Two or more people</option><option>No illness — product defect only</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Medical attention sought?</label>
+            <select id="tc-medical" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;">
+              <option value=""></option>
+              <option>No</option><option>Yes — saw a doctor or clinic</option><option>Yes — went to emergency room / hospital</option>
+            </select>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+          <div>
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Caller still has product?</label>
+            <select id="tc-hasproduct" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;">
+              <option value=""></option>
+              <option>Yes, unopened</option><option>Yes, partially consumed</option><option>No — discarded</option><option>No — given to authorities</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Product storage method?</label>
+            <select id="tc-storage" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;">
+              <option value=""></option>
+              <option>Refrigerated (fridge)</option><option>Frozen (freezer)</option><option>Room temperature</option><option>Unknown / not applicable</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="font-size:10px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--border);padding-bottom:6px;">Complaint Details</div>
         <div>
-          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Complaint details <span style="color:var(--danger);">*</span></label>
-          <textarea id="tc-text" rows="5" placeholder="Describe what the caller reported, in their own words as closely as possible. Include any symptoms, descriptions of foreign material, or anything else they mentioned." style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px;color:var(--text);font-size:13px;line-height:1.5;resize:vertical;box-sizing:border-box;font-family:inherit;"></textarea>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Description <span style="color:var(--danger);">*</span></label>
+          <textarea id="tc-text" rows="5" placeholder="Describe what the caller reported, in their own words as closely as possible. Include any symptoms, descriptions of foreign material, storage conditions, or anything else mentioned." style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px;color:var(--text);font-size:13px;line-height:1.5;resize:vertical;box-sizing:border-box;font-family:inherit;"></textarea>
         </div>
 
         <div id="tc-msg" style="display:none;border-radius:8px;padding:10px 14px;font-size:13px;"></div>
@@ -1500,6 +1565,19 @@ function renderTriageForm(el) {
       </div>
     </div>
   `;
+
+  // Expose region updater globally for onchange
+  window.tcUpdateState = function(countryName) {
+    const code = Object.entries({Norway:'NO',Sweden:'SE',Denmark:'DK',Germany:'DE','United States':'US',Canada:'CA',Australia:'AU','United Kingdom':'GB',France:'FR',Italy:'IT',Spain:'ES',Mexico:'MX',Brazil:'BR'}).find(([n]) => n === countryName)?.[1];
+    const wrap = document.getElementById('tc-state-wrap');
+    const stateEl = document.getElementById('tc-state');
+    const stateLabel = document.getElementById('tc-state-label');
+    const reg = code ? REGIONS[code] : null;
+    if (!reg) { wrap.style.display = 'none'; return; }
+    wrap.style.display = 'block';
+    stateLabel.textContent = reg.label + (reg.required ? ' *' : ' (optional)');
+    stateEl.innerHTML = '<option value="">Select</option>' + reg.opts.map(o => `<option value="${o}">${o}</option>`).join('');
+  };
 }
 
 async function submitPhoneComplaint() {
@@ -1612,7 +1690,13 @@ async function renderTriageDetail(el) {
               ${c.product_name ? `<div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Product</span><span style="color:var(--text);font-weight:500;">${c.product_name}</span></div>` : ''}
               ${c.lot_number ? `<div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Lot / Batch</span><span style="color:var(--text);font-family:'DM Mono',monospace;">${c.lot_number}</span></div>` : ''}
               ${c.barcode ? `<div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Barcode</span><span style="color:var(--text);font-family:'DM Mono',monospace;">${c.barcode}</span></div>` : ''}
-              ${c.purchase_store ? `<div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Store</span><span style="color:var(--text);">${c.purchase_store}</span></div>` : ''}
+              ${c.country ? `<div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Country</span><span style="color:var(--text);">${c.country}</span></div>` : ''}
+              ${(c.purchase_store||c.store_name) ? `<div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Store</span><span style="color:var(--text);">${c.purchase_store||c.store_name}</span></div>` : ''}
+              ${c.purchase_city ? `<div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">City</span><span style="color:var(--text);">${c.purchase_city}${c.purchase_state ? ', ' + c.purchase_state : ''}</span></div>` : ''}
+              ${c.best_before_date ? `<div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Best before</span><span style="color:var(--text);font-family:'DM Mono',monospace;">${c.best_before_date}</span></div>` : ''}
+              ${c.people_affected ? `<div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Affected</span><span style="color:var(--text);">${c.people_affected}</span></div>` : ''}
+              ${c.medical_attention ? `<div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Medical</span><span style="color:${c.medical_attention.includes('emergency')||c.medical_attention.includes('hospital')?'var(--danger)':'var(--text)'};">${c.medical_attention}</span></div>` : ''}
+              ${c.storage_method ? `<div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Storage</span><span style="color:var(--text);">${c.storage_method}</span></div>` : ''}
               ${c.incident_date ? `<div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Incident date</span><span style="color:var(--text);">${c.incident_date}</span></div>` : ''}
               ${c.still_has_product !== null ? `<div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Has product</span><span style="color:${c.still_has_product?'var(--accent)':'var(--muted)'};">${c.still_has_product?'Yes':'No'}</span></div>` : ''}
               <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Source</span><span style="color:var(--text);">${c.source}</span></div>
@@ -1630,6 +1714,16 @@ async function renderTriageDetail(el) {
             ${c.triage_summary ? `<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);font-size:12px;color:var(--muted);line-height:1.6;font-style:italic;">"${c.triage_summary}"</div>` : ''}
           </div>
         </div>
+
+        ${(c.barcode||c.lot_number||c.purchase_city) ? `
+        <div style="background:var(--surface);border:1px solid rgba(56,189,248,0.2);border-radius:12px;padding:20px;margin-bottom:16px;">
+          <div style="font-size:11px;font-weight:700;color:var(--info);letter-spacing:0.08em;margin-bottom:14px;">BATCH'D INTELLIGENCE</div>
+          <div style="font-size:12px;color:var(--muted);line-height:1.6;">
+            ${c.barcode ? `<div style="margin-bottom:6px;"><span style="color:var(--muted);">Barcode match check: </span><span style="color:var(--text);font-family:'DM Mono',monospace;">${c.barcode}</span></div>` : ''}
+            ${c.lot_number ? `<div style="margin-bottom:6px;"><span style="color:var(--muted);">Lot in shipment records: </span><span style="color:var(--text);font-family:'DM Mono',monospace;">${c.lot_number}</span> — <a href="javascript:void(0)" onclick="showPanel('shipments')" style="color:var(--info);text-decoration:none;">Check shipments →</a></div>` : ''}
+            ${c.purchase_city ? `<div style="margin-bottom:6px;"><span style="color:var(--muted);">Store location: </span><span style="color:var(--text);">${[c.purchase_city, c.purchase_state, c.country].filter(Boolean).join(', ')}</span> — <a href="javascript:void(0)" onclick="showPanel('partners')" style="color:var(--info);text-decoration:none;">Check trading partners →</a></div>` : ''}
+          </div>
+        </div>` : ''}
 
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px;">
           <div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:0.08em;margin-bottom:14px;">CONTACT</div>

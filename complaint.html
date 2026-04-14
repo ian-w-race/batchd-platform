@@ -3,430 +3,475 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Report a Product Concern</title>
+<title>Report a Product Concern — Batch'd Triage</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-  :root {
-    --bg:         #040c0e;
-    --surface:    #091918;
-    --surface2:   #0e2622;
-    --border:     #12352f;
-    --accent:     #34d399;
-    --text:       #edfdf8;
-    --muted:      #6aaf9e;
-    --danger:     #ff5c5c;
-    --warn:       #f5a623;
-    --info:       #38bdf8;
-    --radius:     12px;
-  }
-
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: 'Figtree', -apple-system, sans-serif;
-    min-height: 100dvh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 24px 16px 48px;
-  }
-
-  .page-header {
-    width: 100%;
-    max-width: 560px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 32px;
-    padding-top: 8px;
-  }
-
-  .logo-mark {
-    width: 32px; height: 32px; flex-shrink: 0;
-  }
-
-  .logo-name {
-    font-size: 17px;
-    font-weight: 800;
-    color: var(--accent);
-    line-height: 1;
-  }
-
-  .logo-sub {
-    font-size: 9px;
-    color: var(--muted);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    margin-top: 3px;
-  }
-
-  .card {
-    width: 100%;
-    max-width: 560px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 28px 24px;
-  }
-
-  .card-title {
-    font-size: 20px;
-    font-weight: 700;
-    color: var(--text);
-    margin-bottom: 6px;
-  }
-
-  .card-sub {
-    font-size: 13px;
-    color: var(--muted);
-    line-height: 1.6;
-    margin-bottom: 24px;
-  }
-
-  .form { display: flex; flex-direction: column; gap: 16px; }
-
-  .field { display: flex; flex-direction: column; gap: 5px; }
-
-  .field label {
-    font-size: 12px;
-    color: var(--muted);
-    font-weight: 500;
-  }
-
-  .field .sub {
-    font-size: 11px;
-    color: var(--muted);
-    opacity: 0.7;
-    margin-top: 1px;
-  }
-
-  input, textarea, select {
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 10px 12px;
-    color: var(--text);
-    font-size: 13px;
-    font-family: inherit;
-    outline: none;
-    transition: border-color 0.15s;
-    width: 100%;
-  }
-
-  input:focus, textarea:focus { border-color: var(--accent); }
-  input::placeholder, textarea::placeholder { color: #3d7a6b; }
-  textarea { resize: vertical; min-height: 100px; line-height: 1.5; }
-
-  .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  @media (max-width: 420px) { .row-2 { grid-template-columns: 1fr; } }
-
-  .mono { font-family: 'DM Mono', monospace; }
-
-  .info-box {
-    background: rgba(56,189,248,0.08);
-    border: 1px solid rgba(56,189,248,0.2);
-    border-radius: 8px;
-    padding: 12px 14px;
-    font-size: 12px;
-    color: var(--info);
-    line-height: 1.6;
-  }
-
-  .submit-btn {
-    background: var(--accent);
-    color: #065f46;
-    border: none;
-    border-radius: 8px;
-    padding: 13px;
-    font-size: 14px;
-    font-weight: 700;
-    cursor: pointer;
-    width: 100%;
-    font-family: inherit;
-    transition: opacity 0.15s;
-    margin-top: 4px;
-  }
-
-  .submit-btn:hover { opacity: 0.9; }
-  .submit-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-
-  .error-box {
-    display: none;
-    background: rgba(255,92,92,0.1);
-    border: 1px solid rgba(255,92,92,0.3);
-    border-radius: 8px;
-    padding: 10px 14px;
-    font-size: 13px;
-    color: var(--danger);
-  }
-
-  /* Success state */
-  .success-state {
-    display: none;
-    flex-direction: column;
-    align-items: center;
-    text-align: center;
-    padding: 12px 0 4px;
-    gap: 14px;
-  }
-
-  .success-state.show { display: flex; }
-
-  .success-icon {
-    width: 56px; height: 56px;
-    border-radius: 50%;
-    background: rgba(52,211,153,0.12);
-    display: flex; align-items: center; justify-content: center;
-  }
-
-  .success-title {
-    font-size: 20px;
-    font-weight: 700;
-    color: var(--text);
-  }
-
-  .success-ref {
-    font-family: 'DM Mono', monospace;
-    font-size: 12px;
-    color: var(--accent);
-    background: rgba(52,211,153,0.08);
-    padding: 5px 14px;
-    border-radius: 20px;
-  }
-
-  .success-sub {
-    font-size: 13px;
-    color: var(--muted);
-    line-height: 1.6;
-    max-width: 380px;
-  }
-
-  .success-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 4px; }
-
-  .btn-secondary {
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    color: var(--muted);
-    border-radius: 8px;
-    padding: 10px 18px;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    font-family: inherit;
-  }
-
-  .btn-primary {
-    background: var(--accent);
-    color: #065f46;
-    border: none;
-    border-radius: 8px;
-    padding: 10px 18px;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    font-family: inherit;
-  }
-
-  .page-footer {
-    margin-top: 24px;
-    font-size: 11px;
-    color: #3d7a6b;
-    text-align: center;
-    line-height: 1.7;
-  }
-
-  .page-footer a { color: var(--muted); text-decoration: none; }
-  .page-footer a:hover { color: var(--accent); }
-
-  .spinner {
-    width: 16px; height: 16px;
-    border: 2px solid rgba(6,95,70,0.3);
-    border-top-color: #065f46;
-    border-radius: 50%;
-    animation: spin 0.7s linear infinite;
-    display: inline-block;
-    vertical-align: middle;
-    margin-right: 6px;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+:root{
+  --bg:#040c0e;--surface:#091918;--surface2:#0e2622;
+  --border:#12352f;--accent:#34d399;--text:#edfdf8;
+  --muted:#6aaf9e;--danger:#ff5c5c;--warn:#f5a623;--info:#38bdf8;
+}
+body{background:var(--bg);color:var(--text);font-family:'Figtree',-apple-system,sans-serif;min-height:100dvh;padding:24px 16px 56px;}
+.page{max-width:600px;margin:0 auto;}
+.page-header{display:flex;align-items:center;gap:10px;margin-bottom:28px;padding-top:6px;}
+.logo-name{font-size:17px;font-weight:800;color:var(--accent);line-height:1;}
+.logo-sub{font-size:9px;color:var(--muted);letter-spacing:0.08em;text-transform:uppercase;margin-top:3px;}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px 22px;}
+.card-title{font-size:19px;font-weight:700;margin-bottom:6px;}
+.card-sub{font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:20px;}
+.emergency{background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.2);border-radius:8px;padding:11px 14px;font-size:12px;color:var(--danger);line-height:1.5;margin-bottom:20px;}
+.form{display:flex;flex-direction:column;gap:16px;}
+.section-label{font-size:10px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:#3d7a6b;padding-bottom:8px;border-bottom:1px solid var(--border);}
+.field{display:flex;flex-direction:column;gap:5px;}
+.label{font-size:12px;color:var(--muted);font-weight:500;display:flex;align-items:center;gap:5px;}
+.opt{font-size:10px;color:#3d7a6b;font-style:italic;}
+.field-sub{font-size:11px;color:#3d7a6b;line-height:1.4;}
+input,textarea,select{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;font-family:inherit;outline:none;transition:border-color 0.15s;width:100%;}
+input:focus,textarea:focus,select:focus{border-color:var(--accent);}
+input::placeholder,textarea::placeholder{color:#2d6657;}
+select option{background:#091918;}
+textarea{resize:vertical;min-height:100px;line-height:1.5;}
+.mono{font-family:'DM Mono',monospace;}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;}
+@media(max-width:440px){.row,.row3{grid-template-columns:1fr;}}
+#state-row{display:none;}
+.submit-btn{background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:13px;font-size:14px;font-weight:700;cursor:pointer;width:100%;font-family:inherit;transition:opacity 0.15s;margin-top:4px;}
+.submit-btn:hover{opacity:0.9;}
+.submit-btn:disabled{opacity:0.5;cursor:not-allowed;}
+.error-box{display:none;background:rgba(255,92,92,0.09);border:1px solid rgba(255,92,92,0.25);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--danger);line-height:1.5;}
+.success{display:none;flex-direction:column;align-items:center;text-align:center;padding:16px 0 8px;gap:14px;}
+.success.show{display:flex;}
+.s-icon{width:56px;height:56px;border-radius:50%;background:rgba(52,211,153,0.1);display:flex;align-items:center;justify-content:center;}
+.s-title{font-size:20px;font-weight:700;}
+.s-ref{font-family:'DM Mono',monospace;font-size:12px;color:var(--accent);background:rgba(52,211,153,0.08);padding:5px 14px;border-radius:20px;}
+.s-sub{font-size:13px;color:var(--muted);line-height:1.6;max-width:400px;}
+.s-actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:4px;}
+.btn-s{background:var(--surface2);border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:10px 18px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;}
+.page-footer{margin-top:24px;font-size:11px;color:#2d6657;text-align:center;line-height:1.8;}
+.page-footer a{color:var(--muted);text-decoration:none;}
+.page-footer a:hover{color:var(--accent);}
+.spinner{width:14px;height:14px;border:2px solid rgba(6,95,70,0.3);border-top-color:#065f46;border-radius:50%;animation:spin 0.7s linear infinite;display:inline-block;vertical-align:middle;margin-right:6px;}
+@keyframes spin{to{transform:rotate(360deg);}}
 </style>
 </head>
 <body>
+<div class="page">
 
 <div class="page-header">
-  <svg class="logo-mark" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect width="512" height="512" rx="113" fill="#34D399"/>
-    <rect x="172" y="75" width="167" height="167" rx="24" fill="#055A46"/>
-    <rect x="75" y="270" width="167" height="167" rx="24" fill="#055A46"/>
-    <rect x="270" y="270" width="167" height="167" rx="24" fill="#055A46"/>
-  </svg>
-  <div>
-    <div class="logo-name">Batch'd</div>
-    <div class="logo-sub">Product Triage</div>
-  </div>
+  <svg width="32" height="32" viewBox="0 0 512 512" fill="none"><rect width="512" height="512" rx="113" fill="#34D399"/><rect x="172" y="75" width="167" height="167" rx="24" fill="#055A46"/><rect x="75" y="270" width="167" height="167" rx="24" fill="#055A46"/><rect x="270" y="270" width="167" height="167" rx="24" fill="#055A46"/></svg>
+  <div><div class="logo-name">Batch'd</div><div class="logo-sub" id="logo-sub">Product Triage</div></div>
 </div>
 
 <div class="card">
   <div id="form-view">
-    <div class="card-title">Report a product concern</div>
-    <div class="card-sub" id="page-sub">Your report helps keep products safe. We take every concern seriously and will follow up with you directly.</div>
+    <div class="card-title" id="card-title">Report a product concern</div>
+    <div class="card-sub" id="card-sub">Your report helps keep products safe. All reports are reviewed by our food safety team and followed up directly.</div>
+
+    <div class="emergency" id="emergency-notice">If this is a medical emergency, please call emergency services immediately before submitting this form.</div>
 
     <div class="form" id="complaint-form">
 
-      <div class="info-box">
-        If this is a medical emergency, please call emergency services immediately before submitting this form.
-      </div>
-
-      <div class="row-2">
+      <!-- Contact -->
+      <div class="section-label" id="sec-contact">Contact information</div>
+      <div class="row">
         <div class="field">
-          <label for="c-name">Your name</label>
-          <input id="c-name" type="text" autocomplete="name" placeholder="Full name">
+          <label class="label" for="c-name" id="l-name">Full name</label>
+          <input id="c-name" type="text" autocomplete="name">
         </div>
         <div class="field">
-          <label for="c-phone">Phone number (optional)</label>
-          <input id="c-phone" type="tel" autocomplete="tel" placeholder="+1 555 000 0000">
+          <label class="label" for="c-email" id="l-email">Email address</label>
+          <div class="field-sub" id="sub-email">A reference number will be sent to this address</div>
+          <input id="c-email" type="email" autocomplete="email" placeholder="you@email.com">
         </div>
       </div>
-
       <div class="field">
-        <label for="c-email">Email address</label>
-        <div class="sub">We'll send you a follow-up reference number</div>
-        <input id="c-email" type="email" autocomplete="email" placeholder="you@email.com">
+        <label class="label" for="c-phone" id="l-phone">Phone number <span class="opt" id="opt-text">(Optional)</span></label>
+        <input id="c-phone" type="tel" autocomplete="tel" id="ph-ph" placeholder="+47 123 45 678 or +1 555 000 0000">
       </div>
 
-      <div class="row-2">
+      <!-- Product -->
+      <div class="section-label" id="sec-product">Product information</div>
+      <div class="row">
         <div class="field">
-          <label for="c-product">Product name</label>
-          <input id="c-product" type="text" placeholder="e.g. Grandiosa Original 485g">
+          <label class="label" for="c-product" id="l-product">Product name</label>
+          <input id="c-product" type="text" id="ph-product">
         </div>
         <div class="field">
-          <label for="c-lot">Lot or batch number (if visible)</label>
-          <input id="c-lot" type="text" class="mono" placeholder="e.g. L2024-0441">
-        </div>
-      </div>
-
-      <div class="row-2">
-        <div class="field">
-          <label for="c-store">Where did you purchase it?</label>
-          <input id="c-store" type="text" placeholder="Store name or location">
-        </div>
-        <div class="field">
-          <label for="c-date">When did this happen?</label>
-          <input id="c-date" type="date">
+          <label class="label" for="c-barcode" id="l-barcode">Barcode / EAN / UPC <span class="opt">(Optional)</span></label>
+          <input id="c-barcode" type="text" class="mono" id="ph-barcode">
         </div>
       </div>
-
+      <div class="row">
+        <div class="field">
+          <label class="label" for="c-lot" id="l-lot">Lot or batch number <span class="opt">(Optional)</span></label>
+          <input id="c-lot" type="text" class="mono" id="ph-lot">
+        </div>
+        <div class="field">
+          <label class="label" for="c-bestbefore" id="l-bestbefore">Best before / use by date <span class="opt">(Optional)</span></label>
+          <input id="c-bestbefore" type="date">
+        </div>
+      </div>
       <div class="field">
-        <label for="c-details">What happened? <span style="color:var(--danger);">*</span></label>
-        <textarea id="c-details" placeholder="Please describe what you found or experienced, in as much detail as you can. The more detail you provide, the better we can investigate."></textarea>
+        <label class="label" for="c-purchdate" id="l-purchdate">Approximate purchase date <span class="opt">(Optional)</span></label>
+        <input id="c-purchdate" type="date">
+      </div>
+
+      <!-- Location -->
+      <div class="section-label" id="sec-location">Purchase location</div>
+      <div class="row">
+        <div class="field">
+          <label class="label" for="c-country" id="l-country">Country *</label>
+          <select id="c-country"></select>
+        </div>
+        <div class="field">
+          <label class="label" for="c-store" id="l-store">Store / retailer name</label>
+          <input id="c-store" type="text">
+        </div>
+      </div>
+      <div class="row" id="city-state-row">
+        <div class="field">
+          <label class="label" for="c-city" id="l-city">City / town</label>
+          <input id="c-city" type="text">
+        </div>
+        <div class="field" id="state-row" style="display:none;">
+          <label class="label" for="c-state" id="l-state">State / region</label>
+          <select id="c-state"></select>
+        </div>
+      </div>
+
+      <!-- Details -->
+      <div class="section-label" id="sec-details">What happened?</div>
+      <div class="field">
+        <label class="label" for="c-details" id="l-details">Description *</label>
+        <textarea id="c-details"></textarea>
+      </div>
+
+      <!-- Health signals -->
+      <div class="section-label" id="sec-health">Health and safety</div>
+      <div class="row">
+        <div class="field">
+          <label class="label" for="c-affected" id="l-affected">Anyone affected?</label>
+          <select id="c-affected"></select>
+        </div>
+        <div class="field">
+          <label class="label" for="c-medical" id="l-medical">Medical attention sought?</label>
+          <select id="c-medical"></select>
+        </div>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label class="label" for="c-hasproduct" id="l-hasproduct">Do you still have the product?</label>
+          <select id="c-hasproduct"></select>
+        </div>
+        <div class="field">
+          <label class="label" for="c-storage" id="l-storage">How was it stored?</label>
+          <select id="c-storage"></select>
+        </div>
       </div>
 
       <div class="error-box" id="c-error"></div>
-
       <button class="submit-btn" id="c-submit" onclick="submitComplaint()">Submit report</button>
-
     </div>
   </div>
 
-  <div class="success-state" id="success-view">
-    <div class="success-icon">
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-    </div>
-    <div class="success-title">Report received</div>
-    <div class="success-ref" id="success-ref"></div>
-    <div class="success-sub">We'll review your report and be in touch if we need more information.</div>
-    <div id="success-followup" style="display:none;font-size:13px;color:var(--muted);"></div>
-    <div class="success-actions">
-      <button class="btn-secondary" onclick="resetForm()">Submit another report</button>
+  <div class="success" id="success-view">
+    <div class="s-icon"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg></div>
+    <div class="s-title" id="s-title">Report received</div>
+    <div class="s-ref" id="s-ref"></div>
+    <div class="s-sub" id="s-sub">We have received your report and will review it promptly.</div>
+    <div id="s-followup" style="display:none;font-size:12px;color:var(--muted);text-align:center;"></div>
+    <div class="s-actions">
+      <button class="btn-s" onclick="resetForm()" id="s-another">Submit another report</button>
     </div>
   </div>
 </div>
 
 <div class="page-footer">
-  This form is managed by <a href="https://batchd.no" target="_blank">Batch'd Triage</a>, a food safety and traceability platform.<br>
-  Your report is stored securely and used only for food safety investigation purposes.
+  <span id="footer-text">This form is managed by <a href="https://batchd.no" target="_blank">Batch'd Triage</a>, a food safety and traceability platform.<br>Your report is stored securely and used only for food safety investigation purposes.</span>
+</div>
+
 </div>
 
 <script>
-  const TRIAGE_URL = '/.netlify/functions/triage-complaint';
+const TRIAGE_URL = '/.netlify/functions/triage-complaint';
 
-  // Read org from URL param
-  const urlParams = new URLSearchParams(window.location.search);
-  const orgId   = urlParams.get('org')  || '';
-  const orgName = urlParams.get('name') || '';
-  const lang    = urlParams.get('lang') || 'en';
+const urlP = new URLSearchParams(window.location.search);
+const orgId   = urlP.get('org')  || '';
+const orgName = urlP.get('name') || '';
+const langP   = urlP.get('lang') || '';
+const browserLang = (navigator.language || '');
+const LANG = langP || ((browserLang.startsWith('nb') || browserLang.startsWith('nn')) ? 'no' : 'en');
 
-  if (lang === 'no') {
-    document.querySelector('.card-title').textContent = 'Meld en produktbekymring';
-    document.getElementById('page-sub').textContent = 'Tilbakemeldingen din bidrar til tryggere produkter. Vi tar alle henvendelser på alvor og følger opp direkte.';
-    document.getElementById('c-submit').textContent = 'Send inn rapport';
+const STR = {
+  en: {
+    logoSub:'Product Triage', title:'Report a product concern',
+    sub:'Your report helps keep products safe. All reports are reviewed by our food safety team and followed up directly.',
+    emergency:'If this is a medical emergency, please call emergency services immediately before submitting this form.',
+    secContact:'Contact information', secProduct:'Product information',
+    secLocation:'Purchase location', secDetails:'What happened?', secHealth:'Health and safety',
+    lName:'Full name', lEmail:'Email address', subEmail:'A reference number will be sent to this address',
+    lPhone:'Phone number', lProduct:'Product name', lBarcode:'Barcode / EAN / UPC',
+    lLot:'Lot or batch number', lBestBefore:'Best before / use by date',
+    lPurchDate:'Approximate purchase date', lCountry:'Country *', lStore:'Store / retailer name',
+    lCity:'City / town', lState:'State / region', lDetails:'Description *',
+    lAffected:'Anyone affected?', lMedical:'Medical attention sought?',
+    lHasProduct:'Do you still have the product?', lStorage:'How was it stored?',
+    opt:'Optional', required:'Please describe what happened.',
+    countryRequired:'Please select a country.',
+    phPhone:'+47 123 45 678 or +1 555 000 0000',
+    phProduct:'Name as shown on packaging', phBarcode:'Numbers beneath the barcode',
+    phLot:'Usually printed near the best before date',
+    phStore:'Name of the shop', phCity:'City or town where you purchased it',
+    phState:'Select region', phDetails:'Please describe what you found or experienced. The more detail you provide, the better we can investigate.',
+    affOpts:['','Just me','Two or more people','No illness — product defect only'],
+    medOpts:['','No','Yes — saw a doctor or clinic','Yes — went to emergency room / hospital'],
+    hasOpts:['','Yes, unopened','Yes, partially consumed','No — discarded','No — given to authorities'],
+    storOpts:['','Refrigerated (fridge)','Frozen (freezer)','Room temperature','Unknown / not applicable'],
+    countryDefault:'Select country',
+    submit:'Submit report', submitting:'Submitting…',
+    sTitle:'Report received', sRef:'Your reference number',
+    sSub:'We have received your report and will review it promptly. If you provided an email address, a follow-up confirmation has been sent.',
+    sAnother:'Submit another report',
+    footer:'This form is managed by <a href="https://batchd.no" target="_blank">Batch\'d Triage</a>, a food safety and traceability platform.<br>Your report is stored securely and used only for food safety investigation purposes.'
+  },
+  no: {
+    logoSub:'Produkttriage', title:'Meld en produktbekymring',
+    sub:'Rapporten din bidrar til tryggere produkter. Alle rapporter gjennomgås av mattrygghetsteamet vårt og følges opp direkte.',
+    emergency:'Hvis dette er en medisinsk nødsituasjon, ring nødetatene umiddelbart før du fyller ut dette skjemaet.',
+    secContact:'Kontaktinformasjon', secProduct:'Produktinformasjon',
+    secLocation:'Kjøpssted', secDetails:'Hva skjedde?', secHealth:'Helse og sikkerhet',
+    lName:'Fullt navn', lEmail:'E-postadresse', subEmail:'Et referansenummer sendes til denne adressen',
+    lPhone:'Telefonnummer', lProduct:'Produktnavn', lBarcode:'Strekkode / EAN / UPC',
+    lLot:'Partinummer / batchnummer', lBestBefore:'Best-før / siste forbruksdato',
+    lPurchDate:'Omtrentlig kjøpsdato', lCountry:'Land *', lStore:'Butikk / forhandlernavn',
+    lCity:'By / tettsted', lState:'Fylke / region', lDetails:'Beskrivelse *',
+    lAffected:'Noen berørt?', lMedical:'Medisinsk hjelp oppsøkt?',
+    lHasProduct:'Har du fortsatt produktet?', lStorage:'Hvordan ble det oppbevart?',
+    opt:'Valgfritt', required:'Beskriv hva som skjedde.',
+    countryRequired:'Velg et land.',
+    phPhone:'Inkluder landkode, f.eks. +47 123 45 678',
+    phProduct:'Navn slik det står på emballasjen', phBarcode:'Tallene under strekkoden',
+    phLot:'Vanligvis trykket nær best-før-datoen',
+    phStore:'Navn på butikken', phCity:'By eller tettsted der du kjøpte det',
+    phState:'Velg region', phDetails:'Beskriv hva du fant eller opplevde. Jo mer detaljer du oppgir, jo bedre kan vi etterforske.',
+    affOpts:['','Bare meg','To eller flere personer','Ingen sykdom — kun produktfeil'],
+    medOpts:['','Nei','Ja — oppsøkte lege eller klinikk','Ja — ble innlagt på sykehus / legevakt'],
+    hasOpts:['','Ja, uåpnet','Ja, delvis brukt','Nei — kastet','Nei — overlevert til myndigheter'],
+    storOpts:['','Kjølt (kjøleskap)','Fryst (fryser)','Romtemperatur','Ukjent / ikke relevant'],
+    countryDefault:'Velg land',
+    submit:'Send inn rapport', submitting:'Sender…',
+    sTitle:'Rapport mottatt', sRef:'Ditt referansenummer',
+    sSub:'Vi har mottatt rapporten din og vil gjennomgå den snarest. Hvis du oppga e-postadresse, er en oppfølgingsbekreftelse sendt.',
+    sAnother:'Send inn en ny rapport',
+    footer:'Dette skjemaet administreres av <a href="https://batchd.no" target="_blank">Batch\'d Triage</a>, en plattform for mattrygghet og sporbarhet.<br>Rapporten din lagres sikkert og brukes kun til matsikkerhetsundersøkelse.'
   }
+};
+const s = STR[LANG] || STR.en;
 
-  async function submitComplaint() {
-    const details = document.getElementById('c-details').value.trim();
-    if (!details) { showError('Please describe what happened.'); return; }
+// Apply strings
+document.documentElement.lang = LANG;
+document.getElementById('logo-sub').textContent = s.logoSub;
+document.getElementById('card-title').textContent = s.title;
+document.getElementById('card-sub').textContent = s.sub;
+document.getElementById('emergency-notice').textContent = s.emergency;
+document.getElementById('sec-contact').textContent = s.secContact;
+document.getElementById('sec-product').textContent = s.secProduct;
+document.getElementById('sec-location').textContent = s.secLocation;
+document.getElementById('sec-details').textContent = s.secDetails;
+document.getElementById('sec-health').textContent = s.secHealth;
+document.getElementById('l-name').textContent = s.lName;
+document.getElementById('l-email').textContent = s.lEmail;
+document.getElementById('sub-email').textContent = s.subEmail;
+document.getElementById('l-phone').innerHTML = s.lPhone + ' <span class="opt">(' + s.opt + ')</span>';
+document.getElementById('c-phone').placeholder = s.phPhone;
+document.getElementById('l-product').textContent = s.lProduct;
+document.getElementById('c-product').placeholder = s.phProduct;
+document.getElementById('l-barcode').innerHTML = s.lBarcode + ' <span class="opt">(' + s.opt + ')</span>';
+document.getElementById('c-barcode').placeholder = s.phBarcode;
+document.getElementById('l-lot').innerHTML = s.lLot + ' <span class="opt">(' + s.opt + ')</span>';
+document.getElementById('c-lot').placeholder = s.phLot;
+document.getElementById('l-bestbefore').innerHTML = s.lBestBefore + ' <span class="opt">(' + s.opt + ')</span>';
+document.getElementById('l-purchdate').innerHTML = s.lPurchDate + ' <span class="opt">(' + s.opt + ')</span>';
+document.getElementById('l-country').textContent = s.lCountry;
+document.getElementById('l-store').textContent = s.lStore;
+document.getElementById('c-store').placeholder = s.phStore;
+document.getElementById('l-city').textContent = s.lCity;
+document.getElementById('c-city').placeholder = s.phCity;
+document.getElementById('l-state').textContent = s.lState;
+document.getElementById('l-details').textContent = s.lDetails;
+document.getElementById('c-details').placeholder = s.phDetails;
+document.getElementById('l-affected').textContent = s.lAffected;
+document.getElementById('l-medical').textContent = s.lMedical;
+document.getElementById('l-hasproduct').textContent = s.lHasProduct;
+document.getElementById('l-storage').textContent = s.lStorage;
+document.getElementById('c-submit').textContent = s.submit;
+document.getElementById('s-title').textContent = s.sTitle;
+document.getElementById('s-sub').textContent = s.sSub;
+document.getElementById('s-another').textContent = s.sAnother;
+document.getElementById('footer-text').innerHTML = s.footer;
 
-    const btn = document.getElementById('c-submit');
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner"></span> Submitting…';
+// Populate selects
+function populateSel(id, opts) {
+  const el = document.getElementById(id);
+  el.innerHTML = opts.map(o => `<option value="${o}">${o || '—'}</option>`).join('');
+}
+populateSel('c-affected', s.affOpts);
+populateSel('c-medical', s.medOpts);
+populateSel('c-hasproduct', s.hasOpts);
+populateSel('c-storage', s.storOpts);
 
-    const email = document.getElementById('c-email').value.trim();
+// Country data
+const COUNTRIES = [
+  ['NO','Norway'],['SE','Sweden'],['DK','Denmark'],['FI','Finland'],
+  ['DE','Germany'],['NL','Netherlands'],['BE','Belgium'],['FR','France'],
+  ['IT','Italy'],['ES','Spain'],['PT','Portugal'],['CH','Switzerland'],
+  ['AT','Austria'],['PL','Poland'],['GB','United Kingdom'],
+  ['US','United States'],['CA','Canada'],['AU','Australia'],['NZ','New Zealand'],
+  ['--',''],
+  ['AF','Afghanistan'],['AL','Albania'],['DZ','Algeria'],['AR','Argentina'],
+  ['AM','Armenia'],['AZ','Azerbaijan'],['BH','Bahrain'],['BD','Bangladesh'],
+  ['BY','Belarus'],['BR','Brazil'],['BG','Bulgaria'],['KH','Cambodia'],
+  ['CM','Cameroon'],['CL','Chile'],['CN','China'],['CO','Colombia'],
+  ['HR','Croatia'],['CU','Cuba'],['CY','Cyprus'],['CZ','Czech Republic'],
+  ['DO','Dominican Republic'],['EC','Ecuador'],['EG','Egypt'],['SV','El Salvador'],
+  ['EE','Estonia'],['ET','Ethiopia'],['FJ','Fiji'],['GE','Georgia'],
+  ['GH','Ghana'],['GR','Greece'],['GT','Guatemala'],['HU','Hungary'],
+  ['IS','Iceland'],['IN','India'],['ID','Indonesia'],['IR','Iran'],
+  ['IQ','Iraq'],['IE','Ireland'],['IL','Israel'],['JM','Jamaica'],
+  ['JP','Japan'],['JO','Jordan'],['KZ','Kazakhstan'],['KE','Kenya'],
+  ['KR','South Korea'],['KW','Kuwait'],['LV','Latvia'],['LB','Lebanon'],
+  ['LT','Lithuania'],['LU','Luxembourg'],['MY','Malaysia'],['MT','Malta'],
+  ['MX','Mexico'],['MD','Moldova'],['MA','Morocco'],['MZ','Mozambique'],
+  ['MM','Myanmar'],['NA','Namibia'],['NP','Nepal'],['NG','Nigeria'],
+  ['OM','Oman'],['PK','Pakistan'],['PA','Panama'],['PY','Paraguay'],
+  ['PE','Peru'],['PH','Philippines'],['QA','Qatar'],['RO','Romania'],
+  ['RU','Russia'],['RW','Rwanda'],['SA','Saudi Arabia'],['SN','Senegal'],
+  ['RS','Serbia'],['SG','Singapore'],['SK','Slovakia'],['SI','Slovenia'],
+  ['ZA','South Africa'],['LK','Sri Lanka'],['SD','Sudan'],['SZ','Eswatini'],
+  ['SY','Syria'],['TW','Taiwan'],['TZ','Tanzania'],['TH','Thailand'],
+  ['TN','Tunisia'],['TR','Turkey'],['UG','Uganda'],['UA','Ukraine'],
+  ['AE','United Arab Emirates'],['UY','Uruguay'],['UZ','Uzbekistan'],
+  ['VE','Venezuela'],['VN','Vietnam'],['YE','Yemen'],['ZM','Zambia'],['ZW','Zimbabwe']
+];
 
-    const payload = {
-      source: 'widget',
-      manufacturer_id: orgId || null,
-      org_name: orgName || null,
-      product_name:   document.getElementById('c-product').value.trim() || null,
-      lot_number:     document.getElementById('c-lot').value.trim() || null,
-      complaint_text: details,
-      customer_name:  document.getElementById('c-name').value.trim() || null,
-      customer_email: email || null,
-      customer_phone: document.getElementById('c-phone').value.trim() || null,
-      purchase_store: document.getElementById('c-store').value.trim() || null,
-      incident_date:  document.getElementById('c-date').value || null,
-      submitted_by_label: 'Customer (web form)'
-    };
+const REGIONS = {
+  US:{label:LANG==='no'?'Delstat':'State',required:true,opts:['Alabama','Alaska','Arizona','Arkansas','California','Colorado','Connecticut','Delaware','Florida','Georgia','Hawaii','Idaho','Illinois','Indiana','Iowa','Kansas','Kentucky','Louisiana','Maine','Maryland','Massachusetts','Michigan','Minnesota','Mississippi','Missouri','Montana','Nebraska','Nevada','New Hampshire','New Jersey','New Mexico','New York','North Carolina','North Dakota','Ohio','Oklahoma','Oregon','Pennsylvania','Rhode Island','South Carolina','South Dakota','Tennessee','Texas','Utah','Vermont','Virginia','Washington','West Virginia','Wisconsin','Wyoming','District of Columbia']},
+  CA:{label:LANG==='no'?'Provins':'Province',required:true,opts:['Alberta','British Columbia','Manitoba','New Brunswick','Newfoundland and Labrador','Northwest Territories','Nova Scotia','Nunavut','Ontario','Prince Edward Island','Quebec','Saskatchewan','Yukon']},
+  AU:{label:LANG==='no'?'Delstat':'State',required:true,opts:['Australian Capital Territory','New South Wales','Northern Territory','Queensland','South Australia','Tasmania','Victoria','Western Australia']},
+  DE:{label:LANG==='no'?'Delstat (Bundesland)':'State (Bundesland)',required:false,opts:['Baden-Württemberg','Bavaria','Berlin','Brandenburg','Bremen','Hamburg','Hesse','Lower Saxony','Mecklenburg-Vorpommern','North Rhine-Westphalia','Rhineland-Palatinate','Saarland','Saxony','Saxony-Anhalt','Schleswig-Holstein','Thuringia']},
+  NO:{label:LANG==='no'?'Fylke':'County (Fylke)',required:false,opts:['Agder','Innlandet','Møre og Romsdal','Nordland','Oslo','Rogaland','Troms og Finnmark','Trøndelag','Vestfold og Telemark','Vestland','Viken']},
+  SE:{label:LANG==='no'?'Län':'County (Län)',required:false,opts:['Blekinge','Dalarna','Gävleborg','Gotland','Halland','Jämtland','Jönköping','Kalmar','Kronoberg','Norrbotten','Örebro','Östergötland','Skåne','Södermanland','Stockholm','Uppsala','Värmland','Västerbotten','Västernorrland','Västmanland','Västra Götaland']},
+  GB:{label:LANG==='no'?'Nasjon / Region':'Nation / Region',required:false,opts:['England','Scotland','Wales','Northern Ireland']},
+  FR:{label:'Région',required:false,opts:['Auvergne-Rhône-Alpes','Bourgogne-Franche-Comté','Bretagne','Centre-Val de Loire','Corse','Grand Est','Hauts-de-France','Île-de-France','Normandie','Nouvelle-Aquitaine','Occitanie','Pays de la Loire','Provence-Alpes-Côte d\'Azur']},
+  IT:{label:'Region',required:false,opts:['Abruzzo','Aosta Valley','Apulia','Basilicata','Calabria','Campania','Emilia-Romagna','Friuli-Venezia Giulia','Lazio','Liguria','Lombardy','Marche','Molise','Piedmont','Sardinia','Sicily','Trentino-South Tyrol','Tuscany','Umbria','Veneto']},
+  ES:{label:'Region',required:false,opts:['Andalusia','Aragon','Asturias','Balearic Islands','Basque Country','Canary Islands','Cantabria','Castile and León','Castile-La Mancha','Catalonia','Extremadura','Galicia','La Rioja','Madrid','Murcia','Navarre','Valencia']},
+  MX:{label:'State',required:false,opts:['Aguascalientes','Baja California','Baja California Sur','Campeche','Chiapas','Chihuahua','Coahuila','Colima','Durango','Guanajuato','Guerrero','Hidalgo','Jalisco','Mexico City','Michoacán','Morelos','Nayarit','Nuevo León','Oaxaca','Puebla','Querétaro','Quintana Roo','San Luis Potosí','Sinaloa','Sonora','Tabasco','Tamaulipas','Tlaxcala','Veracruz','Yucatán','Zacatecas','State of Mexico']},
+  BR:{label:'State',required:false,opts:['Acre','Alagoas','Amapá','Amazonas','Bahia','Ceará','Distrito Federal','Espírito Santo','Goiás','Maranhão','Mato Grosso','Mato Grosso do Sul','Minas Gerais','Pará','Paraíba','Paraná','Pernambuco','Piauí','Rio de Janeiro','Rio Grande do Norte','Rio Grande do Sul','Rondônia','Roraima','Santa Catarina','São Paulo','Sergipe','Tocantins']}
+};
 
-    try {
-      const res  = await fetch(TRIAGE_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
+// Build country dropdown
+const countryEl = document.getElementById('c-country');
+countryEl.innerHTML = `<option value="">${s.countryDefault}</option>`;
+COUNTRIES.forEach(([code, name]) => {
+  if (code === '--') { const o = document.createElement('option'); o.disabled = true; o.textContent = '──────────────'; countryEl.appendChild(o); return; }
+  const o = document.createElement('option');
+  o.value = code; o.textContent = name; countryEl.appendChild(o);
+});
 
-      document.getElementById('form-view').style.display = 'none';
-      const sv = document.getElementById('success-view');
-      sv.classList.add('show');
-      document.getElementById('success-ref').textContent = 'Reference: ' + (data.complaint_number || '');
+// Auto-detect country from browser
+const browserCountry = (navigator.language || '').split('-')[1] || '';
+if (browserCountry && countryEl.querySelector(`option[value="${browserCountry}"]`)) {
+  countryEl.value = browserCountry;
+  updateStateField(browserCountry);
+}
 
-      if (email) {
-        const fu = document.getElementById('success-followup');
-        fu.textContent = 'A follow-up email has been sent to ' + email + '.';
-        fu.style.display = 'block';
-      }
-    } catch (e) {
-      btn.disabled = false;
-      btn.textContent = lang === 'no' ? 'Send inn rapport' : 'Submit report';
-      showError(e.message || 'Something went wrong. Please try again.');
+countryEl.addEventListener('change', () => updateStateField(countryEl.value));
+
+function updateStateField(code) {
+  const row = document.getElementById('state-row');
+  const stateEl = document.getElementById('c-state');
+  const stateLabel = document.getElementById('l-state');
+  const reg = REGIONS[code];
+  if (!reg) { row.style.display = 'none'; return; }
+  row.style.display = 'flex';
+  stateLabel.innerHTML = reg.label + (reg.required ? ' *' : ` <span class="opt">(${s.opt})</span>`);
+  stateEl.innerHTML = `<option value="">${s.phState}</option>` + reg.opts.map(o => `<option value="${o}">${o}</option>`).join('');
+}
+
+async function submitComplaint() {
+  const details = document.getElementById('c-details').value.trim();
+  const country = document.getElementById('c-country').value;
+  const errEl = document.getElementById('c-error');
+  errEl.style.display = 'none';
+
+  if (!details) { errEl.textContent = s.required; errEl.style.display = 'block'; return; }
+  if (!country) { errEl.textContent = s.countryRequired; errEl.style.display = 'block'; return; }
+
+  const btn = document.getElementById('c-submit');
+  btn.disabled = true; btn.innerHTML = `<span class="spinner"></span>${s.submitting}`;
+
+  const email = document.getElementById('c-email').value.trim();
+  const hasProductVal = document.getElementById('c-hasproduct').value;
+  const countryName = COUNTRIES.find(([c]) => c === country)?.[1] || country;
+
+  const payload = {
+    source: 'widget',
+    manufacturer_id: orgId || null,
+    org_name: orgName || null,
+    lang: LANG,
+    product_name: document.getElementById('c-product').value.trim() || null,
+    barcode: document.getElementById('c-barcode').value.trim() || null,
+    lot_number: document.getElementById('c-lot').value.trim() || null,
+    best_before_date: document.getElementById('c-bestbefore').value || null,
+    purchase_date: document.getElementById('c-purchdate').value || null,
+    complaint_text: details,
+    customer_name: document.getElementById('c-name').value.trim() || null,
+    customer_email: email || null,
+    customer_phone: document.getElementById('c-phone').value.trim() || null,
+    country: countryName,
+    store_name: document.getElementById('c-store').value.trim() || null,
+    purchase_city: document.getElementById('c-city').value.trim() || null,
+    purchase_state: document.getElementById('c-state').value || null,
+    people_affected: document.getElementById('c-affected').value || null,
+    medical_attention: document.getElementById('c-medical').value || null,
+    still_has_product: hasProductVal ? hasProductVal.startsWith('Yes') : null,
+    storage_method: document.getElementById('c-storage').value || null,
+    submitted_by_label: 'Customer (web form)'
+  };
+
+  try {
+    const res = await fetch(TRIAGE_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+
+    document.getElementById('form-view').style.display = 'none';
+    document.getElementById('success-view').classList.add('show');
+    document.getElementById('s-ref').textContent = s.sRef + ': ' + (data.complaint_number || '');
+    if (email) {
+      const fu = document.getElementById('s-followup');
+      fu.textContent = (LANG === 'no' ? 'En bekreftelse er sendt til ' : 'A confirmation has been sent to ') + email + '.';
+      fu.style.display = 'block';
     }
+  } catch(e) {
+    btn.disabled = false; btn.textContent = s.submit;
+    errEl.textContent = e.message || (LANG === 'no' ? 'Noe gikk galt. Prøv igjen.' : 'Something went wrong. Please try again.');
+    errEl.style.display = 'block';
   }
+}
 
-  function showError(msg) {
-    const el = document.getElementById('c-error');
-    el.textContent = msg;
-    el.style.display = 'block';
-  }
-
-  function resetForm() {
-    document.getElementById('form-view').style.display = 'block';
-    document.getElementById('success-view').classList.remove('show');
-    document.querySelectorAll('input, textarea').forEach(i => i.value = '');
-    document.getElementById('c-error').style.display = 'none';
-    const btn = document.getElementById('c-submit');
-    btn.disabled = false;
-    btn.textContent = lang === 'no' ? 'Send inn rapport' : 'Submit report';
-  }
+function resetForm() {
+  document.querySelectorAll('input,textarea').forEach(i => i.value = '');
+  document.querySelectorAll('select').forEach(s => s.selectedIndex = 0);
+  document.getElementById('state-row').style.display = 'none';
+  document.getElementById('c-error').style.display = 'none';
+  document.getElementById('c-submit').textContent = s.submit;
+  document.getElementById('c-submit').disabled = false;
+  document.getElementById('form-view').style.display = 'block';
+  document.getElementById('success-view').classList.remove('show');
+}
 </script>
 </body>
 </html>
