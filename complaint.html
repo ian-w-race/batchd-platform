@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Report a Product Concern</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:         #040c0e;
+    --surface:    #091918;
+    --surface2:   #0e2622;
+    --border:     #12352f;
+    --accent:     #34d399;
+    --text:       #edfdf8;
+    --muted:      #6aaf9e;
+    --danger:     #ff5c5c;
+    --warn:       #f5a623;
+    --info:       #38bdf8;
+    --radius:     12px;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Figtree', -apple-system, sans-serif;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px 48px;
+  }
+
+  .page-header {
+    width: 100%;
+    max-width: 560px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 32px;
+    padding-top: 8px;
+  }
+
+  .logo-mark {
+    width: 32px; height: 32px; flex-shrink: 0;
+  }
+
+  .logo-name {
+    font-size: 17px;
+    font-weight: 800;
+    color: var(--accent);
+    line-height: 1;
+  }
+
+  .logo-sub {
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-top: 3px;
+  }
+
+  .card {
+    width: 100%;
+    max-width: 560px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px 24px;
+  }
+
+  .card-title {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 6px;
+  }
+
+  .card-sub {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.6;
+    margin-bottom: 24px;
+  }
+
+  .form { display: flex; flex-direction: column; gap: 16px; }
+
+  .field { display: flex; flex-direction: column; gap: 5px; }
+
+  .field label {
+    font-size: 12px;
+    color: var(--muted);
+    font-weight: 500;
+  }
+
+  .field .sub {
+    font-size: 11px;
+    color: var(--muted);
+    opacity: 0.7;
+    margin-top: 1px;
+  }
+
+  input, textarea, select {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    color: var(--text);
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.15s;
+    width: 100%;
+  }
+
+  input:focus, textarea:focus { border-color: var(--accent); }
+  input::placeholder, textarea::placeholder { color: #3d7a6b; }
+  textarea { resize: vertical; min-height: 100px; line-height: 1.5; }
+
+  .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 420px) { .row-2 { grid-template-columns: 1fr; } }
+
+  .mono { font-family: 'DM Mono', monospace; }
+
+  .info-box {
+    background: rgba(56,189,248,0.08);
+    border: 1px solid rgba(56,189,248,0.2);
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 12px;
+    color: var(--info);
+    line-height: 1.6;
+  }
+
+  .submit-btn {
+    background: var(--accent);
+    color: #065f46;
+    border: none;
+    border-radius: 8px;
+    padding: 13px;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    width: 100%;
+    font-family: inherit;
+    transition: opacity 0.15s;
+    margin-top: 4px;
+  }
+
+  .submit-btn:hover { opacity: 0.9; }
+  .submit-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .error-box {
+    display: none;
+    background: rgba(255,92,92,0.1);
+    border: 1px solid rgba(255,92,92,0.3);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 13px;
+    color: var(--danger);
+  }
+
+  /* Success state */
+  .success-state {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    padding: 12px 0 4px;
+    gap: 14px;
+  }
+
+  .success-state.show { display: flex; }
+
+  .success-icon {
+    width: 56px; height: 56px;
+    border-radius: 50%;
+    background: rgba(52,211,153,0.12);
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  .success-title {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  .success-ref {
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    color: var(--accent);
+    background: rgba(52,211,153,0.08);
+    padding: 5px 14px;
+    border-radius: 20px;
+  }
+
+  .success-sub {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.6;
+    max-width: 380px;
+  }
+
+  .success-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 4px; }
+
+  .btn-secondary {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 8px;
+    padding: 10px 18px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: #065f46;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 18px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .page-footer {
+    margin-top: 24px;
+    font-size: 11px;
+    color: #3d7a6b;
+    text-align: center;
+    line-height: 1.7;
+  }
+
+  .page-footer a { color: var(--muted); text-decoration: none; }
+  .page-footer a:hover { color: var(--accent); }
+
+  .spinner {
+    width: 16px; height: 16px;
+    border: 2px solid rgba(6,95,70,0.3);
+    border-top-color: #065f46;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    display: inline-block;
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <svg class="logo-mark" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect width="512" height="512" rx="113" fill="#34D399"/>
+    <rect x="172" y="75" width="167" height="167" rx="24" fill="#055A46"/>
+    <rect x="75" y="270" width="167" height="167" rx="24" fill="#055A46"/>
+    <rect x="270" y="270" width="167" height="167" rx="24" fill="#055A46"/>
+  </svg>
+  <div>
+    <div class="logo-name">Batch'd</div>
+    <div class="logo-sub">Product Triage</div>
+  </div>
+</div>
+
+<div class="card">
+  <div id="form-view">
+    <div class="card-title">Report a product concern</div>
+    <div class="card-sub" id="page-sub">Your report helps keep products safe. We take every concern seriously and will follow up with you directly.</div>
+
+    <div class="form" id="complaint-form">
+
+      <div class="info-box">
+        If this is a medical emergency, please call emergency services immediately before submitting this form.
+      </div>
+
+      <div class="row-2">
+        <div class="field">
+          <label for="c-name">Your name</label>
+          <input id="c-name" type="text" autocomplete="name" placeholder="Full name">
+        </div>
+        <div class="field">
+          <label for="c-phone">Phone number (optional)</label>
+          <input id="c-phone" type="tel" autocomplete="tel" placeholder="+1 555 000 0000">
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="c-email">Email address</label>
+        <div class="sub">We'll send you a follow-up reference number</div>
+        <input id="c-email" type="email" autocomplete="email" placeholder="you@email.com">
+      </div>
+
+      <div class="row-2">
+        <div class="field">
+          <label for="c-product">Product name</label>
+          <input id="c-product" type="text" placeholder="e.g. Grandiosa Original 485g">
+        </div>
+        <div class="field">
+          <label for="c-lot">Lot or batch number (if visible)</label>
+          <input id="c-lot" type="text" class="mono" placeholder="e.g. L2024-0441">
+        </div>
+      </div>
+
+      <div class="row-2">
+        <div class="field">
+          <label for="c-store">Where did you purchase it?</label>
+          <input id="c-store" type="text" placeholder="Store name or location">
+        </div>
+        <div class="field">
+          <label for="c-date">When did this happen?</label>
+          <input id="c-date" type="date">
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="c-details">What happened? <span style="color:var(--danger);">*</span></label>
+        <textarea id="c-details" placeholder="Please describe what you found or experienced, in as much detail as you can. The more detail you provide, the better we can investigate."></textarea>
+      </div>
+
+      <div class="error-box" id="c-error"></div>
+
+      <button class="submit-btn" id="c-submit" onclick="submitComplaint()">Submit report</button>
+
+    </div>
+  </div>
+
+  <div class="success-state" id="success-view">
+    <div class="success-icon">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+    </div>
+    <div class="success-title">Report received</div>
+    <div class="success-ref" id="success-ref"></div>
+    <div class="success-sub">We'll review your report and be in touch if we need more information.</div>
+    <div id="success-followup" style="display:none;font-size:13px;color:var(--muted);"></div>
+    <div class="success-actions">
+      <button class="btn-secondary" onclick="resetForm()">Submit another report</button>
+    </div>
+  </div>
+</div>
+
+<div class="page-footer">
+  This form is managed by <a href="https://batchd.no" target="_blank">Batch'd Triage</a>, a food safety and traceability platform.<br>
+  Your report is stored securely and used only for food safety investigation purposes.
+</div>
+
+<script>
+  const TRIAGE_URL = '/.netlify/functions/triage-complaint';
+
+  // Read org from URL param
+  const urlParams = new URLSearchParams(window.location.search);
+  const orgId   = urlParams.get('org')  || '';
+  const orgName = urlParams.get('name') || '';
+  const lang    = urlParams.get('lang') || 'en';
+
+  if (lang === 'no') {
+    document.querySelector('.card-title').textContent = 'Meld en produktbekymring';
+    document.getElementById('page-sub').textContent = 'Tilbakemeldingen din bidrar til tryggere produkter. Vi tar alle henvendelser på alvor og følger opp direkte.';
+    document.getElementById('c-submit').textContent = 'Send inn rapport';
+  }
+
+  async function submitComplaint() {
+    const details = document.getElementById('c-details').value.trim();
+    if (!details) { showError('Please describe what happened.'); return; }
+
+    const btn = document.getElementById('c-submit');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Submitting…';
+
+    const email = document.getElementById('c-email').value.trim();
+
+    const payload = {
+      source: 'widget',
+      manufacturer_id: orgId || null,
+      org_name: orgName || null,
+      product_name:   document.getElementById('c-product').value.trim() || null,
+      lot_number:     document.getElementById('c-lot').value.trim() || null,
+      complaint_text: details,
+      customer_name:  document.getElementById('c-name').value.trim() || null,
+      customer_email: email || null,
+      customer_phone: document.getElementById('c-phone').value.trim() || null,
+      purchase_store: document.getElementById('c-store').value.trim() || null,
+      incident_date:  document.getElementById('c-date').value || null,
+      submitted_by_label: 'Customer (web form)'
+    };
+
+    try {
+      const res  = await fetch(TRIAGE_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+
+      document.getElementById('form-view').style.display = 'none';
+      const sv = document.getElementById('success-view');
+      sv.classList.add('show');
+      document.getElementById('success-ref').textContent = 'Reference: ' + (data.complaint_number || '');
+
+      if (email) {
+        const fu = document.getElementById('success-followup');
+        fu.textContent = 'A follow-up email has been sent to ' + email + '.';
+        fu.style.display = 'block';
+      }
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = lang === 'no' ? 'Send inn rapport' : 'Submit report';
+      showError(e.message || 'Something went wrong. Please try again.');
+    }
+  }
+
+  function showError(msg) {
+    const el = document.getElementById('c-error');
+    el.textContent = msg;
+    el.style.display = 'block';
+  }
+
+  function resetForm() {
+    document.getElementById('form-view').style.display = 'block';
+    document.getElementById('success-view').classList.remove('show');
+    document.querySelectorAll('input, textarea').forEach(i => i.value = '');
+    document.getElementById('c-error').style.display = 'none';
+    const btn = document.getElementById('c-submit');
+    btn.disabled = false;
+    btn.textContent = lang === 'no' ? 'Send inn rapport' : 'Submit report';
+  }
+</script>
+</body>
+</html>
