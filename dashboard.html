@@ -396,12 +396,19 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
         Dashboard
       </button>
-      <div class="nav-section">Operations</div>
+      <div class="nav-section">Complaints</div>
+      <button class="nav-item" onclick="showPanel('triage')" id="nav-triage">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 19h20L12 2z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17" r="0.5" fill="currentColor" stroke="currentColor" stroke-width="1"/></svg>
+        Triage
+        <span id="triage-badge" style="display:none;margin-left:auto;background:var(--danger);color:#fff;font-size:10px;font-family:'DM Mono',monospace;padding:1px 6px;border-radius:10px;"></span>
+      </button>
+      <div class="nav-section">Recalls</div>
       <button class="nav-item" onclick="showPanel('recalls')">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
         Recalls
         <span class="nav-badge" id="nav-recall-badge" style="display:none;">0</span>
       </button>
+      <div class="nav-section">Operations</div>
       <button class="nav-item" onclick="showPanel('stores')">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
         Stores
@@ -605,18 +612,19 @@ async function initDashboard(user) {
   }
 
   showPanel('overview');
+  loadDashboardTriageBadge();
 }
 
 // ── Panel router ──────────────────────────────────────────────
 function showPanel(name) {
   _activePanel = name;
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-  const panels = { overview:'Dashboard', recalls:'Recalls', stores:'Stores', traceability:'Traceability', shipments:'Incoming Shipments', staff:'Staff', compliance:'Compliance', reports:'Reports', settings:'Settings', partners:'Manufacturer Partners' };
+  const panels = { overview:'Dashboard', recalls:'Recalls', stores:'Stores', traceability:'Traceability', shipments:'Incoming Shipments', staff:'Staff', compliance:'Compliance', reports:'Reports', settings:'Settings', partners:'Manufacturer Partners', triage:'Complaint Triage' };
   document.getElementById('topbar-title').textContent = panels[name] || name;
   document.querySelectorAll('.nav-item').forEach(el => {
     if (el.getAttribute('onclick')?.includes(`'${name}'`)) el.classList.add('active');
   });
-  const fns = { overview: renderOverview, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, shipments: renderShipments, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, partners: renderPartners };
+  const fns = { overview: renderOverview, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, shipments: renderShipments, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, partners: renderPartners, triage: renderDashboardTriage };
   (fns[name] || renderComingSoon)(name);
 }
 
@@ -2690,6 +2698,295 @@ async function renderStoreManagerOverview() {
     el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error: ${e.message}</div>`;
   }
 }
+
+// ── Complaint Triage (Retailer) ────────────────────────────────
+let _dashTriageView = 'list';
+let _dashTriageComplaint = null;
+let _dashTriageFilter = 'all';
+
+async function renderDashboardTriage() {
+  const el = document.getElementById('main-content');
+  if (_dashTriageView === 'new') { renderDashTriageForm(el); return; }
+  if (_dashTriageView === 'detail' && _dashTriageComplaint) { await renderDashTriageDetail(el); return; }
+  await renderDashTriageList(el);
+}
+
+function dashTriageLevelStyle(level) {
+  if (level === 'critical') return { bg: 'rgba(255,92,92,0.12)',  color: 'var(--danger)', label: 'CRITICAL' };
+  if (level === 'serious')  return { bg: 'rgba(245,166,35,0.12)', color: 'var(--warn)',   label: 'SERIOUS'  };
+  if (level === 'monitor')  return { bg: 'rgba(52,211,153,0.10)', color: 'var(--accent)', label: 'MONITOR'  };
+  return                           { bg: 'rgba(56,189,248,0.10)', color: 'var(--info)',   label: 'PENDING'  };
+}
+
+function dashTriageStatusLabel(status) {
+  const map = { new:'New', triaged:'Triaged', follow_up_sent:'Follow-up Sent', investigating:'Investigating', resolved:'Resolved', recall_triggered:'Recall Triggered', closed:'Closed' };
+  return map[status] || status;
+}
+
+async function renderDashTriageList(el) {
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading complaints...</div>`;
+  try {
+    const { data: complaints, error } = await sb.from('complaints')
+      .select('*')
+      .eq('receiving_org_id', _currentOrgId)
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (error) throw error;
+
+    const critical = (complaints||[]).filter(c => c.triage_level === 'critical' && !['closed','resolved'].includes(c.status));
+    const badge = document.getElementById('triage-badge');
+    if (badge) { badge.textContent = critical.length; badge.style.display = critical.length ? 'inline' : 'none'; }
+
+    const counts = {
+      all: (complaints||[]).length,
+      critical: (complaints||[]).filter(c=>c.triage_level==='critical').length,
+      serious:  (complaints||[]).filter(c=>c.triage_level==='serious').length,
+      monitor:  (complaints||[]).filter(c=>c.triage_level==='monitor').length,
+      pending:  (complaints||[]).filter(c=>c.triage_level==='pending').length,
+    };
+    const filtered = _dashTriageFilter === 'all' ? (complaints||[]) : (complaints||[]).filter(c => c.triage_level === _dashTriageFilter);
+
+    el.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:20px;flex-wrap:wrap;">
+        <div>
+          <div style="font-size:15px;font-weight:600;color:var(--text);">Complaint Triage</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:2px;">Complaints about products in your stores, triaged automatically by Batch'd AI.</div>
+        </div>
+        <button onclick="_dashTriageView='new';renderDashboardTriage()" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;">+ Log Phone Complaint</button>
+      </div>
+
+      <div style="display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;">
+        ${[
+          { key:'all',      label:'All',      dot:null,             activeColor:'var(--accent)', activeBg:'rgba(52,211,153,0.1)' },
+          { key:'critical', label:'Critical', dot:'var(--danger)',  activeColor:'var(--danger)', activeBg:'rgba(255,92,92,0.1)'  },
+          { key:'serious',  label:'Serious',  dot:'var(--warn)',    activeColor:'var(--warn)',   activeBg:'rgba(245,166,35,0.1)' },
+          { key:'monitor',  label:'Monitor',  dot:'var(--accent)',  activeColor:'var(--accent)', activeBg:'rgba(52,211,153,0.1)' },
+          { key:'pending',  label:'Pending',  dot:'var(--info)',    activeColor:'var(--info)',   activeBg:'rgba(56,189,248,0.1)' }
+        ].map(f => `
+          <button onclick="_dashTriageFilter='${f.key}';renderDashTriageList(document.getElementById('main-content'))"
+            style="display:flex;align-items:center;gap:6px;padding:5px 12px;border-radius:20px;border:1px solid ${_dashTriageFilter===f.key?f.activeColor:'var(--border)'};background:${_dashTriageFilter===f.key?f.activeBg:'transparent'};color:${_dashTriageFilter===f.key?f.activeColor:'var(--muted)'};font-size:12px;cursor:pointer;font-family:inherit;">
+            ${f.dot ? `<span style="width:7px;height:7px;border-radius:50%;background:${f.dot};flex-shrink:0;display:inline-block;"></span>` : ''}
+            ${f.label} <span style="opacity:0.6;">(${counts[f.key]||0})</span>
+          </button>`).join('')}
+      </div>
+
+      ${filtered.length === 0 ? `
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:48px;text-align:center;">
+          <div style="font-size:28px;margin-bottom:12px;">📋</div>
+          <div style="color:var(--text);font-weight:600;margin-bottom:6px;">No complaints yet</div>
+          <div style="color:var(--muted);font-size:13px;">Complaints from your triage widget or logged by staff will appear here.</div>
+        </div>
+      ` : `<div style="display:flex;flex-direction:column;gap:8px;">${filtered.map(c => {
+        const s = dashTriageLevelStyle(c.triage_level);
+        const date = new Date(c.created_at).toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' });
+        return `<div onclick="_dashTriageView='detail';_dashTriageComplaint='${c.id}';renderDashboardTriage()" style="background:var(--surface);border:1px solid ${c.triage_level==='critical'?'rgba(255,92,92,0.3)':'var(--border)'};border-radius:12px;padding:16px;cursor:pointer;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='${c.triage_level==='critical'?'rgba(255,92,92,0.3)':'var(--border)'}'">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+              <span style="background:${s.bg};color:${s.color};font-size:10px;font-weight:700;font-family:'DM Mono',monospace;padding:3px 8px;border-radius:4px;letter-spacing:0.05em;">${s.label}</span>
+              <span style="font-size:12px;font-family:'DM Mono',monospace;color:var(--muted);">${c.complaint_number || c.id.slice(0,8)}</span>
+              ${c.triage_category ? `<span style="font-size:11px;color:var(--muted);background:var(--surface2);padding:2px 8px;border-radius:4px;">${c.triage_category}</span>` : ''}
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-size:11px;color:var(--muted);">${dashTriageStatusLabel(c.status)}</span>
+              <span style="font-size:11px;color:var(--muted);">${date}</span>
+            </div>
+          </div>
+          <div style="margin-top:10px;">
+            <div style="font-size:13px;font-weight:500;color:var(--text);margin-bottom:4px;">${c.product_name || 'Product not specified'}</div>
+            <div style="font-size:12px;color:var(--muted);line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${c.triage_summary || c.complaint_text}</div>
+          </div>
+          ${c.keywords_detected?.length ? `<div style="margin-top:8px;display:flex;gap:4px;flex-wrap:wrap;">${c.keywords_detected.slice(0,5).map(k=>`<span style="font-size:10px;font-family:'DM Mono',monospace;background:var(--surface2);color:var(--muted);padding:2px 6px;border-radius:3px;">${k}</span>`).join('')}</div>` : ''}
+        </div>`;
+      }).join('')}</div>`}
+    `;
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);padding:20px;">Error: ${e.message}</div>`;
+  }
+}
+
+function renderDashTriageForm(el) {
+  el.innerHTML = `
+    <div style="max-width:680px;">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px;">
+        <button onclick="_dashTriageView='list';renderDashboardTriage()" style="background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer;">← Back</button>
+        <div>
+          <div style="font-size:15px;font-weight:600;color:var(--text);">Log Phone Complaint</div>
+          <div style="font-size:12px;color:var(--muted);">Record a complaint received by a store. Triage runs automatically on submission.</div>
+        </div>
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;display:flex;flex-direction:column;gap:18px;">
+        <div style="background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.2);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--info);line-height:1.5;">
+          Fill this in while on the call. Batch'd will triage the complaint automatically and create a timestamped record.
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+          <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Caller name</label>
+          <input id="dtc-name" type="text" placeholder="Full name" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+          <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Phone number</label>
+          <input id="dtc-phone" type="text" placeholder="+1 555 000 0000" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+        </div>
+        <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Email address <span style="opacity:0.6;">(follow-up sent automatically if provided)</span></label>
+        <input id="dtc-email" type="email" placeholder="caller@email.com" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+          <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Product name</label>
+          <input id="dtc-product" type="text" placeholder="Product name" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+          <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Lot / batch number</label>
+          <input id="dtc-lot" type="text" placeholder="e.g. L2024-0441" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;font-family:'DM Mono',monospace;box-sizing:border-box;"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+          <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Store</label>
+          <input id="dtc-store" type="text" placeholder="Store name or location" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+          <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Date of incident</label>
+          <input id="dtc-date" type="date" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+        </div>
+        <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Complaint details <span style="color:var(--danger);">*</span></label>
+        <textarea id="dtc-text" rows="5" placeholder="Describe what was reported, in the caller's own words as closely as possible." style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px;color:var(--text);font-size:13px;line-height:1.5;resize:vertical;box-sizing:border-box;font-family:inherit;"></textarea></div>
+        <div id="dtc-msg" style="display:none;border-radius:8px;padding:10px 14px;font-size:13px;"></div>
+        <div style="display:flex;justify-content:flex-end;gap:10px;">
+          <button onclick="_dashTriageView='list';renderDashboardTriage()" style="background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:9px 18px;font-size:13px;cursor:pointer;">Cancel</button>
+          <button onclick="submitDashPhoneComplaint()" id="dtc-submit" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer;">Submit and Triage</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function submitDashPhoneComplaint() {
+  const text = document.getElementById('dtc-text').value.trim();
+  if (!text) { showDashTriageMsg('Complaint details are required.', 'error'); return; }
+  const btn = document.getElementById('dtc-submit');
+  btn.disabled = true; btn.innerHTML = '<span style="display:flex;align-items:center;gap:6px;"><div class="spinner" style="width:12px;height:12px;border-width:2px;"></div> Triaging...</span>';
+  const payload = {
+    source: 'phone', receiving_org_id: _currentOrgId, manufacturer_id: null,
+    org_name: _orgName, product_name: document.getElementById('dtc-product').value.trim() || null,
+    lot_number: document.getElementById('dtc-lot').value.trim() || null,
+    complaint_text: text, customer_name: document.getElementById('dtc-name').value.trim() || null,
+    customer_email: document.getElementById('dtc-email').value.trim() || null,
+    customer_phone: document.getElementById('dtc-phone').value.trim() || null,
+    purchase_store: document.getElementById('dtc-store').value.trim() || null,
+    incident_date: document.getElementById('dtc-date').value || null,
+    submitted_by_label: 'Staff (phone intake)'
+  };
+  try {
+    const res = await fetch('/.netlify/functions/triage-complaint', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Submission failed');
+    const s = dashTriageLevelStyle(data.triage_level);
+    document.getElementById('main-content').innerHTML = `
+      <div style="max-width:600px;">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:32px;text-align:center;">
+          <div style="display:inline-block;background:${s.bg};color:${s.color};font-size:11px;font-weight:700;font-family:'DM Mono',monospace;padding:4px 12px;border-radius:6px;letter-spacing:0.05em;margin-bottom:16px;">${s.label}</div>
+          <div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:8px;">Complaint logged and triaged</div>
+          <div style="font-size:12px;font-family:'DM Mono',monospace;color:var(--muted);margin-bottom:16px;">${data.complaint_number}</div>
+          <div style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:20px;">${data.triage_summary}</div>
+          ${payload.customer_email ? `<div style="font-size:12px;color:var(--muted);margin-bottom:20px;">Follow-up email sent to ${payload.customer_email}.</div>` : ''}
+          <div style="display:flex;justify-content:center;gap:10px;">
+            <button onclick="_dashTriageView='list';renderDashboardTriage()" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer;">View All Complaints</button>
+            <button onclick="_dashTriageView='new';renderDashboardTriage()" style="background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:9px 18px;font-size:13px;cursor:pointer;">Log Another</button>
+          </div>
+        </div>
+      </div>`;
+  } catch(e) {
+    btn.disabled = false; btn.innerHTML = 'Submit and Triage';
+    showDashTriageMsg(e.message, 'error');
+  }
+}
+
+function showDashTriageMsg(txt, type) {
+  const el = document.getElementById('dtc-msg');
+  if (!el) return;
+  el.textContent = txt; el.style.display = 'block';
+  el.style.background = type === 'error' ? 'rgba(255,92,92,0.1)' : 'rgba(52,211,153,0.1)';
+  el.style.color = type === 'error' ? 'var(--danger)' : 'var(--accent)';
+  el.style.border = `1px solid ${type === 'error' ? 'rgba(255,92,92,0.3)' : 'rgba(52,211,153,0.3)'}`;
+}
+
+async function renderDashTriageDetail(el) {
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading complaint...</div>`;
+  try {
+    const [compRes, msgsRes, logRes] = await Promise.all([
+      sb.from('complaints').select('*').eq('id', _dashTriageComplaint).single(),
+      sb.from('complaint_messages').select('*').eq('complaint_id', _dashTriageComplaint).order('created_at', { ascending: true }),
+      sb.from('complaint_audit_log').select('*').eq('complaint_id', _dashTriageComplaint).order('created_at', { ascending: true })
+    ]);
+    const c = compRes.data;
+    if (!c) throw new Error('Complaint not found');
+    const msgs = msgsRes.data || [];
+    const log = logRes.data || [];
+    const s = dashTriageLevelStyle(c.triage_level);
+    el.innerHTML = `
+      <div style="max-width:760px;">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px;flex-wrap:wrap;">
+          <button onclick="_dashTriageView='list';renderDashboardTriage()" style="background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer;">← Back</button>
+          <span style="background:${s.bg};color:${s.color};font-size:10px;font-weight:700;font-family:'DM Mono',monospace;padding:3px 10px;border-radius:4px;letter-spacing:0.05em;">${s.label}</span>
+          <span style="font-size:12px;font-family:'DM Mono',monospace;color:var(--muted);">${c.complaint_number}</span>
+          <span style="font-size:11px;color:var(--muted);background:var(--surface2);padding:2px 8px;border-radius:4px;">${dashTriageStatusLabel(c.status)}</span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;">
+            <div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:0.08em;margin-bottom:14px;">COMPLAINT DETAILS</div>
+            <div style="display:flex;flex-direction:column;gap:9px;font-size:12px;">
+              ${c.product_name ? `<div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Product</span><span style="color:var(--text);font-weight:500;">${c.product_name}</span></div>` : ''}
+              ${c.lot_number ? `<div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Lot</span><span style="color:var(--text);font-family:'DM Mono',monospace;">${c.lot_number}</span></div>` : ''}
+              ${c.purchase_store ? `<div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Store</span><span style="color:var(--text);">${c.purchase_store}</span></div>` : ''}
+              ${c.incident_date ? `<div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Incident</span><span style="color:var(--text);">${c.incident_date}</span></div>` : ''}
+              <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Received</span><span style="color:var(--text);">${new Date(c.created_at).toLocaleString('en-GB')}</span></div>
+            </div>
+          </div>
+          <div style="background:var(--surface);border:1px solid ${c.triage_level==='critical'?'rgba(255,92,92,0.3)':'var(--border)'};border-radius:12px;padding:20px;">
+            <div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:0.08em;margin-bottom:14px;">TRIAGE ASSESSMENT</div>
+            <div style="display:flex;flex-direction:column;gap:9px;font-size:12px;">
+              <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Severity</span><span style="background:${s.bg};color:${s.color};padding:2px 8px;border-radius:4px;font-weight:700;font-size:10px;font-family:'DM Mono',monospace;">${s.label}</span></div>
+              <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Category</span><span style="color:var(--text);">${c.triage_category || 'Pending'}</span></div>
+            </div>
+            ${c.triage_summary ? `<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);font-size:12px;color:var(--muted);line-height:1.6;font-style:italic;">"${c.triage_summary}"</div>` : ''}
+          </div>
+        </div>
+        ${(msgs.length > 0) ? `
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px;">
+          <div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:0.08em;margin-bottom:14px;">MESSAGES</div>
+          <div style="display:flex;flex-direction:column;gap:10px;">${msgs.map(m=>`
+            <div style="display:flex;gap:10px;align-items:flex-start;">
+              <div style="width:8px;height:8px;border-radius:50%;background:${m.direction==='inbound'?'var(--warn)':'var(--accent)'};margin-top:5px;flex-shrink:0;"></div>
+              <div style="flex:1;">
+                <div style="font-size:11px;color:var(--muted);margin-bottom:3px;">${m.direction==='inbound'?'Inbound':'Outbound'} · ${m.channel} · ${new Date(m.created_at).toLocaleString('en-GB')}</div>
+                <div style="font-size:12px;color:var(--text);line-height:1.5;background:var(--surface2);padding:10px 12px;border-radius:8px;">${m.content}</div>
+              </div>
+            </div>`).join('')}</div>
+        </div>` : ''}
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px;">
+          <div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:0.08em;margin-bottom:14px;">AUDIT TRAIL</div>
+          <div style="display:flex;flex-direction:column;gap:0;">${log.map((entry,i)=>`
+            <div style="display:flex;gap:12px;align-items:flex-start;padding:8px 0;${i<log.length-1?'border-bottom:1px solid var(--border);':''}">
+              <div style="font-size:11px;font-family:'DM Mono',monospace;color:var(--muted);white-space:nowrap;min-width:130px;">${new Date(entry.created_at).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
+              <div><div style="font-size:12px;color:var(--text);">${entry.action.replace(/_/g,' ')}</div><div style="font-size:11px;color:var(--muted);">${entry.actor_label||''}</div></div>
+            </div>`).join('')}</div>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <button onclick="updateDashTriageStatus('${c.id}','investigating')" style="background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:9px 16px;font-size:13px;cursor:pointer;">Mark: Investigating</button>
+          <button onclick="updateDashTriageStatus('${c.id}','resolved')" style="background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:9px 16px;font-size:13px;cursor:pointer;">Mark: Resolved</button>
+          <button onclick="updateDashTriageStatus('${c.id}','closed')" style="background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:9px 16px;font-size:13px;cursor:pointer;">Close</button>
+        </div>
+      </div>`;
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);padding:20px;">Error: ${e.message}</div>`;
+  }
+}
+
+async function updateDashTriageStatus(id, newStatus) {
+  try {
+    await sb.from('complaints').update({ status: newStatus }).eq('id', id);
+    await sb.from('complaint_audit_log').insert({ complaint_id: id, action: 'status_changed_to_' + newStatus, actor_label: 'Staff' });
+    renderDashTriageDetail(document.getElementById('main-content'));
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function loadDashboardTriageBadge() {
+  try {
+    const { data } = await sb.from('complaints').select('id').eq('receiving_org_id', _currentOrgId).eq('triage_level', 'critical').not('status', 'in', '("closed","resolved")');
+    const badge = document.getElementById('triage-badge');
+    if (badge && data?.length) { badge.textContent = data.length; badge.style.display = 'inline'; }
+  } catch(e) {}
+}
+
 
 function renderComingSoon(name) {
   document.getElementById('main-content').innerHTML = `
