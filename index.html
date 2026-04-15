@@ -12558,22 +12558,26 @@ async function loadStoreMgrView() {
 }
 
 function renderStoreMgrPicker() {
-  // Hide normal tab strip + show picker
+  // Hide tab strip, mgr panels, and the store-mgr-panel
   const tabStrip = document.querySelector('#view-manager > div[style*="display:flex;gap:4px"]');
   if (tabStrip) tabStrip.style.display = 'none';
-  const panels = document.querySelectorAll('[id^="mgr-panel-"]');
-  panels.forEach(p => p.style.display = 'none');
-
-  const el = document.getElementById('mgr-stat-tiles');
-  if (!el) return;
-  el.innerHTML = '';
+  document.querySelectorAll('[id^="mgr-panel-"]').forEach(p => p.style.display = 'none');
+  const smPanel = document.getElementById('store-mgr-panel');
+  if (smPanel) smPanel.style.display = 'none';
+  const tiles = document.getElementById('mgr-stat-tiles');
+  if (tiles) tiles.innerHTML = '';
 
   const container = document.getElementById('view-manager');
   let pickerEl = document.getElementById('store-mgr-picker');
   if (!pickerEl) {
     pickerEl = document.createElement('div');
     pickerEl.id = 'store-mgr-picker';
-    container.appendChild(pickerEl);
+    // Insert right after the view-manager header row, not at the bottom
+    const headerRow = container.querySelector('[style*="justify-content:space-between"]');
+    if (headerRow) headerRow.after(pickerEl);
+    else container.prepend(pickerEl);
+  } else {
+    pickerEl.style.display = '';
   }
 
   // Populate store options
