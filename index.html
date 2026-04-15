@@ -3396,7 +3396,17 @@
         <button class="btn btn-ghost" onclick="loadMgrRecalls()" style="font-size:11px;padding:6px 12px;" data-i18n="allRecalls.refresh">↻ Refresh</button>
       </div>
       <div class="settings-section-body">
+        <div style="display:flex;gap:8px;margin-bottom:8px;">
+          <input id="mgr-recall-search" type="text" placeholder="Search recalls…" oninput="filterMgrRecalls()"
+            style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:7px 10px;color:var(--text);font-size:13px;font-family:inherit;outline:none;">
+          <button onclick="loadMgrRecalls()" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:7px 12px;color:var(--muted);font-size:12px;cursor:pointer;white-space:nowrap;">↻ Refresh</button>
+        </div>
+        <div id="mgr-recall-source-filters" style="display:flex;gap:5px;margin-bottom:10px;flex-wrap:wrap;"></div>
         <div id="mgr-recalls-list"><div style="font-size:13px;color:var(--muted);padding:8px 0;" data-i18n="js.loading">Loading…</div></div>
+        <div id="mgr-recall-list-footer" style="display:none;margin-top:8px;display:flex;gap:8px;justify-content:center;">
+          <button id="mgr-recall-show-more" onclick="showMoreMgrRecalls()" style="background:transparent;border:1px solid var(--border);border-radius:8px;padding:6px 16px;font-size:12px;color:var(--muted);cursor:pointer;font-family:inherit;">Show more</button>
+          <button id="mgr-recall-show-less" onclick="showLessMgrRecalls()" style="display:none;background:transparent;border:1px solid var(--border);border-radius:8px;padding:6px 16px;font-size:12px;color:var(--muted);cursor:pointer;font-family:inherit;">Show less</button>
+        </div>
       </div>
     </div>
   
@@ -13488,43 +13498,128 @@ async function loadMgrStaff() {
 
 // ── RECALL MANAGEMENT PANEL ──────────────────────────────────
 
+const MGR_RECALL_PAGE = 6;
+let _mgrRecallCache = [];
+let _mgrRecallFilter = '';
+let _mgrRecallSrcFilter = 'all';
+let _mgrRecallShown = MGR_RECALL_PAGE;
+
 async function loadMgrRecalls() {
   const el = document.getElementById('mgr-recalls-list');
   if (!el) return;
   el.innerHTML = `<div style="font-size:13px;color:var(--muted);padding:8px 0;">${t('js.loading')}</div>`;
   try {
-    const { data, error } = await sb.from('recalls').select('*').order('created_at', { ascending: false });
+    const { data, error } = await sb.from('recalls').select('*')
+      .eq('organisation_id', _currentOrgId)
+      .order('active', { ascending: false })
+      .order('created_at', { ascending: false })
+      .limit(300);
     if (error) throw error;
     _mgrAllRecalls = data || [];
-    if (!data.length) {
-      el.innerHTML = '<div style="font-size:13px;color:var(--muted);text-align:center;padding:16px 0;">'+t('mgr.noRecallsYet')+'</div>';
-      return;
-    }
-    el.innerHTML = data.map(r => `
-      <div class="mgr-recall-row" id="mgr-recall-row-${r.id}">
-        <div class="mgr-recall-info">
-          <div class="mgr-recall-name">${esc(r.product_name || 'Unknown product')}</div>
-          <div class="mgr-recall-meta">
-            ${r.lot_number   ? `<span>${t('card.lotLabel')} <strong>${esc(r.lot_number)}</strong></span>` : ''}
-            ${r.batch_number ? `<span>${t("card.batch")} <strong>${esc(r.batch_number)}</strong></span>` : ''}
-            ${r.barcode_number ? `<span>${t("card.barcodeLabel")} <strong>${esc(r.barcode_number)}</strong></span>` : ''}
-            <span class="source-badge ${r.source||'manual'}">${(r.source||'manual').toUpperCase()}</span>
-            ${r.active
-              ? '<span style="color:var(--danger);font-size:10px;font-weight:600;">● ACTIVE</span>'
-              : '<span style="color:var(--muted);font-size:10px;">inactive</span>'}
-          </div>
-          ${r.description ? `<div style="font-size:11px;color:var(--muted);margin-top:4px;">${esc(r.description)}</div>` : ''}
-        </div>
-        <div class="mgr-recall-actions">
-          <button onclick="mgrToggleRecall('${r.id}', ${!r.active})" title="${r.active ? 'Deactivate' : 'Activate'}">
-            ${r.active ? 'Deactivate' : 'Activate'}
-          </button>
-          <button onclick="mgrEditRecall('${r.id}')" title="Edit">Edit</button>
-          <button class="danger" onclick="mgrDeleteRecall('${r.id}')" title="Delete">Delete</button>
-        </div>
-      </div>`).join('');
+    _mgrRecallCache = data || [];
+    _mgrRecallFilter = '';
+    _mgrRecallSrcFilter = 'all';
+    _mgrRecallShown = MGR_RECALL_PAGE;
+    const searchEl = document.getElementById('mgr-recall-search');
+    if (searchEl) searchEl.value = '';
+    renderMgrRecallSourcePills();
+    renderMgrRecallList();
   } catch(e) {
     el.innerHTML = `<div style="font-size:13px;color:var(--danger);">Error: ${e.message}</div>`;
+  }
+}
+
+function filterMgrRecalls() {
+  const searchEl = document.getElementById('mgr-recall-search');
+  _mgrRecallFilter = (searchEl?.value || '').toLowerCase().trim();
+  _mgrRecallShown = MGR_RECALL_PAGE;
+  renderMgrRecallList();
+}
+
+function setMgrRecallSrcFilter(src) {
+  _mgrRecallSrcFilter = src;
+  _mgrRecallShown = MGR_RECALL_PAGE;
+  renderMgrRecallSourcePills();
+  renderMgrRecallList();
+}
+
+function showMoreMgrRecalls() { _mgrRecallShown += MGR_RECALL_PAGE; renderMgrRecallList(); }
+function showLessMgrRecalls() {
+  _mgrRecallShown = MGR_RECALL_PAGE;
+  renderMgrRecallList();
+  document.getElementById('mgr-recalls-list')?.scrollIntoView({ behavior:'smooth', block:'start' });
+}
+
+function renderMgrRecallSourcePills() {
+  const container = document.getElementById('mgr-recall-source-filters');
+  if (!container) return;
+  const counts = { all: _mgrRecallCache.length };
+  _mgrRecallCache.forEach(r => { const s = r.source||'manual'; counts[s] = (counts[s]||0)+1; });
+  const srcColour = { all:'var(--muted)', fda:'var(--info)', rasff:'var(--warn)', mattilsynet:'var(--accent)', manufacturer_push:'var(--info)', manual:'var(--muted)' };
+  const srcLabel  = { all: currentLang==='no'?'Alle':'All', fda:'FDA', rasff:'RASFF', mattilsynet:'Mattilsynet', manufacturer_push: currentLang==='no'?'Produsent':'Manufacturer', manual: currentLang==='no'?'Manuell':'Manual' };
+  const active = ['all', ...Object.keys(counts).filter(k => k!=='all' && counts[k]>0)];
+  container.innerHTML = active.map(src => {
+    const col = srcColour[src]||'var(--muted)';
+    const isActive = _mgrRecallSrcFilter === src;
+    const bg = isActive ? col.replace('var(','rgba(').replace('--info)','56,189,248,0.12)').replace('--warn)','245,166,35,0.12)').replace('--accent)','52,211,153,0.12)').replace('--muted)','106,175,158,0.1)') : 'transparent';
+    return `<button onclick="setMgrRecallSrcFilter('${src}')" style="display:flex;align-items:center;gap:5px;padding:4px 10px;border-radius:20px;border:1px solid ${isActive?col:'var(--border)'};background:${bg};color:${isActive?col:'var(--muted)'};font-size:11px;cursor:pointer;font-family:inherit;">
+      ${src!=='all'?`<span style="width:6px;height:6px;border-radius:50%;background:${col};display:inline-block;flex-shrink:0;"></span>`:''}
+      ${srcLabel[src]||src} <span style="opacity:0.6;">(${counts[src]||0})</span>
+    </button>`;
+  }).join('');
+}
+
+function renderMgrRecallList() {
+  const el = document.getElementById('mgr-recalls-list');
+  const footer = document.getElementById('mgr-recall-list-footer');
+  const showMore = document.getElementById('mgr-recall-show-more');
+  const showLess = document.getElementById('mgr-recall-show-less');
+  if (!el) return;
+
+  let filtered = _mgrRecallCache;
+  if (_mgrRecallSrcFilter !== 'all') filtered = filtered.filter(r => (r.source||'manual') === _mgrRecallSrcFilter);
+  if (_mgrRecallFilter) filtered = filtered.filter(r =>
+    (r.product_name||'').toLowerCase().includes(_mgrRecallFilter) ||
+    (r.lot_number||'').toLowerCase().includes(_mgrRecallFilter) ||
+    (r.description||'').toLowerCase().includes(_mgrRecallFilter) ||
+    (r.source||'').toLowerCase().includes(_mgrRecallFilter)
+  );
+
+  if (!filtered.length) {
+    el.innerHTML = `<div style="font-size:13px;color:var(--muted);text-align:center;padding:16px 0;">${_mgrRecallFilter||_mgrRecallSrcFilter!=='all' ? (currentLang==='no'?'Ingen treff':'No results') : t('mgr.noRecallsYet')}</div>`;
+    if (footer) footer.style.display = 'none';
+    return;
+  }
+
+  const visible = filtered.slice(0, _mgrRecallShown);
+  const hasMore = filtered.length > _mgrRecallShown;
+  const srcColour = { fda:'var(--info)', rasff:'var(--warn)', mattilsynet:'var(--accent)', manufacturer_push:'var(--info)', manual:'var(--muted)' };
+
+  el.innerHTML = visible.map(r => `
+    <div class="mgr-recall-row" id="mgr-recall-row-${r.id}">
+      <div class="mgr-recall-info">
+        <div class="mgr-recall-name">${esc(r.product_name || t('hist.unknownProduct'))}</div>
+        <div class="mgr-recall-meta" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          ${r.lot_number ? `<span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);">${t('card.lotLabel')} <strong>${esc(r.lot_number)}</strong></span>` : ''}
+          <span style="font-size:10px;font-weight:700;font-family:'DM Mono',monospace;padding:1px 6px;border-radius:4px;background:${(srcColour[r.source]||'var(--muted)').replace('var(','rgba(').replace('--info)','56,189,248,0.12)').replace('--warn)','245,166,35,0.12)').replace('--accent)','52,211,153,0.12)').replace('--muted)','106,175,158,0.08)')};color:${srcColour[r.source]||'var(--muted)'};">${(r.source||'manual').toUpperCase()}</span>
+          ${r.active ? '<span style="color:var(--danger);font-size:10px;font-weight:600;">● ACTIVE</span>' : '<span style="color:var(--muted);font-size:10px;">inactive</span>'}
+        </div>
+        ${r.description ? `<div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5;">${esc(r.description.slice(0,120))}${r.description.length>120?'…':''}</div>` : ''}
+      </div>
+      <div class="mgr-recall-actions">
+        <button onclick="mgrToggleRecall('${r.id}', ${!r.active})" title="${r.active ? t('allRecalls.deactivate') : t('allRecalls.activate')}">
+          ${r.active ? t('allRecalls.deactivate') : t('allRecalls.activate')}
+        </button>
+        <button onclick="mgrEditRecall('${r.id}')" title="${currentLang==='no'?'Rediger':'Edit'}">${currentLang==='no'?'Rediger':'Edit'}</button>
+        <button class="danger" onclick="mgrDeleteRecall('${r.id}')" title="${currentLang==='no'?'Slett':'Delete'}">${currentLang==='no'?'Slett':'Delete'}</button>
+      </div>
+    </div>`).join('');
+
+  if (footer) {
+    const show = hasMore || _mgrRecallShown > MGR_RECALL_PAGE;
+    footer.style.display = show ? 'flex' : 'none';
+    if (showMore) { showMore.style.display = hasMore ? 'inline-block' : 'none'; showMore.textContent = currentLang==='no' ? `Vis flere (${filtered.length-_mgrRecallShown} gjenstår)` : `Show more (${filtered.length-_mgrRecallShown} remaining)`; }
+    if (showLess) { showLess.style.display = _mgrRecallShown > MGR_RECALL_PAGE ? 'inline-block' : 'none'; showLess.textContent = currentLang==='no'?'Vis færre':'Show less'; }
   }
 }
 
