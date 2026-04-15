@@ -7270,7 +7270,7 @@ async function runAutoFetch() {
     promises.push(fetchFDARecalls().catch(e => console.warn('FDA fetch error:', e)));
   }
   if (recallSource === 'rasff' || recallSource === 'both') {
-    promises.push(fetchRASFFRecalls().catch(e => console.warn('RASFF fetch error:', e)));
+    // RASFF requires EU Login auth — using Mattilsynet instead
     promises.push(fetchMattilsynetRecalls().catch(e => console.warn('Mattilsynet fetch error:', e)));
   }
   await Promise.allSettled(promises);
@@ -7596,8 +7596,8 @@ async function fetchAndRefreshRecalls() {
     catch(e) { results.push('FDA: ✗ ' + e.message.slice(0, 40)); }
   }
   if (recallSource === 'rasff' || recallSource === 'both') {
-    try { const n = await fetchRASFFRecalls(); results.push('RASFF: +' + n); }
-    catch(e) { results.push('RASFF: ✗ ' + e.message.slice(0, 40)); }
+    // RASFF web API requires EU Login auth — not accessible server-side
+    // Mattilsynet covers Norwegian/EU recalls reliably
     try { const n = await fetchMattilsynetRecalls(); results.push('Mattilsynet: +' + n); }
     catch(e) { results.push('Mattilsynet: ✗ ' + e.message.slice(0, 40)); }
   }
@@ -7805,13 +7805,7 @@ async function fetchExternalRecalls() {
       }
     }
     if (recallSource === 'rasff' || recallSource === 'both') {
-      try {
-        const n = await fetchRASFFRecalls();
-        results.push(`RASFF: +${n}`);
-      } catch(e) {
-        results.push(`RASFF: ✗ ${e.message}`);
-        console.error('RASFF fetch failed:', e);
-      }
+      // RASFF requires EU Login — using Mattilsynet (Norwegian Food Safety Authority) instead
       try {
         const n = await fetchMattilsynetRecalls();
         results.push(`Mattilsynet: +${n}`);
@@ -7920,6 +7914,9 @@ async function fetchFDARecalls() {
 }
 
 async function fetchRASFFRecalls() {
+  // RASFF EU webgate requires EU Login auth — not accessible server-side
+  // This function is kept for backward compat but does nothing
+  return 0;
   const resp = await fetch('/.netlify/functions/recall-feeds?source=rasff');
   if (!resp.ok) throw new Error('RASFF proxy error ' + resp.status);
   const xml = await resp.text();
@@ -12544,28 +12541,25 @@ function initMode() {
 
 // ── MANAGER ROLE ─────────────────────────────────────────────
 
+let _profileFetching = false;
 async function fetchUserProfile() {
-  if (!currentUser) return;
+  if (!currentUser || _profileFetching) return;
+  _profileFetching = true;
   try {
     const { data, error } = await sb
       .from('user_profiles')
       .select('is_manager')
       .eq('id', currentUser.id)
       .maybeSingle();
-    console.log('[fetchUserProfile] id:', currentUser.id, 'data:', JSON.stringify(data), 'error:', error?.message);
     if (error) throw error;
     if (!data) {
-      // Row missing — auto-create it (is_manager defaults to false; admin sets true via Supabase)
-      console.warn('[fetchUserProfile] No profile row found — attempting upsert');
-      const { error: upsertErr } = await sb.from('user_profiles').upsert({
+      // Row missing — auto-create with is_manager:false; admin can set true in Supabase
+      await sb.from('user_profiles').upsert({
         id: currentUser.id,
         email: currentUser.email,
         is_manager: false
       }, { onConflict: 'id' });
-      if (upsertErr) console.warn('[fetchUserProfile] upsert failed:', upsertErr.message);
-      // Re-read after upsert in case the row already existed with is_manager:true
       const { data: reread } = await sb.from('user_profiles').select('is_manager').eq('id', currentUser.id).maybeSingle();
-      console.log('[fetchUserProfile] re-read after upsert:', JSON.stringify(reread));
       const isManager = reread?.is_manager === true;
       currentUser.isManager = isManager;
       applyManagerUI(isManager);
@@ -12573,15 +12567,15 @@ async function fetchUserProfile() {
       return;
     }
     const isManager = data?.is_manager === true;
-    console.log('[fetchUserProfile] isManager:', isManager);
     currentUser.isManager = isManager;
     applyManagerUI(isManager);
     renderSettingsForRole();
   } catch(e) {
-    console.warn('[fetchUserProfile] error:', e.message);
     currentUser.isManager = false;
     applyManagerUI(false);
     renderSettingsForRole();
+  } finally {
+    _profileFetching = false;
   }
 }
 
