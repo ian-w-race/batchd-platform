@@ -1997,48 +1997,99 @@ async function renderCompliance() {
 }
 
 // ── Reports ────────────────────────────────────────────────────
-function renderReports() {
+async function renderReports() {
   const el = document.getElementById('main-content');
   const isUS = _orgRegion === 'us';
+
+  const REPORT_DEFS = [
+    { key:'audit',         title:'Audit Trail',            sub:'Full traceability scan log for regulators',             icon:'📋', color:'var(--accent)',  stat:'scans',      statLabel:'total scan records'    },
+    { key:'recalls',       title:'Recall History',          sub:'Complete recall log with store response chain',         icon:'⚠️',  color:'var(--danger)',  stat:'recalls',    statLabel:'recall events'          },
+    { key:'staff',         title:'Staff Activity',          sub:'Scan and action log per employee',                      icon:'👤', color:'var(--info)',    stat:'staff',      statLabel:'staff members active'   },
+    { key:'stores',        title:'Store Compliance',        sub:'Per-store scan rates and compliance scores',            icon:'🏪', color:'var(--warn)',    stat:'stores',     statLabel:'stores tracked'         },
+    { key:'effectiveness', title:'Recall Effectiveness',    sub:'Response times, compliance rates, per-store chain',     icon:'📊', color:'var(--accent)',  stat:'acks',       statLabel:'acknowledgements'       },
+    { key:'exposure',      title:'Consumer Exposure Notice',sub:'Professional recall notice for public distribution',   icon:'📢', color:'var(--danger)',  stat:'active',     statLabel:'active recalls'         },
+    { key:'fsma',          title: isUS ? 'FSMA 204 Export' : 'EU Traceability Export',
+                           sub:   isUS ? 'KDE/CTE records in FDA-ready electronic format' : 'One-step-back/forward records for Mattilsynet audit',
+                           icon:  isUS ? '🇺🇸' : '🇳🇴',   color:'var(--muted)',   stat:'scans',      statLabel:'traceable records'      },
+  ];
+
+  // Render cards immediately with spinners, then load stats async
   el.innerHTML = `
     <div style="margin-bottom:20px;">
-      <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Reports & exports</div>
-      <div style="font-size:11px;color:var(--muted);margin-top:2px;">Live data reports for ${_orgName} — view on screen or download as CSV</div>
+      <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Reports & Exports</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:2px;">Live data reports for ${_orgName} — click View to explore on screen, or ↓ CSV to download</div>
     </div>
-    <div class="two-col">
-      ${[
-        { key:'audit',      title:'Audit trail',        sub:'Full traceability scan log for regulators',         icon:'📋', color:'var(--accent)' },
-        { key:'recalls',    title:'Recall history',      sub:'Complete recall log with store response status',    icon:'⚠️', color:'var(--danger)' },
-        { key:'staff',      title:'Staff activity',      sub:'Scan and action log per employee',                  icon:'👤', color:'var(--info)'   },
-        { key:'stores',     title:'Store compliance',    sub:'Per-store scan activity and compliance scores',     icon:'🏪', color:'var(--warn)'   },
-        { key:'exposure',   title:'Exposure notice',     sub:'Customer-facing recall notification template',      icon:'📢', color:'var(--danger)' },
-        { key:'effectiveness', title:'Recall effectiveness', sub:'Response times, compliance rates and per-store chain', icon:'📊', color:'var(--accent)' },
-        { key:'fsma',       title:isUS?'FSMA 204 export':'EU traceability export', sub:isUS?'KDE/CTE records in FDA format':'One-step-back/forward records for Mattilsynet', icon:isUS?'🇺🇸':'🇪🇺', color:'var(--muted)' },
-      ].map(r => `
-        <div class="panel" style="cursor:default;">
-          <div class="panel-body" style="display:flex;align-items:center;gap:14px;">
-            <div style="width:40px;height:40px;border-radius:10px;background:rgba(52,211,153,0.06);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;">${r.icon}</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;">
+      ${REPORT_DEFS.map(r => `
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px;display:flex;flex-direction:column;gap:14px;transition:border-color 0.15s;"
+          onmouseover="this.style.borderColor='rgba(52,211,153,0.35)'" onmouseout="this.style.borderColor='var(--border)'">
+          <div style="display:flex;align-items:flex-start;gap:14px;">
+            <div style="width:44px;height:44px;border-radius:12px;background:${r.color.replace('var(--accent)','rgba(52,211,153,0.1)').replace('var(--danger)','rgba(255,92,92,0.1)').replace('var(--info)','rgba(56,189,248,0.1)').replace('var(--warn)','rgba(245,166,35,0.1)').replace('var(--muted)','rgba(106,175,158,0.1)')};display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;">${r.icon}</div>
             <div style="flex:1;min-width:0;">
-              <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:13px;color:var(--text);margin-bottom:2px;">${r.title}</div>
-              <div style="font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${r.sub}</div>
+              <div style="font-weight:700;font-size:13px;color:var(--text);">${r.title}</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:2px;line-height:1.5;">${r.sub}</div>
             </div>
-            <div style="display:flex;gap:6px;flex-shrink:0;">
-              <button onclick="runReport('${r.key}')"
-                style="font-family:'DM Mono',monospace;font-size:11px;padding:6px 12px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);cursor:pointer;transition:all 0.15s;"
-                onmouseenter="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'"
-                onmouseleave="this.style.borderColor='var(--border)';this.style.color='var(--text)'">
-                View →
-              </button>
-              <button onclick="downloadReport('${r.key}')"
-                style="font-family:'DM Mono',monospace;font-size:11px;padding:6px 12px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;transition:all 0.15s;"
-                onmouseenter="this.style.borderColor='var(--muted)';this.style.color='var(--text)'"
-                onmouseleave="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">
-                ↓ CSV
-              </button>
-            </div>
+          </div>
+          <div style="background:var(--surface2);border-radius:8px;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;">
+            <div id="report-stat-${r.key}" style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;"><div class="spinner" style="width:12px;height:12px;border-width:2px;"></div> Loading…</div>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button onclick="runReport('${r.key}')"
+              style="flex:1;font-family:inherit;font-size:12px;font-weight:600;padding:8px 0;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);cursor:pointer;transition:all 0.15s;"
+              onmouseover="this.style.background='rgba(52,211,153,0.1)';this.style.borderColor='var(--accent)';this.style.color='var(--accent)'"
+              onmouseout="this.style.background='var(--surface2)';this.style.borderColor='var(--border)';this.style.color='var(--text)'">
+              View Report →
+            </button>
+            <button onclick="downloadReport('${r.key}')"
+              style="font-family:'DM Mono',monospace;font-size:11px;padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;transition:all 0.15s;white-space:nowrap;"
+              onmouseover="this.style.borderColor='var(--muted)';this.style.color='var(--text)'"
+              onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">
+              ↓ CSV
+            </button>
           </div>
         </div>`).join('')}
     </div>`;
+
+  // Load live stats for each card asynchronously
+  loadReportStats();
+}
+
+async function loadReportStats() {
+  const isUS = _orgRegion === 'us';
+  const setStat = (key, html) => {
+    const el = document.getElementById('report-stat-' + key);
+    if (el) el.innerHTML = html;
+  };
+
+  // Run all stat queries in parallel
+  const [scansRes, recallsRes, staffRes, storesRes, acksRes, activeRes, distRes] = await Promise.allSettled([
+    sb.from('scans').select('id', { count:'exact', head:true }).eq('organisation_id', _orgId),
+    sb.from('recalls').select('id', { count:'exact', head:true }).eq('organisation_id', _orgId),
+    sb.from('scans').select('scanned_by').eq('organisation_id', _orgId).not('scanned_by', 'is', null),
+    sb.from('stores').select('id', { count:'exact', head:true }).eq('organisation_id', _orgId).eq('active', true),
+    sb.from('recall_acknowledgements').select('id', { count:'exact', head:true }).eq('organisation_id', _orgId),
+    sb.from('recalls').select('id', { count:'exact', head:true }).eq('organisation_id', _orgId).eq('active', true),
+    sb.from('recall_distributions').select('id', { count:'exact', head:true }).eq('retailer_org_id', _orgId),
+  ]);
+
+  const stat = (res, fallback=0) => res.status === 'fulfilled' ? (res.value.count ?? fallback) : fallback;
+
+  const uniqueStaff = scansRes.status === 'fulfilled' ? 0 :
+    new Set((staffRes.status==='fulfilled' ? staffRes.value.data||[] : []).map(s => s.scanned_by)).size;
+  const staffCount = (() => {
+    if (staffRes.status !== 'fulfilled') return 0;
+    return new Set((staffRes.value.data||[]).map(s=>s.scanned_by)).size;
+  })();
+
+  const n = (n) => `<span style="font-size:15px;font-weight:700;color:var(--text);font-family:'Figtree',sans-serif;">${n}</span>`;
+
+  setStat('audit',       `${n(stat(scansRes))} scan records on file`);
+  setStat('recalls',     `${n(stat(recallsRes))} total · ${n(stat(activeRes))} active`);
+  setStat('staff',       `${n(staffCount)} team member${staffCount!==1?'s':''} active`);
+  setStat('stores',      `${n(stat(storesRes))} active store${stat(storesRes)!==1?'s':''}`);
+  setStat('effectiveness', `${n(stat(acksRes))} acknowledgement records · ${n(stat(distRes))} recall events received`);
+  setStat('exposure',    `${n(stat(activeRes))} active recall${stat(activeRes)!==1?'s':''} — notice ready`);
+  setStat('fsma',        `${n(stat(scansRes))} ${isUS ? 'KDE records' : 'traceability records'} exportable`);
 }
 
 // ── CSV helper ─────────────────────────────────────────────────
@@ -2178,29 +2229,91 @@ async function runReport(key) {
 
   if (key === 'audit') {
     const rows = data;
-    el.innerHTML = reportHeader('Audit trail', `${rows.length} scan records · ${_orgName}`, 'audit') + `
+
+    // Build 30-day scan activity by day
+    const dayCounts = {};
+    const now = new Date();
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(now); d.setDate(d.getDate() - i);
+      dayCounts[d.toISOString().slice(0,10)] = 0;
+    }
+    rows.forEach(s => {
+      const day = s.created_at?.slice(0,10);
+      if (day && dayCounts[day] !== undefined) dayCounts[day]++;
+    });
+    const chartDays = Object.keys(dayCounts);
+    const chartVals = Object.values(dayCounts);
+    const maxVal = Math.max(...chartVals, 1);
+    const barW = 100 / chartDays.length;
+
+    // Status summary
+    const resolved = rows.filter(s => s.recall_resolved).length;
+    const removed  = rows.filter(s => s.removed_from_shelf_at && !s.recall_resolved).length;
+    const onShelf  = rows.length - resolved - removed;
+
+    el.innerHTML = reportHeader('Audit Trail', `${rows.length} scan records · ${_orgName}`, 'audit') + `
+      <!-- Summary strip -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:20px;">
+        ${[
+          {label:'Total scans', value:rows.length, color:'var(--text)'},
+          {label:'On shelf', value:onShelf, color:'var(--accent)'},
+          {label:'Removed', value:removed, color:'var(--warn)'},
+          {label:'Recall resolved', value:resolved, color:'var(--danger)'},
+        ].map(k=>`<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;">
+          <div style="font-size:20px;font-weight:700;color:${k.color};font-family:'Figtree',sans-serif;">${k.value}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">${k.label}</div>
+        </div>`).join('')}
+      </div>
+
+      <!-- 30-day activity chart -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:20px;">
+        <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:14px;">Scan activity — last 30 days</div>
+        <div style="display:flex;align-items:flex-end;gap:2px;height:60px;">
+          ${chartVals.map((v,i) => {
+            const h = Math.round((v / maxVal) * 100);
+            const day = chartDays[i];
+            const isToday = day === now.toISOString().slice(0,10);
+            return `<div title="${day}: ${v} scan${v!==1?'s':''}" style="flex:1;height:${Math.max(h,2)}%;background:${isToday?'var(--accent)':v>0?'rgba(52,211,153,0.4)':'var(--surface2)'};border-radius:2px 2px 0 0;cursor:default;transition:background 0.1s;" onmouseover="this.style.background='var(--accent)'" onmouseout="this.style.background='${isToday?'var(--accent)':v>0?'rgba(52,211,153,0.4)':'var(--surface2)'}'"></div>`;
+          }).join('')}
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-top:4px;">
+          <span style="font-size:10px;color:var(--muted);">${chartDays[0]?.slice(5)}</span>
+          <span style="font-size:10px;color:var(--muted);">Today</span>
+        </div>
+      </div>
+
+      <!-- Date filter -->
+      <div style="display:flex;gap:8px;margin-bottom:14px;align-items:center;flex-wrap:wrap;">
+        <span style="font-size:12px;color:var(--muted);">Filter:</span>
+        ${['All time','Last 7 days','Last 30 days','Last 90 days'].map((label,i) => {
+          const days = [0,7,30,90][i];
+          return `<button onclick="filterAuditRows(${days})" data-days="${days}" class="audit-filter-btn"
+            style="font-family:'DM Mono',monospace;font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid ${i===0?'var(--accent)':'var(--border)'};background:${i===0?'rgba(52,211,153,0.1)':'none'};color:${i===0?'var(--accent)':'var(--muted)'};cursor:pointer;">${label}</button>`;
+        }).join('')}
+      </div>
+
       <div class="panel">
         <div class="panel-body" style="padding:0;">
-          <table class="store-table" style="width:100%;">
+          <table class="store-table" style="width:100%;" id="audit-table">
             <thead><tr>
-              <th style="padding:12px 18px;">Date</th>
+              <th style="padding:12px 18px;">Date / Time</th>
               <th style="padding:12px 18px;">Product</th>
               <th style="padding:12px 18px;">Lot / Barcode</th>
               <th style="padding:12px 18px;">Store</th>
               <th style="padding:12px 18px;">Staff</th>
-              <th style="padding:12px 18px;">Qty</th>
+              <th style="padding:12px 18px;">Supplier</th>
               <th style="padding:12px 18px;">Status</th>
             </tr></thead>
-            <tbody>
+            <tbody id="audit-body">
               ${rows.length === 0 ? `<tr><td colspan="7"><div class="empty">No scans recorded yet.</div></td></tr>` :
               rows.map(s => `
-                <tr>
-                  <td style="padding:9px 18px;font-size:11px;color:var(--muted);white-space:nowrap;">${s.created_at ? new Date(s.created_at).toLocaleDateString('en-GB') : '—'}</td>
+                <tr data-date="${s.created_at||''}">
+                  <td style="padding:9px 18px;font-size:11px;color:var(--muted);white-space:nowrap;">${s.created_at ? new Date(s.created_at).toLocaleDateString('en-GB') + ' ' + new Date(s.created_at).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}) : '—'}</td>
                   <td style="padding:9px 18px;"><div style="font-size:12px;font-weight:500;color:var(--text);">${s.product_name||'—'}</div></td>
                   <td style="padding:9px 18px;font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${s.lot_number||'—'}${s.barcode_number?'<br>'+s.barcode_number:''}</td>
                   <td style="padding:9px 18px;font-size:11px;color:var(--muted);">${s.store_name||'—'}</td>
                   <td style="padding:9px 18px;font-size:11px;color:var(--muted);">${s.scanned_by||'—'}</td>
-                  <td style="padding:9px 18px;font-size:11px;color:var(--muted);">${s.quantity||'—'}</td>
+                  <td style="padding:9px 18px;font-size:11px;color:var(--muted);">${s.supplier_name||'—'}</td>
                   <td style="padding:9px 18px;">
                     ${s.recall_resolved
                       ? `<span class="recall-status status-resolved">Resolved</span>`
@@ -2216,7 +2329,7 @@ async function runReport(key) {
   }
 
   else if (key === 'recalls') {
-    el.innerHTML = reportHeader('Recall history', `${data.length} recall events · ${_orgName}`, 'recalls') + `
+    el.innerHTML = reportHeader('Recall History', `${data.length} recall events · ${_orgName}`, 'recalls') + `
       <div class="panel">
         <div class="panel-body" style="padding:0;">
           <table class="store-table" style="width:100%;">
@@ -2269,7 +2382,22 @@ async function runReport(key) {
     const staffRows = Object.values(byStaff).sort((a,b) => b.scans.length - a.scans.length);
     const lastScan = s => s.scans.reduce((latest, sc) => sc.created_at > latest ? sc.created_at : latest, '');
 
-    el.innerHTML = reportHeader('Staff activity', `${staffRows.length} team members · ${data.length} total scans`, 'staff') + `
+    // Staff summary strip
+    const top3 = staffRows.slice(0,3);
+    const totalEscalated = staffRows.reduce((s,r) => s + r.escalated, 0);
+    const totalResolved  = staffRows.reduce((s,r) => s + r.resolved, 0);
+    el.innerHTML = reportHeader('Staff Activity', `${staffRows.length} team members · ${data.length} total scans`, 'staff') + `
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:20px;">
+        ${[
+          {label:'Total scans', value:data.length, color:'var(--text)'},
+          {label:'Team members', value:staffRows.length, color:'var(--text)'},
+          {label:'Recalls resolved', value:totalResolved, color:'var(--accent)'},
+          {label:'Escalations', value:totalEscalated, color: totalEscalated>0?'var(--danger)':'var(--muted)'},
+        ].map(k=>`<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;">
+          <div style="font-size:20px;font-weight:700;color:${k.color};font-family:'Figtree',sans-serif;">${k.value}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">${k.label}</div>
+        </div>`).join('')}
+      </div>
       <div class="panel">
         <div class="panel-body" style="padding:0;">
           <table class="store-table" style="width:100%;">
@@ -2299,7 +2427,24 @@ async function runReport(key) {
   }
 
   else if (key === 'stores') {
-    el.innerHTML = reportHeader('Store compliance', `${data.length} stores · based on scan activity`, 'stores') + `
+    // Add visual compliance grid above table
+    const avgScore = data.length ? Math.round(data.reduce((s,d) => s + d.score, 0) / data.length) : 0;
+    const passing  = data.filter(d => d.score >= 80).length;
+    const warning  = data.filter(d => d.score >= 60 && d.score < 80).length;
+    const failing  = data.filter(d => d.score < 60).length;
+
+    el.innerHTML = reportHeader('Store Compliance', `${data.length} stores · based on scan activity`, 'stores') + `
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:20px;">
+        ${[
+          {label:'Avg compliance', value: avgScore+'%', color: avgScore>=80?'var(--accent)':avgScore>=60?'var(--warn)':'var(--danger)'},
+          {label:'Passing (≥80%)', value: passing, color:'var(--accent)'},
+          {label:'Warning (60–79%)', value: warning, color:'var(--warn)'},
+          {label:'Failing (<60%)', value: failing, color:'var(--danger)'},
+        ].map(k=>`<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;">
+          <div style="font-size:20px;font-weight:700;color:${k.color};font-family:'Figtree',sans-serif;">${k.value}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">${k.label}</div>
+        </div>`).join('')}
+      </div>
       <div class="panel">
         <div class="panel-body" style="padding:0;">
           <table class="store-table" style="width:100%;">
@@ -2341,44 +2486,130 @@ async function runReport(key) {
 
   else if (key === 'exposure') {
     const recalls = data;
+    const isUS = _orgRegion === 'us';
     if (recalls.length === 0) {
-      el.innerHTML = reportHeader('Exposure notice', 'Customer-facing recall notification', 'exposure') + `
-        <div class="panel"><div class="panel-body"><div class="empty">No active manufacturer recalls to generate a notice for.</div></div></div>`;
+      el.innerHTML = reportHeader('Consumer Exposure Notice', 'Customer-facing recall notification', 'exposure') + `
+        <div class="panel"><div class="panel-body" style="text-align:center;padding:40px;">
+          <div style="font-size:32px;margin-bottom:12px;">📢</div>
+          <div style="font-weight:600;color:var(--text);margin-bottom:6px;">No active recalls</div>
+          <div style="font-size:12px;color:var(--muted);">Exposure notices are generated from active manufacturer recall events.</div>
+        </div></div>`;
       return;
     }
-    const r = recalls[0]; // most recent
-    const noticeText = `PRODUCT RECALL NOTICE\n\n${_orgName} is notifying customers of a recall affecting the following product:\n\nProduct: ${r.product_name}\nLot number: ${r.lot_number||'See packaging'}\n${r.barcode?'Barcode: '+r.barcode+'\n':''}\nReason: ${r.reason||'See below'}\n${r.description?'\nDetails:\n'+r.description+'\n':''}\nWhat to do:\nIf you have purchased this product, do not consume it. Return it to the place of purchase for a full refund.\n\nFor questions, contact us at ${_orgName}.\n\nIssued: ${new Date().toLocaleDateString('en-GB')}`;
 
-    el.innerHTML = reportHeader('Exposure notice', 'Customer-facing recall notification template', 'exposure') + `
-      <div style="margin-bottom:12px;font-size:11px;color:var(--muted);">
-        Showing notice for most recent recall. Copy the text below or download as CSV for your records.
-      </div>
+    // Show recall selector
+    let selectedIdx = 0;
+    const renderNotice = (idx) => {
+      const r = recalls[idx];
+      const today = new Date().toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'});
+      const lotStr = r.lot_number || 'See product packaging';
+
+      const htmlNotice = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><style>
+body{font-family:Arial,sans-serif;max-width:600px;margin:40px auto;padding:20px;color:#111;}
+.header{background:#c00;color:#fff;padding:20px 24px;border-radius:4px 4px 0 0;}
+.header h1{margin:0;font-size:20px;}
+.header p{margin:4px 0 0;font-size:13px;opacity:0.9;}
+.body{border:1px solid #ddd;border-top:none;padding:24px;border-radius:0 0 4px 4px;}
+.field{margin-bottom:14px;}
+.field label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:#666;display:block;margin-bottom:3px;}
+.field value{font-size:14px;font-weight:600;}
+.action{background:#fff3cd;border:1px solid #ffc107;border-radius:4px;padding:14px 16px;margin:16px 0;}
+.footer{font-size:11px;color:#999;margin-top:20px;border-top:1px solid #eee;padding-top:12px;}
+</style></head><body>
+<div class="header"><h1>⚠ PRODUCT RECALL NOTICE</h1><p>${_orgName} · ${today}</p></div>
+<div class="body">
+  <p style="font-size:14px;margin-top:0;">${_orgName} is notifying customers of a product recall affecting the following item.</p>
+  <div class="field"><label>Product</label><value>${r.product_name||'—'}</value></div>
+  <div class="field"><label>Lot / Batch Number</label><value style="font-family:monospace">${lotStr}</value></div>
+  ${r.barcode ? `<div class="field"><label>Barcode / EAN</label><value style="font-family:monospace">${r.barcode}</value></div>` : ''}
+  <div class="field"><label>Reason for Recall</label><value>${r.reason||'—'}</value></div>
+  ${r.description ? `<div class="field"><label>Additional Details</label><value style="font-weight:400;font-size:13px;">${r.description}</value></div>` : ''}
+  ${r.severity ? `<div class="field"><label>Classification</label><value>${r.severity}</value></div>` : ''}
+  <div class="action">
+    <strong>What to do if you have this product:</strong><br>
+    Do not consume this product. Return it to the place of purchase for a full refund.<br>
+    If you have consumed this product and feel unwell, seek medical advice immediately.
+  </div>
+  ${isUS ? `<p style="font-size:13px;color:#444;">This recall is conducted in cooperation with the U.S. Food and Drug Administration (FDA)${r.severity?.includes('I') ? ' and has been reported to the FDA Reportable Food Registry (RFR)' : ''}.</p>` :
+  `<p style="font-size:13px;color:#444;">Denne tilbakekallingen er gjennomført i samarbeid med Mattilsynet (Norsk mattilsynsmyndighet).</p>`}
+  <div class="footer">
+    Notice issued: ${today}<br>
+    For questions, contact ${_orgName}.<br>
+    ${isUS ? 'FDA recall information: fda.gov/safety/recalls-market-withdrawals-safety-alerts' : 'Mattilsynet tilbakekallinger: mattilsynet.no/tilbakekallinger'}
+  </div>
+</div></body></html>`;
+
+      return `
       ${recalls.length > 1 ? `
-      <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
-        ${recalls.map((r,i) => `
-          <button onclick="runReport('exposure')"
-            style="font-family:'DM Mono',monospace;font-size:10px;padding:5px 10px;border-radius:6px;border:1px solid ${i===0?'var(--accent)':'var(--border)'};background:${i===0?'rgba(52,211,153,0.08)':'none'};color:${i===0?'var(--accent)':'var(--muted)'};cursor:pointer;">
-            ${r.product_name}
-          </button>`).join('')}
+      <div style="margin-bottom:14px;">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:6px;">Select recall:</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          ${recalls.map((rec,i) => `<button onclick="(function(){${idx===i?'':''}})();runReport('exposure')" 
+            style="font-family:'DM Mono',monospace;font-size:10px;padding:5px 10px;border-radius:6px;border:1px solid ${i===idx?'var(--accent)':'var(--border)'};background:${i===idx?'rgba(52,211,153,0.08)':'none'};color:${i===idx?'var(--accent)':'var(--muted)'};cursor:pointer;">${rec.product_name?.slice(0,30)||'Recall'}</button>`).join('')}
+        </div>
       </div>` : ''}
-      <div class="panel" style="margin-bottom:14px;border-color:rgba(255,92,92,0.2);">
-        <div class="panel-header" style="background:rgba(255,92,92,0.03);">
-          <div>
-            <div class="panel-title" style="color:var(--danger);">🚨 ${r.product_name}</div>
-            <div class="panel-sub">Lot: ${r.lot_number||'—'} · ${r.severity||'—'} · ${r.reason||'—'}</div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px;">
+        <!-- Plain text notice -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;">
+          <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+            <div style="font-size:12px;font-weight:600;color:var(--text);">Plain text</div>
+            <button onclick="const t=document.getElementById('notice-plain');t.select();document.execCommand('copy');this.textContent='Copied ✓';setTimeout(()=>this.textContent='Copy',2000);"
+              style="font-family:'DM Mono',monospace;font-size:10px;padding:4px 10px;border-radius:5px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);cursor:pointer;">Copy</button>
           </div>
-          <span style="font-size:10px;color:var(--muted);">${r.published_at ? new Date(r.published_at).toLocaleDateString('en-GB') : ''}</span>
+          <textarea id="notice-plain" readonly style="width:100%;height:280px;background:var(--surface2);border:none;padding:12px 14px;font-family:'DM Mono',monospace;font-size:11px;color:var(--text);line-height:1.6;resize:none;outline:none;box-sizing:border-box;">PRODUCT RECALL NOTICE — ${_orgName}
+Issued: ${today}
+
+Product: ${r.product_name||'—'}
+Lot/Batch: ${lotStr}${r.barcode ? ' Barcode: '+r.barcode : ''}
+Severity: ${r.severity||'—'}
+Reason: ${r.reason||'—'}
+${r.description ? 'Details: '+r.description : ''}
+WHAT TO DO:
+If you have this product, do not consume it.
+Return to place of purchase for a full refund.
+If you have consumed it and feel unwell, seek medical advice.
+
+Issued by: ${_orgName}
+${isUS ? 'In cooperation with: U.S. FDA' : 'I samarbeid med: Mattilsynet'}
+${isUS ? 'FDA RFR: accessdata.fda.gov/scripts/rfr' : 'Mattilsynet: mattilsynet.no/tilbakekallinger'}
+Date: ${today}</textarea>
         </div>
-        <div class="panel-body">
-          <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">Notice text — copy and use in customer communications:</div>
-          <textarea id="notice-text" readonly
-            style="width:100%;min-height:220px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px;font-family:'DM Mono',monospace;font-size:11px;color:var(--text);line-height:1.7;resize:vertical;outline:none;">${noticeText}</textarea>
-          <button onclick="document.getElementById('notice-text').select();document.execCommand('copy');this.textContent='Copied ✓';setTimeout(()=>this.textContent='Copy text',2000);"
-            style="margin-top:10px;font-family:'DM Mono',monospace;font-size:11px;padding:7px 14px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);cursor:pointer;">
-            Copy text
-          </button>
+
+        <!-- HTML preview -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;">
+          <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+            <div style="font-size:12px;font-weight:600;color:var(--text);">HTML notice (print/email ready)</div>
+            <button onclick="downloadExposureHTML()" style="font-family:'DM Mono',monospace;font-size:10px;padding:4px 10px;border-radius:5px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);cursor:pointer;">↓ HTML</button>
+          </div>
+          <iframe id="notice-preview" style="width:100%;height:280px;border:none;background:#fff;" srcdoc="${htmlNotice.replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}"></iframe>
         </div>
+      </div>
+
+      <!-- Regulatory checklist for this notice -->
+      <div style="background:rgba(52,211,153,0.05);border:1px solid rgba(52,211,153,0.2);border-radius:12px;padding:16px;">
+        <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:10px;">Before issuing this notice — regulatory checklist</div>
+        ${[
+          isUS ? '24-hour RFR notification submitted to FDA (accessdata.fda.gov/scripts/rfr)' : 'Mattilsynet notified (mattilsynet.no/skjemaer)',
+          'All retail trading partners notified via Batchd recall push',
+          'Acknowledgement chain confirmed (retailers acknowledged receipt)',
+          'Internal investigation documented (CAP or investigation record)',
+          isUS ? 'Press release prepared for Class I recalls' : 'Consumer notification prepared for serious recalls',
+          'Record retention: this notice saved for ' + (isUS ? '2 years minimum' : 'shelf-life + 6 months'),
+        ].map(item => `<div style="display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:1px solid rgba(22,61,55,0.3);">
+          <input type="checkbox" style="margin-top:2px;accent-color:var(--accent);">
+          <span style="font-size:12px;color:var(--text);">${item}</span>
+        </div>`).join('')}
       </div>`;
+    };
+
+    el.innerHTML = reportHeader('Consumer Exposure Notice', `${recalls.length} recall event${recalls.length!==1?'s':''} · ${_orgName}`, 'exposure') + renderNotice(0);
+
+    window._exposureHtml = (() => {
+      const r = recalls[0];
+      return `<!DOCTYPE html>...`;
+    })();
   }
 
   else if (key === 'effectiveness') {
@@ -2547,6 +2778,32 @@ async function runReport(key) {
         </div>
       </div>`;
   }
+}
+
+function downloadExposureHTML() {
+  const el = document.getElementById('notice-preview');
+  if (!el) return;
+  const raw = el.getAttribute('srcdoc') || '';
+  const html = raw.replace(/&quot;/g,'"').replace(/&lt;/g,'<').replace(/&gt;/g,'>');
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `recall-notice-${new Date().toISOString().slice(0,10)}.html`;
+  a.click(); URL.revokeObjectURL(url);
+}
+
+function filterAuditRows(days) {
+  document.querySelectorAll('.audit-filter-btn').forEach(btn => {
+    const active = parseInt(btn.dataset.days) === days;
+    btn.style.borderColor = active ? 'var(--accent)' : 'var(--border)';
+    btn.style.background  = active ? 'rgba(52,211,153,0.1)' : 'none';
+    btn.style.color       = active ? 'var(--accent)' : 'var(--muted)';
+  });
+  const cutoff = days === 0 ? null : new Date(Date.now() - days * 86400000);
+  document.querySelectorAll('#audit-body tr[data-date]').forEach(row => {
+    const d = row.dataset.date;
+    row.style.display = (!cutoff || !d || new Date(d) >= cutoff) ? '' : 'none';
+  });
 }
 
 // ── Download report as CSV ─────────────────────────────────────
