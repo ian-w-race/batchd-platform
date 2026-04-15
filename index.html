@@ -3029,7 +3029,9 @@
           <input id="recall-search" type="text" placeholder="Search recalls…" oninput="filterRecallsList()"
             style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:7px 10px;color:var(--text);font-size:13px;font-family:inherit;outline:none;">
           <button onclick="loadRecallsList()" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:7px 12px;color:var(--muted);font-size:12px;cursor:pointer;white-space:nowrap;">↻ Refresh</button>
+          <button onclick="fetchAndRefreshRecalls()" id="settings-fetch-btn" style="background:var(--accent);border:none;border-radius:8px;padding:7px 12px;color:#065f46;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;font-family:inherit;">↓ Fetch now</button>
         </div>
+        <div id="settings-fetch-status" style="display:none;font-size:11px;font-family:'DM Mono',monospace;margin-bottom:8px;padding:6px 10px;background:var(--surface2);border-radius:6px;"></div>
         <div id="recall-source-filters" style="display:flex;gap:5px;margin-bottom:10px;flex-wrap:wrap;"></div>
         <div class="recall-list" id="settings-recall-list">
           <div style="font-size:13px;color:var(--muted);text-align:center;padding:12px 0;">Loading recalls…</div>
@@ -7538,6 +7540,14 @@ async function loadRecallsList() {
     if (searchEl) searchEl.value = '';
     renderRecallSourcePills();
     renderRecallsList();
+
+    // Auto-fetch if source includes RASFF/Mattilsynet but none are stored yet
+    if ((recallSource === 'rasff' || recallSource === 'both') &&
+        !_allRecallsCache.some(r => r.source === 'rasff' || r.source === 'mattilsynet')) {
+      const statusEl = document.getElementById('settings-fetch-status');
+      if (statusEl) { statusEl.style.display = 'block'; statusEl.style.color = 'var(--muted)'; statusEl.textContent = 'No RASFF / Mattilsynet records found — fetching now…'; }
+      fetchAndRefreshRecalls();
+    }
   } catch(e) {
     el.innerHTML = `<div style="font-size:13px;color:var(--danger);">Error: ${e.message}</div>`;
   }
@@ -7548,6 +7558,41 @@ function setRecallSourceFilter(src) {
   _recallsShown = RECALLS_PAGE_SIZE;
   renderRecallSourcePills();
   renderRecallsList();
+}
+
+async function fetchAndRefreshRecalls() {
+  const btn = document.getElementById('settings-fetch-btn');
+  const statusEl = document.getElementById('settings-fetch-status');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Fetching…'; }
+  if (statusEl) { statusEl.style.display = 'block'; statusEl.style.color = 'var(--muted)'; statusEl.textContent = 'Contacting recall feeds…'; }
+
+  if (recallSource === 'manual') {
+    if (statusEl) { statusEl.textContent = 'Manual mode — no external feeds configured.'; }
+    if (btn) { btn.disabled = false; btn.textContent = '↓ Fetch now'; }
+    return;
+  }
+
+  const results = [];
+  if (recallSource === 'fda' || recallSource === 'both') {
+    try { const n = await fetchFDARecalls(); results.push('FDA: +' + n); }
+    catch(e) { results.push('FDA: ✗ ' + e.message.slice(0, 40)); }
+  }
+  if (recallSource === 'rasff' || recallSource === 'both') {
+    try { const n = await fetchRASFFRecalls(); results.push('RASFF: +' + n); }
+    catch(e) { results.push('RASFF: ✗ ' + e.message.slice(0, 40)); }
+    try { const n = await fetchMattilsynetRecalls(); results.push('Mattilsynet: +' + n); }
+    catch(e) { results.push('Mattilsynet: ✗ ' + e.message.slice(0, 40)); }
+  }
+
+  const hasError = results.some(r => r.includes('✗'));
+  if (statusEl) {
+    statusEl.style.color = hasError ? 'var(--warn)' : 'var(--accent)';
+    statusEl.textContent = results.join(' · ') || 'Done.';
+  }
+  if (btn) { btn.disabled = false; btn.textContent = '↓ Fetch now'; }
+
+  // Reload the list to show new records
+  await loadRecallsList();
 }
 
 function filterRecallsList() {
