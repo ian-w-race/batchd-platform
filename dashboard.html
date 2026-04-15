@@ -2706,6 +2706,119 @@ let _dashTriageView = 'list';
 let _dashTriageComplaint = null;
 let _dashTriageFilter = 'all';
 
+
+// ── Dashboard Complaint Pattern Detection ─────────────────────
+
+function detectDashComplaintPatterns(complaints, windowDays = 7) {
+  const cutoff = Date.now() - windowDays * 24 * 60 * 60 * 1000;
+  const recent = (complaints || []).filter(c =>
+    new Date(c.created_at).getTime() > cutoff &&
+    !['closed','resolved'].includes(c.status)
+  );
+  if (recent.length < 2) return [];
+
+  const groups = {};
+  recent.forEach(c => {
+    const keys = [];
+    if (c.barcode) keys.push('barcode:' + c.barcode.trim().toLowerCase());
+    if (c.product_name) {
+      const word = c.product_name.trim().toLowerCase().split(/\s+/)[0];
+      if (word && word.length > 2) keys.push('name:' + word);
+    }
+    keys.forEach(k => {
+      if (!groups[k]) groups[k] = { key: k, complaints: [], productName: c.product_name, barcode: c.barcode, lotNumbers: new Set(), stores: new Set() };
+      groups[k].complaints.push(c);
+      if (c.lot_number) groups[k].lotNumbers.add(c.lot_number);
+      if (c.purchase_store || c.store_name) groups[k].stores.add(c.purchase_store || c.store_name);
+    });
+  });
+
+  const seen = new Set();
+  const patterns = [];
+  Object.values(groups)
+    .filter(g => g.complaints.length >= 2)
+    .sort((a, b) => b.complaints.length - a.complaints.length)
+    .forEach(g => {
+      const unique = g.complaints.filter(c => !seen.has(c.id));
+      if (unique.length < 2) return;
+      unique.forEach(c => seen.add(c.id));
+      const criticalCount = unique.filter(c => c.triage_level === 'critical').length;
+      const seriousCount  = unique.filter(c => c.triage_level === 'serious').length;
+      const total = unique.length;
+      const multiStore = g.stores.size > 1;
+      let level, title, colour, bg;
+      if (criticalCount >= 2 || (criticalCount >= 1 && seriousCount >= 1) || multiStore) {
+        level = 'systemic'; colour = 'var(--danger)'; bg = 'rgba(255,92,92,0.07)';
+        title = multiStore && total >= 2 ? 'Multi-store pattern' : 'Potential systemic issue';
+      } else if (total >= 5 || seriousCount >= 3) {
+        level = 'volume'; colour = 'var(--warn)'; bg = 'rgba(245,166,35,0.07)';
+        title = 'Volume alert';
+      } else {
+        level = 'emerging'; colour = 'var(--warn)'; bg = 'rgba(245,166,35,0.05)';
+        title = 'Emerging pattern';
+      }
+      const lots = [...g.lotNumbers].slice(0, 3).join(', ');
+      const storeList = [...g.stores].slice(0, 3).join(', ');
+      patterns.push({ level, title, colour, bg, productName: g.productName, barcode: g.barcode, lots, storeList, multiStore, total, criticalCount, seriousCount, complaints: unique, windowDays });
+    });
+  return patterns;
+}
+
+function dashPatternAlertHTML(pattern, idx) {
+  const lotStr = pattern.lots ? ` · Lot: <span style="font-family:'DM Mono',monospace;">${pattern.lots}</span>` : '';
+  const storeStr = pattern.storeList ? `<div style="font-size:11px;color:var(--muted);margin-top:3px;">Stores: ${pattern.storeList}${pattern.multiStore ? ' <span style="color:var(--danger);font-weight:600;">· multiple stores</span>' : ''}</div>` : '';
+  const breakdown = [
+    pattern.criticalCount ? `<span style="color:var(--danger);font-weight:700;">${pattern.criticalCount} critical</span>` : '',
+    pattern.seriousCount  ? `<span style="color:var(--warn);">${pattern.seriousCount} serious</span>` : '',
+    (pattern.total - pattern.criticalCount - pattern.seriousCount) > 0 ? `<span style="color:var(--muted);">${pattern.total - pattern.criticalCount - pattern.seriousCount} monitor</span>` : ''
+  ].filter(Boolean).join(' · ');
+
+  const borderColour = pattern.colour.includes('danger') ? 'rgba(255,92,92,0.3)' : 'rgba(245,166,35,0.3)';
+  return `
+    <div id="dash-pattern-${idx}" style="background:${pattern.bg};border:1px solid ${borderColour};border-radius:12px;padding:16px;position:relative;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+        <div style="flex:1;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap;">
+            <span style="font-size:10px;font-weight:700;font-family:'DM Mono',monospace;letter-spacing:0.07em;color:${pattern.colour};text-transform:uppercase;">${pattern.title}</span>
+            <span style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">${pattern.total} complaints · ${pattern.windowDays}d window</span>
+          </div>
+          <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:3px;">${pattern.productName || 'Unknown product'}${lotStr}</div>
+          <div style="font-size:12px;color:var(--muted);">${breakdown}</div>
+          ${storeStr}
+        </div>
+        <div style="display:flex;gap:8px;align-items:flex-start;flex-shrink:0;flex-wrap:wrap;">
+          <button onclick="notifyManufacturerOfPattern(${JSON.stringify(pattern.productName||'')},${JSON.stringify(pattern.lots||'')},${pattern.total},${JSON.stringify(pattern.title)})"
+            style="background:transparent;border:1px solid ${borderColour};color:${pattern.colour};border-radius:7px;padding:6px 12px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap;">
+            Notify manufacturer
+          </button>
+          <button onclick="document.getElementById('dash-pattern-${idx}').style.display='none'"
+            style="background:transparent;border:none;color:var(--muted);font-size:18px;cursor:pointer;padding:0;line-height:1;" title="Dismiss">×</button>
+        </div>
+      </div>
+      <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;">
+        ${pattern.complaints.slice(0,4).map(c => `
+          <span onclick="_dashTriageView='detail';_dashTriageComplaint='${c.id}';renderDashboardTriage()"
+            style="font-size:11px;font-family:'DM Mono',monospace;background:var(--surface2);color:var(--muted);padding:2px 8px;border-radius:4px;cursor:pointer;border:1px solid var(--border);">
+            ${c.complaint_number || c.id.slice(0,8)}
+          </span>`).join('')}
+        ${pattern.complaints.length > 4 ? `<span style="font-size:11px;color:var(--muted);padding:2px 4px;">+${pattern.complaints.length-4} more</span>` : ''}
+      </div>
+    </div>`;
+}
+
+function notifyManufacturerOfPattern(productName, lots, count, patternTitle) {
+  // Open the manufacturers panel — the corp admin can notify their trading partner manufacturer
+  const msg = `Pattern alert: ${count} complaints about "${productName}" in 7 days (${patternTitle}). Lot(s): ${lots || 'unknown'}. Please review and consider a recall.`;
+  if (confirm(`Send a pattern alert to the manufacturer of "${productName}"?
+
+Message:
+"${msg}"
+
+This will open the Manufacturers panel where you can contact your trading partners.`)) {
+    showPanel('partners');
+  }
+}
+
 async function renderDashboardTriage() {
   const el = document.getElementById('main-content');
   if (_dashTriageView === 'new') { renderDashTriageForm(el); return; }
@@ -2730,7 +2843,7 @@ async function renderDashTriageList(el) {
   try {
     const { data: complaints, error } = await sb.from('complaints')
       .select('*')
-      .eq('receiving_org_id', _currentOrgId)
+      .eq('receiving_org_id', _orgId)
       .order('created_at', { ascending: false })
       .limit(100);
     if (error) throw error;
@@ -2738,6 +2851,9 @@ async function renderDashTriageList(el) {
     const critical = (complaints||[]).filter(c => c.triage_level === 'critical' && !['closed','resolved'].includes(c.status));
     const badge = document.getElementById('triage-badge');
     if (badge) { badge.textContent = critical.length; badge.style.display = critical.length ? 'inline' : 'none'; }
+
+    // Detect patterns
+    const dashPatterns = detectDashComplaintPatterns(complaints || []);
 
     const counts = {
       all: (complaints||[]).length,
@@ -2756,6 +2872,16 @@ async function renderDashTriageList(el) {
         </div>
         <button onclick="_dashTriageView='new';renderDashboardTriage()" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;">+ Log Phone Complaint</button>
       </div>
+
+      ${dashPatterns.length > 0 ? `
+        <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:20px;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2.5"><path d="M12 2L2 19h20L12 2z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17" r="0.7" fill="var(--warn)" stroke="none"/></svg>
+            <span style="font-size:11px;font-weight:700;color:var(--warn);letter-spacing:0.06em;text-transform:uppercase;">Pattern${dashPatterns.length > 1 ? 's' : ''} Detected</span>
+          </div>
+          ${dashPatterns.map((p, i) => dashPatternAlertHTML(p, i)).join('')}
+        </div>
+      ` : ''}
 
       <div style="display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;">
         ${[
@@ -2925,7 +3051,7 @@ async function submitDashPhoneComplaint() {
   btn.disabled = true; btn.innerHTML = '<span style="display:flex;align-items:center;gap:6px;"><div class="spinner" style="width:12px;height:12px;border-width:2px;"></div> Triaging...</span>';
   const dtcHasProduct = document.getElementById('dtc-hasproduct')?.value || '';
   const payload = {
-    source: 'phone', receiving_org_id: _currentOrgId, manufacturer_id: null,
+    source: 'phone', receiving_org_id: _orgId, manufacturer_id: null,
     org_name: _orgName, lang: 'en',
     product_name: document.getElementById('dtc-product').value.trim() || null,
     barcode: document.getElementById('dtc-barcode')?.value.trim() || null,
@@ -2958,6 +3084,15 @@ async function submitDashPhoneComplaint() {
           <div style="font-size:12px;font-family:'DM Mono',monospace;color:var(--muted);margin-bottom:16px;">${data.complaint_number}</div>
           <div style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:20px;">${data.triage_summary}</div>
           ${payload.customer_email ? `<div style="font-size:12px;color:var(--muted);margin-bottom:20px;">Follow-up email sent to ${payload.customer_email}.</div>` : ''}
+          ${data.pattern_alert ? `
+            <div style="background:rgba(245,166,35,0.08);border:1px solid rgba(245,166,35,0.3);border-radius:8px;padding:12px 16px;margin-bottom:20px;text-align:left;">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2.5"><path d="M12 2L2 19h20L12 2z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17" r="0.6" fill="var(--warn)" stroke="none"/></svg>
+                <span style="font-size:12px;font-weight:700;color:var(--warn);">PATTERN DETECTED: ${data.pattern_alert.title.toUpperCase()}</span>
+              </div>
+              <div style="font-size:12px;color:var(--muted);">${data.pattern_alert.count} complaints about this product in the last 7 days. Consider notifying the manufacturer.</div>
+            </div>
+          ` : ''}
           <div style="display:flex;justify-content:center;gap:10px;">
             <button onclick="_dashTriageView='list';renderDashboardTriage()" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer;">View All Complaints</button>
             <button onclick="_dashTriageView='new';renderDashboardTriage()" style="background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:9px 18px;font-size:13px;cursor:pointer;">Log Another</button>
@@ -3067,7 +3202,7 @@ async function updateDashTriageStatus(id, newStatus) {
 
 async function loadDashboardTriageBadge() {
   try {
-    const { data } = await sb.from('complaints').select('id').eq('receiving_org_id', _currentOrgId).eq('triage_level', 'critical').not('status', 'in', '("closed","resolved")');
+    const { data } = await sb.from('complaints').select('id').eq('receiving_org_id', _orgId).eq('triage_level', 'critical').not('status', 'in', '("closed","resolved")');
     const badge = document.getElementById('triage-badge');
     if (badge && data?.length) { badge.textContent = data.length; badge.style.display = 'inline'; }
   } catch(e) {}
