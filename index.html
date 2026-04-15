@@ -3848,7 +3848,7 @@
           </div>
           <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px;">
             <div>
-              <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);display:block;margin-bottom:4px;">Recall reason <span style="color:var(--danger);">*</span></label>
+              <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);display:block;margin-bottom:4px;">Recall reason <span style="opacity:0.6;font-style:italic;">(pre-filled if known)</span></label>
               <input type="text" id="recall-step-0-reason" placeholder="e.g. Undeclared allergen, contamination, foreign body…"
                 style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-family:'DM Mono',monospace;font-size:12px;color:var(--text);outline:none;box-sizing:border-box;" />
             </div>
@@ -3925,25 +3925,7 @@
         </div>
       </div>
 
-      <!-- Step 4: Escalate to manager -->
-      <div id="recall-step-4" class="recall-action-step">
-        <div class="recall-step-label">
-          <span class="recall-step-num" id="recall-step-4-num">4</span>
-          <span>Escalate to manager</span>
-          <span id="recall-step-4-done" style="display:none;margin-left:auto;font-size:11px;color:var(--accent);font-family:'DM Mono',monospace;">✓ Flagged</span>
-        </div>
-        <div id="recall-step-4-body">
-          <div style="font-size:12px;color:var(--muted);margin-bottom:8px;" data-i18n="recall.flagDesc">Flag this recall match so it appears prominently in the Manager panel for review.</div>
-          <button id="recall-escalate-btn" onclick="recallActionEscalate()" class="btn btn-ghost" style="font-size:12px;padding:8px 16px;color:var(--warn);border-color:rgba(245,166,35,0.4);cursor:pointer;">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-            Flag for manager review →
-          </button>
-        </div>
-        <div id="recall-step-4-done-body" style="display:none;">
-          <div style="font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;padding:4px 0 8px;"></div>
-          <button onclick="recallUndoEscalate()" class="btn btn-ghost" style="font-size:11px;padding:5px 12px;color:var(--warn);border-color:rgba(245,166,35,0.4);">↩ Undo escalation</button>
-        </div>
-      </div>
+
 
       <!-- Step 4b: Log a complaint — connects to Triage system -->
       <div id="recall-step-4b" class="recall-action-step">
@@ -8235,7 +8217,7 @@ function renderRecords(records, recallQ) {
               : `<button onclick="undoPullFromShelf('${r.id}')" style="font-family:'DM Mono',monospace;font-size:11px;padding:4px 10px;border-radius:6px;border:1px solid rgba(245,166,35,0.5);background:rgba(245,166,35,0.08);color:var(--warn);cursor:pointer;">${t('card.undoRemoval')}</button>`
             }
             ${isMatch ? `<button onclick="openRecallActionSheet('${r.id}')" style="font-family:'DM Mono',monospace;font-size:11px;padding:4px 12px;border-radius:6px;border:1px solid ${matchLevel === 'exact' ? 'var(--danger)' : 'var(--warn)'};background:${matchLevel === 'exact' ? 'rgba(255,92,92,0.1)' : 'rgba(245,166,35,0.1)'};color:${matchLevel === 'exact' ? 'var(--danger)' : 'var(--warn)'};cursor:pointer;font-weight:700;">${t('card.takeAction')}</button>` : ''}
-            <button onclick="openComplaintSheet('${r.id}','${esc(r.product_name||'')}','${esc(r.lot_number||'')}','${esc(r.barcode_number||'')}','${esc(r.store_name||'')}')" style="font-family:'DM Mono',monospace;font-size:11px;padding:4px 10px;border-radius:6px;border:1px solid rgba(56,189,248,0.3);background:rgba(56,189,248,0.07);color:var(--info);cursor:pointer;">${t('card.reportConcern')}</button>
+            ${!isMatch ? `<button onclick="openComplaintSheet('${r.id}','${esc(r.product_name||'')}','${esc(r.lot_number||'')}','${esc(r.barcode_number||'')}','${esc(r.store_name||'')}')" style="font-family:'DM Mono',monospace;font-size:11px;padding:4px 10px;border-radius:6px;border:1px solid rgba(56,189,248,0.3);background:rgba(56,189,248,0.07);color:var(--info);cursor:pointer;">${t('card.reportConcern')}</button>` : ''}
           </div>
         </div>
       </div>
@@ -14968,14 +14950,9 @@ async function recallActionFileRecall() {
   const reasonEl = document.getElementById('recall-step-0-reason');
   const msgEl    = document.getElementById('recall-step-0-msg');
   const btn      = document.getElementById('recall-step-0-btn');
-  const reason   = (reasonEl?.value || '').trim();
-
-  if (!reason) {
-    msgEl.style.color = 'var(--danger)';
-    msgEl.textContent = '⚠ Please enter a recall reason.';
-    reasonEl?.focus();
-    return;
-  }
+  const reason = (reasonEl?.value || '').trim()
+    || _recallActionRecord?.notes
+    || (currentLang === 'no' ? 'Tilbakekalling registrert fra skanneappen' : 'Recall filed from scanning app');
 
   btn.disabled = true;
   btn.textContent = currentLang==='no'?'Registrerer tilbakekalling…':'Filing recall…';
