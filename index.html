@@ -4451,12 +4451,13 @@ async function showApp(user) {
   try {
     // Load organisation_id for this user — used in all scan inserts
     const { data: member } = await sb.from('organisation_members')
-      .select('organisation_id, role')
+      .select('organisation_id, role, store_id')
       .eq('user_id', user.id)
       .maybeSingle();
     if (member) {
       _currentOrgId = member.organisation_id;
       _currentUserRole = member.role || null;
+      _managerStoreId = member.store_id || null;
     }
 
     // Auto-populate user_settings on first login so recall prefs and region are set
@@ -7213,6 +7214,7 @@ async function initRecallSystem() {
     recallSource = data?.recall_source || 'both';
     if (data?.region) { _userRegion = data.region; applyRegion(); }
     if (data?.recall_lookback_days) recallLookbackDays = data.recall_lookback_days;
+    if (data?.store_id) _managerStoreId = data.store_id;
   } catch(e) { recallSource = 'both'; }
 
   // Step 2: fire recall fetch in the BACKGROUND — never block login on external APIs
@@ -12509,16 +12511,301 @@ function applyManagerUI(isManager) {
   });
 })();
 
+
+// ── STORE MANAGER DEDICATED VIEW ─────────────────────────────
+
+async function loadStoreMgrView() {
+  // Resolve store name from ID if not yet set
+  if (_managerStoreId && !_managerStoreName) {
+    const { data: st } = await sb.from('stores').select('name').eq('id', _managerStoreId).maybeSingle();
+    if (st) _managerStoreName = st.name;
+  }
+
+  // If no store assigned at all, show a store picker
+  if (!_managerStoreId && !_managerStoreName) {
+    renderStoreMgrPicker();
+    return;
+  }
+
+  // Load all needed data in parallel
+  const today = new Date(); today.setHours(0,0,0,0);
+  const [scansRes, acksRes, complaintsRes] = await Promise.all([
+    sb.from('scans').select('*').eq('organisation_id', _currentOrgId)
+      .gte('created_at', today.toISOString()).order('created_at', { ascending: false }),
+    sb.from('recall_acknowledgements')
+      .select('*, recall_events(product_name, lot_number, severity, reason, is_drill)')
+      .eq('organisation_id', _currentOrgId)
+      .not('status', 'eq', 'confirmed')
+      .order('created_at', { ascending: false }),
+    sb.from('complaints')
+      .select('id, complaint_number, product_name, triage_level, triage_summary, status, created_at')
+      .eq('receiving_org_id', _currentOrgId)
+      .not('status', 'in', '("closed","resolved")')
+      .order('created_at', { ascending: false })
+      .limit(10),
+  ]);
+
+  const todayScans = (scansRes.data || []).filter(s =>
+    _managerStoreId ? s.store_id === _managerStoreId : s.store_name === _managerStoreName
+  );
+  // Filter acks to this store
+  const storeAcks = (acksRes.data || []).filter(a =>
+    _managerStoreId ? a.store_id === _managerStoreId : (a.stores?.name === _managerStoreName)
+  );
+  const complaints = complaintsRes.data || [];
+
+  renderStoreMgrDashboard(todayScans, storeAcks, complaints);
+}
+
+function renderStoreMgrPicker() {
+  // Hide normal tab strip + show picker
+  const tabStrip = document.querySelector('#view-manager > div[style*="display:flex;gap:4px"]');
+  if (tabStrip) tabStrip.style.display = 'none';
+  const panels = document.querySelectorAll('[id^="mgr-panel-"]');
+  panels.forEach(p => p.style.display = 'none');
+
+  const el = document.getElementById('mgr-stat-tiles');
+  if (!el) return;
+  el.innerHTML = '';
+
+  const container = document.getElementById('view-manager');
+  let pickerEl = document.getElementById('store-mgr-picker');
+  if (!pickerEl) {
+    pickerEl = document.createElement('div');
+    pickerEl.id = 'store-mgr-picker';
+    container.appendChild(pickerEl);
+  }
+
+  // Populate store options
+  const storeOptions = window._storeIdMap
+    ? Object.entries(window._storeIdMap).map(([name, id]) => `<option value="${id}" data-name="${name}">${name}</option>`).join('')
+    : '';
+
+  pickerEl.innerHTML = `
+    <div style="max-width:440px;margin:40px auto;text-align:center;">
+      <div style="font-size:32px;margin-bottom:16px;">🏪</div>
+      <div style="font-size:17px;font-weight:700;color:var(--text);margin-bottom:6px;">${currentLang==='no'?'Hvilken butikk er du ansvarlig for?':'Which store do you manage?'}</div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:24px;">${currentLang==='no'?'Velg butikken din. Dashbordet ditt viser kun data for denne butikken.':'Select your store. Your dashboard will only show data for this location.'}</div>
+      <select id="store-mgr-picker-select" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;color:var(--text);font-size:14px;font-family:inherit;margin-bottom:16px;">
+        <option value="">${currentLang==='no'?'— Velg butikk —':'— Select store —'}</option>
+        ${storeOptions}
+      </select>
+      <button onclick="confirmStoreMgrPicker()" style="width:100%;background:var(--accent);color:#065f46;border:none;border-radius:10px;padding:13px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;">
+        ${currentLang==='no'?'Bekreft':'Confirm'}
+      </button>
+    </div>`;
+}
+
+async function confirmStoreMgrPicker() {
+  const sel = document.getElementById('store-mgr-picker-select');
+  if (!sel?.value) { showToast(currentLang==='no'?'Velg en butikk':'Please select a store', 'error'); return; }
+  const opt = sel.options[sel.selectedIndex];
+  _managerStoreId = sel.value;
+  _managerStoreName = opt.dataset.name || opt.text;
+
+  // Save to user_settings (store_id column — added by SQL migration)
+  sb.from('user_settings').upsert({ user_id: currentUser.id, store_id: _managerStoreId }, { onConflict: 'user_id' }).catch(() => {});
+
+  document.getElementById('store-mgr-picker')?.remove();
+  await loadStoreMgrView();
+}
+
+function renderStoreMgrDashboard(todayScans, storeAcks, complaints) {
+  // Show the store manager panel, hide normal tabs
+  const tabStrip = document.querySelector('#view-manager > div[style*="display:flex;gap:4px"]');
+  if (tabStrip) tabStrip.style.display = 'none';
+  const panels = document.querySelectorAll('[id^="mgr-panel-"]');
+  panels.forEach(p => p.style.display = 'none');
+  document.getElementById('mgr-stat-tiles').innerHTML = '';
+  document.getElementById('store-mgr-picker')?.remove();
+
+  // Get or create the store-mgr panel
+  let panel = document.getElementById('store-mgr-panel');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = 'store-mgr-panel';
+    document.getElementById('view-manager').appendChild(panel);
+  }
+
+  const storeName = _managerStoreName || (currentLang==='no'?'Din butikk':'Your store');
+  const fmtDate = d => d ? new Date(d).toLocaleTimeString(currentLang==='no'?'nb-NO':'en-GB', { hour:'2-digit', minute:'2-digit' }) : '—';
+  const fmtDay  = d => d ? new Date(d).toLocaleDateString(currentLang==='no'?'nb-NO':'en-GB', { day:'numeric', month:'short' }) : '—';
+
+  const byStaff = {};
+  todayScans.forEach(s => {
+    const k = s.scanned_by || 'Unknown';
+    if (!byStaff[k]) byStaff[k] = { name: k, count: 0, lastScan: null };
+    byStaff[k].count++;
+    if (!byStaff[k].lastScan || s.created_at > byStaff[k].lastScan) byStaff[k].lastScan = s.created_at;
+  });
+  const staffList = Object.values(byStaff).sort((a,b) => b.count - a.count);
+  const lastScanTime = todayScans.length ? todayScans[0].created_at : null;
+
+  const activeRecalls = storeAcks.filter(a => a.recall_events && !a.recall_events.is_drill);
+  const criticalAcks  = activeRecalls.filter(a => a.recall_events?.severity?.toLowerCase() === 'critical' || a.status === 'notified');
+
+  const stepOrder   = ['notified','acknowledged','pulled','disposed','confirmed'];
+  const stepColours = { notified:'var(--danger)', acknowledged:'var(--warn)', pulled:'var(--info)', disposed:'var(--accent)', confirmed:'var(--accent)' };
+  const nextAction  = { notified: currentLang==='no'?'Bekreft mottak':'Acknowledge', acknowledged: currentLang==='no'?'Marker trukket':'Mark pulled', pulled: currentLang==='no'?'Marker avhendet':'Mark disposed', disposed: currentLang==='no'?'Bekreft ferdig':'Confirm complete' };
+  const nextStatus  = { notified:'acknowledged', acknowledged:'pulled', pulled:'disposed', disposed:'confirmed' };
+
+  const triageLevelColour = l => ({ critical:'var(--danger)', serious:'var(--warn)', monitor:'var(--accent)', pending:'var(--info)' }[l] || 'var(--muted)');
+
+  panel.innerHTML = `
+    <!-- Store header -->
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 20px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+          <span style="font-size:16px;font-weight:700;color:var(--text);">${storeName}</span>
+        </div>
+        <div style="font-size:11px;color:var(--muted);">${currentLang==='no'?'Siste skanning':'Last scan'}: ${lastScanTime ? fmtDate(lastScanTime) + ' · ' + fmtDay(lastScanTime) : (currentLang==='no'?'Ingen i dag':'None today')}</div>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button onclick="loadStoreMgrView()" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:7px 12px;font-size:12px;color:var(--muted);cursor:pointer;font-family:inherit;">↻ ${currentLang==='no'?'Oppdater':'Refresh'}</button>
+        <button onclick="_managerStoreId=null;_managerStoreName=null;renderStoreMgrPicker()" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:7px 12px;font-size:12px;color:var(--muted);cursor:pointer;font-family:inherit;">${currentLang==='no'?'Bytt butikk':'Switch store'}</button>
+      </div>
+    </div>
+
+    <!-- KPI row -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:16px;">
+      ${[
+        { label: currentLang==='no'?'Skannet i dag':'Scanned today',      value: todayScans.length,    color:'var(--text)' },
+        { label: currentLang==='no'?'Aktive tilbakekall':'Active recalls', value: activeRecalls.length, color: activeRecalls.length>0?'var(--danger)':'var(--accent)' },
+        { label: currentLang==='no'?'Krever handling':'Need action',       value: criticalAcks.length,  color: criticalAcks.length>0?'var(--danger)':'var(--accent)' },
+        { label: currentLang==='no'?'Klager åpne':'Open complaints',       value: complaints.length,    color: complaints.length>0?'var(--warn)':'var(--accent)' },
+      ].map(k => `
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
+          <div style="font-size:24px;font-weight:700;color:${k.color};font-family:'Figtree',sans-serif;">${k.value}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:3px;">${k.label}</div>
+        </div>`).join('')}
+    </div>
+
+    <!-- Active recalls -->
+    <div style="margin-bottom:16px;">
+      <div style="font-size:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;">${currentLang==='no'?'Aktive tilbakekall':'Active recalls'}</div>
+      ${activeRecalls.length === 0 ? `
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:20px;text-align:center;font-size:13px;color:var(--muted);">
+          <span style="color:var(--accent);">✓</span> ${currentLang==='no'?'Ingen aktive tilbakekall for denne butikken':'No active recalls for this store'}
+        </div>` : activeRecalls.map(a => {
+        const ev = a.recall_events;
+        const sevCol = { critical:'var(--danger)', high:'var(--danger)', medium:'var(--warn)' }[ev?.severity?.toLowerCase()] || 'var(--warn)';
+        const bdrCol = a.status === 'notified' ? 'rgba(255,92,92,0.35)' : 'var(--border)';
+        return `
+        <div style="background:var(--surface);border:1px solid ${bdrCol};border-radius:10px;padding:14px 16px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+          <div style="flex:1;min-width:0;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap;">
+              ${ev?.severity ? `<span style="font-size:10px;font-weight:700;font-family:'DM Mono',monospace;color:${sevCol};text-transform:uppercase;">${ev.severity}</span>` : ''}
+              <span style="font-size:10px;font-weight:700;font-family:'DM Mono',monospace;color:${stepColours[a.status]||'var(--muted)'};text-transform:uppercase;padding:1px 7px;border-radius:4px;background:${stepColours[a.status]?.replace('var(','rgba(').replace('--danger)','255,92,92,0.1)').replace('--warn)','245,166,35,0.1)').replace('--info)','56,189,248,0.1)').replace('--accent)','52,211,153,0.1)')||'transparent'};">${a.status.toUpperCase()}</span>
+            </div>
+            <div style="font-size:13px;font-weight:600;color:var(--text);">${ev?.product_name || (currentLang==='no'?'Ukjent produkt':'Unknown product')}</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px;">${ev?.lot_number ? (currentLang==='no'?'Parti: ':'Lot: ') + ev.lot_number + ' · ' : ''}${ev?.reason || ''}</div>
+          </div>
+          ${nextStatus[a.status] ? `
+          <button onclick="advanceStoreMgrAck('${a.id}','${nextStatus[a.status]}')"
+            style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;flex-shrink:0;">
+            ${nextAction[a.status]} →
+          </button>` : `<span style="font-size:11px;color:var(--accent);font-family:'DM Mono',monospace;">✓ ${currentLang==='no'?'Fullført':'Complete'}</span>`}
+        </div>`;
+      }).join('')}
+    </div>
+
+    <!-- Todays staff activity -->
+    <div style="margin-bottom:16px;">
+      <div style="font-size:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;">${currentLang==='no'?'Dagens aktivitet':'Todays activity'}</div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;">
+        ${staffList.length === 0 ? `<div style="padding:20px;text-align:center;font-size:13px;color:var(--muted);">${currentLang==='no'?'Ingen skanninger i dag':'No scans recorded today'}</div>` : `
+        <table style="width:100%;border-collapse:collapse;">
+          <thead><tr style="border-bottom:1px solid var(--border);">
+            <th style="padding:10px 16px;font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);text-align:left;font-weight:600;">${currentLang==='no'?'Ansatt':'Staff'}</th>
+            <th style="padding:10px 16px;font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);text-align:right;font-weight:600;">${currentLang==='no'?'Skanninger':'Scans'}</th>
+            <th style="padding:10px 16px;font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);text-align:right;font-weight:600;">${currentLang==='no'?'Siste':'Last scan'}</th>
+          </tr></thead>
+          <tbody>
+            ${staffList.map((s,i) => `
+            <tr style="${i < staffList.length-1 ? 'border-bottom:1px solid var(--border);' : ''}">
+              <td style="padding:10px 16px;font-size:13px;color:var(--text);">${s.name.split('@')[0]}</td>
+              <td style="padding:10px 16px;font-size:13px;color:var(--text);text-align:right;font-family:'DM Mono',monospace;">${s.count}</td>
+              <td style="padding:10px 16px;font-size:11px;color:var(--muted);text-align:right;">${fmtDate(s.lastScan)}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>`}
+      </div>
+    </div>
+
+    <!-- Open complaints -->
+    ${complaints.length > 0 ? `
+    <div style="margin-bottom:16px;">
+      <div style="font-size:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;">${currentLang==='no'?'Åpne klager':'Open complaints'}</div>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        ${complaints.map(c => `
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 16px;display:flex;align-items:center;gap:12px;">
+          <span style="font-size:10px;font-weight:700;font-family:'DM Mono',monospace;padding:2px 8px;border-radius:4px;background:${triageLevelColour(c.triage_level).replace('var(','rgba(').replace('--danger)','255,92,92,0.12)').replace('--warn)','245,166,35,0.12)').replace('--accent)','52,211,153,0.12)').replace('--info)','56,189,248,0.12)')};color:${triageLevelColour(c.triage_level)};flex-shrink:0;">${(c.triage_level||'pending').toUpperCase()}</span>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.product_name || (currentLang==='no'?'Ukjent produkt':'Unknown product')}</div>
+            <div style="font-size:11px;color:var(--muted);">${c.triage_summary || ''}</div>
+          </div>
+          <div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;flex-shrink:0;">${fmtDay(c.created_at)}</div>
+        </div>`).join('')}
+      </div>
+    </div>` : ''}
+
+    <!-- Quick actions -->
+    <div>
+      <div style="font-size:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;">${currentLang==='no'?'Hurtighandlinger':'Quick actions'}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button onclick="switchTab('history')" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:9px 14px;font-size:12px;color:var(--text);cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:6px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          ${currentLang==='no'?'Vis historikk':'View history'}
+        </button>
+        <button onclick="switchMgrTab('audit');document.getElementById('store-mgr-panel').style.display='none';document.getElementById('mgr-panel-audit').style.display='';const tabStrip=document.querySelector('#view-manager > div[style*="display:flex;gap:4px"]');if(tabStrip)tabStrip.style.display='';" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:9px 14px;font-size:12px;color:var(--text);cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:6px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          ${currentLang==='no'?'Revisjonseksport':'Audit export'}
+        </button>
+        <button onclick="switchMgrTab('recalls');document.getElementById('store-mgr-panel').style.display='none';document.getElementById('mgr-panel-recalls').style.display='';const ts2=document.querySelector('#view-manager > div[style*="display:flex;gap:4px"]');if(ts2)ts2.style.display='';" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:9px 14px;font-size:12px;color:var(--text);cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:6px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+          ${currentLang==='no'?'Tilbakekallshåndtering':'Recall management'}
+        </button>
+        <button onclick="switchMgrTab('settings');document.getElementById('store-mgr-panel').style.display='none';const ts3=document.querySelector('#view-manager > div[style*="display:flex;gap:4px"]');if(ts3)ts3.style.display='';" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:9px 14px;font-size:12px;color:var(--muted);cursor:pointer;font-family:inherit;">
+          ${currentLang==='no'?'Alle manager-verktøy →':'All manager tools →'}
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+async function advanceStoreMgrAck(ackId, newStatus) {
+  const timestamps = {
+    acknowledged: { acknowledged_at: new Date().toISOString() },
+    pulled:       { pulled_at: new Date().toISOString() },
+    disposed:     { disposed_at: new Date().toISOString() },
+    confirmed:    { confirmed_at: new Date().toISOString() },
+  };
+  const { error } = await sb.from('recall_acknowledgements')
+    .update({ status: newStatus, ...timestamps[newStatus] })
+    .eq('id', ackId);
+  if (error) { showToast('Could not update: ' + error.message, 'error'); return; }
+  showToast(currentLang==='no'?'Status oppdatert':'Status updated', 'ok', 2000);
+  await loadStoreMgrView();
+}
+
 // ── MANAGER DASHBOARD ────────────────────────────────────────
 
 let _mgrAllScans = [];
 let _mgrAllRecalls = [];
 let _mgrLoaded = false;
 let _mgrActiveTab = 'stores';
+let _managerStoreId = null;   // UUID of this manager's assigned store
+let _managerStoreName = null; // Name, resolved from stores table
 
 async function loadManagerDashboard() {
   if (!currentUser?.isManager) return;
   updateMgrSubtitle();
+  // Store managers get a focused single-store view
+  if (_currentUserRole === 'store_manager') {
+    await loadStoreMgrView();
+    return;
+  }
   await loadMgrData();
   renderMgrStatTiles();
   renderMgrStores();
@@ -12556,9 +12843,17 @@ async function refreshManagerDashboard() {
 
 async function loadMgrData() {
   try {
+    let scansQuery = sb.from('scans').select('*').order('created_at', { ascending: false }).limit(2000);
+    if (_currentOrgId) scansQuery = scansQuery.eq('organisation_id', _currentOrgId);
+    // Store managers: filter to their store only
+    if (_currentUserRole === 'store_manager' && _managerStoreId) {
+      scansQuery = scansQuery.eq('store_id', _managerStoreId);
+    } else if (_currentUserRole === 'store_manager' && _managerStoreName) {
+      scansQuery = scansQuery.eq('store_name', _managerStoreName);
+    }
     const [scansRes, recallsRes] = await Promise.all([
-      sb.from('scans').select('*').order('created_at', { ascending: false }),
-      sb.from('recalls').select('*').order('created_at', { ascending: false })
+      scansQuery,
+      sb.from('recalls').select('*').eq('organisation_id', _currentOrgId).order('created_at', { ascending: false })
     ]);
     _mgrAllScans   = scansRes.data   || [];
     _mgrAllRecalls = recallsRes.data || [];
