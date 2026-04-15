@@ -1992,6 +1992,7 @@ function renderReports() {
         { key:'staff',      title:'Staff activity',      sub:'Scan and action log per employee',                  icon:'👤', color:'var(--info)'   },
         { key:'stores',     title:'Store compliance',    sub:'Per-store scan activity and compliance scores',     icon:'🏪', color:'var(--warn)'   },
         { key:'exposure',   title:'Exposure notice',     sub:'Customer-facing recall notification template',      icon:'📢', color:'var(--danger)' },
+        { key:'effectiveness', title:'Recall effectiveness', sub:'Response times, compliance rates and per-store chain', icon:'📊', color:'var(--accent)' },
         { key:'fsma',       title:isUS?'FSMA 204 export':'EU traceability export', sub:isUS?'KDE/CTE records in FDA format':'One-step-back/forward records for Mattilsynet', icon:isUS?'🇺🇸':'🇪🇺', color:'var(--muted)' },
       ].map(r => `
         <div class="panel" style="cursor:default;">
@@ -2110,6 +2111,32 @@ async function fetchReportData(key) {
       if (ids.length === 0) return [];
       const { data } = await sb.from('recall_events').select('*').in('id', ids).eq('is_drill', false).order('published_at', { ascending: false });
       return data || [];
+    }
+    case 'effectiveness': {
+      // Pull all recall events distributed to this org + their acknowledgement chains
+      const [distRes, acksRes] = await Promise.all([
+        sb.from('recall_distributions')
+          .select('recall_event_id, est_affected_units, distributed_at')
+          .eq('retailer_org_id', _orgId),
+        sb.from('recall_acknowledgements')
+          .select('*, stores(name)')
+          .eq('organisation_id', _orgId)
+          .order('created_at', { ascending: false })
+      ]);
+      const dists = distRes.data || [];
+      const acks  = acksRes.data || [];
+      if (dists.length === 0) return [];
+      const eventIds = [...new Set(dists.map(d => d.recall_event_id))];
+      const { data: events } = await sb.from('recall_events')
+        .select('id, product_name, lot_number, severity, reason, is_drill, published_at, source_org_id')
+        .in('id', eventIds)
+        .eq('is_drill', false)
+        .order('published_at', { ascending: false });
+      return (events || []).map(ev => {
+        const dist = dists.find(d => d.recall_event_id === ev.id);
+        const evAcks = acks.filter(a => a.recall_event_id === ev.id);
+        return { ...ev, dist, acks: evAcks };
+      });
     }
     case 'fsma': {
       const { data } = await sb.from('scans')
@@ -2334,6 +2361,123 @@ async function runReport(key) {
       </div>`;
   }
 
+  else if (key === 'effectiveness') {
+    const fmtDur = ms => {
+      if (ms == null || isNaN(ms)) return '—';
+      const h = Math.round(ms / 3600000);
+      if (h < 24) return h + 'h';
+      return Math.round(h / 24) + 'd ' + (h % 24) + 'h';
+    };
+    const stepLabel = s => ({ notified:'Notified', acknowledged:'Acknowledged', pulled:'Pulled', disposed:'Disposed', confirmed:'Confirmed' }[s] || s);
+    const stepColor = s => ({ notified:'var(--muted)', acknowledged:'var(--info)', pulled:'var(--warn)', disposed:'var(--accent)', confirmed:'var(--accent)' }[s] || 'var(--muted)');
+    const sevColor  = s => ({ critical:'var(--danger)', high:'var(--danger)', medium:'var(--warn)', low:'var(--muted)' }[s?.toLowerCase()] || 'var(--muted)');
+
+    if (data.length === 0) {
+      el.innerHTML = reportHeader('Recall Effectiveness', 'No recall events found', 'effectiveness') +
+        '<div class="panel"><div class="panel-body" style="text-align:center;padding:40px;color:var(--muted);">No manufacturer recall events have been distributed to your organisation yet.</div></div>';
+      return;
+    }
+
+    // Summary KPIs across all events
+    const allAcks = data.flatMap(ev => ev.acks || []);
+    const totalStores = new Set(allAcks.map(a => a.store_id)).size;
+    const acked   = allAcks.filter(a => a.status !== 'notified').length;
+    const pulled  = allAcks.filter(a => ['pulled','disposed','confirmed'].includes(a.status)).length;
+    const confirmed = allAcks.filter(a => a.status === 'confirmed').length;
+    const complianceRate = allAcks.length ? Math.round((pulled / allAcks.length) * 100) : 0;
+    const ackTimes = allAcks.filter(a => a.acknowledged_at && a.created_at)
+      .map(a => new Date(a.acknowledged_at) - new Date(a.created_at));
+    const avgAckMs = ackTimes.length ? ackTimes.reduce((s,v) => s+v, 0) / ackTimes.length : null;
+
+    el.innerHTML = reportHeader('Recall Effectiveness', `${data.length} recall event${data.length!==1?'s':''} · ${_orgName}`, 'effectiveness') + `
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:24px;">
+        ${[
+          { label:'Recall events',    value: data.length,       sub: 'distributed to you',       color:'var(--text)' },
+          { label:'Stores reached',   value: totalStores,       sub: 'unique store locations',    color:'var(--text)' },
+          { label:'Compliance rate',  value: complianceRate+'%',sub: 'pulled or resolved',        color: complianceRate>=80?'var(--accent)':complianceRate>=50?'var(--warn)':'var(--danger)' },
+          { label:'Avg ack time',     value: fmtDur(avgAckMs),  sub: 'notified → acknowledged',   color:'var(--info)' },
+          { label:'Fully confirmed',  value: confirmed,         sub: 'stores marked complete',    color:'var(--accent)' },
+        ].map(k => `
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;">
+            <div style="font-size:22px;font-weight:700;color:${k.color};font-family:'Figtree',sans-serif;">${k.value}</div>
+            <div style="font-size:11px;font-weight:600;color:var(--text);margin-top:4px;">${k.label}</div>
+            <div style="font-size:10px;color:var(--muted);margin-top:2px;">${k.sub}</div>
+          </div>`).join('')}
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        ${data.map(ev => {
+          const evAcks = ev.acks || [];
+          const notifiedCount   = evAcks.length;
+          const ackedCount      = evAcks.filter(a => a.status !== 'notified').length;
+          const pulledCount     = evAcks.filter(a => ['pulled','disposed','confirmed'].includes(a.status)).length;
+          const confirmedCount  = evAcks.filter(a => a.status === 'confirmed').length;
+          const unitsPulled     = evAcks.reduce((s,a) => s + (a.units_pulled||0), 0);
+          const estAffected     = ev.dist?.est_affected_units || 0;
+          const pct = notifiedCount ? Math.round((pulledCount/notifiedCount)*100) : 0;
+          const ackTimes2 = evAcks.filter(a => a.acknowledged_at && a.created_at).map(a => new Date(a.acknowledged_at)-new Date(a.created_at));
+          const avgAck2 = ackTimes2.length ? ackTimes2.reduce((s,v)=>s+v,0)/ackTimes2.length : null;
+
+          return `
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;">
+            <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+              <div>
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                  ${ev.severity ? `<span style="font-size:10px;font-weight:700;font-family:'DM Mono',monospace;color:${sevColor(ev.severity)};text-transform:uppercase;">${ev.severity}</span>` : ''}
+                  <span style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${ev.published_at ? new Date(ev.published_at).toLocaleDateString('en-GB') : '—'}</span>
+                </div>
+                <div style="font-size:14px;font-weight:700;color:var(--text);">${ev.product_name||'Unknown product'}</div>
+                <div style="font-size:11px;color:var(--muted);margin-top:2px;">${ev.lot_number ? 'Lot: '+ev.lot_number+' · ' : ''}${ev.reason||''}</div>
+              </div>
+              <div style="display:flex;gap:16px;text-align:center;flex-shrink:0;">
+                <div><div style="font-size:18px;font-weight:700;color:${pct>=80?'var(--accent)':pct>=50?'var(--warn)':'var(--danger)'};">${pct}%</div><div style="font-size:10px;color:var(--muted);">compliance</div></div>
+                <div><div style="font-size:18px;font-weight:700;color:var(--text);">${pulledCount}/${notifiedCount}</div><div style="font-size:10px;color:var(--muted);">stores pulled</div></div>
+                ${avgAck2 != null ? `<div><div style="font-size:18px;font-weight:700;color:var(--info);">${fmtDur(avgAck2)}</div><div style="font-size:10px;color:var(--muted);">avg ack time</div></div>` : ''}
+                ${estAffected > 0 ? `<div><div style="font-size:18px;font-weight:700;color:var(--text);">${unitsPulled}/${estAffected}</div><div style="font-size:10px;color:var(--muted);">units pulled</div></div>` : ''}
+              </div>
+            </div>
+            ${evAcks.length === 0 ? `<div style="padding:16px 20px;font-size:12px;color:var(--muted);">No store acknowledgements recorded yet.</div>` : `
+            <div style="padding:0;">
+              <table class="store-table" style="width:100%;">
+                <thead><tr>
+                  <th style="padding:10px 20px;">Store</th>
+                  <th style="padding:10px 20px;">Status</th>
+                  <th style="padding:10px 20px;">Notified</th>
+                  <th style="padding:10px 20px;">Acknowledged</th>
+                  <th style="padding:10px 20px;">Time to ack</th>
+                  <th style="padding:10px 20px;">Pulled</th>
+                  <th style="padding:10px 20px;">Units pulled</th>
+                  <th style="padding:10px 20px;">Confirmed</th>
+                </tr></thead>
+                <tbody>
+                  ${evAcks.sort((a,b) => {
+                    const order = ['confirmed','disposed','pulled','acknowledged','notified'];
+                    return order.indexOf(a.status) - order.indexOf(b.status);
+                  }).map(a => {
+                    const ackMs = a.acknowledged_at && a.created_at ? new Date(a.acknowledged_at)-new Date(a.created_at) : null;
+                    const storeName = a.stores?.name || a.store_id?.slice(0,8) || '—';
+                    return `<tr>
+                      <td style="padding:9px 20px;font-size:12px;font-weight:500;color:var(--text);">${storeName}</td>
+                      <td style="padding:9px 20px;">
+                        <span style="font-size:10px;font-weight:700;font-family:'DM Mono',monospace;color:${stepColor(a.status)};text-transform:uppercase;">${stepLabel(a.status)}</span>
+                      </td>
+                      <td style="padding:9px 20px;font-size:11px;color:var(--muted);">${a.created_at ? new Date(a.created_at).toLocaleDateString('en-GB') : '—'}</td>
+                      <td style="padding:9px 20px;font-size:11px;color:var(--muted);">${a.acknowledged_at ? new Date(a.acknowledged_at).toLocaleDateString('en-GB') : '—'}</td>
+                      <td style="padding:9px 20px;font-size:11px;font-family:'DM Mono',monospace;color:${ackMs && ackMs < 7200000 ? 'var(--accent)' : ackMs && ackMs < 86400000 ? 'var(--warn)' : 'var(--danger)'};">${fmtDur(ackMs)}</td>
+                      <td style="padding:9px 20px;font-size:11px;color:var(--muted);">${a.pulled_at ? new Date(a.pulled_at).toLocaleDateString('en-GB') : '—'}</td>
+                      <td style="padding:9px 20px;font-size:11px;font-family:'DM Mono',monospace;color:var(--text);">${a.units_pulled != null ? a.units_pulled : '—'}</td>
+                      <td style="padding:9px 20px;font-size:11px;color:var(--muted);">${a.confirmed_at ? new Date(a.confirmed_at).toLocaleDateString('en-GB') : '—'}</td>
+                    </tr>`;
+                  }).join('')}
+                </tbody>
+              </table>
+            </div>`}
+          </div>`;
+        }).join('')}
+      </div>`;
+  }
+
   else if (key === 'fsma') {
     const rows = isUS
       ? data
@@ -2455,6 +2599,31 @@ async function downloadReport(key) {
       downloadCSV(`batchd-exposure-notice-${date}.csv`,
         ['Product','Lot Number','Barcode','Severity','Reason','Description','Authority Reference','Published'],
         data.map(r => [r.product_name, r.lot_number, r.barcode||'', r.severity||'', r.reason||'', r.description||'', r.authority_reference||'', r.published_at ? new Date(r.published_at).toLocaleDateString('en-GB') : ''])
+      );
+    } else if (key === 'effectiveness') {
+      const rows = [];
+      data.forEach(ev => {
+        (ev.acks || []).forEach(a => {
+          const ackMs = a.acknowledged_at && a.created_at ? new Date(a.acknowledged_at)-new Date(a.created_at) : null;
+          const ackHrs = ackMs != null ? Math.round(ackMs/3600000) : '';
+          rows.push([
+            ev.product_name||'', ev.lot_number||'', ev.severity||'', ev.reason||'',
+            ev.published_at ? new Date(ev.published_at).toLocaleDateString('en-GB') : '',
+            a.stores?.name || a.store_id || '',
+            a.status||'notified',
+            a.created_at ? new Date(a.created_at).toLocaleDateString('en-GB') : '',
+            a.acknowledged_at ? new Date(a.acknowledged_at).toLocaleDateString('en-GB') : '',
+            ackHrs !== '' ? ackHrs+'h' : '',
+            a.pulled_at ? new Date(a.pulled_at).toLocaleDateString('en-GB') : '',
+            a.units_pulled != null ? a.units_pulled : '',
+            a.confirmed_at ? new Date(a.confirmed_at).toLocaleDateString('en-GB') : '',
+            a.notes||'',
+          ]);
+        });
+      });
+      downloadCSV(`batchd-recall-effectiveness-${date}.csv`,
+        ['Product','Lot Number','Severity','Reason','Recall Date','Store','Status','Notified','Acknowledged','Time to Ack','Pulled','Units Pulled','Confirmed','Notes'],
+        rows
       );
     } else if (key === 'fsma') {
       downloadCSV(`batchd-${isUS?'fsma204':'eu-traceability'}-${date}.csv`,
