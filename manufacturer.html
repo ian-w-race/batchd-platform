@@ -391,7 +391,16 @@ function showPanel(name) {
     el.classList.toggle('active', el.getAttribute('onclick')?.includes(`'${name}'`));
   });
   const fns = { overview: renderOverview, push: renderPush, history: renderHistory, acknowledgements: renderAcknowledgements, partners: renderPartners, products: renderProducts, lots: renderLots, shipments: renderShipments, suppliers: renderSupplierRisk, my_suppliers: renderMySuppliers, patterns: renderPatterns, triage: renderTriage, widget: renderWidgetSetup, investigations: renderInvestigations, settings: renderMfrSettings, compliance: renderMfrCompliance, mock_audit: renderMockAudit, timeline: renderIncidentTimeline };
-  (fns[name] || (() => {}))();
+  const panelFn = fns[name];
+  if (panelFn) {
+    const result = panelFn();
+    // Re-apply language after async panel renders so nav stays translated
+    if (result && typeof result.then === 'function') {
+      result.then(() => { if (_mfrLang && _mfrLang !== 'en') applyMfrLang(_mfrLang); });
+    } else {
+      if (_mfrLang && _mfrLang !== 'en') applyMfrLang(_mfrLang);
+    }
+  }
 }
 
 // ── Overview ───────────────────────────────────────────────────
@@ -3256,6 +3265,8 @@ const MFR_I18N = {
     nav_lots:'Lot Codes', nav_shipments:'Shipments', nav_suppliers:'Supplier Risk',
     nav_patterns:'Pattern Library', nav_partners:'Trading Partners', nav_settings:'Settings',
     nav_mock_audit:'Mock Audit',
+    nav_my_suppliers:'My Suppliers',
+    nav_timeline:'Incident Timeline',
     sec_overview:'OVERVIEW', sec_complaints:'COMPLAINTS', sec_recalls:'RECALLS',
     sec_products:'PRODUCTS', sec_logistics:'LOGISTICS', sec_partners:'PARTNERS', sec_account:'ACCOUNT',
     topbar_mfr:'Manufacturer', topbar_admin:'Corp Admin',
@@ -3267,6 +3278,8 @@ const MFR_I18N = {
     nav_lots:'Partinumre', nav_shipments:'Leveranser', nav_suppliers:'Leverandorrisk',
     nav_patterns:'Monstersbibliotek', nav_partners:'Handelspartnere', nav_settings:'Innstillinger',
     nav_mock_audit:'Simulert revisjon',
+    nav_my_suppliers:'Mine leverandorer',
+    nav_timeline:'Hendelsestidslinje',
     sec_overview:'OVERSIKT', sec_complaints:'KLAGER', sec_recalls:'TILBAKEKALLINGER',
     sec_products:'PRODUKTER', sec_logistics:'LOGISTIKK', sec_partners:'PARTNERE', sec_account:'KONTO',
     topbar_mfr:'Produsent', topbar_admin:'Adminbruker',
@@ -3280,25 +3293,43 @@ const NAV_MAP = {
   'lots':'nav_lots','shipments':'nav_shipments','suppliers':'nav_suppliers',
   'patterns':'nav_patterns','partners':'nav_partners','settings':'nav_settings',
   'mock_audit':'nav_mock_audit',
+  'my_suppliers':'nav_my_suppliers',
+  'timeline':'nav_timeline',
 };
 
 function applyMfrLang(lang) {
   const t = MFR_I18N[lang] || MFR_I18N.en;
-  // Update nav item text
+
+  // Update nav item text — replace last text node, preserving SVG children
   document.querySelectorAll('.nav-item[onclick]').forEach(btn => {
     const match = btn.getAttribute('onclick')?.match(/showPanel\('([^']+)'\)/);
     if (!match) return;
-    const panel = match[1];
-    const key = NAV_MAP[panel];
+    const key = NAV_MAP[match[1]];
     if (!key || !t[key]) return;
-    // Preserve SVG and badge span, only replace text node
-    const textNodes = [...btn.childNodes].filter(n => n.nodeType === 3 && n.textContent.trim());
-    if (textNodes.length) textNodes[textNodes.length-1].textContent = '\n        ' + t[key] + '\n      ';
+    // Walk childNodes backwards to find the last raw text node
+    for (let i = btn.childNodes.length - 1; i >= 0; i--) {
+      const node = btn.childNodes[i];
+      if (node.nodeType === 3) {
+        // Preserve any badge span that may follow
+        node.textContent = '\n        ' + t[key] + '\n      ';
+        break;
+      }
+    }
   });
-  // Update section labels
+
+  // Update section labels in order
   const sections = document.querySelectorAll('.nav-section');
   const sectionKeys = ['sec_overview','sec_complaints','sec_recalls','sec_products','sec_logistics','sec_partners','sec_account'];
-  sections.forEach((el, i) => { if (t[sectionKeys[i]]) el.textContent = t[sectionKeys[i]]; });
+  sections.forEach((el, i) => {
+    if (sectionKeys[i] && t[sectionKeys[i]]) el.textContent = t[sectionKeys[i]];
+  });
+
+  // Update topbar sub (role label)
+  const topbarSub = document.getElementById('topbar-sub');
+  if (topbarSub) {
+    const role = _userRole === 'corp_admin' ? (t.topbar_admin || 'Corp Admin') : (t.topbar_mfr || 'Manufacturer');
+    topbarSub.textContent = _orgName + ' · ' + role;
+  }
 }
 
 function selectMfrLang(val) {
