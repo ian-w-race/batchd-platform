@@ -3107,7 +3107,7 @@
             <span style="font-size:20px;">🇳🇴</span>
             <div style="text-align:left;">
               <div style="font-weight:700;font-size:13px;">Norway / EU</div>
-              <div style="font-size:11px;color:var(--muted);">Mattilsynet · EU Reg. 178/2002 · RASFF</div>
+              <div style="font-size:11px;color:var(--muted);">Mattilsynet · EU Reg. 178/2002</div>
             </div>
           </button>
           <button id="settings-region-us" onclick="saveRegion('us')" class="ob-choice-btn" style="flex:1;padding:12px;gap:10px;">
@@ -3351,7 +3351,7 @@
           <!-- Notified by -->
           <div class="field">
             <label><span data-i18n="recall.fieldNotifiedBy">Notified by</span> <span style="font-size:10px;color:var(--muted);" data-i18n="lbl.optional">optional</span></label>
-            <input type="text" id="mgr-recall-notifiedby" placeholder="e.g. Supplier call, Mattilsynet letter, internal inspection, RASFF alert" />
+            <input type="text" id="mgr-recall-notifiedby" placeholder="e.g. Supplier call, Mattilsynet letter, internal inspection, EU alert" />
           </div>
 
           <div id="mgr-recall-msg" style="font-size:12px;min-height:16px;font-family:'DM Mono',monospace;"></div>
@@ -3423,7 +3423,7 @@
       <div class="settings-section-body">
         <div class="source-toggle">
           <button class="source-pill" id="mgr-pill-fda" onclick="setRecallSource('fda')">FDA (USA)</button>
-          <button class="source-pill" id="mgr-pill-rasff" onclick="setRecallSource('rasff')">RASFF + Mattilsynet (EUR/NOR)</button>
+          <button class="source-pill" id="mgr-pill-rasff" onclick="setRecallSource('rasff')">Mattilsynet (NOR/EU)</button>
           <button class="source-pill" id="mgr-pill-both" onclick="setRecallSource('both')">Both</button>
           <button class="source-pill" id="mgr-pill-manual" onclick="setRecallSource('manual')">Manual only</button>
         </div>
@@ -4240,7 +4240,7 @@
             <span style="font-size:18px;">🇳🇴</span>
             <div>
               <div style="font-weight:700;font-size:14px;">Norway</div>
-              <div style="font-size:11px;color:var(--muted);">Recommended: RASFF + Mattilsynet</div>
+              <div style="font-size:11px;color:var(--muted);">Recommended for Norway/EU</div>
             </div>
           </button>
         </div>
@@ -4261,7 +4261,7 @@
             <div style="display:flex;align-items:center;gap:10px;flex:1;">
               <div id="ob-src-rasff-check" class="ob-src-check"></div>
               <div style="text-align:left;">
-                <div style="font-weight:700;font-size:13px;">RASFF + Mattilsynet <span id="ob-rasff-rec" class="ob-rec-badge" style="display:none;">Recommended</span></div>
+                <div style="font-weight:700;font-size:13px;">Mattilsynet <span id="ob-rasff-rec" class="ob-rec-badge" style="display:none;">Recommended</span></div>
                 <div style="font-size:11px;color:var(--muted);margin-top:2px;">EU food safety alerts + Norwegian Food Safety Authority</div>
               </div>
             </div>
@@ -5058,8 +5058,8 @@ function applyRegion() {
        <option value='Class III — Unlikely to cause harm'>Class III — Unlikely to cause harm (FDA) — labelling or regulatory violation</option>
        <option value='Market withdrawal'>Market withdrawal — not a public health hazard</option>`
     : `<option value=''>Unknown / not yet classified</option>
-       <option value='Serious — EU/RASFF Class I'>Serious — EU/RASFF Class I — may cause death or serious injury</option>
-       <option value='Less serious — EU/RASFF Class II'>Less serious — EU/RASFF Class II — unlikely to cause lasting harm</option>
+       <option value='Serious — EU Class I'>Serious — EU Class I — may cause death or serious injury</option>
+       <option value='Less serious — EU Class II'>Less serious — EU Class II — unlikely to cause lasting harm</option>
        <option value='Not serious — regulatory only'>Not serious — regulatory/labelling violation only</option>
        <option value='Tilbaketrekking — Market withdrawal'>Tilbaketrekking — product removed before consumer purchase</option>`;
   // Supplier label
@@ -5596,7 +5596,7 @@ function _obRenderSources() {
     note.textContent = currentLang==='no'?'Kun manuelt deaktiverer automatiske feeds — fjern andre for kun manuelle tilbakekallinger.':'Manual only disables automatic feeds — deselect others to use only manual recalls.';
     note.style.color = 'var(--warn)';
   } else {
-    const labels = { fda: 'FDA', rasff: 'RASFF + Mattilsynet', manual: 'Manual only' };
+    const labels = { fda: 'FDA', rasff: 'Mattilsynet (NOR/EU)', manual: 'Manual only' };
     note.textContent = (currentLang==='no'?'Valgt: ':'Selected: ') + [..._obSources].map(s => labels[s]).join(' + ');
     note.style.color = 'var(--accent)';
   }
@@ -7189,8 +7189,8 @@ let recallSource = 'both'; // default until loaded from DB
 
 const SOURCE_DESCS = {
   fda:    'Pulls active food recalls from the US FDA enforcement database. Useful for imported American products.',
-  rasff:  'Pulls alerts from the EU RASFF feed AND Mattilsynet (Norwegian Food Safety Authority) recall notices — the most relevant combination for Norwegian grocery stores.',
-  both:   'Pulls from all three sources: FDA (USA), RASFF (EU/EEA), and Mattilsynet (Norway). Maximum coverage.',
+  rasff:  'Pulls alerts from Mattilsynet (Norwegian Food Safety Authority) — the most relevant source for Norwegian grocery stores. Covers all Norwegian and EU/EEA food recalls.',
+  both:   'Pulls from both FDA (USA) and Mattilsynet (Norway/EU). Best option for stores operating across both regions.',
   manual: 'Only recalls you enter manually below. No automatic feed.'
 };
 
@@ -7542,13 +7542,13 @@ async function loadRecallsList() {
     renderRecallSourcePills();
     renderRecallsList();
 
-    // Auto-fetch once if source includes RASFF/Mattilsynet but none stored yet
+    // Auto-fetch once if source includes Mattilsynet but none stored yet
     // Use a flag to prevent infinite loop (fetchAndRefreshRecalls calls loadRecallsList)
     if (!_externalFetchInProgress &&
         (recallSource === 'rasff' || recallSource === 'both') &&
         !_allRecallsCache.some(r => r.source === 'rasff' || r.source === 'mattilsynet')) {
       const statusEl = document.getElementById('settings-fetch-status');
-      if (statusEl) { statusEl.style.display = 'block'; statusEl.style.color = 'var(--muted)'; statusEl.textContent = 'No RASFF / Mattilsynet records found — click “Fetch now” to import them.'; }
+      if (statusEl) { statusEl.style.display = 'block'; statusEl.style.color = 'var(--muted)'; statusEl.textContent = 'No Mattilsynet records found — click "Fetch now" to import them.'; }
     }
   } catch(e) {
     el.innerHTML = `<div style="font-size:13px;color:var(--danger);">Error: ${e.message}</div>`;
@@ -7621,7 +7621,7 @@ function renderRecallSourcePills() {
   const srcColors = {
     all:        { color:'var(--muted)',   bg:'rgba(106,175,158,0.1)',  label: currentLang==='no'?'Alle':'All' },
     fda:        { color:'var(--info)',    bg:'rgba(56,189,248,0.1)',   label:'FDA' },
-    rasff:      { color:'var(--warn)',    bg:'rgba(245,166,35,0.1)',   label:'RASFF' },
+    rasff:      { color:'var(--warn)',    bg:'rgba(245,166,35,0.1)',   label:'RASFF' },  // legacy label
     mattilsynet:{ color:'var(--accent)',  bg:'rgba(52,211,153,0.1)',   label:'Mattilsynet' },
     manufacturer_push:{ color:'var(--info)', bg:'rgba(56,189,248,0.1)', label: currentLang==='no'?'Produsent':'Manufacturer' },
     manual:     { color:'var(--muted)',   bg:'rgba(106,175,158,0.08)', label: currentLang==='no'?'Manuell':'Manual' },
@@ -9043,7 +9043,7 @@ async function generateAuditReport() {
       <div style="font-size:11px;color:#6aaf9e;font-family:'DM Mono',monospace;margin-bottom:12px;">
         ${_userRegion === 'us'
           ? 'Regulatory basis: FDA FSMA · 21 CFR Part 1 · FMI Retail Guidance · FSMA 204 (USA) Food Traceability Rule'
-          : 'Regulatory basis: EU Reg. 178/2002 · Mattilsynet · RASFF · EU General Food Law'}
+          : 'Regulatory basis: EU Reg. 178/2002 · Mattilsynet · EU General Food Law'}
       </div>
 
       <!-- Compliance summary tiles -->
@@ -14632,7 +14632,7 @@ function openRecallActionSheet(scanId) {
     const rec = matchedR?.recall;
     if (rec) {
       const src = (rec.source || 'manual').toUpperCase();
-      const srcLabel = src === 'FDA' ? 'FDA Recall' : src === 'RASFF' ? 'EU RASFF Alert' : src === 'MATTILSYNET' ? 'Mattilsynet' : src === 'MANUFACTURER_PUSH' ? 'Manufacturer Alert' : 'Manual Recall';
+      const srcLabel = src === 'FDA' ? 'FDA Recall' : src === 'RASFF' ? 'EU Food Safety Alert' : src === 'MATTILSYNET' ? 'Mattilsynet' : src === 'MANUFACTURER_PUSH' ? 'Manufacturer Alert' : 'Manual Recall';
       if (srcEl) srcEl.textContent = srcLabel + (rec.lot_number ? ' · Lot: ' + rec.lot_number : '');
       if (reasonEl2) reasonEl2.textContent = rec.reason_for_recall || rec.reason || rec.description?.split('[')[0]?.trim() || '';
       // Description may contain the reason — show remaining detail
