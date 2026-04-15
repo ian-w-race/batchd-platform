@@ -5394,91 +5394,7 @@ async function signOut() {
 }
 
 // ── Init ───────────────────────────────────────────────────────
-async function initDashboard(user) {
-  // Get org membership
-  const { data: member } = await sb.from('organisation_members')
-    .select('organisation_id, role')
-    .eq('user_id', user.id)
-    .single();
-
-  if (!member) {
-    showAuthMsg('No organisation found for this account. Please sign up at batchdapp.com first.');
-    document.getElementById('auth-btn').disabled = false;
-    document.getElementById('auth-btn').innerHTML = 'Sign in →';
-    return;
-  }
-
-  // Route by role — manufacturers and staff don't belong here
-  if (member.role === 'mfr_admin' || member.role === 'mfr_qa') {
-    window.location.replace('https://manufacturer.batchdapp.com');
-    return;
-  }
-  if (member.role === 'staff') {
-    window.location.replace('https://batchd-app.netlify.app');
-    return;
-  }
-
-  _orgId    = member.organisation_id;
-  _userRole = member.role;
-  _storeId  = member.store_id || null;
-
-  const { data: org } = await sb.from('organisations')
-    .select('name, region')
-    .eq('id', _orgId)
-    .single();
-
-  _orgName   = org?.name || 'My Organisation';
-  _orgRegion = org?.region || 'no';
-
-  // If store manager, load store name
-  if (_storeId) {
-    const { data: store } = await sb.from('stores').select('name').eq('id', _storeId).single();
-    _storeName = store?.name || 'My Store';
-  }
-
-  // Show app
-  document.getElementById('auth-gate').style.display = 'none';
-  document.getElementById('app-shell').style.display = 'flex';
-
-  // Set user info
-  const firstName = user.user_metadata?.first_name || user.email?.split('@')[0] || 'User';
-  const lastName  = user.user_metadata?.last_name  || '';
-  document.getElementById('user-name').textContent  = firstName + (lastName ? ' ' + lastName : '');
-  document.getElementById('user-role').textContent  = member.role.replace('_', ' ');
-  document.getElementById('user-avatar').textContent = firstName[0].toUpperCase();
-  document.getElementById('topbar-sub').textContent  = _userRole === 'store_manager'
-    ? `${_storeName} · ${_orgName}`
-    : _orgName + ' · ' + (_orgRegion === 'us' ? 'United States' : 'Norway');
-
-  // Adjust sidebar for store managers
-  if (_userRole === 'store_manager') {
-    // Hide corp-only nav items
-    document.querySelectorAll('.nav-item').forEach(el => {
-      const onclick = el.getAttribute('onclick') || '';
-      if (onclick.includes("'stores'") || onclick.includes("'staff'") || onclick.includes("'reports'") || onclick.includes("'partners'") || onclick.includes("'shipments'")) {
-        el.style.display = 'none';
-      }
-    });
-    // Update logo sub
-    const logoSub = document.querySelector('.logo-sub');
-    if (logoSub) logoSub.textContent = 'Store Manager';
-  }
-
-  // Load pending partner requests badge
-  if (_userRole !== 'store_manager') {
-    sb.from('trading_partners').select('id').eq('retailer_id', _orgId).eq('status', 'pending').then(({ data }) => {
-      const count = data?.length || 0;
-      const badge = document.getElementById('nav-partners-badge');
-      if (badge && count > 0) { badge.textContent = count; badge.style.display = 'inline-flex'; }
-    });
-  }
-
-  // Check if this org needs onboarding
-  checkDashboardOnboarding();
-  showPanel('overview');
-  loadDashboardTriageBadge();
-  checkRiskBadge();
-}
+// (duplicate initDashboard removed)
 
 // ── Panel router ──────────────────────────────────────────────
 function showPanel(name) {
@@ -8682,14 +8598,7 @@ async function rejectPartner(id) {
   renderPartners();
 }
 
-// ── Boot ───────────────────────────────────────────────────────
-(async () => {
-  const { data: { session } } = await sb.auth.getSession();
-  if (session) {
-    _session = session;
-    await initDashboard(session.user);
-  }
-})();
+// (duplicate boot removed)
 </script>
 </body>
 </html>
