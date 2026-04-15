@@ -3016,14 +3016,7 @@
   <!-- SETTINGS VIEW -->
   <div class="settings-view" id="view-settings">
 
-    <!-- Corp admin shortcut — shown only for corp_admin role -->
-    <div id="corp-admin-banner" style="display:none;background:rgba(52,211,153,0.07);border:1px solid rgba(52,211,153,0.25);border-radius:12px;padding:14px 18px;align-items:center;justify-content:space-between;gap:12px;">
-      <div>
-        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:13px;color:var(--accent);">Corporate Dashboard</div>
-        <div style="font-size:11px;color:var(--muted);margin-top:2px;">Access recalls, compliance, stores and staff management</div>
-      </div>
-      <a href="https://app.batchdapp.com" style="font-family:'DM Mono',monospace;font-size:11px;font-weight:700;padding:8px 14px;border-radius:8px;background:var(--accent);color:#080f12;text-decoration:none;white-space:nowrap;">Open dashboard →</a>
-    </div>
+
 
     <!-- Active Recalls -->
     <div class="settings-section">
@@ -3032,8 +3025,16 @@
         <div class="settings-section-sub"><span data-i18n="settings.activeRecallsSub">Recalls currently being checked against your scan history.</span></div>
       </div>
       <div class="settings-section-body">
+        <div style="display:flex;gap:8px;margin-bottom:10px;">
+          <input id="recall-search" type="text" placeholder="Search recalls…" oninput="filterRecallsList(this.value)"
+            style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:7px 10px;color:var(--text);font-size:13px;font-family:inherit;outline:none;">
+          <button onclick="loadRecallsList()" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:7px 12px;color:var(--muted);font-size:12px;cursor:pointer;white-space:nowrap;">↻ Refresh</button>
+        </div>
         <div class="recall-list" id="settings-recall-list">
           <div style="font-size:13px;color:var(--muted);text-align:center;padding:12px 0;">Loading recalls…</div>
+        </div>
+        <div id="recall-list-footer" style="display:none;margin-top:8px;text-align:center;">
+          <button id="recall-show-more" onclick="showMoreRecalls()" style="background:transparent;border:1px solid var(--border);border-radius:8px;padding:6px 16px;font-size:12px;color:var(--muted);cursor:pointer;font-family:inherit;">Show more</button>
         </div>
       </div>
     </div>
@@ -3684,13 +3685,22 @@
     </div>
   </div>
 
+  <!-- Corporate Dashboard shortcut — corp_admin and store_manager only -->
+  <div id="corp-admin-banner" style="display:none;margin:24px 0 8px;background:rgba(52,211,153,0.07);border:1px solid rgba(52,211,153,0.25);border-radius:12px;padding:14px 18px;align-items:center;justify-content:space-between;gap:12px;">
+    <div>
+      <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:13px;color:var(--accent);">Corporate Dashboard</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:2px;">Access recalls, compliance, stores and staff management</div>
+    </div>
+    <a href="https://app.batchdapp.com" style="font-family:'DM Mono',monospace;font-size:11px;font-weight:700;padding:8px 14px;border-radius:8px;background:var(--accent);color:#080f12;text-decoration:none;white-space:nowrap;">Open dashboard →</a>
+  </div>
+
 </div>
 <!-- END MANAGER VIEW -->
 
 
 <!-- Complaint Sheet — slide-up from scan card "Report Concern" button -->
-<div id="complaint-sheet" style="display:none;position:fixed;inset:0;z-index:800;background:var(--overlay);align-items:flex-end;justify-content:center;" onclick="if(event.target===this)closeComplaintSheet()">
-  <div id="complaint-panel" style="width:100%;max-width:600px;background:var(--surface);border-radius:16px 16px 0 0;border:1px solid var(--border);padding:0;transform:translateY(100%);transition:transform 0.25s cubic-bezier(0.32,0.72,0,1);max-height:90vh;display:flex;flex-direction:column;overflow-y:auto;">
+<div id="complaint-sheet" style="display:none;position:fixed;inset:0;z-index:800;background:var(--overlay);align-items:center;justify-content:center;padding:16px;" onclick="if(event.target===this)closeComplaintSheet()">
+  <div id="complaint-panel" style="width:100%;max-width:580px;background:var(--surface);border-radius:16px;border:1px solid var(--border);padding:0;transform:scale(0.96) translateY(8px);opacity:0;transition:transform 0.22s cubic-bezier(0.32,0.72,0,1),opacity 0.2s ease;max-height:88vh;display:flex;flex-direction:column;overflow-y:auto;">
     <div style="padding:16px 18px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-shrink:0;">
       <div>
         <div id="complaint-sheet-title" style="font-size:15px;font-weight:700;color:var(--text);"></div>
@@ -7506,35 +7516,94 @@ async function setRecallSource(source) {
   }
 }
 
+let _allRecallsCache = [];
+const RECALLS_PAGE_SIZE = 6;
+let _recallsShown = RECALLS_PAGE_SIZE;
+let _recallsFilter = '';
+
 async function loadRecallsList() {
   const el = document.getElementById('settings-recall-list');
   el.innerHTML = `<div style="font-size:13px;color:var(--muted);padding:8px 0;">${t('js.loading')}</div>`;
   try {
-    const { data, error } = await sb.from('recalls').select('*').order('created_at', { ascending: false });
+    const { data, error } = await sb.from('recalls').select('*')
+      .eq('organisation_id', _currentOrgId)
+      .order('active', { ascending: false })
+      .order('created_at', { ascending: false })
+      .limit(200);
     if (error) throw error;
-    if (!data || !data.length) {
-      el.innerHTML = '<div style="font-size:13px;color:var(--muted);text-align:center;padding:12px 0;">'+t('mgr.noRecallsYet')+'</div>';
-      return;
-    }
-    el.innerHTML = data.map(r => `
-      <div class="recall-item ${r.active ? '' : 'inactive'}" id="recall-row-${r.id}">
-        <div class="recall-item-info">
-          <div class="recall-item-name">${esc(r.product_name || t('hist.unknownProduct'))}</div>
-          <div class="recall-item-meta">
-            ${r.lot_number ? `<span>${t('card.lotLabel')} <strong>${esc(r.lot_number)}</strong></span>` : ''}
-            ${r.batch_number ? `<span>${t("card.batch")} <strong>${esc(r.batch_number)}</strong></span>` : ''}
-            <span class="source-badge ${r.source || 'manual'}">${(r.source || 'manual').toUpperCase()}</span>
-            ${r.active ? `<span style="color:var(--danger);font-size:10px;">● ${currentLang==='no'?'AKTIV':'ACTIVE'}</span>` : `<span style="color:var(--muted);font-size:10px;">${currentLang==='no'?'inaktiv':'inactive'}</span>`}
-          </div>
-          ${r.description ? `<div style="font-size:11px;color:var(--muted);margin-top:3px;">${esc(r.description)}</div>` : ''}
-        </div>
-        <div class="recall-item-actions">
-          <button class="btn-icon activate" onclick="toggleRecallActive('${r.id}', ${!r.active})" title="${r.active ? (currentLang==='no'?'Deaktiver':'Deactivate') : (currentLang==='no'?'Aktiver':'Activate')}">${r.active ? '⏸' : '▶'}</button>
-          <button class="btn-icon" onclick="deleteRecall('${r.id}')" title="${currentLang==='no'?'Slett':'Delete'}">✕</button>
-        </div>
-      </div>`).join('');
+    _allRecallsCache = data || [];
+    _recallsShown = RECALLS_PAGE_SIZE;
+    _recallsFilter = '';
+    const searchEl = document.getElementById('recall-search');
+    if (searchEl) searchEl.value = '';
+    renderRecallsList();
   } catch(e) {
     el.innerHTML = `<div style="font-size:13px;color:var(--danger);">Error: ${e.message}</div>`;
+  }
+}
+
+function filterRecallsList(q) {
+  _recallsFilter = (q || '').toLowerCase().trim();
+  _recallsShown = RECALLS_PAGE_SIZE;
+  renderRecallsList();
+}
+
+function showMoreRecalls() {
+  _recallsShown += RECALLS_PAGE_SIZE;
+  renderRecallsList();
+}
+
+function renderRecallsList() {
+  const el = document.getElementById('settings-recall-list');
+  const footer = document.getElementById('recall-list-footer');
+  const showMoreBtn = document.getElementById('recall-show-more');
+
+  let filtered = _allRecallsCache;
+  if (_recallsFilter) {
+    filtered = filtered.filter(r =>
+      (r.product_name||'').toLowerCase().includes(_recallsFilter) ||
+      (r.lot_number||'').toLowerCase().includes(_recallsFilter) ||
+      (r.description||'').toLowerCase().includes(_recallsFilter) ||
+      (r.source||'').toLowerCase().includes(_recallsFilter)
+    );
+  }
+
+  if (!filtered.length) {
+    el.innerHTML = `<div style="font-size:13px;color:var(--muted);text-align:center;padding:16px 0;">${_recallsFilter ? (currentLang==='no'?'Ingen treff for «'+_recallsFilter+'»':'No results for "'+_recallsFilter+'"') : t('mgr.noRecallsYet')}</div>`;
+    if (footer) footer.style.display = 'none';
+    return;
+  }
+
+  const visible = filtered.slice(0, _recallsShown);
+  const hasMore = filtered.length > _recallsShown;
+
+  // Source colour map
+  const srcColor = { fda:'var(--info)', rasff:'var(--warn)', mattilsynet:'var(--accent)', manual:'var(--muted)' };
+
+  el.innerHTML = visible.map(r => `
+    <div class="recall-item ${r.active ? '' : 'inactive'}" id="recall-row-${r.id}">
+      <div class="recall-item-info">
+        <div class="recall-item-name">${esc(r.product_name || t('hist.unknownProduct'))}</div>
+        <div class="recall-item-meta" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          ${r.lot_number ? `<span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);">${t('card.lotLabel')} <strong>${esc(r.lot_number)}</strong></span>` : ''}
+          <span style="font-size:10px;font-weight:700;font-family:'DM Mono',monospace;padding:1px 6px;border-radius:4px;background:rgba(56,189,248,0.1);color:${srcColor[r.source]||'var(--muted)'};">${(r.source||'manual').toUpperCase()}</span>
+          ${r.active
+            ? `<span style="color:var(--danger);font-size:10px;font-weight:600;">● ${currentLang==='no'?'AKTIV':'ACTIVE'}</span>`
+            : `<span style="color:var(--muted);font-size:10px;">${currentLang==='no'?'inaktiv':'inactive'}</span>`}
+        </div>
+        ${r.description ? `<div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5;">${esc(r.description.slice(0,120))}${r.description.length>120?'…':''}</div>` : ''}
+      </div>
+      <div class="recall-item-actions">
+        <button class="btn-icon activate" onclick="toggleRecallActive('${r.id}', ${!r.active})" title="${r.active?(currentLang==='no'?'Deaktiver':'Deactivate'):(currentLang==='no'?'Aktiver':'Activate')}">${r.active?'⏸':'▶'}</button>
+        <button class="btn-icon" onclick="deleteRecall('${r.id}')" title="${currentLang==='no'?'Slett':'Delete'}">✕</button>
+      </div>
+    </div>`).join('');
+
+  if (footer) {
+    footer.style.display = hasMore ? 'block' : 'none';
+    if (showMoreBtn) showMoreBtn.textContent = currentLang==='no'
+      ? `Vis flere (${filtered.length - _recallsShown} gjenstår)`
+      : `Show more (${filtered.length - _recallsShown} remaining)`;
   }
 }
 
@@ -7589,26 +7658,48 @@ async function fetchExternalRecalls() {
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Fetching…'; }
   const msgEl = document.getElementById('mgr-source-save-msg') || document.getElementById('source-save-msg');
 
-  let fetched = 0;
+  if (recallSource === 'manual') {
+    if (msgEl) { msgEl.style.color = 'var(--muted)'; msgEl.textContent = currentLang==='no'?'Manuell modus — ingen ekstern kilde.':'Manual mode — no external feed.'; }
+    if (btn) { btn.disabled = false; btn.textContent = '↓ Fetch latest recalls now'; }
+    return;
+  }
+
+  const results = [];
   try {
     if (recallSource === 'fda' || recallSource === 'both') {
-      fetched += await fetchFDARecalls();
+      try {
+        const n = await fetchFDARecalls();
+        results.push(`FDA: +${n}`);
+      } catch(e) {
+        results.push(`FDA: ✗ ${e.message}`);
+        console.error('FDA fetch failed:', e);
+      }
     }
     if (recallSource === 'rasff' || recallSource === 'both') {
-      // RASFF and Mattilsynet always go together
-      const [r, m] = await Promise.allSettled([fetchRASFFRecalls(), fetchMattilsynetRecalls()]);
-      if (r.status === 'fulfilled') fetched += r.value;
-      if (m.status === 'fulfilled') fetched += m.value;
+      try {
+        const n = await fetchRASFFRecalls();
+        results.push(`RASFF: +${n}`);
+      } catch(e) {
+        results.push(`RASFF: ✗ ${e.message}`);
+        console.error('RASFF fetch failed:', e);
+      }
+      try {
+        const n = await fetchMattilsynetRecalls();
+        results.push(`Mattilsynet: +${n}`);
+      } catch(e) {
+        results.push(`Mattilsynet: ✗ ${e.message}`);
+        console.error('Mattilsynet fetch failed:', e);
+      }
     }
-    if (recallSource === 'manual') {
-      msgEl.style.color = 'var(--muted)'; msgEl.textContent = currentLang==='no'?'Manuell modus — ingen ekstern kilde å hente.':'Manual mode — no external feed to fetch.';
-    } else {
-      msgEl.style.color = 'var(--accent)'; msgEl.textContent = `✓ ${fetched} new recall${fetched!==1?'s':''} imported`;
-      setTimeout(() => msgEl.textContent = '', 3000);
+    const hasError = results.some(r => r.includes('✗'));
+    if (msgEl) {
+      msgEl.style.color = hasError ? 'var(--warn)' : 'var(--accent)';
+      msgEl.textContent = results.join(' · ');
+      setTimeout(() => { if (msgEl) msgEl.textContent = ''; }, 6000);
     }
     loadRecallsList();
   } catch(e) {
-    msgEl.style.color = 'var(--danger)'; msgEl.textContent = '✗ Fetch failed: ' + e.message;
+    if (msgEl) { msgEl.style.color = 'var(--danger)'; msgEl.textContent = '✗ ' + e.message; }
   }
   if (btn) { btn.disabled = false; btn.textContent = '↓ Fetch latest recalls now'; }
 }
@@ -14617,7 +14708,8 @@ function openComplaintSheet(scanId, productName, lotNumber, barcodeNumber, store
   const sheet = document.getElementById('complaint-sheet');
   sheet.style.display = 'flex';
   requestAnimationFrame(() => {
-    document.getElementById('complaint-panel').style.transform = 'translateY(0)';
+    document.getElementById('complaint-panel').style.transform = 'scale(1) translateY(0)';
+    document.getElementById('complaint-panel').style.opacity = '1';
   });
   document.body.style.overflow = 'hidden';
   setTimeout(() => { document.getElementById('complaint-details').focus(); }, 200);
@@ -14625,7 +14717,8 @@ function openComplaintSheet(scanId, productName, lotNumber, barcodeNumber, store
 
 function closeComplaintSheet() {
   const panel = document.getElementById('complaint-panel');
-  panel.style.transform = 'translateY(100%)';
+  panel.style.transform = 'scale(0.96) translateY(8px)';
+  panel.style.opacity = '0';
   setTimeout(() => {
     document.getElementById('complaint-sheet').style.display = 'none';
     _complaintScanId = null;
