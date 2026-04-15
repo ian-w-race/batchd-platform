@@ -4972,10 +4972,16 @@ async function renderMySuppliers() {
           <div style="font-size:15px;font-weight:600;color:var(--text);">My Suppliers</div>
           <div style="font-size:12px;color:var(--muted);margin-top:2px;">Ingredient and raw material suppliers — the one-step-back chain required by EU 178/2002 Art. 18 and FSMA 204.</div>
         </div>
-        <button onclick="openAddSupplier()" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          Connect Supplier
-        </button>
+        <div style="display:flex;gap:8px;">
+          <button onclick="openInviteSupplier()" style="background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+            Invite by Email
+          </button>
+          <button onclick="openAddSupplier()" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Connect (on Batch'd)
+          </button>
+        </div>
       </div>
 
       <!-- Regulatory context -->
@@ -5207,5 +5213,106 @@ async function saveManualReceipt() {
   document.getElementById('manual-receipt-modal').remove();
   showToast('Receipt logged', 'ok', 2500);
   renderMySuppliers();
+}
+</script>
+
+<script>
+// ── Supplier email invite ──────────────────────────────────────
+function openInviteSupplier() {
+  document.getElementById('invite-supplier-modal')?.remove();
+  const modal = document.createElement('div');
+  modal.id = 'invite-supplier-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;';
+  modal.innerHTML = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:28px;width:100%;max-width:480px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+        <div>
+          <div style="font-size:14px;font-weight:700;color:var(--text);">Invite Supplier by Email</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">Send an invitation to a supplier not yet on Batchd</div>
+        </div>
+        <button onclick="document.getElementById('invite-supplier-modal').remove()" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;">✕</button>
+      </div>
+
+      <div style="background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.2);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--muted);margin-bottom:18px;line-height:1.6;">
+        Your supplier will receive a branded email with a link to create a free Batchd supplier account and accept your connection. Once connected, they can log ingredient shipments directly.
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:12px;">
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Supplier email address *</label>
+          <input id="inv-email" type="email" placeholder="supply@theircompany.com" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 11px;color:var(--text);font-size:13px;box-sizing:border-box;outline:none;">
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Contact name at supplier <span style="opacity:0.6;">(optional)</span></label>
+          <input id="inv-contact" type="text" placeholder="e.g. Sarah at Nordic Ingredients" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 11px;color:var(--text);font-size:13px;box-sizing:border-box;outline:none;">
+        </div>
+        <div id="inv-msg" style="display:none;border-radius:8px;padding:9px 12px;font-size:12px;"></div>
+        <div id="inv-success" style="display:none;background:rgba(52,211,153,0.08);border:1px solid rgba(52,211,153,0.25);border-radius:10px;padding:16px;text-align:center;">
+          <div style="font-size:20px;margin-bottom:8px;">✅</div>
+          <div style="font-size:13px;font-weight:600;color:var(--text);">Invitation sent!</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:4px;">Your supplier will receive an email with a link to join Batchd. You can also copy the invite link:</div>
+          <div id="inv-link" style="margin-top:10px;background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:8px 10px;font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);word-break:break-all;text-align:left;"></div>
+          <button onclick="copyInviteLink()" style="margin-top:8px;background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:6px 14px;font-size:11px;color:var(--muted);cursor:pointer;font-family:inherit;">Copy link</button>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:10px;" id="inv-buttons">
+          <button onclick="document.getElementById('invite-supplier-modal').remove()" style="background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:9px 18px;font-size:13px;cursor:pointer;font-family:inherit;">Cancel</button>
+          <button onclick="sendSupplierInvite()" id="btn-send-inv" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:9px 18px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">Send Invite →</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+}
+
+async function sendSupplierInvite() {
+  const email   = document.getElementById('inv-email')?.value.trim();
+  const contact = document.getElementById('inv-contact')?.value.trim();
+  const btn     = document.getElementById('btn-send-inv');
+  const msg     = document.getElementById('inv-msg');
+
+  if (!email) {
+    msg.style.display='block'; msg.style.background='rgba(255,92,92,0.1)'; msg.style.color='var(--danger)'; msg.style.border='1px solid rgba(255,92,92,0.3)'; msg.textContent='Enter a supplier email.';
+    return;
+  }
+
+  btn.disabled = true; btn.textContent = 'Sending…';
+
+  try {
+    const resp = await fetch('/.netlify/functions/supplier-invite', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        manufacturer_id: _orgId,
+        manufacturer_name: _orgName,
+        supplier_email: email,
+        invited_by: contact || null,
+      }),
+    });
+
+    const data = await resp.json();
+
+    if (!resp.ok || data.error) {
+      msg.style.display='block'; msg.style.background='rgba(255,92,92,0.1)'; msg.style.color='var(--danger)'; msg.style.border='1px solid rgba(255,92,92,0.3)'; msg.textContent='Error: ' + (data.error || 'Could not send invite');
+      btn.disabled=false; btn.textContent='Send Invite →'; return;
+    }
+
+    // Show success state
+    document.getElementById('inv-buttons').style.display = 'none';
+    document.getElementById('inv-success').style.display = 'block';
+    document.getElementById('inv-link').textContent = data.invite_url;
+    window._lastInviteUrl = data.invite_url;
+    msg.style.display = 'none';
+
+  } catch(e) {
+    msg.style.display='block'; msg.style.background='rgba(255,92,92,0.1)'; msg.style.color='var(--danger)'; msg.style.border='1px solid rgba(255,92,92,0.3)'; msg.textContent='Error: ' + e.message;
+    btn.disabled=false; btn.textContent='Send Invite →';
+  }
+}
+
+function copyInviteLink() {
+  const url = window._lastInviteUrl;
+  if (!url) return;
+  navigator.clipboard.writeText(url).then(() => {
+    showToast('Invite link copied', 'ok', 2000);
+  });
 }
 </script>
