@@ -32,7 +32,7 @@
     .logo-icon svg { color: #080f12; }
     .logo-text { font-family: 'Figtree', sans-serif; font-weight: 800; font-size: 17px; color: var(--accent); line-height: 1; }
     .logo-sub { font-size: 9px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; margin-top: 3px; line-height: 1; }
-    .sidebar-nav { flex: 1; padding: 12px 10px; display: flex; flex-direction: column; gap: 2px; }
+    .sidebar-nav { flex: 1; padding: 12px 10px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; overflow-x: hidden; min-height: 0; }
     .nav-section { font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); padding: 10px 8px 4px; }
     .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; cursor: pointer;
       font-size: 12px; color: var(--muted); transition: all 0.15s; text-decoration: none; border: none; background: none; width: 100%; text-align: left; }
@@ -219,6 +219,10 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
         Compliance
       </button>
+      <button class="nav-item" onclick="showPanel('mock_audit')" id="nav-mock-audit">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg>
+        Mock Audit
+      </button>
       <button class="nav-item" onclick="showPanel('push')">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
         Push Recall
@@ -356,6 +360,7 @@ async function initPortal(user) {
 
   const { data: org } = await sb.from('organisations').select('name').eq('id', _orgId).single();
   _orgName = org?.name || 'My Organisation';
+  if (org?.language) _mfrLang = org.language;
 
   document.getElementById('auth-gate').style.display = 'none';
   document.getElementById('app-shell').style.display = 'flex';
@@ -367,18 +372,21 @@ async function initPortal(user) {
   const roleLabel = document.getElementById('user-role-label');
   if (roleLabel) roleLabel.textContent = _userRole || 'mfr_admin';
 
+  // Apply saved language preference
+  if (_mfrLang && _mfrLang !== 'en') applyMfrLang(_mfrLang);
+
   showPanel('overview');
   loadTriageBadge();
 }
 
 // ── Panel router ───────────────────────────────────────────────
 function showPanel(name) {
-  const titles = { overview:'Dashboard', push:'Push a Recall', history:'Recall History', acknowledgements:'Acknowledgements', partners:'Trading Partners', shipments:'Shipments', suppliers:'Supplier Risk', products:'Products', lots:'Lot Codes', triage:'Complaint Triage', widget:'Widget Setup', investigations:'Investigations', settings:'Settings', compliance:'Compliance' };
+  const titles = { overview:'Dashboard', push:'Push a Recall', history:'Recall History', acknowledgements:'Acknowledgements', partners:'Trading Partners', shipments:'Shipments', suppliers:'Supplier Risk', products:'Products', lots:'Lot Codes', triage:'Complaint Triage', widget:'Widget Setup', investigations:'Investigations', settings:'Settings', compliance:'Compliance', mock_audit:'Mock Audit', timeline:'Incident Timeline' };
   document.getElementById('topbar-title').textContent = titles[name] || name;
   document.querySelectorAll('.nav-item').forEach(el => {
     el.classList.toggle('active', el.getAttribute('onclick')?.includes(`'${name}'`));
   });
-  const fns = { overview: renderOverview, push: renderPush, history: renderHistory, acknowledgements: renderAcknowledgements, partners: renderPartners, products: renderProducts, lots: renderLots, shipments: renderShipments, suppliers: renderSupplierRisk, patterns: renderPatterns, triage: renderTriage, widget: renderWidgetSetup, investigations: renderInvestigations, settings: renderMfrSettings, compliance: renderMfrCompliance };
+  const fns = { overview: renderOverview, push: renderPush, history: renderHistory, acknowledgements: renderAcknowledgements, partners: renderPartners, products: renderProducts, lots: renderLots, shipments: renderShipments, suppliers: renderSupplierRisk, patterns: renderPatterns, triage: renderTriage, widget: renderWidgetSetup, investigations: renderInvestigations, settings: renderMfrSettings, compliance: renderMfrCompliance, mock_audit: renderMockAudit, timeline: renderIncidentTimeline };
   (fns[name] || (() => {}))();
 }
 
@@ -831,6 +839,10 @@ async function renderHistory() {
                 </div>
               </div>
               <div style="display:flex;gap:7px;flex-shrink:0;flex-wrap:wrap;">
+                <button onclick="setTimelineContext('${e.id}', this)" data-product="${(e.product_name||'').replace(/"/g,'&quot;')}" title="View Incident Timeline"
+                  style="background:rgba(52,211,153,0.1);border:1px solid rgba(52,211,153,0.3);color:var(--accent);border-radius:7px;padding:6px 11px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap;">
+                  📅 Timeline
+                </button>
                 <button onclick="generateLegalPackage('${e.id}')" title="Generate Legal Defense Package"
                   style="background:rgba(56,189,248,0.1);border:1px solid rgba(56,189,248,0.3);color:var(--info);border-radius:7px;padding:6px 11px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap;">
                   🛡 Defense Package
@@ -937,7 +949,7 @@ async function renderPartners() {
     <!-- Connection request form -->
     <div id="partner-request-form" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px;">
       <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:12px;">Send connection request</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:14px;line-height:1.6;">Search for a retailer organisation by name. Once they accept, they'll automatically receive all your recall notifications. Norwegian retailers are subject to Mattilsynet and EU Reg. 178/2002 requirements — US retailers to FDA/FSMA. Batch'd handles both frameworks automatically based on each retailer's region setting.</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:14px;line-height:1.6;">Search for a retailer organisation by name. Once they accept, they'll automatically receive all your recall notifications. Norwegian retailers are subject to Mattilsynet and EU Reg. 178/2002 requirements — US retailers to FDA/FSMA. Batchd handles both frameworks automatically based on each retailer region setting.</div>
       <div id="partner-req-msg" style="display:none;font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;"></div>
       <div style="display:flex;gap:8px;margin-bottom:12px;">
         <div class="field" style="margin:0;flex:1;"><label>Search retailer name</label><input id="partner-search-input" type="text" placeholder="e.g. Batch'd Admin" oninput="searchRetailers()" /></div>
@@ -2540,7 +2552,10 @@ async function renderLots() {
                       ${l.expiry_date&&new Date(l.expiry_date)<new Date()?` <span style="font-size:9px;">EXPIRED</span>`:''}
                     </td>
                     <td style="padding:10px 0;border-bottom:1px solid rgba(22,61,55,0.5);text-align:right;">
-                      <button onclick="deleteLot('${l.id}')" style="font-family:'DM Mono',monospace;font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);cursor:pointer;">Delete</button>
+                      <div style="display:flex;gap:6px;justify-content:flex-end;">
+                        <button onclick="showTraceQR('${encodeURIComponent(l.lot_number)}','${(l.products?.name||'').replace(/'/g,"\'")}','${l.barcode||''}')" style="font-family:'DM Mono',monospace;font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid rgba(52,211,153,0.3);background:rgba(52,211,153,0.07);color:var(--accent);cursor:pointer;" title="Consumer QR Code">QR</button>
+                        <button onclick="deleteLot('${l.id}')" style="font-family:'DM Mono',monospace;font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);cursor:pointer;">Delete</button>
+                      </div>
                     </td>
                   </tr>`).join('')}
               </tbody>
@@ -3133,20 +3148,42 @@ async function renderMfrSettings() {
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px;display:flex;flex-direction:column;gap:14px;">
         <div>
           <div style="font-size:13px;font-weight:600;color:var(--text);border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:2px;">Regulatory Frameworks</div>
-          <div style="font-size:12px;color:var(--muted);margin-top:8px;line-height:1.6;">Select every regulatory framework your organisation must comply with. This drives compliance checklists, authority contacts, investigation templates, document generators, and audit exports throughout the platform.</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:8px;line-height:1.6;">Select every market your organisation sells into. This drives compliance checklists, authority contacts, audit templates, and document generators throughout the platform.</div>
         </div>
-        <div style="display:flex;flex-direction:column;gap:8px;" id="mfr-fw-list">
-          ${ALL_FRAMEWORKS.map(fw => {
-            const checked = frameworks.includes(fw.key);
-            return `<label style="display:flex;align-items:flex-start;gap:12px;padding:12px 14px;background:var(--surface2);border:1px solid ${checked?'rgba(52,211,153,0.4)':'var(--border)'};border-radius:10px;cursor:pointer;transition:all 0.15s;" id="mfr-fw-label-${fw.key}">
-              <input type="checkbox" id="mfr-fw-${fw.key}" ${checked?'checked':''} onchange="toggleMfrFramework('${fw.key}')" style="margin-top:2px;accent-color:var(--accent);width:15px;height:15px;flex-shrink:0;">
+
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <!-- Norway -->
+          <button onclick="toggleMfrMarket('no')" id="mfr-market-no"
+            style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:16px 18px;text-align:left;cursor:pointer;font-family:inherit;transition:all 0.15s;width:100%;">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
               <div>
-                <div style="font-size:13px;font-weight:600;color:var(--text);">${fw.flag} ${fw.label}</div>
-                <div style="font-size:11px;color:var(--muted);margin-top:2px;">${fw.sub}</div>
+                <div style="font-size:14px;font-weight:700;color:var(--text);">🇳🇴 Norway</div>
+                <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5;">
+                  Mattilsynet / Matloven (Food Act 2003) · EU Reg. 178/2002 (General Food Law via EEA)<br>
+                  Matinformasjonsforskriften · EU Reg. 1169/2011 · IK-mat forskriften
+                </div>
               </div>
-            </label>`;
-          }).join('')}
+              <div id="mfr-market-no-check" style="width:22px;height:22px;border-radius:50%;border:2px solid var(--border);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:12px;"></div>
+            </div>
+          </button>
+
+          <!-- USA -->
+          <button onclick="toggleMfrMarket('us')" id="mfr-market-us"
+            style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:16px 18px;text-align:left;cursor:pointer;font-family:inherit;transition:all 0.15s;width:100%;">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+              <div>
+                <div style="font-size:14px;font-weight:700;color:var(--text);">🇺🇸 United States</div>
+                <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5;">
+                  FDA Food Safety · 21 CFR 117 (Preventive Controls / HACCP)<br>
+                  FSMA 204 — Food Traceability Rule (compliance: July 20, 2028)<br>
+                  USDA FSIS — meat, poultry &amp; eggs
+                </div>
+              </div>
+              <div id="mfr-market-us-check" style="width:22px;height:22px;border-radius:50%;border:2px solid var(--border);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:12px;"></div>
+            </div>
+          </button>
         </div>
+
         <div id="mfr-fw-msg" style="display:none;border-radius:7px;padding:9px 12px;font-size:12px;"></div>
         <div style="display:flex;justify-content:flex-end;">
           <button onclick="saveMfrFrameworks()" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;">Save frameworks</button>
@@ -3191,6 +3228,7 @@ async function renderMfrSettings() {
 
   selectMfrRegion(org.region || 'no');
   selectMfrLang(org.language || 'en');
+  initMfrMarkets(org.regulatory_frameworks || []);
 }
 
 function selectMfrRegion(val) {
@@ -3204,8 +3242,65 @@ function selectMfrRegion(val) {
   });
 }
 
+let _mfrLang = 'en';
+
+const MFR_I18N = {
+  en: {
+    nav_overview:'Dashboard', nav_triage:'Triage', nav_widget:'Widget Setup',
+    nav_investigations:'Investigations', nav_compliance:'Compliance', nav_push:'Push Recall',
+    nav_history:'Recall History', nav_acks:'Acknowledgements', nav_products:'Products',
+    nav_lots:'Lot Codes', nav_shipments:'Shipments', nav_suppliers:'Supplier Risk',
+    nav_patterns:'Pattern Library', nav_partners:'Trading Partners', nav_settings:'Settings',
+    nav_mock_audit:'Mock Audit',
+    sec_overview:'OVERVIEW', sec_complaints:'COMPLAINTS', sec_recalls:'RECALLS',
+    sec_products:'PRODUCTS', sec_logistics:'LOGISTICS', sec_partners:'PARTNERS', sec_account:'ACCOUNT',
+    topbar_mfr:'Manufacturer', topbar_admin:'Corp Admin',
+  },
+  no: {
+    nav_overview:'Oversikt', nav_triage:'Klagesaker', nav_widget:'Widget-oppsett',
+    nav_investigations:'Undersokelser', nav_compliance:'Samsvar', nav_push:'Send tilbakekalling',
+    nav_history:'Tilbakekallingshistorikk', nav_acks:'Bekreftelser', nav_products:'Produkter',
+    nav_lots:'Partinumre', nav_shipments:'Leveranser', nav_suppliers:'Leverandorrisk',
+    nav_patterns:'Monstersbibliotek', nav_partners:'Handelspartnere', nav_settings:'Innstillinger',
+    nav_mock_audit:'Simulert revisjon',
+    sec_overview:'OVERSIKT', sec_complaints:'KLAGER', sec_recalls:'TILBAKEKALLINGER',
+    sec_products:'PRODUKTER', sec_logistics:'LOGISTIKK', sec_partners:'PARTNERE', sec_account:'KONTO',
+    topbar_mfr:'Produsent', topbar_admin:'Adminbruker',
+  }
+};
+
+const NAV_MAP = {
+  'overview':'nav_overview','triage':'nav_triage','widget':'nav_widget',
+  'investigations':'nav_investigations','compliance':'nav_compliance','push':'nav_push',
+  'history':'nav_history','acknowledgements':'nav_acks','products':'nav_products',
+  'lots':'nav_lots','shipments':'nav_shipments','suppliers':'nav_suppliers',
+  'patterns':'nav_patterns','partners':'nav_partners','settings':'nav_settings',
+  'mock_audit':'nav_mock_audit',
+};
+
+function applyMfrLang(lang) {
+  const t = MFR_I18N[lang] || MFR_I18N.en;
+  // Update nav item text
+  document.querySelectorAll('.nav-item[onclick]').forEach(btn => {
+    const match = btn.getAttribute('onclick')?.match(/showPanel\('([^']+)'\)/);
+    if (!match) return;
+    const panel = match[1];
+    const key = NAV_MAP[panel];
+    if (!key || !t[key]) return;
+    // Preserve SVG and badge span, only replace text node
+    const textNodes = [...btn.childNodes].filter(n => n.nodeType === 3 && n.textContent.trim());
+    if (textNodes.length) textNodes[textNodes.length-1].textContent = '\n        ' + t[key] + '\n      ';
+  });
+  // Update section labels
+  const sections = document.querySelectorAll('.nav-section');
+  const sectionKeys = ['sec_overview','sec_complaints','sec_recalls','sec_products','sec_logistics','sec_partners','sec_account'];
+  sections.forEach((el, i) => { if (t[sectionKeys[i]]) el.textContent = t[sectionKeys[i]]; });
+}
+
 function selectMfrLang(val) {
-  document.getElementById('mfr-set-lang').value = val;
+  _mfrLang = val;
+  const el = document.getElementById('mfr-set-lang');
+  if (el) el.value = val;
   ['en','no'].forEach(k => {
     const btn = document.getElementById('mfr-lang-' + k);
     if (!btn) return;
@@ -3213,14 +3308,53 @@ function selectMfrLang(val) {
     btn.style.borderColor = k === val ? 'var(--accent)' : 'var(--border)';
     btn.style.color = k === val ? 'var(--accent)' : 'var(--text)';
   });
+  applyMfrLang(val);
 }
 
-function toggleMfrFramework(key) {
-  const label = document.getElementById('mfr-fw-label-' + key);
-  const cb = document.getElementById('mfr-fw-' + key);
-  if (!label || !cb) return;
-  label.style.borderColor = cb.checked ? 'rgba(52,211,153,0.4)' : 'var(--border)';
+// Market selection state
+let _mfrMarkets = new Set();
+
+function initMfrMarkets(frameworks) {
+  _mfrMarkets = new Set();
+  const NO_KEYS = ['mattilsynet','eu_178'];
+  const US_KEYS = ['fda_food','fsma_204','usda_fsis'];
+  if ((frameworks||[]).length === 0) {
+    const region = document.getElementById('mfr-set-region')?.value || 'no';
+    if (region === 'no' || region === 'both') _mfrMarkets.add('no');
+    if (region === 'us' || region === 'both') _mfrMarkets.add('us');
+  } else {
+    if (NO_KEYS.some(k => frameworks.includes(k))) _mfrMarkets.add('no');
+    if (US_KEYS.some(k => frameworks.includes(k))) _mfrMarkets.add('us');
+  }
+  if (_mfrMarkets.size === 0) _mfrMarkets.add('no');
+  renderMfrMarketButtons();
 }
+
+function toggleMfrMarket(market) {
+  if (_mfrMarkets.has(market) && _mfrMarkets.size > 1) {
+    _mfrMarkets.delete(market);
+  } else {
+    _mfrMarkets.add(market);
+  }
+  renderMfrMarketButtons();
+}
+
+function renderMfrMarketButtons() {
+  ['no','us'].forEach(m => {
+    const btn   = document.getElementById('mfr-market-' + m);
+    const check = document.getElementById('mfr-market-' + m + '-check');
+    if (!btn || !check) return;
+    const active = _mfrMarkets.has(m);
+    btn.style.borderColor = active ? 'rgba(52,211,153,0.5)' : 'var(--border)';
+    btn.style.background  = active ? 'rgba(52,211,153,0.07)' : 'var(--surface2)';
+    check.style.borderColor = active ? 'var(--accent)' : 'var(--border)';
+    check.style.background  = active ? 'var(--accent)' : 'transparent';
+    check.textContent = active ? '✓' : '';
+    check.style.color = '#065f46';
+  });
+}
+
+function toggleMfrFramework(key) {} // legacy no-op
 
 async function saveMfrSettings() {
   const name   = document.getElementById('mfr-set-name')?.value.trim();
@@ -3237,12 +3371,13 @@ async function saveMfrSettings() {
 }
 
 async function saveMfrFrameworks() {
-  const keys = ['mattilsynet','eu_178','fda_food','fsma_204','usda_fsis'];
-  const selected = keys.filter(k => document.getElementById('mfr-fw-' + k)?.checked);
   const msg = document.getElementById('mfr-fw-msg');
+  const selected = [];
+  if (_mfrMarkets.has('no')) selected.push('mattilsynet','eu_178');
+  if (_mfrMarkets.has('us')) selected.push('fda_food','fsma_204','usda_fsis');
   const { error } = await sb.from('organisations').update({ regulatory_frameworks: selected }).eq('id', _orgId);
   if (error) { showMfrMsg(msg, 'Error: ' + error.message, 'error'); return; }
-  showMfrMsg(msg, '✓ Frameworks saved — compliance panel updated', 'ok');
+  showMfrMsg(msg, '✓ Markets saved — compliance panel updated', 'ok');
 }
 
 async function saveMfrCoordinator() {
@@ -4181,5 +4316,628 @@ async function renderSupplierRisk() {
         Scores update in real time as recalls, investigations, and complaints are recorded in Batch'd.
       </div>
     </div>`;
+}
+</script>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// 4. MOCK AUDIT MODE
+// ═══════════════════════════════════════════════════════════════
+
+let _auditResults = null;
+let _auditRunning = false;
+
+const AUDIT_CHECKS = [
+  // ── Mattilsynet / EU 178/2002 ──────────────────────────
+  {
+    id: 'coord_designated', framework: 'mattilsynet', severity: 'critical',
+    question: 'Is a named Recall Coordinator with 24/7 contact details designated?',
+    regulation: 'Matloven §16 · EU 178/2002 Art. 19 · FDA 21 CFR 117 Subpart F',
+    auditorNote: 'An auditor will ask for the name and direct number of the person responsible for initiating a recall at any hour.',
+    check: async (data) => {
+      const has = !!(data.org?.recall_coordinator_name && data.org?.recall_coordinator_contact);
+      return { pass: has, detail: has
+        ? `✓ ${data.org.recall_coordinator_name} · ${data.org.recall_coordinator_contact}`
+        : 'No coordinator designated. Go to Settings → Recall Coordinator to assign one.' };
+    }
+  },
+  {
+    id: 'products_registered', framework: 'mattilsynet', severity: 'critical',
+    question: 'Are all food products registered with lot code tracking enabled?',
+    regulation: 'EU 178/2002 Art. 18 · Matloven §14',
+    auditorNote: 'Auditors will ask to see your product catalog and verify that every product can be traced to a lot.',
+    check: async (data) => {
+      const n = data.products?.length || 0;
+      return { pass: n > 0, detail: n > 0 ? `✓ ${n} product${n!==1?'s':''} registered` : 'No products registered. Add products in the Products panel.' };
+    }
+  },
+  {
+    id: 'lots_registered', framework: 'mattilsynet', severity: 'critical',
+    question: 'Are partinummer (lot codes) assigned and recorded for all products?',
+    regulation: 'EU 178/2002 Art. 18 · FSMA 204 § 1.1320',
+    auditorNote: 'The auditor will request to trace a specific lot. Without lot codes you cannot demonstrate traceability.',
+    check: async (data) => {
+      const n = data.lots?.length || 0;
+      return { pass: n > 0, detail: n > 0 ? `✓ ${n} lot code${n!==1?'s':''} registered` : 'No lot codes registered. Add lot codes in the Lot Codes panel.' };
+    }
+  },
+  {
+    id: 'forward_trace', framework: 'mattilsynet', severity: 'critical',
+    question: 'Can you identify all customers who received a specific lot (ett ledd fremover)?',
+    regulation: 'EU 178/2002 Art. 18 — one step forward · Matloven §14',
+    auditorNote: 'Auditor will pick a lot code and ask: "Show me every retailer and store this lot was shipped to." Must be answerable within minutes.',
+    check: async (data) => {
+      const n = data.shipments?.length || 0;
+      const partners = data.partners?.length || 0;
+      const pass = n > 0 && partners > 0;
+      return { pass, detail: pass
+        ? `✓ ${n} shipment records covering ${partners} retail partner${partners!==1?'s':''}`
+        : n === 0 ? 'No shipment records. Log shipments in the Shipments panel to establish forward traceability.'
+        : 'No confirmed trading partners. Connect retailers in the Trading Partners panel.' };
+    }
+  },
+  {
+    id: 'trading_partners', framework: 'mattilsynet', severity: 'major',
+    question: 'Are all distribution partners formally connected in the traceability network?',
+    regulation: 'EU 178/2002 Art. 18 · IK-mat forskriften',
+    auditorNote: 'Auditor will ask for a list of all retailers and distributors who carry your products.',
+    check: async (data) => {
+      const n = data.partners?.length || 0;
+      return { pass: n > 0, detail: n > 0 ? `✓ ${n} active trading partner${n!==1?'s':''}` : 'No confirmed trading partners. Send connection requests in the Partners panel.' };
+    }
+  },
+  {
+    id: 'recall_procedure', framework: 'mattilsynet', severity: 'major',
+    question: 'Is a written recall and withdrawal procedure documented?',
+    regulation: 'IK-mat forskriften · FDA 21 CFR 117 Subpart F',
+    auditorNote: 'The auditor will ask to see your written procedure. Generate one from the Compliance panel.',
+    check: async (data) => {
+      const hasCoord = !!(data.org?.recall_coordinator_name);
+      const hasShipments = (data.shipments?.length || 0) > 0;
+      return { pass: hasCoord && hasShipments, partial: hasCoord || hasShipments,
+        detail: hasCoord && hasShipments
+          ? '✓ Coordinator assigned + distribution records exist — generate procedure from Compliance panel'
+          : hasCoord ? '⚠ Coordinator assigned but no shipment records — procedure incomplete'
+          : 'No coordinator assigned. Assign one in Settings then generate a recall procedure from Compliance.' };
+    }
+  },
+  {
+    id: 'mock_drill', framework: 'mattilsynet', severity: 'minor',
+    question: 'Has a mock recall drill been conducted in the last 12 months?',
+    regulation: 'IK-mat best practice · FDA 21 CFR 117 guidance · ISO 22000:2018 §8.9.5',
+    auditorNote: 'Auditors increasingly ask for evidence of tested procedures. An untested recall plan is a theoretical plan.',
+    check: async (data) => {
+      const drills = data.recalls?.filter(r => r.is_drill) || [];
+      const recent = drills.filter(r => new Date(r.created_at) > new Date(Date.now() - 365*86400000));
+      return { pass: recent.length > 0, partial: drills.length > 0 && recent.length === 0,
+        detail: recent.length > 0 ? `✓ ${recent.length} drill${recent.length!==1?'s':''} in last 12 months`
+        : drills.length > 0 ? `⚠ Drills on record but none in last 12 months (last: ${new Date(drills[0].created_at).toLocaleDateString('en-GB')})`
+        : 'No mock recall drills on record. Run a drill from the scanning app Manager → Mock Recall Drill.' };
+    }
+  },
+  // ── FDA / FSMA ──────────────────────────────────────────
+  {
+    id: 'rfr_process', framework: 'fda_food', severity: 'critical',
+    question: 'Is there a documented process for FDA Reportable Food Registry (RFR) notification within 24 hours?',
+    regulation: 'FDA 21 CFR 7 · Reportable Food Registry — Class I: 24-hour notification',
+    auditorNote: 'FDA will ask: "If you discovered a Class I issue at 2am, could you submit an RFR notification within 24 hours?" Your Batchd recall push creates the evidence trail.',
+    check: async (data) => {
+      const hasCoord = !!(data.org?.recall_coordinator_name && data.org?.recall_coordinator_contact);
+      const hasPartners = (data.partners?.length || 0) > 0;
+      return { pass: hasCoord && hasPartners, partial: hasCoord,
+        detail: hasCoord && hasPartners ? '✓ Coordinator + distribution network in place for RFR process'
+        : hasCoord ? '⚠ Coordinator assigned but no distribution network to notify'
+        : 'Designate a coordinator in Settings — they are responsible for RFR submission.' };
+    }
+  },
+  {
+    id: 'fsma_traceability_plan', framework: 'fsma_204', severity: 'critical',
+    question: 'Has a FSMA 204 Traceability Plan been documented (§ 1.1315)?',
+    regulation: 'FSMA 204 § 1.1315 — compliance: July 20 2028',
+    auditorNote: 'FDA will request the Traceability Plan document. It must contain: recordkeeping procedures, FTL food identification, TLC assignment method, point of contact, retention policy.',
+    check: async (data) => {
+      const hasAll = !!(data.org?.recall_coordinator_name) && (data.lots?.length||0) > 0 && (data.shipments?.length||0) > 0;
+      return { pass: hasAll, partial: !!(data.org?.recall_coordinator_name),
+        detail: hasAll ? '✓ All 5 required elements can be demonstrated — generate plan from Compliance panel'
+        : '⚠ Generate your Traceability Plan from the Compliance panel. Requires coordinator + lot codes + shipment records.' };
+    }
+  },
+  {
+    id: 'kde_24h', framework: 'fsma_204', severity: 'critical',
+    question: 'Can KDE (Key Data Elements) records be provided to FDA within 24 hours as an electronic sortable spreadsheet?',
+    regulation: 'FSMA 204 § 1.1455 — 24-hour electronic provision requirement',
+    auditorNote: 'FDA can request all traceability records for a specific food and date range. You must produce a complete CSV within 24 hours. The Batchd audit export satisfies this.',
+    check: async (data) => {
+      const n = data.shipments?.length || 0;
+      return { pass: n > 0, detail: n > 0
+        ? `✓ ${n} shipment records exportable as CSV from Compliance panel — 24h requirement satisfied`
+        : 'No shipment records. Log shipments to satisfy FSMA 204 24-hour provision requirement.' };
+    }
+  },
+  {
+    id: 'cap_post_recall', framework: 'fda_food', severity: 'major',
+    question: 'Has a Corrective Action Plan been completed for any previous recall events?',
+    regulation: 'FDA 21 CFR 117.150 — corrective actions required · Food Safety Plan reanalysis',
+    auditorNote: 'FDA will ask: after your last recall, what corrective actions did you take and is the Food Safety Plan updated?',
+    check: async (data) => {
+      const recallsWithCAP = (data.recalls||[]).filter(r => !r.is_drill && r.cap_data);
+      const allRecalls = (data.recalls||[]).filter(r => !r.is_drill);
+      if (allRecalls.length === 0) return { pass: true, detail: '✓ No recall events on record — no CAP required yet' };
+      return { pass: recallsWithCAP.length === allRecalls.length,
+        partial: recallsWithCAP.length > 0,
+        detail: recallsWithCAP.length === allRecalls.length
+          ? `✓ CAP documented for all ${allRecalls.length} recall event${allRecalls.length!==1?'s':''}`
+          : `⚠ ${allRecalls.length - recallsWithCAP.length} recall${allRecalls.length-recallsWithCAP.length!==1?'s':''} without a Corrective Action Plan — generate from Recall History` };
+    }
+  },
+  // ── USDA FSIS ───────────────────────────────────────────
+  {
+    id: 'fsis_est', framework: 'usda_fsis', severity: 'critical',
+    question: 'Is a USDA FSIS establishment number registered for all meat, poultry, and egg products?',
+    regulation: 'USDA FSIS — mandatory establishment number on all regulated product labels',
+    auditorNote: 'FSIS will ask for the establishment number on your product labels. Without it, products cannot legally be sold.',
+    check: async (data) => {
+      return { pass: false, partial: false,
+        detail: 'Manual verification required — confirm FSIS establishment number is on all product labels. FSIS verification cannot be automated from Batch\'d.' };
+    }
+  },
+];
+
+async function renderMockAudit() {
+  const el = document.getElementById('main-content');
+  if (_auditResults) { renderAuditResults(el); return; }
+  el.innerHTML = `
+    <div style="max-width:680px;">
+      <div style="margin-bottom:24px;">
+        <div style="font-size:15px;font-weight:600;color:var(--text);">Mock Audit</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px;">Simulate a regulatory inspection before the real one arrives. Batch'd checks your actual data against what an FDA or Mattilsynet auditor would ask for.</div>
+      </div>
+      <div style="background:rgba(245,166,35,0.07);border:1px solid rgba(245,166,35,0.25);border-radius:12px;padding:20px;margin-bottom:24px;">
+        <div style="font-size:13px;font-weight:600;color:var(--warn);margin-bottom:8px;">⚠ What this audit checks</div>
+        <div style="font-size:12px;color:var(--muted);line-height:1.8;">
+          • Whether a Recall Coordinator is designated with 24/7 contact<br>
+          • Whether forward and backward traceability chains are documented<br>
+          • Whether lot codes, products, and shipments are logged<br>
+          • Whether a mock drill has been conducted in the last 12 months<br>
+          • Whether Corrective Action Plans exist for previous recalls<br>
+          • Whether FSMA 204 Traceability Plan elements are in place<br>
+          • Whether KDE records can be produced within 24 hours
+        </div>
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;text-align:center;">
+        <div style="font-size:36px;margin-bottom:12px;">📋</div>
+        <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:6px;">Ready to run your mock audit</div>
+        <div style="font-size:12px;color:var(--muted);max-width:380px;margin:0 auto 20px;">The audit checks ${AUDIT_CHECKS.length} regulatory checkpoints across your active frameworks. Takes about 5 seconds.</div>
+        <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
+          <select id="audit-framework-filter" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text);font-size:13px;">
+            <option value="all">All frameworks</option>
+            <option value="mattilsynet">Mattilsynet / EU 178/2002 only</option>
+            <option value="fda_food">FDA only</option>
+            <option value="fsma_204">FSMA 204 only</option>
+            <option value="usda_fsis">USDA FSIS only</option>
+          </select>
+          <button onclick="runMockAudit()" id="btn-run-audit" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:9px 24px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">
+            ▶ Start Mock Audit
+          </button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function runMockAudit() {
+  if (_auditRunning) return;
+  _auditRunning = true;
+  const el = document.getElementById('main-content');
+  const framework = document.getElementById('audit-framework-filter')?.value || 'all';
+
+  el.innerHTML = `
+    <div style="max-width:600px;text-align:center;padding:60px 20px;">
+      <div style="font-size:36px;margin-bottom:16px;">🔍</div>
+      <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:8px;">Running audit checks…</div>
+      <div style="font-size:12px;color:var(--muted);" id="audit-progress">Loading data…</div>
+      <div style="margin-top:16px;background:var(--surface2);border-radius:8px;height:6px;overflow:hidden;">
+        <div id="audit-bar" style="height:100%;background:var(--accent);width:0%;transition:width 0.3s;"></div>
+      </div>
+    </div>`;
+
+  const setProgress = (pct, msg) => {
+    const bar = document.getElementById('audit-bar');
+    const prog = document.getElementById('audit-progress');
+    if (bar) bar.style.width = pct + '%';
+    if (prog) prog.textContent = msg;
+  };
+
+  try {
+    setProgress(10, 'Loading organisation data…');
+    const [orgRes, productsRes, lotsRes, shipmentsRes, partnersRes, recallsRes] = await Promise.all([
+      sb.from('organisations').select('recall_coordinator_name, recall_coordinator_contact, regulatory_frameworks, region').eq('id', _orgId).single(),
+      sb.from('products').select('id, name').eq('manufacturer_id', _orgId),
+      sb.from('product_lots').select('id, lot_number').eq('manufacturer_id', _orgId),
+      sb.from('shipments').select('id, lot_number, retailer_id, shipped_at').eq('manufacturer_id', _orgId).limit(200),
+      sb.from('trading_partners').select('id, retailer_id').eq('manufacturer_id', _orgId).eq('status', 'active'),
+      sb.from('recall_events').select('id, product_name, is_drill, created_at, cap_data').eq('source_org_id', _orgId),
+    ]);
+
+    const data = {
+      org: orgRes.data, products: productsRes.data, lots: lotsRes.data,
+      shipments: shipmentsRes.data, partners: partnersRes.data, recalls: recallsRes.data,
+    };
+
+    // Filter checks by framework
+    const activeFrameworks = data.org?.regulatory_frameworks || [];
+    let checksToRun = AUDIT_CHECKS.filter(c => {
+      if (framework !== 'all') return c.framework === framework;
+      if (activeFrameworks.length === 0) return true;
+      return activeFrameworks.includes(c.framework) ||
+             (c.framework === 'mattilsynet' && activeFrameworks.includes('eu_178')) ||
+             (c.framework === 'eu_178' && activeFrameworks.includes('mattilsynet'));
+    });
+    if (checksToRun.length === 0) checksToRun = AUDIT_CHECKS;
+
+    const results = [];
+    for (let i = 0; i < checksToRun.length; i++) {
+      const check = checksToRun[i];
+      setProgress(10 + Math.round((i / checksToRun.length) * 85), `Checking: ${check.question.slice(0, 60)}…`);
+      await new Promise(r => setTimeout(r, 120)); // brief pause for UX
+      try {
+        const result = await check.check(data);
+        results.push({ ...check, result });
+      } catch(e) {
+        results.push({ ...check, result: { pass: false, detail: 'Check failed: ' + e.message } });
+      }
+    }
+
+    setProgress(100, 'Complete!');
+    await new Promise(r => setTimeout(r, 400));
+
+    _auditResults = results;
+    _auditRunning = false;
+    renderAuditResults(el);
+  } catch(e) {
+    _auditRunning = false;
+    el.innerHTML = `<div style="color:var(--danger);padding:20px;">Audit failed: ${e.message}<br><button onclick="_auditResults=null;renderMockAudit()" style="margin-top:12px;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:7px 14px;font-size:12px;cursor:pointer;">Try again</button></div>`;
+  }
+}
+
+function renderAuditResults(el) {
+  const results = _auditResults || [];
+  const passed   = results.filter(r => r.result.pass).length;
+  const partial  = results.filter(r => !r.result.pass && r.result.partial).length;
+  const failed   = results.filter(r => !r.result.pass && !r.result.partial).length;
+  const critical = results.filter(r => !r.result.pass && r.severity === 'critical').length;
+  const pct = Math.round(passed / results.length * 100);
+  const scoreColor = pct >= 80 ? 'var(--accent)' : pct >= 55 ? 'var(--warn)' : 'var(--danger)';
+
+  el.innerHTML = `
+    <div style="max-width:760px;">
+      <!-- Header -->
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
+        <div>
+          <div style="font-size:15px;font-weight:600;color:var(--text);">Mock Audit Results</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:2px;">${results.length} checks · ${new Date().toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}</div>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button onclick="_auditResults=null;renderMockAudit()" style="background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:7px 12px;font-size:12px;cursor:pointer;">↺ Re-run</button>
+          <button onclick="downloadAuditReport()" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;">↓ Download Report</button>
+        </div>
+      </div>
+
+      <!-- Score card -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:20px;display:grid;grid-template-columns:auto 1fr;gap:20px;align-items:center;">
+        <div style="text-align:center;min-width:90px;">
+          <div style="font-size:48px;font-weight:800;color:${scoreColor};font-family:'Figtree',sans-serif;line-height:1;">${pct}%</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px;">Audit Score</div>
+        </div>
+        <div>
+          <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px;">
+            ${pct >= 80 ? '✅ Well prepared — minor gaps to close' : pct >= 55 ? '⚠️ Partially prepared — address failures before an inspection' : '🔴 Significant gaps — act before a real audit or recall event'}
+          </div>
+          <div style="display:flex;gap:16px;flex-wrap:wrap;">
+            <div style="font-size:12px;color:var(--accent);">✓ ${passed} passed</div>
+            ${partial > 0 ? `<div style="font-size:12px;color:var(--warn);">⚠ ${partial} partial</div>` : ''}
+            <div style="font-size:12px;color:var(--danger);">✗ ${failed} failed</div>
+            ${critical > 0 ? `<div style="font-size:12px;color:var(--danger);font-weight:700;">🔴 ${critical} critical failure${critical!==1?'s':''}</div>` : ''}
+          </div>
+        </div>
+      </div>
+
+      <!-- Results by severity -->
+      ${['critical','major','minor'].map(sev => {
+        const items = results.filter(r => r.severity === sev);
+        if (!items.length) return '';
+        const sevLabels = { critical:'Critical', major:'Major', minor:'Minor' };
+        const sevColors = { critical:'var(--danger)', major:'var(--warn)', minor:'var(--muted)' };
+        return `
+        <div style="margin-bottom:16px;">
+          <div style="font-size:11px;font-weight:700;color:${sevColors[sev]};text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px;">${sevLabels[sev]} checks</div>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            ${items.map(r => {
+              const statusColor = r.result.pass ? 'var(--accent)' : r.result.partial ? 'var(--warn)' : 'var(--danger)';
+              const statusIcon  = r.result.pass ? '✓' : r.result.partial ? '⚠' : '✗';
+              const statusLabel = r.result.pass ? 'PASS' : r.result.partial ? 'PARTIAL' : 'FAIL';
+              return `
+              <div style="background:var(--surface);border:1px solid ${r.result.pass ? 'var(--border)' : statusColor.replace('var(','rgba(').replace('--danger)','255,92,92,0.3)').replace('--warn)','245,166,35,0.3)').replace('--accent)','52,211,153,0.3)')};border-radius:10px;padding:14px 16px;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:6px;">
+                  <div style="font-size:12px;font-weight:600;color:var(--text);flex:1;">${r.question}</div>
+                  <span style="font-size:10px;font-family:'DM Mono',monospace;font-weight:700;padding:2px 8px;border-radius:4px;background:${statusColor.replace('var(','rgba(').replace('--danger)','255,92,92,0.12)').replace('--warn)','245,166,35,0.12)').replace('--accent)','52,211,153,0.12)')};color:${statusColor};flex-shrink:0;">${statusIcon} ${statusLabel}</span>
+                </div>
+                <div style="font-size:11px;color:${r.result.pass ? 'var(--muted)' : statusColor};margin-bottom:6px;">${r.result.detail}</div>
+                <div style="display:flex;gap:12px;flex-wrap:wrap;">
+                  <span style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${r.regulation}</span>
+                </div>
+                ${!r.result.pass ? `<div style="font-size:11px;color:var(--muted);margin-top:6px;padding-top:6px;border-top:1px solid var(--border);font-style:italic;">💬 ${r.auditorNote}</div>` : ''}
+              </div>`;
+            }).join('')}
+          </div>
+        </div>`;
+      }).join('')}
+
+      <div style="text-align:center;padding:8px 0;"><button onclick="_auditResults=null;renderMockAudit()" style="background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;text-decoration:underline;">← Run another audit</button></div>
+    </div>`;
+}
+
+async function downloadAuditReport() {
+  const results = _auditResults || [];
+  const passed = results.filter(r => r.result.pass).length;
+  const pct = Math.round(passed / results.length * 100);
+  const today = new Date().toLocaleDateString('en-GB', { day:'numeric', month:'long', year:'numeric' });
+  const { data: org } = await sb.from('organisations').select('name, recall_coordinator_name').eq('id', _orgId).single();
+
+  const lines = [
+    'MOCK AUDIT REPORT', `━`.repeat(64),
+    `Organisation: ${org?.name || _orgName}`,
+    `Prepared by: ${org?.recall_coordinator_name || 'Not designated'}`,
+    `Date: ${today}`,
+    `Overall Score: ${pct}% (${passed}/${results.length} checks passed)`,
+    '', `━`.repeat(64), '',
+    ...results.map((r, i) => [
+      `${String(i+1).padStart(2)}. [${r.result.pass ? 'PASS' : r.result.partial ? 'PARTIAL' : 'FAIL'}] ${r.question}`,
+      `    Regulation: ${r.regulation}`,
+      `    Finding: ${r.result.detail}`,
+      r.result.pass ? '' : `    Auditor note: ${r.auditorNote}`,
+      '',
+    ].filter(l => l !== null).join('\n')),
+    `━`.repeat(64),
+    `Generated by Batch'd Mock Audit · ${today}`,
+    `This report is confidential and intended for internal use.`,
+    `Address all failures before a regulatory inspection or recall event.`,
+  ];
+
+  const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `batched_mock_audit_${new Date().toISOString().slice(0,10)}.txt`;
+  a.click(); URL.revokeObjectURL(url);
+  showToast('Audit report downloaded', 'ok', 2500);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 5. INCIDENT TIMELINE
+// ═══════════════════════════════════════════════════════════════
+
+let _timelineRecallId = null;
+let _timelineProduct  = '';
+
+function setTimelineContext(recallId, btn) {
+  _timelineRecallId = recallId;
+  _timelineProduct  = btn.closest('[data-product]')?.dataset?.product
+    || btn.getAttribute('data-product') || '';
+  showPanel('timeline');
+}
+
+async function renderIncidentTimeline() {
+  const el = document.getElementById('main-content');
+  if (!_timelineRecallId) {
+    el.innerHTML = `<div style="color:var(--muted);padding:40px;text-align:center;">Open a recall from <button onclick="showPanel('history')" style="background:none;border:none;color:var(--accent);cursor:pointer;text-decoration:underline;font-family:inherit;font-size:inherit;">Recall History</button> to view its incident timeline.</div>`;
+    return;
+  }
+
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Building timeline…</div>`;
+
+  const [eventRes, acksRes, distRes, invRes, complaintsRes, shipmentsRes] = await Promise.all([
+    sb.from('recall_events').select('*').eq('id', _timelineRecallId).single(),
+    sb.from('recall_acknowledgements').select('*, organisations(name)').eq('recall_event_id', _timelineRecallId).order('updated_at', { ascending: true }),
+    sb.from('recall_distributions').select('*, organisations!recall_distributions_retailer_org_id_fkey(name)').eq('recall_event_id', _timelineRecallId),
+    sb.from('investigation_requests').select('*, investigation_responses(id, submitted_at, retailer_org_id, issue_found, store_name)').eq('manufacturer_id', _orgId).order('created_at', { ascending: true }),
+    sb.from('complaints').select('*').ilike('product_name', '%' + (_timelineProduct||'').split(' ')[0] + '%').order('created_at', { ascending: true }).limit(10),
+    sb.from('shipments').select('*, stores(name), organisations!shipments_retailer_id_fkey(name)').eq('manufacturer_id', _orgId).ilike('lot_number', '%' + (eventRes.data?.lot_number||'N/A').slice(0,10) + '%').limit(20),
+  ]);
+
+  const ev = eventRes.data;
+  const acks = acksRes.data || [];
+  const dists = distRes.data || [];
+  const invs = invRes.data || [];
+  const complaints = complaintsRes.data || [];
+  const shipments = shipmentsRes.data || [];
+  if (!ev) { el.innerHTML = `<div style="color:var(--danger)">Recall event not found.</div>`; return; }
+
+  const fmt = d => d ? new Date(d).toLocaleString('en-GB',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+  const recallTime = new Date(ev.created_at);
+  const deltaH = d => d ? Math.round((new Date(d) - recallTime) / 36e5 * 10) / 10 : null;
+
+  // Build chronological event list
+  const events = [];
+
+  // Shipments (before recall)
+  for (const s of shipments) {
+    events.push({ time: new Date(s.shipped_at), type:'shipment', color:'var(--muted)',
+      icon:'📦', title:`Shipped to ${s.organisations?.name || 'retailer'}`,
+      detail:`${s.quantity||'?'} ${s.unit||'units'} · Lot ${s.lot_number||'?'} → ${s.stores?.name || s.organisations?.name || ''}` });
+  }
+
+  // Complaints (before or near recall)
+  for (const c of complaints) {
+    events.push({ time: new Date(c.created_at), type:'complaint', color:'var(--warn)',
+      icon:'📝', title:`Complaint received — ${c.triage_level||'unknown'} priority`,
+      detail:`${c.product_name||''} · ${c.complaint_type||''} · ${c.store_name||''}` });
+  }
+
+  // Investigations
+  for (const inv of invs) {
+    events.push({ time: new Date(inv.created_at), type:'investigation', color:'var(--warn)',
+      icon:'🔍', title:`Field investigation launched — ${inv.issue_type||''}`,
+      detail:`${inv.product_name} · ${(inv.investigation_responses||[]).length} responses · Status: ${inv.status}` });
+    for (const resp of (inv.investigation_responses||[])) {
+      if (resp.submitted_at) events.push({ time: new Date(resp.submitted_at), type:'inv_response', color: resp.issue_found ? 'var(--danger)' : 'var(--accent)',
+        icon: resp.issue_found ? '⚠' : '✓', title:`Investigation response — ${resp.store_name || 'store'}`,
+        detail:`Issue ${resp.issue_found ? 'CONFIRMED' : 'not found'}` });
+    }
+  }
+
+  // Recall pushed
+  events.push({ time: recallTime, type:'recall', color:'var(--danger)', icon:'🚨', isPrimary: true,
+    title:`${ev.is_drill ? 'DRILL' : 'RECALL'} PUSHED — ${ev.product_name}`,
+    detail:`${ev.severity||''} · ${ev.reason||''} · Lot: ${ev.lot_number||'N/A'} · Notified ${dists.length} retailer${dists.length!==1?'s':''}` });
+
+  // Acknowledgement steps
+  const ackStatuses = ['acknowledged','pulled','disposed','confirmed'];
+  for (const ack of acks) {
+    const retailer = ack.organisations?.name || 'Store';
+    if (ackStatuses.includes(ack.status)) {
+      const statusColors = { acknowledged:'var(--info)', pulled:'var(--warn)', disposed:'var(--warn)', confirmed:'var(--accent)' };
+      const statusIcons  = { acknowledged:'👁', pulled:'🏪', disposed:'🗑', confirmed:'✅' };
+      const h = deltaH(ack.updated_at);
+      events.push({ time: new Date(ack.updated_at), type:'ack', color: statusColors[ack.status],
+        icon: statusIcons[ack.status], title:`${retailer} — ${ack.status.toUpperCase()}`,
+        detail:`${h !== null ? `+${h}h from recall push` : ''}` });
+    }
+  }
+
+  // Sort chronologically
+  events.sort((a,b) => a.time - b.time);
+
+  // Find last event time for axis
+  const lastTime = events.length ? events[events.length-1].time : recallTime;
+  const totalDuration = Math.max(1, (lastTime - events[0]?.time) / 36e5);
+
+  el.innerHTML = `
+    <div style="max-width:780px;">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap;">
+        <button onclick="showPanel('history')" style="background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer;">← Recall History</button>
+        <div>
+          <div style="font-size:15px;font-weight:600;color:var(--text);">Incident Timeline — ${ev.product_name}</div>
+          <div style="font-size:12px;color:var(--muted);">
+            ${events.length} events · Lot ${ev.lot_number||'N/A'} ·
+            ${ev.is_drill ? '<span style="color:var(--info);">MOCK DRILL</span>' : '<span style="color:var(--danger);">LIVE RECALL</span>'}
+          </div>
+        </div>
+      </div>
+
+      <!-- Key metrics strip -->
+      ${(() => {
+        const firstAck = acks.find(a => a.status === 'acknowledged' || a.status === 'pulled' || a.status === 'confirmed');
+        const firstPull = acks.find(a => a.status === 'pulled' || a.status === 'confirmed');
+        const confirmedCount = acks.filter(a => a.status === 'confirmed').length;
+        const h1 = firstAck ? deltaH(firstAck.updated_at) : null;
+        const h2 = firstPull ? deltaH(firstPull.updated_at) : null;
+        return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-bottom:20px;">
+          ${[
+            { label:'Retailers notified', value: dists.length, color:'var(--text)' },
+            { label:'Time to first ack', value: h1 !== null ? h1+'h' : '—', color: h1 !== null && h1 <= 4 ? 'var(--accent)' : 'var(--warn)' },
+            { label:'Time to first pull', value: h2 !== null ? h2+'h' : '—', color: h2 !== null && h2 <= 2 ? 'var(--accent)' : h2 !== null && h2 <= 24 ? 'var(--warn)' : 'var(--danger)' },
+            { label:'Stores confirmed', value: confirmedCount + '/' + acks.length, color: confirmedCount === acks.length && acks.length > 0 ? 'var(--accent)' : 'var(--warn)' },
+          ].map(k => `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 14px;">
+            <div style="font-size:18px;font-weight:700;color:${k.color};font-family:'Figtree',sans-serif;">${k.value}</div>
+            <div style="font-size:10px;color:var(--muted);margin-top:2px;">${k.label}</div>
+          </div>`).join('')}
+        </div>`;
+      })()}
+
+      <!-- Timeline -->
+      <div style="position:relative;padding-left:32px;">
+        <!-- Vertical line -->
+        <div style="position:absolute;left:11px;top:8px;bottom:8px;width:2px;background:linear-gradient(to bottom, var(--border), var(--border));border-radius:1px;"></div>
+
+        ${events.map((ev_item, i) => {
+          const isRecall = ev_item.isPrimary;
+          const bgColor  = isRecall ? 'rgba(255,92,92,0.08)' : 'var(--surface)';
+          const border   = isRecall ? '1px solid rgba(255,92,92,0.35)' : '1px solid var(--border)';
+          const h = i > 0 ? deltaH(ev_item.time) : null;
+          return `
+          <div style="position:relative;margin-bottom:12px;">
+            <!-- Dot -->
+            <div style="position:absolute;left:-25px;top:14px;width:12px;height:12px;border-radius:50%;border:2px solid ${ev_item.color};background:${ev_item.color.replace('var(','rgba(').replace('--danger)','255,92,92,0.25)').replace('--warn)','245,166,35,0.25)').replace('--accent)','52,211,153,0.25)').replace('--info)','56,189,248,0.25)').replace('--muted)','106,175,158,0.15)')};"></div>
+            <!-- Card -->
+            <div style="background:${bgColor};border:${border};border-radius:10px;padding:12px 14px;">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+                <div style="flex:1;">
+                  <div style="font-size:12px;font-weight:${isRecall?'700':'600'};color:${isRecall?ev_item.color:'var(--text)'};">${ev_item.icon} ${ev_item.title}</div>
+                  ${ev_item.detail ? `<div style="font-size:11px;color:var(--muted);margin-top:3px;">${ev_item.detail}</div>` : ''}
+                </div>
+                <div style="text-align:right;flex-shrink:0;">
+                  <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">${ev_item.time.toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
+                  ${h !== null && isRecall === false ? `<div style="font-size:10px;color:${ev_item.color};">${h > 0 ? '+'+h+'h' : h === 0 ? 'at recall' : h+'h'}</div>` : ''}
+                </div>
+              </div>
+            </div>
+          </div>`;
+        }).join('')}
+
+        ${events.length === 0 ? `<div style="color:var(--muted);font-size:13px;padding:20px 0;">No events found for this recall.</div>` : ''}
+      </div>
+
+      <div style="display:flex;justify-content:center;gap:10px;margin-top:20px;">
+        <button onclick="generateLegalPackage('${_timelineRecallId}')" style="background:rgba(56,189,248,0.1);border:1px solid rgba(56,189,248,0.3);color:var(--info);border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">🛡 Generate Legal Package</button>
+        <button onclick="openCAPForm('${_timelineRecallId}','${_timelineProduct}','')" style="background:rgba(245,166,35,0.1);border:1px solid rgba(245,166,35,0.3);color:var(--warn);border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">📋 Corrective Action Plan</button>
+      </div>
+    </div>`;
+}
+</script>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// 6. CONSUMER TRANSPARENCY QR CODE GENERATOR
+// ═══════════════════════════════════════════════════════════════
+
+function showTraceQR(encodedLot, productName, barcode) {
+  const lot = decodeURIComponent(encodedLot);
+  const baseUrl = 'https://batchd-app.netlify.app/trace.html';
+  const params = new URLSearchParams();
+  if (lot) params.set('lot', lot);
+  if (barcode) params.set('barcode', barcode);
+  const traceUrl = baseUrl + '?' + params.toString();
+
+  document.getElementById('trace-qr-modal')?.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'trace-qr-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;';
+  modal.innerHTML = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:28px;width:100%;max-width:420px;text-align:center;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;text-align:left;">
+        <div>
+          <div style="font-size:14px;font-weight:700;color:var(--text);">Consumer Transparency QR</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">${productName} · Lot ${lot}</div>
+        </div>
+        <button onclick="document.getElementById('trace-qr-modal').remove()" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;">✕</button>
+      </div>
+
+      <!-- QR code via qrserver.com free API -->
+      <div style="background:#fff;border-radius:12px;padding:16px;display:inline-block;margin-bottom:16px;">
+        <img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(traceUrl)}" width="200" height="200" alt="QR Code" style="display:block;">
+      </div>
+
+      <div style="font-size:11px;color:var(--muted);margin-bottom:16px;line-height:1.6;">
+        Print this QR code on your product packaging. When consumers scan it, they see a real-time traceability record and recall status for this lot.
+      </div>
+
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:11px;font-family:'DM Mono',monospace;color:var(--muted);word-break:break-all;text-align:left;margin-bottom:16px;">${traceUrl}</div>
+
+      <div style="display:flex;gap:8px;justify-content:center;">
+        <button onclick="copyTraceUrl('${traceUrl.replace(/'/g,"\\'")}',this)" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 16px;font-size:12px;cursor:pointer;font-family:inherit;">Copy URL</button>
+        <a href="https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(traceUrl)}" download="batchd-qr-${lot.replace(/[^a-zA-Z0-9]/g,'-')}.png" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:8px 16px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;text-decoration:none;">↓ Download QR</a>
+      </div>
+    </div>`;
+
+  document.body.appendChild(modal);
+}
+
+function copyTraceUrl(url, btn) {
+  navigator.clipboard.writeText(url).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = '✓ Copied';
+    btn.style.color = 'var(--accent)';
+    setTimeout(() => { btn.textContent = orig; btn.style.color = 'var(--text)'; }, 2000);
+  });
 }
 </script>
