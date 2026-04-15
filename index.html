@@ -7342,6 +7342,12 @@ async function checkRecallsOnLogin(silent = false) {
 
     loginRecallMatches = [];
     for (const recall of uniqueRecalls) {
+      // Product-name-only recalls (no lot number) are too ambiguous to alert on at login.
+      // They remain searchable and visible in the recalls list, but won't trigger the
+      // login alert modal. Only recalls with a lot number or barcode generate alerts.
+      const hasLotOrBarcode = recall.lot_number || recall.barcode_number;
+      if (!hasLotOrBarcode && recall.source !== 'manufacturer_push') continue;
+
       const exactScans    = recentScans.filter(r => recallMatchLevel(r, recall).level === 'exact');
       const possibleScans = recentScans.filter(r => recallMatchLevel(r, recall).level === 'possible');
       if (exactScans.length || possibleScans.length) {
@@ -7703,8 +7709,10 @@ function renderRecallsList() {
           ${r.active
             ? `<span style="color:var(--danger);font-size:10px;font-weight:600;">● ${currentLang==='no'?'AKTIV':'ACTIVE'}</span>`
             : `<span style="color:var(--muted);font-size:10px;">${currentLang==='no'?'inaktiv':'inactive'}</span>`}
+          ${r.potential_duplicate ? `<span title="A manufacturer or manual recall for this product/lot already exists in the system — this may be a duplicate." style="font-size:10px;font-family:'DM Mono',monospace;padding:1px 6px;border-radius:4px;background:rgba(56,189,248,0.12);color:var(--info);border:1px solid rgba(56,189,248,0.25);cursor:help;">⚡ ${currentLang==='no'?'Mulig duplikat':'Possible duplicate'}</span>` : ''}
         </div>
         ${r.description ? `<div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5;">${esc(r.description.slice(0,120))}${r.description.length>120?'…':''}</div>` : ''}
+        ${r.potential_duplicate ? `<div style="font-size:11px;color:var(--info);margin-top:4px;line-height:1.5;">⚡ ${currentLang==='no'?'En produsent- eller manuell tilbakekalling for dette produktet/partiet finnes allerede — dette kan være et duplikat fra'+' '+esc(r.duplicate_source||'ukjent kilde'):'A '+esc(r.duplicate_source||'manufacturer')+' recall for this product/lot already exists in the system — this may be a duplicate from an external feed matching an existing record.'}</div>` : ''}
       </div>
       <div class="recall-item-actions" style="display:flex;align-items:center;">
         <span style="font-size:10px;color:${r.active?'var(--danger)':'var(--muted)'};font-family:'DM Mono',monospace;font-weight:600;">${r.active?(currentLang==='no'?'AKTIV':'ACTIVE'):(currentLang==='no'?'inaktiv':'inactive')}</span>
@@ -7825,6 +7833,50 @@ async function fetchExternalRecalls() {
   if (btn) { btn.disabled = false; btn.textContent = '↓ Fetch latest recalls now'; }
 }
 
+// Check if a new external recall (FDA/Mattilsynet) duplicates an existing
+// manufacturer-push recall_event or manual recall for the same product+lot.
+// Returns { source, id, product_name } if duplicate found, else null.
+async function checkRecallDuplicate(productName, lotNumber, incomingSource) {
+  if (!lotNumber || !productName) return null;
+  const lotLow = lotNumber.toLowerCase().trim();
+  const nameLow = productName.toLowerCase().trim().slice(0, 60);
+
+  // Check recall_events (manufacturer pushes) — same lot
+  const { data: events } = await sb.from('recall_events')
+    .select('id, product_name, lot_number, source_org_id')
+    .ilike('lot_number', '%' + lotLow.slice(0, 20) + '%')
+    .limit(10);
+
+  for (const ev of (events || [])) {
+    const evLot = (ev.lot_number || '').toLowerCase().trim();
+    const evName = (ev.product_name || '').toLowerCase().trim();
+    if (evLot && lotLow && (evLot.includes(lotLow) || lotLow.includes(evLot)) && evLot.length >= 4) {
+      if (evName && (evName.includes(nameLow.slice(0,20)) || nameLow.includes(evName.slice(0,20)))) {
+        return { source: 'manufacturer_push', id: ev.id, product_name: ev.product_name };
+      }
+    }
+  }
+
+  // Check existing manual recalls for same lot
+  const { data: manuals } = await sb.from('recalls')
+    .select('id, product_name, lot_number, source')
+    .eq('organisation_id', _currentOrgId)
+    .eq('source', 'manual')
+    .ilike('lot_number', '%' + lotLow.slice(0, 20) + '%')
+    .limit(5);
+
+  for (const m of (manuals || [])) {
+    const mLot = (m.lot_number || '').toLowerCase().trim();
+    const mName = (m.product_name || '').toLowerCase().trim();
+    if (mLot && lotLow && (mLot.includes(lotLow) || lotLow.includes(mLot)) && mLot.length >= 4) {
+      if (mName && (mName.includes(nameLow.slice(0,20)) || nameLow.includes(mName.slice(0,20)))) {
+        return { source: 'manual', id: m.id, product_name: m.product_name };
+      }
+    }
+  }
+  return null;
+}
+
 async function fetchFDARecalls() {
   const url = 'https://api.fda.gov/food/enforcement.json?search=status:Ongoing&limit=50&sort=report_date:desc';
   const resp = await fetch(url);
@@ -7834,7 +7886,7 @@ async function fetchFDARecalls() {
   let added = 0;
   for (const r of results) {
     if (!r.recall_number) continue; // skip records without a unique ID
-    // Dedup by recall_number stored as [H-XXXX-YYYY] tag in description
+    // Dedup by recall_number tag
     const tag = '[' + r.recall_number + ']';
     const { data: existing } = await sb.from('recalls')
       .select('id')
@@ -7843,13 +7895,24 @@ async function fetchFDARecalls() {
       .ilike('description', '%' + r.recall_number + '%')
       .maybeSingle();
     if (existing) continue;
+
+    // Check if a manufacturer-push or manual recall already covers this product+lot
+    const newLot = r.code_info?.slice(0, 200) || null;
+    const newProduct = r.product_description?.slice(0, 120) || '';
+    const potentialDup = newLot
+      ? await checkRecallDuplicate(newProduct, newLot, 'fda')
+      : null;
+
     const { error } = await sb.from('recalls').insert({
-      product_name:    r.product_description?.slice(0, 120) || 'FDA Recall',
-      lot_number:      r.code_info?.slice(0, 200) || null,
-      description:     (r.reason_for_recall || '').slice(0, 190) + ' ' + tag,
-      source:          'fda',
-      active:          true,
-      organisation_id: _currentOrgId,
+      product_name:       newProduct || 'FDA Recall',
+      lot_number:         newLot,
+      description:        (r.reason_for_recall || '').slice(0, 190) + ' ' + tag,
+      source:             'fda',
+      active:             true,
+      organisation_id:    _currentOrgId,
+      potential_duplicate: potentialDup ? true : false,
+      duplicate_source:    potentialDup?.source || null,
+      duplicate_ref:       potentialDup?.id || null,
     });
     if (!error) added++;
   }
@@ -7906,12 +7969,25 @@ async function fetchMattilsynetRecalls() {
       const { data: existing } = await sb.from('recalls')
         .select('id').ilike('product_name', title.slice(0, 80)).eq('organisation_id', _currentOrgId).maybeSingle();
       if (existing) continue;
+      // Try to extract a lot number from the title/description
+      const lotMatch = (title + ' ' + desc).match(/(?:parti(?:nummer)?|lot|batch|lotnr)[:\s.#]+([A-Z0-9][A-Z0-9\s\-./]{2,20})/i);
+      const extractedLot = lotMatch ? lotMatch[1].trim().slice(0, 50) : null;
+
+      // Check for duplicate against manufacturer-push or manual recalls
+      const potentialDup = extractedLot
+        ? await checkRecallDuplicate(title, extractedLot, 'mattilsynet')
+        : null;
+
       const { error } = await sb.from('recalls').insert({
-        product_name:    title.slice(0, 120),
-        description:     (desc.replace(/<[^>]+>/g, '')).slice(0, 200) + (link ? ' [mattilsynet.no]' : ''),
-        source:          'mattilsynet',
-        active:          true,
-        organisation_id: _currentOrgId,
+        product_name:        title.slice(0, 120),
+        lot_number:          extractedLot,
+        description:         (desc.replace(/<[^>]+>/g, '')).slice(0, 200) + (link ? ' [mattilsynet.no]' : ''),
+        source:              'mattilsynet',
+        active:              true,
+        organisation_id:     _currentOrgId,
+        potential_duplicate: potentialDup ? true : false,
+        duplicate_source:    potentialDup?.source || null,
+        duplicate_ref:       potentialDup?.id || null,
       });
       if (!error) added++;
     }
