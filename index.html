@@ -8326,15 +8326,40 @@ function levenshtein(a, b) {
 }
 
 function fuzzyProductMatch(recallProduct, scanProduct) {
-  if (!recallProduct || !scanProduct) return true; // no product to match against
-  const a = recallProduct.toLowerCase();
-  const b = scanProduct.toLowerCase();
-  // Either contains the other, or share significant words
+  // If recall has no product name we cannot match — never return a false positive
+  if (!recallProduct) return false;
+  if (!scanProduct) return false;
+
+  const a = recallProduct.toLowerCase().trim();
+  const b = scanProduct.toLowerCase().trim();
+
+  // Strip common Norwegian recall prefixes before comparing
+  // e.g. "Nortura SA tilbakekaller Gilde ternet storfekjøtt" → "gilde ternet storfekjøtt"
+  const recallPrefixRe = /^.{0,60}tilbakekall[a-z]*\s+/i;
+  const aClean = a.replace(recallPrefixRe, '').trim();
+
+  // Exact or strong substring match on cleaned product name
+  if (b.includes(aClean) || aClean.includes(b)) return true;
   if (b.includes(a) || a.includes(b)) return true;
-  const aWords = a.split(/\s+/).filter(w => w.length > 3);
-  const bWords = b.split(/\s+/).filter(w => w.length > 3);
-  const shared = aWords.filter(w => bWords.some(bw => bw.includes(w) || w.includes(bw)));
-  return shared.length >= Math.min(1, aWords.length);
+
+  // Word-based: require at least 2 significant shared words (length > 3)
+  // AND the shared words must represent > 40% of the shorter product name
+  const STOP_WORDS = new Set(['with','from','and','the','for','som','med','til','fra','av','og','på','er','en','et','de','den','det','ikke','har','kan','ved','ble']);
+  const sigWords = s => s.split(/[\s,./\-]+/)
+    .filter(w => w.length > 3 && !STOP_WORDS.has(w));
+
+  const aWords = sigWords(aClean || a);
+  const bWords = sigWords(b);
+  if (!aWords.length || !bWords.length) return false;
+
+  const shared = aWords.filter(w => bWords.some(bw => bw === w || (w.length > 5 && (bw.includes(w) || w.includes(bw)))));
+
+  // Require at least 2 shared significant words
+  if (shared.length < 2) return false;
+
+  // Shared words must cover a meaningful fraction of both names
+  const coverage = shared.length / Math.min(aWords.length, bWords.length);
+  return coverage >= 0.4;
 }
 
 // Core: compare a scan lot against a recall lot
@@ -8352,14 +8377,14 @@ function lotMatchLevel(scanLot, recallLot) {
   const rNorm = normaliseForFuzzy(rl);
   if (sNorm === rNorm) return 'exact';
 
-  // 3. Prefix/substring match — the query must be at least 3 normalised chars
-  //    to avoid single-letter noise ("L"→"1") matching everything
+  // 3. Prefix/substring match — require at least 4 normalised chars to avoid
+  //    single-letter or short token noise ("L"→"1", "B2" matching everything)
   const normMinLen = Math.min(sNorm.length, rNorm.length);
-  if (normMinLen >= 1 && (sNorm.includes(rNorm) || rNorm.includes(sNorm))) return 'exact';
+  if (normMinLen >= 4 && (sNorm.includes(rNorm) || rNorm.includes(sNorm))) return 'exact';
 
-  // 4. Raw substring — require 4+ chars on the shorter side (less aggressive)
+  // 4. Raw substring — require 5+ chars on the shorter side to be meaningful
   const rawMinLen = Math.min(sLow.length, rLow.length);
-  if (rawMinLen >= 1 && (sLow.includes(rLow) || rLow.includes(sLow))) return 'exact';
+  if (rawMinLen >= 5 && (sLow.includes(rLow) || rLow.includes(sLow))) return 'exact';
 
   // 5. Levenshtein fuzzy match — needs at least 3 normalised chars
   if (sNorm.length < 1 || rNorm.length < 1) return null;
@@ -8390,11 +8415,9 @@ function recallMatchLevel(scanRecord, recall) {
     if (level) return { level, recall };
   }
 
-  // Product name only match (no lot on recall) — exact product match = possible
+  // Product name only match (no lot on recall) — only flag as possible, never exact
+  // Require productMatch to have already passed the strict 2-word threshold
   if (!recall.lot_number && recall.product_name && productMatch) {
-    const pLow = (scanRecord.product_name||'').toLowerCase();
-    const rLow = (recall.product_name||'').toLowerCase();
-    if (pLow.includes(rLow) || rLow.includes(pLow)) return { level: 'exact', recall };
     return { level: 'possible', recall };
   }
 

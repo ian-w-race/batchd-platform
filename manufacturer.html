@@ -250,6 +250,11 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         Trading Partners
       </button>
+      <div class="nav-section">Account</div>
+      <button class="nav-item" onclick="showPanel('settings')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        Settings
+      </button>
     </nav>
     <div class="sidebar-footer">
       <div class="user-chip">
@@ -360,12 +365,12 @@ async function initPortal(user) {
 
 // ── Panel router ───────────────────────────────────────────────
 function showPanel(name) {
-  const titles = { overview:'Dashboard', push:'Push a Recall', history:'Recall History', acknowledgements:'Acknowledgements', partners:'Trading Partners', shipments:'Shipments', products:'Products', lots:'Lot Codes', triage:'Complaint Triage', widget:'Widget Setup', investigations:'Investigations' };
+  const titles = { overview:'Dashboard', push:'Push a Recall', history:'Recall History', acknowledgements:'Acknowledgements', partners:'Trading Partners', shipments:'Shipments', products:'Products', lots:'Lot Codes', triage:'Complaint Triage', widget:'Widget Setup', investigations:'Investigations', settings:'Settings' };
   document.getElementById('topbar-title').textContent = titles[name] || name;
   document.querySelectorAll('.nav-item').forEach(el => {
     el.classList.toggle('active', el.getAttribute('onclick')?.includes(`'${name}'`));
   });
-  const fns = { overview: renderOverview, push: renderPush, history: renderHistory, acknowledgements: renderAcknowledgements, partners: renderPartners, products: renderProducts, lots: renderLots, shipments: renderShipments, patterns: renderPatterns, triage: renderTriage, widget: renderWidgetSetup, investigations: renderInvestigations };
+  const fns = { overview: renderOverview, push: renderPush, history: renderHistory, acknowledgements: renderAcknowledgements, partners: renderPartners, products: renderProducts, lots: renderLots, shipments: renderShipments, patterns: renderPatterns, triage: renderTriage, widget: renderWidgetSetup, investigations: renderInvestigations, settings: renderMfrSettings };
   (fns[name] || (() => {}))();
 }
 
@@ -3036,5 +3041,143 @@ async function escalateInvestigationToRecall(id) {
     is_drill: false,
   };
   showPanel('push');
+}
+</script>
+
+<script>
+// ── MANUFACTURER SETTINGS ──────────────────────────────────────
+
+async function renderMfrSettings() {
+  const el = document.getElementById('main-content');
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
+
+  const { data: org } = await sb.from('organisations')
+    .select('name, contact_email, region, type')
+    .eq('id', _orgId).single();
+
+  const { data: member } = await sb.from('organisation_members')
+    .select('role')
+    .eq('organisation_id', _orgId)
+    .eq('user_id', (await sb.auth.getUser()).data?.user?.id)
+    .single();
+
+  const session = await sb.auth.getUser();
+  const userEmail = session.data?.user?.email || '';
+
+  el.innerHTML = `
+    <div style="max-width:580px;display:flex;flex-direction:column;gap:20px;">
+      <div>
+        <div style="font-size:15px;font-weight:600;color:var(--text);">Settings</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px;">Manage your organisation profile and account preferences.</div>
+      </div>
+
+      <!-- Organisation profile -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px;display:flex;flex-direction:column;gap:14px;">
+        <div style="font-size:13px;font-weight:600;color:var(--text);border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:2px;">Organisation Profile</div>
+
+        <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Organisation name</label>
+        <input id="mfr-set-name" type="text" value="${(org?.name||'').replace(/"/g,'&quot;')}" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 11px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+
+        <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Contact email <span style="opacity:0.6;">(used for trading partner notifications)</span></label>
+        <input id="mfr-set-email" type="email" value="${(org?.contact_email||'').replace(/"/g,'&quot;')}" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 11px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+
+        <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px;">Primary market</label>
+        <div style="display:flex;gap:8px;">
+          <button onclick="selectMfrRegion('no')" id="mfr-reg-no" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:all 0.15s;">🇳🇴 Norway / EU</button>
+          <button onclick="selectMfrRegion('us')" id="mfr-reg-us" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:all 0.15s;">🇺🇸 United States</button>
+          <button onclick="selectMfrRegion('both')" id="mfr-reg-both" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:all 0.15s;">🌍 Both</button>
+        </div>
+        <input type="hidden" id="mfr-set-region" value="${org?.region||'no'}"></div>
+
+        <div id="mfr-set-msg" style="display:none;border-radius:7px;padding:9px 12px;font-size:12px;"></div>
+        <div style="display:flex;justify-content:flex-end;">
+          <button onclick="saveMfrSettings()" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;">Save changes</button>
+        </div>
+      </div>
+
+      <!-- Account -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px;">
+        <div style="font-size:13px;font-weight:600;color:var(--text);border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:14px;">Account</div>
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div>
+              <div style="font-size:13px;color:var(--text);">${userEmail}</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:2px;">${member?.role === 'mfr_admin' ? 'Manufacturer Admin' : member?.role === 'mfr_qa' ? 'QA / Food Safety' : member?.role || 'Member'}</div>
+            </div>
+            <span style="font-size:10px;font-family:'DM Mono',monospace;padding:3px 9px;border-radius:5px;background:rgba(52,211,153,0.1);color:var(--accent);font-weight:700;">ACTIVE</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Recall notification preferences -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px;display:flex;flex-direction:column;gap:14px;">
+        <div style="font-size:13px;font-weight:600;color:var(--text);border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:2px;">Recall Coordinator</div>
+        <div style="font-size:12px;color:var(--muted);line-height:1.6;">Designated contact for recall communications. Name and contact details are included in recall push notifications to retailers.</div>
+
+        <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Coordinator name</label>
+        <input id="mfr-coord-name" type="text" placeholder="Full name and title" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 11px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+
+        <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Direct phone / contact</label>
+        <input id="mfr-coord-contact" type="text" placeholder="+47 xxx xx xxx or email" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 11px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+
+        <div id="mfr-coord-msg" style="display:none;border-radius:7px;padding:9px 12px;font-size:12px;"></div>
+        <div style="display:flex;justify-content:flex-end;">
+          <button onclick="saveMfrCoordinator()" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;">Save coordinator</button>
+        </div>
+      </div>
+
+      <!-- Danger zone -->
+      <div style="background:rgba(255,92,92,0.04);border:1px solid rgba(255,92,92,0.2);border-radius:12px;padding:18px;">
+        <div style="font-size:13px;font-weight:600;color:var(--danger);margin-bottom:8px;">Danger Zone</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">Permanently delete your organisation and all associated data. This cannot be undone.</div>
+        <button onclick="if(confirm('Are you sure? This will permanently delete your organisation and all data.')) showToast('Please contact support@batchdapp.com to delete your account.','warn',5000)" style="background:transparent;border:1px solid rgba(255,92,92,0.4);color:var(--danger);border-radius:8px;padding:7px 14px;font-size:12px;cursor:pointer;font-family:inherit;">Delete organisation…</button>
+      </div>
+    </div>`;
+
+  // Highlight current region
+  selectMfrRegion(org?.region || 'no');
+}
+
+function selectMfrRegion(val) {
+  document.getElementById('mfr-set-region').value = val;
+  ['no','us','both'].forEach(k => {
+    const btn = document.getElementById('mfr-reg-' + k);
+    if (!btn) return;
+    btn.style.background = k === val ? 'rgba(52,211,153,0.1)' : 'var(--surface2)';
+    btn.style.borderColor = k === val ? 'var(--accent)' : 'var(--border)';
+    btn.style.color = k === val ? 'var(--accent)' : 'var(--text)';
+  });
+}
+
+async function saveMfrSettings() {
+  const name   = document.getElementById('mfr-set-name')?.value.trim();
+  const email  = document.getElementById('mfr-set-email')?.value.trim();
+  const region = document.getElementById('mfr-set-region')?.value;
+  const msg    = document.getElementById('mfr-set-msg');
+  if (!name) { showMfrMsg(msg, 'Organisation name is required.', 'error'); return; }
+  const { error } = await sb.from('organisations').update({ name, contact_email: email, region }).eq('id', _orgId);
+  if (error) { showMfrMsg(msg, 'Error: ' + error.message, 'error'); return; }
+  _orgName = name;
+  document.getElementById('topbar-sub').textContent = _orgName + ' · ' + (_userRole === 'corp_admin' ? 'Corp Admin' : 'Manufacturer');
+  showMfrMsg(msg, '✓ Changes saved', 'ok');
+}
+
+async function saveMfrCoordinator() {
+  const name    = document.getElementById('mfr-coord-name')?.value.trim();
+  const contact = document.getElementById('mfr-coord-contact')?.value.trim();
+  const msg     = document.getElementById('mfr-coord-msg');
+  const { error } = await sb.from('organisations').update({ recall_coordinator_name: name, recall_coordinator_contact: contact }).eq('id', _orgId);
+  if (error) { showMfrMsg(msg, 'Error: ' + error.message, 'error'); return; }
+  showMfrMsg(msg, '✓ Coordinator saved', 'ok');
+}
+
+function showMfrMsg(el, txt, type) {
+  if (!el) return;
+  el.style.display = 'block';
+  el.style.background = type === 'error' ? 'rgba(255,92,92,0.1)' : 'rgba(52,211,153,0.1)';
+  el.style.color = type === 'error' ? 'var(--danger)' : 'var(--accent)';
+  el.style.border = `1px solid ${type === 'error' ? 'rgba(255,92,92,0.3)' : 'rgba(52,211,153,0.3)'}`;
+  el.textContent = txt;
+  setTimeout(() => { el.style.display = 'none'; }, 3000);
 }
 </script>
