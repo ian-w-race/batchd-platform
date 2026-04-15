@@ -1,144 +1,186 @@
 // netlify/functions/recall-feeds.js
-// Proxies external recall feeds to avoid CORS issues in the browser
-// Cached 30 minutes per source
+// Proxies RASFF and Mattilsynet recall feeds, normalises to RSS-compatible XML
 
-const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
-const cache = {};
-
-const SOURCES = {
-  rasff: {
-    // EU RASFF public RSS — multiple URL variants as the EU reorganises endpoints
-    url: 'https://webgate.ec.europa.eu/rasff-window/backend/public/consumer/rss/feed.rss',
-    fallback: 'https://webgate.ec.europa.eu/rasff-window/backend/public/consumer/notification/rss/all',
-    fallback2: 'https://webgate.ec.europa.eu/rasff-window/screen/rss.cfm',
-    contentType: 'application/xml'
-  },
-  mattilsynet_rss: {
-    // Mattilsynet restructured their site — try current paths first
-    url: 'https://www.mattilsynet.no/mat-og-vann/mattrygghet/tilbakekallinger/feed.rss',
-    fallback: 'https://www.mattilsynet.no/tilbakekallinger.rss',
-    fallback2: 'https://www.mattilsynet.no/rss/nyheter.rss',
-    contentType: 'application/xml'
-  },
-  mattilsynet_page: {
-    url: 'https://www.mattilsynet.no/mat-og-vann/mattrygghet/tilbakekallinger/',
-    fallback: 'https://www.mattilsynet.no/tilbakekallinger/',
-    contentType: 'text/html'
-  }
+const headers = {
+  'Access-Control-Allow-Origin': '*',
+  'Content-Type': 'application/xml; charset=utf-8',
 };
 
 exports.handler = async (event) => {
+  if (event.httpMethod === 'OPTIONS') {
+    return { statusCode: 200, headers: { 'Access-Control-Allow-Origin': '*' }, body: '' };
+  }
+
   const source = event.queryStringParameters?.source;
 
-  if (!source || !SOURCES[source]) {
-    return {
-      statusCode: 400,
-      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-      body: JSON.stringify({ error: 'Invalid source. Use: rasff, mattilsynet_rss, mattilsynet_page' })
-    };
-  }
-
-  // Check cache
-  const now = Date.now();
-  if (cache[source] && (now - cache[source].ts) < CACHE_TTL) {
-    return {
-      statusCode: 200,
-      headers: {
-        'Content-Type': SOURCES[source].contentType,
-        'Access-Control-Allow-Origin': '*',
-        'X-Cache': 'HIT'
-      },
-      body: cache[source].body
-    };
-  }
-
-  const cfg = SOURCES[source];
-  let body = null;
-  let lastError = null;
-
-  // Try primary URL
   try {
-    const res = await fetch(cfg.url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; Batchd/1.0; +https://batchd.no)',
-        'Accept': 'application/rss+xml, application/xml, text/xml, text/html, */*'
-      },
-      signal: AbortSignal.timeout(8000)
-    });
-    if (res.ok) {
-      body = await res.text();
-    } else {
-      lastError = `Primary URL returned ${res.status}`;
-    }
+    if (source === 'rasff')            return await fetchRASFF();
+    if (source === 'mattilsynet_rss')  return await fetchMattilsynet();
+    if (source === 'mattilsynet_page') return await fetchMattilsynet(); // same handler
+    return { statusCode: 400, headers, body: xmlError('Unknown source: ' + source) };
   } catch (e) {
-    lastError = `Primary URL failed: ${e.message}`;
-    console.warn(`[recall-feeds] ${source} primary failed:`, e.message);
+    console.error('[recall-feeds]', source, e.message);
+    return { statusCode: 502, headers, body: xmlError(e.message) };
   }
-
-  // Try fallback URL if primary failed
-  if (!body && cfg.fallback) {
-    try {
-      const res2 = await fetch(cfg.fallback, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; Batchd/1.0; +https://batchd.no)',
-          'Accept': 'application/rss+xml, application/xml, text/xml, */*'
-        },
-        signal: AbortSignal.timeout(8000)
-      });
-      if (res2.ok) {
-        body = await res2.text();
-        lastError = null;
-      } else {
-        lastError = (lastError || '') + ` | Fallback returned ${res2.status}`;
-      }
-    } catch (e2) {
-      lastError = (lastError || '') + ` | Fallback failed: ${e2.message}`;
-      console.warn(`[recall-feeds] ${source} fallback failed:`, e2.message);
-    }
-  }
-
-  // Try fallback2 if both primary and fallback failed
-  if (!body && cfg.fallback2) {
-    try {
-      const res3 = await fetch(cfg.fallback2, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; Batchd/1.0; +https://batchd.no)',
-          'Accept': 'application/rss+xml, application/xml, text/xml, text/html, */*'
-        },
-        signal: AbortSignal.timeout(8000)
-      });
-      if (res3.ok) {
-        body = await res3.text();
-        lastError = null;
-      } else {
-        lastError = (lastError || '') + ` | Fallback2 returned ${res3.status}`;
-      }
-    } catch (e3) {
-      lastError = (lastError || '') + ` | Fallback2 failed: ${e3.message}`;
-      console.warn(`[recall-feeds] ${source} fallback2 failed:`, e3.message);
-    }
-  }
-
-  if (!body) {
-    console.error(`[recall-feeds] ${source} all attempts failed: ${lastError}`);
-    return {
-      statusCode: 502,
-      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-      body: JSON.stringify({ error: `Feed unavailable: ${lastError}` })
-    };
-  }
-
-  // Cache and return
-  cache[source] = { body, ts: now };
-
-  return {
-    statusCode: 200,
-    headers: {
-      'Content-Type': cfg.contentType,
-      'Access-Control-Allow-Origin': '*',
-      'X-Cache': 'MISS',
-      'Cache-Control': 'public, max-age=1800'
-    },
-    body
-  };
 };
+
+// ── RASFF ────────────────────────────────────────────────────────
+// Uses the RASFF Window backend JSON API — more stable than RSS
+async function fetchRASFF() {
+  const url = 'https://webgate.ec.europa.eu/rasff-window/backend/public/consumer/notification/search' +
+    '?page=0&size=30&sortField=publicationDate&sortDir=DESC';
+
+  const resp = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (compatible; Batchd/1.0; +https://batchd.no)',
+      'Accept': 'application/json, */*',
+      'Referer': 'https://webgate.ec.europa.eu/rasff-window/screen/',
+    },
+    signal: AbortSignal.timeout(12000),
+  });
+
+  if (!resp.ok) {
+    throw new Error(`RASFF API returned ${resp.status}`);
+  }
+
+  const json = await resp.json();
+  const items = json?.results || json?.content || json?.notifications || json || [];
+
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new Error('RASFF returned empty or unexpected format');
+  }
+
+  // Normalise to RSS XML so existing client parser works unchanged
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>RASFF Notifications</title>
+    ${items.map(item => {
+      const title = esc(
+        item.subject || item.title || item.productName || item.product ||
+        (item.notifiedProduct ? item.notifiedProduct.productName : null) || 'RASFF Alert'
+      );
+      const desc = esc([
+        item.hazardDescription || item.hazardCategory || '',
+        item.origin ? 'Origin: ' + item.origin : '',
+        item.notificationType ? 'Type: ' + item.notificationType : '',
+        item.referenceNumber ? '[' + item.referenceNumber + ']' : '',
+      ].filter(Boolean).join(' · ').slice(0, 300));
+      const link = esc(item.referenceNumber
+        ? 'https://webgate.ec.europa.eu/rasff-window/screen/?event=notificationDetail&NOTIF_REFERENCE=' + item.referenceNumber
+        : 'https://webgate.ec.europa.eu/rasff-window/screen/');
+      return `    <item>
+      <title>${title}</title>
+      <description>${desc}</description>
+      <link>${link}</link>
+    </item>`;
+    }).join('\n')}
+  </channel>
+</rss>`;
+
+  return { statusCode: 200, headers, body: xml };
+}
+
+// ── MATTILSYNET ──────────────────────────────────────────────────
+// Fetches the tilbakekallinger HTML page and extracts recall items
+async function fetchMattilsynet() {
+  const urls = [
+    'https://www.mattilsynet.no/mat-og-vann/mattrygghet/tilbakekallinger/',
+    'https://www.mattilsynet.no/tilbakekallinger/',
+    'https://www.mattilsynet.no/mat-og-vann/tilbakekallinger/',
+  ];
+
+  let html = null;
+  let lastErr = '';
+
+  for (const url of urls) {
+    try {
+      const resp = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+          'Accept': 'text/html,application/xhtml+xml,*/*',
+          'Accept-Language': 'nb-NO,nb;q=0.9',
+        },
+        signal: AbortSignal.timeout(10000),
+        redirect: 'follow',
+      });
+      if (resp.ok) {
+        html = await resp.text();
+        break;
+      }
+      lastErr = `${url} → ${resp.status}`;
+    } catch (e) {
+      lastErr = `${url} → ${e.message}`;
+    }
+  }
+
+  if (!html) throw new Error('All Mattilsynet URLs failed: ' + lastErr);
+
+  // Extract recall items from the HTML
+  // Look for article/list items containing tilbaketrekking/recall keywords
+  const items = [];
+
+  // Pattern 1: links with tilbakekallinger path + article title
+  const linkMatches = [...html.matchAll(
+    /href="([^"]*tilbakekall[^"]*)"[^>]*>([^<]{5,})</gi
+  )];
+
+  // Pattern 2: article cards / list items
+  const articleMatches = [...html.matchAll(
+    /<(?:article|li|div)[^>]*>[\s\S]{0,500}?(?:tilbaketrekk|tilbakekall|recall)[^<]{0,200}/gi
+  )];
+
+  // Build items from link matches (most reliable)
+  const seen = new Set();
+  for (const m of linkMatches.slice(0, 30)) {
+    const href = m[1];
+    const rawTitle = m[2].trim().replace(/\s+/g, ' ');
+    if (rawTitle.length < 8 || seen.has(href)) continue;
+    seen.add(href);
+    const isRecall = /tilbaketrekk|tilbakekall|recall|trekkes tilbake/i.test(rawTitle + href);
+    if (!isRecall) continue;
+    items.push({
+      title: rawTitle,
+      link: href.startsWith('http') ? href : 'https://www.mattilsynet.no' + href,
+      desc: 'Mattilsynet tilbaketrekking. ' + rawTitle,
+    });
+  }
+
+  // Fallback: extract h-tags near tilbaketrekk keywords
+  if (items.length === 0) {
+    const headingMatches = [...html.matchAll(/<h[2-4][^>]*>([^<]{10,})<\/h[2-4]>/gi)];
+    for (const m of headingMatches) {
+      const title = m[1].trim();
+      if (/tilbaketrekk|tilbakekall/i.test(title)) {
+        items.push({ title, link: 'https://www.mattilsynet.no/mat-og-vann/mattrygghet/tilbakekallinger/', desc: title });
+      }
+    }
+  }
+
+  if (items.length === 0) {
+    throw new Error('No recall items found on Mattilsynet page (structure may have changed)');
+  }
+
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Mattilsynet Tilbakekallinger</title>
+    ${items.map(item => `    <item>
+      <title>${esc(item.title)}</title>
+      <description>${esc(item.desc)}</description>
+      <link>${esc(item.link)}</link>
+      <extra1>Tilbaketrekking</extra1>
+    </item>`).join('\n')}
+  </channel>
+</rss>`;
+
+  return { statusCode: 200, headers, body: xml };
+}
+
+function esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function xmlError(msg) {
+  return `<?xml version="1.0"?><rss version="2.0"><channel><error>${esc(msg)}</error></channel></rss>`;
+}
