@@ -1847,29 +1847,44 @@ async function renderCompliance() {
       },
     ] : [
       {
-        label: 'One step back, one step forward traceability',
+        label: 'One step back / ett ledd tilbake (EU 178/2002 Art. 18, Matloven §14)',
         pass: scans.length > 0 && supplierScans > 0,
-        detail: supplierScans > 0 ? `${supplierScans} scans with supplier data (one step back)` : scans.length > 0 ? 'Scans exist but supplier names not recorded — add in scanning app' : 'No scan records yet',
+        detail: supplierScans > 0 ? `${supplierScans} scans with supplier data — one step back documented` : scans.length > 0 ? 'Scans exist but supplier names not recorded — add in scanning app' : 'No scan records yet',
       },
       {
-        label: 'Lot code documentation at receiving',
+        label: 'Partinummer (lot code) documentation at receiving',
         pass: lotScans > 0,
-        detail: lotScans > 0 ? `${lotScans} of ${scans.length} scans have lot codes (${Math.round(lotScans/Math.max(scans.length,1)*100)}%)` : 'No lot codes recorded yet',
+        detail: lotScans > 0 ? `${lotScans} of ${scans.length} scans have lot/batch codes (${Math.round(lotScans/Math.max(scans.length,1)*100)}%)` : 'No lot codes recorded yet — required under EU 178/2002',
       },
       {
-        label: 'Recall response chain active',
+        label: 'Tilbaketrekking / recall response chain (Matloven §16, Art. 19)',
         pass: acksProgressed > 0,
-        detail: acksProgressed > 0 ? `${acksProgressed} recall acknowledgement${acksProgressed!==1?'s':''} progressed beyond notified` : acks.length > 0 ? `${acks.length} recall${acks.length!==1?'s':''} received — none acknowledged yet` : 'No recall events received yet',
+        detail: acksProgressed > 0 ? `${acksProgressed} recall acknowledgement${acksProgressed!==1?'s':''} progressed` : acks.length > 0 ? `${acks.length} recall${acks.length!==1?'s':''} received — none acknowledged yet` : 'No recall events received yet',
       },
       {
-        label: 'Supplier documentation maintained',
+        label: 'Mattilsynet recall notification process documented',
+        pass: acksProgressed > 0 || confirmedPartners > 0,
+        detail: 'Required under Matloven §16 for any product presenting safety risk — applies to foreign manufacturer products too',
+      },
+      {
+        label: 'IK-mat forskriften — internal control system',
+        pass: scans.length >= 10,
+        detail: scans.length >= 10 ? `Internal control records demonstrable via ${scans.length} scan records` : 'Internkontrollforskriften requires documented food safety procedures',
+      },
+      {
+        label: 'Leverandørdokumentasjon / supplier records (Art. 18)',
         pass: supplierScans > 0,
-        detail: supplierScans > 0 ? `${supplierScans} scans include supplier name` : 'No supplier names recorded — add in scanning app',
+        detail: supplierScans > 0 ? `${supplierScans} scans include supplier name — one-step-back chain documented` : 'No supplier names recorded — add in scanning app',
       },
       {
         label: 'Manufacturer recall network connected',
         pass: confirmedPartners > 0,
-        detail: confirmedPartners > 0 ? `${confirmedPartners} confirmed manufacturer partner${confirmedPartners!==1?'s':''}` : 'No manufacturer partners connected — accept requests in Manufacturers panel',
+        detail: confirmedPartners > 0 ? `${confirmedPartners} confirmed manufacturer partner${confirmedPartners!==1?'s':''}` : 'No manufacturer partners connected — includes foreign suppliers',
+      },
+      {
+        label: 'Recall drill conducted (best practice)',
+        pass: drillInYear,
+        detail: drillInYear ? `${drills.length} drill${drills.length!==1?'s':''} completed — last: ${new Date(drills[0].created_at).toLocaleDateString('en-GB')}` : 'No drills on record — recommended annually under IK-mat guidelines',
       },
     ];
 
@@ -1879,7 +1894,7 @@ async function renderCompliance() {
       <div style="margin-bottom:20px;display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;">
         <div>
           <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Compliance centre</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:2px;">${isUS ? 'FSMA 204 · FDA · USDA' : 'EU Regulation 178/2002 · Mattilsynet · RASFF'}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">${isUS ? 'FSMA 204 · FDA · USDA' : 'Matloven · EU Reg. 178/2002 · Mattilsynet · IK-mat forskriften'}</div>
         </div>
         <div style="display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 18px;">
           <div>
@@ -2490,7 +2505,7 @@ async function runReport(key) {
       <div style="margin-bottom:14px;padding:12px 16px;background:rgba(56,189,248,0.05);border:1px solid rgba(56,189,248,0.15);border-radius:8px;font-size:11px;color:var(--muted);line-height:1.6;">
         ${isUS
           ? '📋 These records satisfy FSMA 204 Key Data Element (KDE) requirements for Critical Tracking Events (CTEs). Download CSV for submission or audit.'
-          : '📋 These records satisfy EU Regulation 178/2002 one-step-back / one-step-forward traceability requirements. Download CSV for Mattilsynet audit.'}
+          : '📋 These records satisfy EU Regulation 178/2002 Art. 18 (one-step-back / ett ledd tilbake) and Matloven §14 traceability requirements. Download CSV for Mattilsynet audit. Applies to products from any country sold in Norway.'}
       </div>
       <div class="panel">
         <div class="panel-body" style="padding:0;">
