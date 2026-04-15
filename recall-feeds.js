@@ -1,75 +1,144 @@
 // netlify/functions/recall-feeds.js
-// Server-side proxy for external recall feeds — avoids CORS issues in the browser.
-// Handles RASFF (EU), Mattilsynet RSS (Norway), and Mattilsynet page scrape fallback.
+// Proxies external recall feeds to avoid CORS issues in the browser
+// Cached 30 minutes per source
 
-const FEEDS = {
-  rasff: 'https://webgate.ec.europa.eu/rasff-window/backend/public/consumer/rss?date_type=publishing&window=30&categories[]=&hazards[]=',
-  mattilsynet_rss: 'https://www.mattilsynet.no/rss?subscription=tilbakekallinger',
-  mattilsynet_page: 'https://www.mattilsynet.no/mat/tilbakekallinger-av-mat',
+const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+const cache = {};
+
+const SOURCES = {
+  rasff: {
+    // EU RASFF public RSS — multiple URL variants as the EU reorganises endpoints
+    url: 'https://webgate.ec.europa.eu/rasff-window/backend/public/consumer/rss/feed.rss',
+    fallback: 'https://webgate.ec.europa.eu/rasff-window/backend/public/consumer/notification/rss/all',
+    fallback2: 'https://webgate.ec.europa.eu/rasff-window/screen/rss.cfm',
+    contentType: 'application/xml'
+  },
+  mattilsynet_rss: {
+    // Mattilsynet restructured their site — try current paths first
+    url: 'https://www.mattilsynet.no/mat-og-vann/mattrygghet/tilbakekallinger/feed.rss',
+    fallback: 'https://www.mattilsynet.no/tilbakekallinger.rss',
+    fallback2: 'https://www.mattilsynet.no/rss/nyheter.rss',
+    contentType: 'application/xml'
+  },
+  mattilsynet_page: {
+    url: 'https://www.mattilsynet.no/mat-og-vann/mattrygghet/tilbakekallinger/',
+    fallback: 'https://www.mattilsynet.no/tilbakekallinger/',
+    contentType: 'text/html'
+  }
 };
 
-const TIMEOUT_MS = 8000;
-
 exports.handler = async (event) => {
-  if (event.httpMethod !== 'GET') {
-    return { statusCode: 405, body: 'Method not allowed' };
-  }
-
   const source = event.queryStringParameters?.source;
-  if (!source || !FEEDS[source]) {
+
+  if (!source || !SOURCES[source]) {
     return {
       statusCode: 400,
-      body: JSON.stringify({ error: `Unknown source: ${source}. Valid: ${Object.keys(FEEDS).join(', ')}` }),
+      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+      body: JSON.stringify({ error: 'Invalid source. Use: rasff, mattilsynet_rss, mattilsynet_page' })
     };
   }
 
-  const url = FEEDS[source];
-
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-
-    const resp = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        'User-Agent': 'Batchd-RecallTracker/1.0 (food safety; contact ian.w.race@gmail.com)',
-        'Accept': source === 'mattilsynet_page'
-          ? 'text/html,application/xhtml+xml'
-          : 'application/rss+xml,application/xml,text/xml,*/*',
-      },
-    });
-
-    clearTimeout(timer);
-
-    if (!resp.ok) {
-      return {
-        statusCode: resp.status,
-        body: JSON.stringify({ error: `Upstream error ${resp.status} from ${source}` }),
-      };
-    }
-
-    const body = await resp.text();
-
+  // Check cache
+  const now = Date.now();
+  if (cache[source] && (now - cache[source].ts) < CACHE_TTL) {
     return {
       statusCode: 200,
       headers: {
-        'Content-Type': source === 'mattilsynet_page' ? 'text/html; charset=utf-8' : 'application/xml; charset=utf-8',
-        'Cache-Control': 'public, max-age=1800',
+        'Content-Type': SOURCES[source].contentType,
+        'Access-Control-Allow-Origin': '*',
+        'X-Cache': 'HIT'
       },
-      body,
-    };
-
-  } catch (err) {
-    if (err.name === 'AbortError') {
-      return {
-        statusCode: 504,
-        body: JSON.stringify({ error: `Timeout fetching ${source} after ${TIMEOUT_MS}ms` }),
-      };
-    }
-    console.error(`recall-feeds error [${source}]:`, err.message);
-    return {
-      statusCode: 502,
-      body: JSON.stringify({ error: err.message }),
+      body: cache[source].body
     };
   }
+
+  const cfg = SOURCES[source];
+  let body = null;
+  let lastError = null;
+
+  // Try primary URL
+  try {
+    const res = await fetch(cfg.url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; Batchd/1.0; +https://batchd.no)',
+        'Accept': 'application/rss+xml, application/xml, text/xml, text/html, */*'
+      },
+      signal: AbortSignal.timeout(8000)
+    });
+    if (res.ok) {
+      body = await res.text();
+    } else {
+      lastError = `Primary URL returned ${res.status}`;
+    }
+  } catch (e) {
+    lastError = `Primary URL failed: ${e.message}`;
+    console.warn(`[recall-feeds] ${source} primary failed:`, e.message);
+  }
+
+  // Try fallback URL if primary failed
+  if (!body && cfg.fallback) {
+    try {
+      const res2 = await fetch(cfg.fallback, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; Batchd/1.0; +https://batchd.no)',
+          'Accept': 'application/rss+xml, application/xml, text/xml, */*'
+        },
+        signal: AbortSignal.timeout(8000)
+      });
+      if (res2.ok) {
+        body = await res2.text();
+        lastError = null;
+      } else {
+        lastError = (lastError || '') + ` | Fallback returned ${res2.status}`;
+      }
+    } catch (e2) {
+      lastError = (lastError || '') + ` | Fallback failed: ${e2.message}`;
+      console.warn(`[recall-feeds] ${source} fallback failed:`, e2.message);
+    }
+  }
+
+  // Try fallback2 if both primary and fallback failed
+  if (!body && cfg.fallback2) {
+    try {
+      const res3 = await fetch(cfg.fallback2, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; Batchd/1.0; +https://batchd.no)',
+          'Accept': 'application/rss+xml, application/xml, text/xml, text/html, */*'
+        },
+        signal: AbortSignal.timeout(8000)
+      });
+      if (res3.ok) {
+        body = await res3.text();
+        lastError = null;
+      } else {
+        lastError = (lastError || '') + ` | Fallback2 returned ${res3.status}`;
+      }
+    } catch (e3) {
+      lastError = (lastError || '') + ` | Fallback2 failed: ${e3.message}`;
+      console.warn(`[recall-feeds] ${source} fallback2 failed:`, e3.message);
+    }
+  }
+
+  if (!body) {
+    console.error(`[recall-feeds] ${source} all attempts failed: ${lastError}`);
+    return {
+      statusCode: 502,
+      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+      body: JSON.stringify({ error: `Feed unavailable: ${lastError}` })
+    };
+  }
+
+  // Cache and return
+  cache[source] = { body, ts: now };
+
+  return {
+    statusCode: 200,
+    headers: {
+      'Content-Type': cfg.contentType,
+      'Access-Control-Allow-Origin': '*',
+      'X-Cache': 'MISS',
+      'Cache-Control': 'public, max-age=1800'
+    },
+    body
+  };
 };
