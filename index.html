@@ -3792,6 +3792,12 @@
           </div>
           <div id="recall-sheet-product" style="font-family:'Figtree',sans-serif;font-size:17px;font-weight:700;color:var(--text);"></div>
           <div id="recall-sheet-meta" style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:3px;"></div>
+          <!-- Recall info banner — shows matched recall description -->
+          <div id="recall-sheet-recall-info" style="display:none;margin-top:10px;background:rgba(245,166,35,0.07);border:1px solid rgba(245,166,35,0.25);border-radius:8px;padding:10px 12px;">
+            <div style="font-size:10px;font-weight:700;letter-spacing:0.07em;text-transform:uppercase;color:var(--warn);margin-bottom:5px;" id="recall-sheet-info-source"></div>
+            <div style="font-size:12px;color:var(--text);font-weight:600;margin-bottom:3px;" id="recall-sheet-info-reason"></div>
+            <div style="font-size:11px;color:var(--muted);line-height:1.5;" id="recall-sheet-info-desc"></div>
+          </div>
         </div>
         <button onclick="closeRecallActionSheet()" style="background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;padding:0;line-height:1;flex-shrink:0;">✕</button>
       </div>
@@ -3832,39 +3838,7 @@
         </div>
       </div>
 
-      <hr style="border:none;border-top:1px solid var(--border);margin:4px 0;" id="recall-step-0-divider" />
 
-      <!-- Step 0: File as system recall — Manager action, shown when opened from recall search -->
-      <div id="recall-step-0" class="recall-action-step" style="display:none;">
-        <div class="recall-step-label" style="cursor:pointer;" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'flex':'none'">
-          <span class="recall-step-num" id="recall-step-0-num" style="background:rgba(245,166,35,0.12);color:var(--warn);font-size:9px;">MGR</span>
-          <span>File as system recall</span>
-          <span style="font-size:10px;color:var(--muted);margin-left:6px;font-family:'DM Mono',monospace;">Manager action</span>
-          <span id="recall-step-0-done" style="display:none;margin-left:auto;font-size:11px;color:var(--accent);font-family:'DM Mono',monospace;">✓ Filed</span>
-        </div>
-        <div id="recall-step-0-body">
-          <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.6;">
-            Broadcast this as an <strong style="color:var(--danger);">active recall</strong> across all stores in Batch'd. Triggers automatic matching against all scan history and alerts all staff on login. Do this after pulling from shelf.
-          </div>
-          <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px;">
-            <div>
-              <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);display:block;margin-bottom:4px;">Recall reason <span style="opacity:0.6;font-style:italic;">(pre-filled if known)</span></label>
-              <input type="text" id="recall-step-0-reason" placeholder="e.g. Undeclared allergen, contamination, foreign body…"
-                style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-family:'DM Mono',monospace;font-size:12px;color:var(--text);outline:none;box-sizing:border-box;" />
-            </div>
-          </div>
-          <div style="display:flex;gap:8px;align-items:center;">
-            <button id="recall-step-0-btn" onclick="recallActionFileRecall()" style="flex:1;padding:11px;background:var(--warn);border:none;border-radius:10px;color:#1a0f00;font-family:'DM Mono',monospace;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-              File recall for all stores
-            </button>
-          </div>
-          <div id="recall-step-0-msg" style="font-size:11px;margin-top:8px;min-height:16px;font-family:'DM Mono',monospace;"></div>
-        </div>
-        <div id="recall-step-0-done-body" style="display:none;">
-          <div style="font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;padding:4px 0 8px;" id="recall-step-0-confirmed"></div>
-        </div>
-      </div>
 
       <!-- Step 2: Where is it now -->
       <div id="recall-step-2" class="recall-action-step">
@@ -14200,6 +14174,33 @@ function openRecallActionSheet(scanId) {
   if (r.scanned_by)   metaParts.push(r.scanned_by.split('@')[0]);
   document.getElementById('recall-sheet-meta').textContent = metaParts.join(' · ');
 
+  // Find and display the matched recall's reason/description
+  const infoEl   = document.getElementById('recall-sheet-recall-info');
+  const srcEl    = document.getElementById('recall-sheet-info-source');
+  const reasonEl2 = document.getElementById('recall-sheet-info-reason');
+  const descEl   = document.getElementById('recall-sheet-info-desc');
+  if (infoEl) {
+    // Match against recalls in memory (loginRecallMatches) or loaded allRecalls
+    const matchedR = (loginRecallMatches || []).find(m =>
+      (r.lot_number && m.recall.lot_number && r.lot_number.toLowerCase().includes(m.recall.lot_number.toLowerCase())) ||
+      (r.product_name && m.recall.product_name && r.product_name.toLowerCase().includes(m.recall.product_name.toLowerCase()))
+    );
+    const rec = matchedR?.recall;
+    if (rec) {
+      const src = (rec.source || 'manual').toUpperCase();
+      const srcLabel = src === 'FDA' ? 'FDA Recall' : src === 'RASFF' ? 'EU RASFF Alert' : src === 'MATTILSYNET' ? 'Mattilsynet' : src === 'MANUFACTURER_PUSH' ? 'Manufacturer Alert' : 'Manual Recall';
+      if (srcEl) srcEl.textContent = srcLabel + (rec.lot_number ? ' · Lot: ' + rec.lot_number : '');
+      if (reasonEl2) reasonEl2.textContent = rec.reason_for_recall || rec.reason || rec.description?.split('[')[0]?.trim() || '';
+      // Description may contain the reason — show remaining detail
+      const fullDesc = rec.description || '';
+      const cleanDesc = fullDesc.replace(rec.reason_for_recall || '', '').replace(rec.reason || '', '').trim();
+      if (descEl) descEl.textContent = cleanDesc.slice(0, 200) + (cleanDesc.length > 200 ? '…' : '');
+      infoEl.style.display = (reasonEl2?.textContent || descEl?.textContent) ? 'block' : 'none';
+    } else {
+      infoEl.style.display = 'none';
+    }
+  }
+
   // Exposure window
   const expEl = document.getElementById('recall-sheet-exposure');
   if (r.created_at) {
@@ -14219,7 +14220,6 @@ function openRecallActionSheet(scanId) {
   }
 
   // Reset steps
-  _resetRecallStep0(r);
   _resetRecallStep1(r);
   _resetRecallStep2(r);
   _populateRecallDetails(r);
