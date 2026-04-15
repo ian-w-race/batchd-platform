@@ -7517,6 +7517,7 @@ async function setRecallSource(source) {
 }
 
 let _allRecallsCache = [];
+let _externalFetchInProgress = false;
 const RECALLS_PAGE_SIZE = 6;
 let _recallsShown = RECALLS_PAGE_SIZE;
 let _recallsFilter = '';
@@ -7541,12 +7542,13 @@ async function loadRecallsList() {
     renderRecallSourcePills();
     renderRecallsList();
 
-    // Auto-fetch if source includes RASFF/Mattilsynet but none are stored yet
-    if ((recallSource === 'rasff' || recallSource === 'both') &&
+    // Auto-fetch once if source includes RASFF/Mattilsynet but none stored yet
+    // Use a flag to prevent infinite loop (fetchAndRefreshRecalls calls loadRecallsList)
+    if (!_externalFetchInProgress &&
+        (recallSource === 'rasff' || recallSource === 'both') &&
         !_allRecallsCache.some(r => r.source === 'rasff' || r.source === 'mattilsynet')) {
       const statusEl = document.getElementById('settings-fetch-status');
-      if (statusEl) { statusEl.style.display = 'block'; statusEl.style.color = 'var(--muted)'; statusEl.textContent = 'No RASFF / Mattilsynet records found — fetching now…'; }
-      fetchAndRefreshRecalls();
+      if (statusEl) { statusEl.style.display = 'block'; statusEl.style.color = 'var(--muted)'; statusEl.textContent = 'No RASFF / Mattilsynet records found — click “Fetch now” to import them.'; }
     }
   } catch(e) {
     el.innerHTML = `<div style="font-size:13px;color:var(--danger);">Error: ${e.message}</div>`;
@@ -7561,6 +7563,8 @@ function setRecallSourceFilter(src) {
 }
 
 async function fetchAndRefreshRecalls() {
+  if (_externalFetchInProgress) return;
+  _externalFetchInProgress = true;
   const btn = document.getElementById('settings-fetch-btn');
   const statusEl = document.getElementById('settings-fetch-status');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Fetching…'; }
@@ -7590,6 +7594,7 @@ async function fetchAndRefreshRecalls() {
     statusEl.textContent = results.join(' · ') || 'Done.';
   }
   if (btn) { btn.disabled = false; btn.textContent = '↓ Fetch now'; }
+  _externalFetchInProgress = false;
 
   // Reload the list to show new records
   await loadRecallsList();
