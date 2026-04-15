@@ -3025,16 +3025,18 @@
         <div class="settings-section-sub"><span data-i18n="settings.activeRecallsSub">Recalls currently being checked against your scan history.</span></div>
       </div>
       <div class="settings-section-body">
-        <div style="display:flex;gap:8px;margin-bottom:10px;">
-          <input id="recall-search" type="text" placeholder="Search recalls…" oninput="filterRecallsList(this.value)"
+        <div style="display:flex;gap:8px;margin-bottom:8px;">
+          <input id="recall-search" type="text" placeholder="Search recalls…" oninput="filterRecallsList()"
             style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:7px 10px;color:var(--text);font-size:13px;font-family:inherit;outline:none;">
           <button onclick="loadRecallsList()" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:7px 12px;color:var(--muted);font-size:12px;cursor:pointer;white-space:nowrap;">↻ Refresh</button>
         </div>
+        <div id="recall-source-filters" style="display:flex;gap:5px;margin-bottom:10px;flex-wrap:wrap;"></div>
         <div class="recall-list" id="settings-recall-list">
           <div style="font-size:13px;color:var(--muted);text-align:center;padding:12px 0;">Loading recalls…</div>
         </div>
-        <div id="recall-list-footer" style="display:none;margin-top:8px;text-align:center;">
+        <div id="recall-list-footer" style="display:none;margin-top:8px;text-align:center;display:flex;gap:8px;justify-content:center;">
           <button id="recall-show-more" onclick="showMoreRecalls()" style="background:transparent;border:1px solid var(--border);border-radius:8px;padding:6px 16px;font-size:12px;color:var(--muted);cursor:pointer;font-family:inherit;">Show more</button>
+          <button id="recall-show-less" onclick="showLessRecalls()" style="display:none;background:transparent;border:1px solid var(--border);border-radius:8px;padding:6px 16px;font-size:12px;color:var(--muted);cursor:pointer;font-family:inherit;">Show less</button>
         </div>
       </div>
     </div>
@@ -3782,6 +3784,7 @@
         <div>
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap;">
             <span id="recall-sheet-type-badge" style="font-size:11px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.08em;color:var(--danger);text-transform:uppercase;">⚠ Recall Match</span>
+            <span style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);padding:2px 8px;background:var(--surface2);border-radius:4px;border:1px solid var(--border);" id="recall-sheet-step-count">Step 1 of 6</span>
             <div style="display:flex;gap:4px;align-items:center;">
               <button id="recall-type-recall-btn" onclick="setRecallIncidentType('recall')" style="font-size:10px;font-family:'DM Mono',monospace;padding:2px 8px;border-radius:4px;border:1px solid var(--danger);background:var(--danger);color:#fff;cursor:pointer;font-weight:600;">Recall</button>
               <button id="recall-type-withdrawal-btn" onclick="setRecallIncidentType('withdrawal')" style="font-size:10px;font-family:'DM Mono',monospace;padding:2px 8px;border-radius:4px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);cursor:pointer;">Withdrawal</button>
@@ -3800,16 +3803,48 @@
     <!-- Steps -->
     <div style="padding:16px 20px;display:flex;flex-direction:column;gap:14px;overflow-y:auto;flex:1;min-height:0;">
 
-      <!-- Step 0: File as Recall — shown when opened from recall search -->
-      <div id="recall-step-0" class="recall-action-step" style="display:none;">
+      <!-- Triage instruction banner — always shown at top -->
+      <div style="background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.25);border-radius:10px;padding:12px 14px;display:flex;gap:10px;align-items:flex-start;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="2.5" style="flex-shrink:0;margin-top:1px;"><path d="M12 2L2 19h20L12 2z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17" r="0.7" fill="var(--danger)" stroke="none"/></svg>
+        <div>
+          <div style="font-size:12px;font-weight:700;color:var(--danger);margin-bottom:3px;" id="recall-triage-headline">Immediate action required</div>
+          <div style="font-size:12px;color:var(--muted);line-height:1.5;" id="recall-triage-instruction">Remove this product from the shelf now. Work through the steps below to complete the triage and create a full audit record.</div>
+        </div>
+      </div>
+
+      <!-- Step 1: Pull from shelf — ALWAYS FIRST, always most prominent -->
+      <div id="recall-step-1" class="recall-action-step">
         <div class="recall-step-label">
-          <span class="recall-step-num" id="recall-step-0-num">!</span>
+          <span class="recall-step-num" id="recall-step-1-num">1</span>
+          <span style="font-weight:700;">Pull from shelf</span>
+          <span id="recall-step-1-done" style="display:none;margin-left:auto;font-size:11px;color:var(--accent);font-family:'DM Mono',monospace;">✓ Logged</span>
+        </div>
+        <div id="recall-step-1-body">
+          <button id="recall-pull-btn" onclick="recallActionPull()" style="width:100%;padding:14px;background:var(--danger);border:none;border-radius:10px;color:#fff;font-family:'DM Mono',monospace;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:0.03em;display:flex;align-items:center;justify-content:center;gap:8px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 6h18M19 6l-1 14H6L5 6M10 11v6M14 11v6M9 6V4h6v2"/></svg>
+            Remove from shelf now
+          </button>
+          <div style="font-size:11px;color:var(--muted);margin-top:6px;text-align:center;">Timestamps your name and the exact moment of removal — required for audit trail</div>
+        </div>
+        <div id="recall-step-1-done-body" style="display:none;">
+          <div style="font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;padding:4px 0 8px;" id="recall-pull-confirmed"></div>
+          <button onclick="recallUndoPull()" class="btn btn-ghost" style="font-size:11px;padding:5px 12px;color:var(--warn);border-color:rgba(245,166,35,0.4);">↩ Undo pull</button>
+        </div>
+      </div>
+
+      <hr style="border:none;border-top:1px solid var(--border);margin:4px 0;" id="recall-step-0-divider" />
+
+      <!-- Step 0: File as system recall — Manager action, shown when opened from recall search -->
+      <div id="recall-step-0" class="recall-action-step" style="display:none;">
+        <div class="recall-step-label" style="cursor:pointer;" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'flex':'none'">
+          <span class="recall-step-num" id="recall-step-0-num" style="background:rgba(245,166,35,0.12);color:var(--warn);font-size:9px;">MGR</span>
           <span>File as system recall</span>
+          <span style="font-size:10px;color:var(--muted);margin-left:6px;font-family:'DM Mono',monospace;">Manager action</span>
           <span id="recall-step-0-done" style="display:none;margin-left:auto;font-size:11px;color:var(--accent);font-family:'DM Mono',monospace;">✓ Filed</span>
         </div>
         <div id="recall-step-0-body">
           <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.6;">
-            File this product as an <strong style="color:var(--danger);">active recall</strong> in Batch'd for all stores. This will trigger automatic matching against all scan history and alert staff on login.
+            Broadcast this as an <strong style="color:var(--danger);">active recall</strong> across all stores in Batch'd. Triggers automatic matching against all scan history and alerts all staff on login. Do this after pulling from shelf.
           </div>
           <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px;">
             <div>
@@ -3819,7 +3854,7 @@
             </div>
           </div>
           <div style="display:flex;gap:8px;align-items:center;">
-            <button id="recall-step-0-btn" onclick="recallActionFileRecall()" style="flex:1;padding:12px;background:var(--danger);border:none;border-radius:10px;color:#fff;font-family:'DM Mono',monospace;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">
+            <button id="recall-step-0-btn" onclick="recallActionFileRecall()" style="flex:1;padding:11px;background:var(--warn);border:none;border-radius:10px;color:#1a0f00;font-family:'DM Mono',monospace;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
               File recall for all stores
             </button>
@@ -3828,28 +3863,6 @@
         </div>
         <div id="recall-step-0-done-body" style="display:none;">
           <div style="font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;padding:4px 0 8px;" id="recall-step-0-confirmed"></div>
-        </div>
-      </div>
-
-      <hr style="border:none;border-top:1px solid var(--border);margin:4px 0;" id="recall-step-0-divider" style="display:none;" />
-
-      <!-- Step 1: Pull from shelf -->
-      <div id="recall-step-1" class="recall-action-step">
-        <div class="recall-step-label">
-          <span class="recall-step-num" id="recall-step-1-num">1</span>
-          <span>Pull from shelf</span>
-          <span id="recall-step-1-done" style="display:none;margin-left:auto;font-size:11px;color:var(--accent);font-family:'DM Mono',monospace;">✓ Logged</span>
-        </div>
-        <div id="recall-step-1-body">
-          <button id="recall-pull-btn" onclick="recallActionPull()" style="width:100%;padding:14px;background:var(--danger);border:none;border-radius:10px;color:#fff;font-family:'DM Mono',monospace;font-size:13px;font-weight:700;cursor:pointer;letter-spacing:0.03em;display:flex;align-items:center;justify-content:center;gap:8px;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 6h18M19 6l-1 14H6L5 6M10 11v6M14 11v6M9 6V4h6v2"/></svg>
-            Remove from shelf now
-          </button>
-          <div style="font-size:11px;color:var(--muted);margin-top:6px;text-align:center;">Records your name and timestamp</div>
-        </div>
-        <div id="recall-step-1-done-body" style="display:none;">
-          <div style="font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;padding:4px 0 8px;" id="recall-pull-confirmed"></div>
-          <button onclick="recallUndoPull()" class="btn btn-ghost" style="font-size:11px;padding:5px 12px;color:var(--warn);border-color:rgba(245,166,35,0.4);">↩ Undo pull</button>
         </div>
       </div>
 
@@ -3929,6 +3942,21 @@
         <div id="recall-step-4-done-body" style="display:none;">
           <div style="font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;padding:4px 0 8px;"></div>
           <button onclick="recallUndoEscalate()" class="btn btn-ghost" style="font-size:11px;padding:5px 12px;color:var(--warn);border-color:rgba(245,166,35,0.4);">↩ Undo escalation</button>
+        </div>
+      </div>
+
+      <!-- Step 4b: Log a complaint — connects to Triage system -->
+      <div id="recall-step-4b" class="recall-action-step">
+        <div class="recall-step-label">
+          <span class="recall-step-num" style="background:rgba(56,189,248,0.12);color:var(--info);font-size:9px;">TRG</span>
+          <span>Log a complaint</span>
+        </div>
+        <div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:8px;line-height:1.6;">If a customer or staff member reported a concern about this product, log it here. It will be triaged automatically and added to the audit trail.</div>
+          <button onclick="openComplaintSheetFromRecall()" class="btn btn-ghost" style="font-size:12px;padding:8px 16px;color:var(--info);border-color:rgba(56,189,248,0.35);cursor:pointer;display:flex;align-items:center;gap:6px;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 19h20L12 2z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17" r="0.5" fill="currentColor" stroke="currentColor" stroke-width="1"/></svg>
+            Log a complaint about this product →
+          </button>
         </div>
       </div>
 
@@ -7504,6 +7532,8 @@ async function setRecallSource(source) {
     const lastFetchKey = `batched_recall_fetch_${currentUser.id}`;
     localStorage.removeItem(lastFetchKey); // force a fresh fetch next time
     if (source !== 'manual') {
+      // Fetch immediately so the user sees results right away
+      fetchExternalRecalls();
       recallSchedulerInterval = setInterval(async () => {
         try {
           await runAutoFetch();
@@ -7520,6 +7550,7 @@ let _allRecallsCache = [];
 const RECALLS_PAGE_SIZE = 6;
 let _recallsShown = RECALLS_PAGE_SIZE;
 let _recallsFilter = '';
+let _recallsSourceFilter = 'all'; // 'all' | 'fda' | 'rasff' | 'mattilsynet' | 'manual'
 
 async function loadRecallsList() {
   const el = document.getElementById('settings-recall-list');
@@ -7534,23 +7565,76 @@ async function loadRecallsList() {
     _allRecallsCache = data || [];
     _recallsShown = RECALLS_PAGE_SIZE;
     _recallsFilter = '';
+    _recallsSourceFilter = 'all';
     const searchEl = document.getElementById('recall-search');
     if (searchEl) searchEl.value = '';
+    renderRecallSourcePills();
     renderRecallsList();
   } catch(e) {
     el.innerHTML = `<div style="font-size:13px;color:var(--danger);">Error: ${e.message}</div>`;
   }
 }
 
-function filterRecallsList(q) {
-  _recallsFilter = (q || '').toLowerCase().trim();
+function setRecallSourceFilter(src) {
+  _recallsSourceFilter = src;
+  _recallsShown = RECALLS_PAGE_SIZE;
+  renderRecallSourcePills();
+  renderRecallsList();
+}
+
+function filterRecallsList() {
+  const searchEl = document.getElementById('recall-search');
+  _recallsFilter = (searchEl?.value || '').toLowerCase().trim();
   _recallsShown = RECALLS_PAGE_SIZE;
   renderRecallsList();
+}
+
+function renderRecallSourcePills() {
+  const container = document.getElementById('recall-source-filters');
+  if (!container) return;
+
+  // Count by source
+  const counts = { all: _allRecallsCache.length };
+  _allRecallsCache.forEach(r => {
+    const src = r.source || 'manual';
+    counts[src] = (counts[src] || 0) + 1;
+  });
+
+  const srcColors = {
+    all:        { color:'var(--muted)',   bg:'rgba(106,175,158,0.1)',  label: currentLang==='no'?'Alle':'All' },
+    fda:        { color:'var(--info)',    bg:'rgba(56,189,248,0.1)',   label:'FDA' },
+    rasff:      { color:'var(--warn)',    bg:'rgba(245,166,35,0.1)',   label:'RASFF' },
+    mattilsynet:{ color:'var(--accent)',  bg:'rgba(52,211,153,0.1)',   label:'Mattilsynet' },
+    manufacturer_push:{ color:'var(--info)', bg:'rgba(56,189,248,0.1)', label: currentLang==='no'?'Produsent':'Manufacturer' },
+    manual:     { color:'var(--muted)',   bg:'rgba(106,175,158,0.08)', label: currentLang==='no'?'Manuell':'Manual' },
+  };
+
+  // Only show sources that have records, plus All
+  const activeSources = ['all', ...Object.keys(counts).filter(k => k !== 'all' && counts[k] > 0)];
+
+  container.innerHTML = activeSources.map(src => {
+    const s = srcColors[src] || srcColors.manual;
+    const isActive = _recallsSourceFilter === src;
+    return `<button onclick="setRecallSourceFilter('${src}')"
+      style="padding:4px 10px;border-radius:20px;border:1px solid ${isActive ? s.color : 'var(--border)'};
+      background:${isActive ? s.bg : 'transparent'};color:${isActive ? s.color : 'var(--muted)'};
+      font-size:11px;cursor:pointer;font-family:inherit;transition:all 0.15s;">
+      ${s.label}${counts[src] !== undefined ? ` <span style="opacity:0.6;">(${counts[src]})</span>` : ''}
+    </button>`;
+  }).join('');
 }
 
 function showMoreRecalls() {
   _recallsShown += RECALLS_PAGE_SIZE;
   renderRecallsList();
+}
+
+function showLessRecalls() {
+  _recallsShown = RECALLS_PAGE_SIZE;
+  renderRecallsList();
+  // Scroll back to top of recall list
+  const el = document.getElementById('settings-recall-list');
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function renderRecallsList() {
@@ -7559,6 +7643,9 @@ function renderRecallsList() {
   const showMoreBtn = document.getElementById('recall-show-more');
 
   let filtered = _allRecallsCache;
+  if (_recallsSourceFilter && _recallsSourceFilter !== 'all') {
+    filtered = filtered.filter(function(r){ return (r.source || 'manual') === _recallsSourceFilter; });
+  }
   if (_recallsFilter) {
     filtered = filtered.filter(r =>
       (r.product_name||'').toLowerCase().includes(_recallsFilter) ||
@@ -7593,17 +7680,25 @@ function renderRecallsList() {
         </div>
         ${r.description ? `<div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5;">${esc(r.description.slice(0,120))}${r.description.length>120?'…':''}</div>` : ''}
       </div>
-      <div class="recall-item-actions">
-        <button class="btn-icon activate" onclick="toggleRecallActive('${r.id}', ${!r.active})" title="${r.active?(currentLang==='no'?'Deaktiver':'Deactivate'):(currentLang==='no'?'Aktiver':'Activate')}">${r.active?'⏸':'▶'}</button>
-        <button class="btn-icon" onclick="deleteRecall('${r.id}')" title="${currentLang==='no'?'Slett':'Delete'}">✕</button>
+      <div class="recall-item-actions" style="display:flex;align-items:center;">
+        <span style="font-size:10px;color:${r.active?'var(--danger)':'var(--muted)'};font-family:'DM Mono',monospace;font-weight:600;">${r.active?(currentLang==='no'?'AKTIV':'ACTIVE'):(currentLang==='no'?'inaktiv':'inactive')}</span>
       </div>
     </div>`).join('');
 
+  const showLessBtn = document.getElementById('recall-show-less');
   if (footer) {
-    footer.style.display = hasMore ? 'block' : 'none';
-    if (showMoreBtn) showMoreBtn.textContent = currentLang==='no'
-      ? `Vis flere (${filtered.length - _recallsShown} gjenstår)`
-      : `Show more (${filtered.length - _recallsShown} remaining)`;
+    const showFooter = hasMore || _recallsShown > RECALLS_PAGE_SIZE;
+    footer.style.display = showFooter ? 'flex' : 'none';
+    if (showMoreBtn) {
+      showMoreBtn.style.display = hasMore ? 'inline-block' : 'none';
+      showMoreBtn.textContent = currentLang==='no'
+        ? `Vis flere (${filtered.length - _recallsShown} gjenstår)`
+        : `Show more (${filtered.length - _recallsShown} remaining)`;
+    }
+    if (showLessBtn) {
+      showLessBtn.style.display = _recallsShown > RECALLS_PAGE_SIZE ? 'inline-block' : 'none';
+      showLessBtn.textContent = currentLang==='no' ? 'Vis færre' : 'Show less';
+    }
   }
 }
 
@@ -7738,12 +7833,13 @@ async function fetchRASFFRecalls() {
   const parser = new DOMParser();
   const doc = parser.parseFromString(xml, 'text/xml');
   const items = Array.from(doc.querySelectorAll('item'));
+  if (!items.length) throw new Error('RASFF proxy returned 0 items. Length: ' + xml.length + '. Preview: ' + xml.slice(0,100));
   let added = 0;
   for (const item of items.slice(0, 20)) {
     const title = item.querySelector('title')?.textContent?.trim() || 'RASFF Alert';
     const desc  = item.querySelector('description')?.textContent?.trim() || '';
     const { data: existing } = await sb.from('recalls')
-      .select('id').eq('description', title.slice(0,80)).eq('organisation_id', _currentOrgId).maybeSingle();
+      .select('id').ilike('product_name', title.slice(0,100)).eq('organisation_id', _currentOrgId).maybeSingle();
     if (existing) continue;
     const { error } = await sb.from('recalls').insert({
       product_name:    title.slice(0, 120),
@@ -7813,7 +7909,7 @@ async function fetchMattilsynetRecalls() {
         if (!error) added++;
       }
     } catch(e2) {
-      console.warn('Mattilsynet fallback also failed:', e2);
+      throw new Error('Mattilsynet fallback also failed: ' + e2.message);
     }
   }
   return added;
@@ -14648,6 +14744,18 @@ const COMPLAINT_COUNTRIES = [
   ['TH','Thailand'],['ID','Indonesia'],['PH','Philippines'],['VN','Vietnam'],
   ['PK','Pakistan'],['BD','Bangladesh'],['EG','Egypt'],['NG','Nigeria']
 ];
+
+function openComplaintSheetFromRecall() {
+  // Pre-fill from the currently open recall action sheet
+  const product = document.getElementById('recall-sheet-product')?.textContent || '';
+  const meta    = document.getElementById('recall-sheet-meta')?.textContent || '';
+  // Extract lot from meta (format: "Lot: XXXXX · Store · User")
+  const lotMatch = meta.match(/(?:Lot:|Parti:)\s*([^\s·]+)/);
+  const lot = lotMatch ? lotMatch[1] : '';
+  const store = document.getElementById('field-store')?.value || '';
+  closeRecallActionSheet();
+  setTimeout(() => openComplaintSheet(null, product, lot, '', store), 150);
+}
 
 function openComplaintSheet(scanId, productName, lotNumber, barcodeNumber, storeName) {
   _complaintScanId = scanId;
