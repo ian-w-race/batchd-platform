@@ -1301,6 +1301,115 @@ async function renderTriage() {
   await renderTriageList(el);
 }
 
+
+// ── Complaint Pattern Detection ────────────────────────────────
+
+function detectComplaintPatterns(complaints, windowDays = 7) {
+  const cutoff = Date.now() - windowDays * 24 * 60 * 60 * 1000;
+  const recent = (complaints || []).filter(c =>
+    new Date(c.created_at).getTime() > cutoff &&
+    !['closed','resolved'].includes(c.status)
+  );
+
+  if (recent.length < 2) return [];
+
+  // Group by product key: barcode (exact) or product name (first word, lowercased)
+  const groups = {};
+  recent.forEach(c => {
+    const keys = [];
+    if (c.barcode) keys.push('barcode:' + c.barcode.trim().toLowerCase());
+    if (c.product_name) {
+      const word = c.product_name.trim().toLowerCase().split(/\s+/)[0];
+      if (word && word.length > 2) keys.push('name:' + word);
+    }
+    keys.forEach(k => {
+      if (!groups[k]) groups[k] = { key: k, complaints: [], productName: c.product_name, barcode: c.barcode, lotNumbers: new Set() };
+      groups[k].complaints.push(c);
+      if (c.lot_number) groups[k].lotNumbers.add(c.lot_number);
+    });
+  });
+
+  // Deduplicate: if same complaint appears under multiple keys, keep the most specific (barcode)
+  const seen = new Set();
+  const patterns = [];
+
+  Object.values(groups)
+    .filter(g => g.complaints.length >= 2)
+    .sort((a, b) => b.complaints.length - a.complaints.length)
+    .forEach(g => {
+      // Deduplicate complaints across groups
+      const unique = g.complaints.filter(c => !seen.has(c.id));
+      if (unique.length < 2) return;
+      unique.forEach(c => seen.add(c.id));
+
+      const criticalCount = unique.filter(c => c.triage_level === 'critical').length;
+      const seriousCount  = unique.filter(c => c.triage_level === 'serious').length;
+      const total = unique.length;
+
+      // Determine alert level
+      let level, title, colour, bg;
+      if (criticalCount >= 2 || (criticalCount >= 1 && seriousCount >= 1)) {
+        level = 'systemic'; colour = 'var(--danger)'; bg = 'rgba(255,92,92,0.08)';
+        title = 'Potential systemic issue';
+      } else if (total >= 5 || seriousCount >= 3) {
+        level = 'volume'; colour = 'var(--warn)'; bg = 'rgba(245,166,35,0.08)';
+        title = 'Volume alert';
+      } else {
+        level = 'emerging'; colour = 'var(--warn)'; bg = 'rgba(245,166,35,0.06)';
+        title = 'Emerging pattern';
+      }
+
+      const lots = [...g.lotNumbers].slice(0, 3).join(', ');
+      const categories = [...new Set(unique.map(c => c.triage_category).filter(Boolean))];
+
+      patterns.push({ level, title, colour, bg, productName: g.productName, barcode: g.barcode, lots, total, criticalCount, seriousCount, categories, complaints: unique, windowDays });
+    });
+
+  return patterns;
+}
+
+function patternAlertHTML(pattern, idx) {
+  const lotStr = pattern.lots ? ` · Lot${pattern.lots.includes(',') ? 's' : ''}: <span style="font-family:'DM Mono',monospace;">${pattern.lots}</span>` : '';
+  const catStr = pattern.categories.length ? ` · ${pattern.categories.join(', ')}` : '';
+  const breakdown = [
+    pattern.criticalCount ? `<span style="color:var(--danger);font-weight:700;">${pattern.criticalCount} critical</span>` : '',
+    pattern.seriousCount  ? `<span style="color:var(--warn);">${pattern.seriousCount} serious</span>` : '',
+    (pattern.total - pattern.criticalCount - pattern.seriousCount) > 0 ? `<span style="color:var(--muted);">${pattern.total - pattern.criticalCount - pattern.seriousCount} monitor</span>` : ''
+  ].filter(Boolean).join(' · ');
+
+  return `
+    <div id="pattern-alert-${idx}" style="background:${pattern.bg};border:1px solid ${pattern.colour.replace('var(', 'rgba(').replace('--danger)', '255,92,92,0.35)').replace('--warn)', '245,166,35,0.35)')};border-radius:12px;padding:16px;position:relative;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+        <div style="flex:1;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap;">
+            <span style="font-size:10px;font-weight:700;font-family:'DM Mono',monospace;letter-spacing:0.07em;color:${pattern.colour};text-transform:uppercase;">${pattern.title}</span>
+            <span style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">${pattern.total} complaints · ${pattern.windowDays}d window</span>
+          </div>
+          <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:4px;">${pattern.productName || 'Unknown product'}${lotStr}</div>
+          <div style="font-size:12px;color:var(--muted);line-height:1.5;">${breakdown}${catStr}</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-shrink:0;">
+          ${pattern.level !== 'emerging' ? `
+            <button onclick="pushFromTriage(${JSON.stringify(pattern.productName||'')},${JSON.stringify(pattern.lots||'')},${JSON.stringify(pattern.barcode||'')},${JSON.stringify(pattern.categories[0]||'')},${JSON.stringify(pattern.title+': '+pattern.total+' complaints in '+pattern.windowDays+' days')})"
+              style="background:var(--danger);color:#fff;border:none;border-radius:7px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;">
+              Push Recall
+            </button>` : ''}
+          <button onclick="document.getElementById('pattern-alert-${idx}').style.display='none'"
+            style="background:transparent;border:none;color:var(--muted);font-size:18px;cursor:pointer;padding:0;line-height:1;" title="Dismiss">×</button>
+        </div>
+      </div>
+      <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;">
+        ${pattern.complaints.slice(0, 4).map(c => `
+          <span onclick="_triageView='detail';_triageComplaint='${c.id}';renderTriage()"
+            style="font-size:11px;font-family:'DM Mono',monospace;background:var(--surface2);color:var(--muted);padding:2px 8px;border-radius:4px;cursor:pointer;border:1px solid var(--border);"
+            title="${c.triage_summary || ''}">
+            ${c.complaint_number || c.id.slice(0,8)}
+          </span>`).join('')}
+        ${pattern.complaints.length > 4 ? `<span style="font-size:11px;color:var(--muted);padding:2px 4px;">+${pattern.complaints.length-4} more</span>` : ''}
+      </div>
+    </div>`;
+}
+
 async function renderTriageList(el) {
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading complaints…</div>`;
   try {
@@ -1328,6 +1437,9 @@ async function renderTriageList(el) {
 
     const filtered = _triageFilter === 'all' ? (complaints||[]) : (complaints||[]).filter(c => c.triage_level === _triageFilter);
 
+    // Detect patterns
+    const patterns = detectComplaintPatterns(complaints || []);
+
     el.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:20px;flex-wrap:wrap;">
         <div>
@@ -1338,6 +1450,16 @@ async function renderTriageList(el) {
           <button onclick="triageShowNew()" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;">+ Log Phone Complaint</button>
         </div>
       </div>
+
+      ${patterns.length > 0 ? `
+        <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:20px;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2.5"><path d="M12 2L2 19h20L12 2z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17" r="0.7" fill="var(--warn)" stroke="none"/></svg>
+            <span style="font-size:11px;font-weight:700;color:var(--warn);letter-spacing:0.06em;text-transform:uppercase;">Pattern${patterns.length > 1 ? 's' : ''} Detected</span>
+          </div>
+          ${patterns.map((p, i) => patternAlertHTML(p, i)).join('')}
+        </div>
+      ` : ''}
 
       <div style="display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;">
         ${[
@@ -1631,6 +1753,16 @@ async function submitPhoneComplaint() {
               <div style="font-size:12px;font-weight:700;color:var(--danger);margin-bottom:4px;">RECALL FLAG</div>
               <div style="font-size:12px;color:var(--muted);">${data.recall_flag_reason}</div>
               <button onclick="pushFromTriage(${JSON.stringify(payload.product_name||'')},${JSON.stringify(payload.lot_number||'')},${JSON.stringify(payload.barcode||'')},${JSON.stringify(data.triage_category||'')},${JSON.stringify(data.triage_summary||'')})" style="margin-top:10px;background:var(--danger);color:#fff;border:none;border-radius:6px;padding:7px 14px;font-size:12px;font-weight:600;cursor:pointer;">Push a Recall Now</button>
+            </div>
+          ` : ''}
+          ${data.pattern_alert ? `
+            <div style="background:rgba(245,166,35,0.08);border:1px solid rgba(245,166,35,0.3);border-radius:8px;padding:12px 16px;margin-bottom:20px;text-align:left;">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2.5"><path d="M12 2L2 19h20L12 2z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17" r="0.6" fill="var(--warn)" stroke="none"/></svg>
+                <span style="font-size:12px;font-weight:700;color:var(--warn);">PATTERN DETECTED: ${data.pattern_alert.title.toUpperCase()}</span>
+              </div>
+              <div style="font-size:12px;color:var(--muted);">${data.pattern_alert.count} complaints about this product in the last 7 days. Review the Triage panel for details.</div>
+              ${data.pattern_alert.level !== 'emerging' ? `<button onclick="pushFromTriage(${JSON.stringify(payload.product_name||'')},${JSON.stringify(payload.lot_number||'')},${JSON.stringify(payload.barcode||'')},${JSON.stringify(data.triage_category||'')},${JSON.stringify('Pattern detected: '+data.pattern_alert.count+' complaints in 7 days')})" style="margin-top:10px;background:var(--warn);color:#1a0f00;border:none;border-radius:6px;padding:7px 14px;font-size:12px;font-weight:600;cursor:pointer;">Push a Recall Now</button>` : ''}
             </div>
           ` : ''}
           ${payload.customer_email ? `<div style="font-size:12px;color:var(--muted);margin-bottom:20px;">Follow-up email sent automatically to ${payload.customer_email}.</div>` : ''}
