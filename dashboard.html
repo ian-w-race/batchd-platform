@@ -404,6 +404,11 @@
         Investigations
         <span id="dash-invest-badge" style="display:none;margin-left:auto;background:var(--warn);color:#1a0f00;font-size:10px;font-family:'DM Mono',monospace;padding:1px 6px;border-radius:10px;font-weight:700;"></span>
       </button>
+      <button class="nav-item" onclick="showPanel('risk')" id="nav-risk">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        Risk Intelligence
+        <span id="risk-badge" style="display:none;margin-left:auto;background:var(--danger);color:#fff;font-size:10px;font-family:'DM Mono',monospace;padding:1px 6px;border-radius:10px;font-weight:700;"></span>
+      </button>
       <button class="nav-item" onclick="showPanel('triage')" id="nav-triage">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 19h20L12 2z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17" r="0.5" fill="currentColor" stroke="currentColor" stroke-width="1"/></svg>
         Triage
@@ -626,12 +631,12 @@ async function initDashboard(user) {
 function showPanel(name) {
   _activePanel = name;
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-  const panels = { overview:'Dashboard', recalls:'Recalls', stores:'Stores', traceability:'Traceability', shipments:'Incoming Shipments', staff:'Staff', compliance:'Compliance', reports:'Reports', settings:'Settings', partners:'Manufacturer Partners', triage:'Complaint Triage' };
+  const panels = { overview:'Dashboard', recalls:'Recalls', stores:'Stores', traceability:'Traceability', shipments:'Incoming Shipments', staff:'Staff', compliance:'Compliance', reports:'Reports', settings:'Settings', partners:'Manufacturer Partners', triage:'Complaint Triage', risk:'Risk Intelligence' };
   document.getElementById('topbar-title').textContent = panels[name] || name;
   document.querySelectorAll('.nav-item').forEach(el => {
     if (el.getAttribute('onclick')?.includes(`'${name}'`)) el.classList.add('active');
   });
-  const fns = { overview: renderOverview, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, shipments: renderShipments, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, partners: renderPartners, triage: renderDashboardTriage, investigations: renderDashInvestigations };
+  const fns = { overview: renderOverview, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, shipments: renderShipments, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, partners: renderPartners, triage: renderDashboardTriage, investigations: renderDashInvestigations, risk: renderRiskIntelligence };
   (fns[name] || renderComingSoon)(name);
 }
 
@@ -987,6 +992,23 @@ async function renderRecalls() {
           <div style="padding:10px 18px;background:var(--surface2);border-top:1px solid var(--border);border-bottom:1px solid var(--border);font-size:11px;color:var(--muted);line-height:1.6;">
             ${ev.description}
           </div>`:''}
+
+          <!-- Action buttons row -->
+          <div style="padding:10px 18px;background:var(--surface);border-top:1px solid var(--border);display:flex;gap:8px;flex-wrap:wrap;">
+            <button onclick="openEffectivenessCheck('${p.recall_event_id}')"
+              style="font-family:inherit;font-size:11px;font-weight:600;padding:6px 12px;border-radius:7px;border:1px solid rgba(56,189,248,0.3);background:rgba(56,189,248,0.07);color:var(--info);cursor:pointer;">
+              🔍 Log Effectiveness Check
+            </button>
+            <button onclick="openConsumerNotification('${p.recall_event_id}')"
+              style="font-family:inherit;font-size:11px;font-weight:600;padding:6px 12px;border-radius:7px;border:1px solid rgba(245,166,35,0.3);background:rgba(245,166,35,0.07);color:var(--warn);cursor:pointer;">
+              📢 Log Consumer Notification
+            </button>
+            <button onclick="showEffectivenessHistory('${p.recall_event_id}', this)"
+              style="font-family:inherit;font-size:11px;padding:6px 12px;border-radius:7px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;">
+              View checks ↓
+            </button>
+          </div>
+          <div id="eff-history-${p.recall_event_id}" style="display:none;"></div>
 
           <!-- Per-store acknowledgement chain -->
           <div style="padding:14px 18px;background:var(--surface);">
@@ -4109,5 +4131,501 @@ function showDashInvestMsg(txt, type) {
   el.style.color = type === 'error' ? 'var(--danger)' : 'var(--accent)';
   el.style.border = `1px solid ${type === 'error' ? 'rgba(255,92,92,0.3)' : 'rgba(52,211,153,0.3)'}`;
   el.textContent = txt;
+}
+</script>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// 1. PREDICTIVE RISK INTELLIGENCE
+// ═══════════════════════════════════════════════════════════════
+
+async function renderRiskIntelligence() {
+  const el = document.getElementById('main-content');
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Analysing risk signals…</div>`;
+
+  const now = Date.now();
+  const days7  = new Date(now - 7  * 86400000).toISOString();
+  const days30 = new Date(now - 30 * 86400000).toISOString();
+  const days90 = new Date(now - 90 * 86400000).toISOString();
+
+  // Parallel data fetch
+  const [scansRes, complaintsRes, recallsRes, acksRes] = await Promise.all([
+    sb.from('scans').select('product_name,barcode_number,lot_number,store_name,supplier_name,created_at').eq('organisation_id', _orgId).gte('created_at', days90).order('created_at',{ascending:false}).limit(2000),
+    sb.from('complaints').select('product_name,lot_number,triage_level,created_at,store_name').eq('receiving_org_id', _orgId).gte('created_at', days90).order('created_at',{ascending:false}).limit(500),
+    sb.from('recalls').select('product_name,lot_number,source,active,created_at').eq('organisation_id', _orgId).eq('active', true),
+    sb.from('recall_acknowledgements').select('status,updated_at,recall_event_id').eq('organisation_id', _orgId).eq('status', 'notified'),
+  ]);
+
+  const scans = scansRes.data || [];
+  const complaints = complaintsRes.data || [];
+  const activeRecalls = recallsRes.data || [];
+  const overdueAcks = (acksRes.data || []).filter(a => (now - new Date(a.updated_at)) > 4 * 3600000);
+
+  const signals = [];
+
+  // ── Signal 1: Scan velocity spike ──
+  // Compare last 7 days vs prior 23 days per product
+  const productScanCounts = {};
+  scans.forEach(s => {
+    const p = (s.product_name || 'unknown').toLowerCase().slice(0, 40);
+    if (!productScanCounts[p]) productScanCounts[p] = { recent: 0, older: 0, name: s.product_name };
+    if (s.created_at >= days7) productScanCounts[p].recent++;
+    else productScanCounts[p].older++;
+  });
+
+  Object.values(productScanCounts).forEach(p => {
+    const olderDaily = p.older / 23;
+    const recentDaily = p.recent / 7;
+    // Spike: 3x normal rate AND at least 3 scans in last 7 days
+    if (olderDaily > 0 && recentDaily >= olderDaily * 3 && p.recent >= 3) {
+      signals.push({
+        level: 'warn',
+        type: 'scan_spike',
+        icon: '📈',
+        title: `Unusual scan activity — ${p.name}`,
+        detail: `${p.recent} scans in the last 7 days (${Math.round(recentDaily * 10)/10}/day) vs ${Math.round(olderDaily * 10)/10}/day prior. Rapid shelf movement or staff concern may be driving this.`,
+        action: 'Check scan history',
+        actionFn: `showPanel('traceability')`,
+      });
+    }
+  });
+
+  // ── Signal 2: Complaint cluster (2+ complaints for same product in 7 days) ──
+  const recentComplaints = complaints.filter(c => c.created_at >= days7);
+  const complaintsByProduct = {};
+  recentComplaints.forEach(c => {
+    const k = (c.product_name || 'unknown').toLowerCase().slice(0, 40);
+    if (!complaintsByProduct[k]) complaintsByProduct[k] = { count: 0, critical: 0, name: c.product_name, stores: new Set() };
+    complaintsByProduct[k].count++;
+    if (c.triage_level === 'critical') complaintsByProduct[k].critical++;
+    if (c.store_name) complaintsByProduct[k].stores.add(c.store_name);
+  });
+
+  Object.values(complaintsByProduct).forEach(p => {
+    if (p.count >= 2) {
+      const multiStore = p.stores.size > 1;
+      signals.push({
+        level: p.critical > 0 || multiStore ? 'danger' : 'warn',
+        type: 'complaint_cluster',
+        icon: '⚠️',
+        title: `${p.count} complaints in 7 days — ${p.name}`,
+        detail: `${p.critical > 0 ? p.critical + ' critical priority. ' : ''}${multiStore ? 'Affecting ' + p.stores.size + ' different stores — possible systemic issue.' : 'Single store — may be isolated.'}`,
+        action: 'View complaints',
+        actionFn: `showPanel('triage')`,
+      });
+    }
+  });
+
+  // ── Signal 3: Overdue recall acknowledgements (>4h since notification) ──
+  if (overdueAcks.length > 0) {
+    signals.push({
+      level: 'danger',
+      type: 'overdue_ack',
+      icon: '🚨',
+      title: `${overdueAcks.length} recall acknowledgement${overdueAcks.length!==1?'s':''} overdue`,
+      detail: `${overdueAcks.length} store${overdueAcks.length!==1?'s':''} have been notified of a recall but not yet acknowledged (>4 hours). FDA Class I target is 2 hours — this creates compliance and legal exposure.`,
+      action: 'View recalls',
+      actionFn: `showPanel('recalls')`,
+    });
+  }
+
+  // ── Signal 4: Supplier with recall history ──
+  const recallSuppliers = new Set(activeRecalls.map(r => (r.product_name||'').split(' ')[0].toLowerCase()));
+  const scannedSuppliers = [...new Set(scans.filter(s => s.supplier_name).map(s => s.supplier_name.toLowerCase()))];
+  const flaggedSuppliers = scannedSuppliers.filter(s => [...recallSuppliers].some(rs => s.includes(rs) || rs.includes(s)));
+  if (flaggedSuppliers.length > 0) {
+    signals.push({
+      level: 'warn',
+      type: 'supplier_flag',
+      icon: '🔗',
+      title: `Supplier correlation with active recall`,
+      detail: `Products from ${flaggedSuppliers[0]} are on shelf and a related product has an active recall. Verify lot codes are not affected.`,
+      action: 'View recalls',
+      actionFn: `showPanel('recalls')`,
+    });
+  }
+
+  // ── Signal 5: No scans for 7+ days (store going dark) ──
+  const { data: stores } = await sb.from('stores').select('id,name').eq('organisation_id', _orgId).eq('active', true);
+  const storesWithRecentScans = new Set(scans.filter(s => s.created_at >= days7).map(s => s.store_name));
+  const darkStores = (stores||[]).filter(s => !storesWithRecentScans.has(s.name));
+  if (darkStores.length > 0) {
+    signals.push({
+      level: 'info',
+      type: 'dark_store',
+      icon: '📵',
+      title: `${darkStores.length} store${darkStores.length!==1?'s':''} with no scan activity`,
+      detail: `${darkStores.map(s=>s.name).slice(0,3).join(', ')}${darkStores.length>3?' and '+(darkStores.length-3)+' more':''} — no scans recorded in the last 7 days. Staff may need retraining or there may be a connectivity issue.`,
+      action: 'View stores',
+      actionFn: `showPanel('stores')`,
+    });
+  }
+
+  // Update badge
+  const dangerCount = signals.filter(s => s.level === 'danger').length;
+  const badge = document.getElementById('risk-badge');
+  if (badge) { badge.textContent = dangerCount || signals.length; badge.style.display = signals.length ? 'inline' : 'none'; badge.style.background = dangerCount > 0 ? 'var(--danger)' : 'var(--warn)'; }
+
+  const levelColors = { danger:'var(--danger)', warn:'var(--warn)', info:'var(--info)' };
+  const levelBg     = { danger:'rgba(255,92,92,0.08)', warn:'rgba(245,166,35,0.08)', info:'rgba(56,189,248,0.08)' };
+  const levelBorder = { danger:'rgba(255,92,92,0.3)', warn:'rgba(245,166,35,0.3)', info:'rgba(56,189,248,0.3)' };
+  const levelLabel  = { danger:'High Risk', warn:'Watch', info:'Info' };
+
+  // 30-day complaint trend by week
+  const weekCounts = [0,0,0,0];
+  complaints.forEach(c => {
+    const age = (now - new Date(c.created_at)) / 86400000;
+    if      (age <= 7)  weekCounts[0]++;
+    else if (age <= 14) weekCounts[1]++;
+    else if (age <= 21) weekCounts[2]++;
+    else if (age <= 30) weekCounts[3]++;
+  });
+  const maxW = Math.max(...weekCounts, 1);
+
+  el.innerHTML = `
+    <div style="max-width:760px;">
+      <div style="margin-bottom:20px;">
+        <div style="font-size:15px;font-weight:600;color:var(--text);">Risk Intelligence</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px;">AI-powered signals from your scan activity, complaint patterns, and recall data. Updated in real time.</div>
+      </div>
+
+      <!-- KPI strip -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:20px;">
+        ${[
+          {label:'Active signals', value:signals.length, color: signals.length>0?'var(--warn)':'var(--accent)'},
+          {label:'High risk', value: signals.filter(s=>s.level==='danger').length, color:'var(--danger)'},
+          {label:'Complaints (30d)', value:complaints.length, color: complaints.length>5?'var(--warn)':'var(--text)'},
+          {label:'Active recalls', value:activeRecalls.length, color: activeRecalls.length>0?'var(--danger)':'var(--accent)'},
+          {label:'Stores active', value:storesWithRecentScans.size, color:'var(--text)'},
+        ].map(k=>`<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;">
+          <div style="font-size:20px;font-weight:700;color:${k.color};font-family:'Figtree',sans-serif;">${k.value}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">${k.label}</div>
+        </div>`).join('')}
+      </div>
+
+      <!-- Signals list -->
+      <div style="margin-bottom:20px;">
+        <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:10px;">Active Signals (${signals.length})</div>
+        ${signals.length === 0 ? `
+          <div style="background:rgba(52,211,153,0.07);border:1px solid rgba(52,211,153,0.2);border-radius:12px;padding:28px;text-align:center;">
+            <div style="font-size:28px;margin-bottom:10px;">✅</div>
+            <div style="font-size:14px;font-weight:600;color:var(--accent);">No risk signals detected</div>
+            <div style="font-size:12px;color:var(--muted);margin-top:6px;">Scan activity is normal, no complaint clusters, all recalls acknowledged.</div>
+          </div>` :
+          signals.sort((a,b) => {const o={danger:0,warn:1,info:2}; return o[a.level]-o[b.level];}).map(s => `
+          <div style="background:${levelBg[s.level]};border:1px solid ${levelBorder[s.level]};border-radius:12px;padding:16px 18px;margin-bottom:10px;display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap;">
+            <div style="flex:1;min-width:0;">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
+                <span style="font-size:16px;">${s.icon}</span>
+                <span style="font-size:12px;font-weight:700;color:${levelColors[s.level]};">${s.title}</span>
+                <span style="font-size:10px;font-family:'DM Mono',monospace;padding:1px 7px;border-radius:4px;background:${levelBorder[s.level]};color:${levelColors[s.level]};font-weight:700;">${levelLabel[s.level].toUpperCase()}</span>
+              </div>
+              <div style="font-size:12px;color:var(--muted);line-height:1.6;">${s.detail}</div>
+            </div>
+            <button onclick="${s.actionFn}" style="background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:6px 12px;font-size:11px;font-weight:600;color:var(--text);cursor:pointer;font-family:inherit;white-space:nowrap;flex-shrink:0;">${s.action} →</button>
+          </div>`).join('')
+        }
+      </div>
+
+      <!-- 4-week complaint trend -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;">
+        <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:14px;">Complaint trend — last 30 days</div>
+        <div style="display:flex;align-items:flex-end;gap:8px;height:80px;">
+          ${weekCounts.map((v,i) => {
+            const h = Math.max(Math.round((v/maxW)*100), v>0?8:2);
+            const labels = ['This week','1-2 weeks ago','2-3 weeks ago','3-4 weeks ago'];
+            return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;">
+              <div style="font-size:11px;font-weight:700;color:${v>0?'var(--warn)':'var(--muted)'};">${v||''}</div>
+              <div title="${labels[i]}: ${v} complaint${v!==1?'s':''}" style="width:100%;height:${h}%;background:${v>0?'rgba(245,166,35,0.5)':'var(--surface2)'};border-radius:4px 4px 0 0;"></div>
+            </div>`;
+          }).join('')}
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-top:4px;">
+          ${['3–4w ago','2–3w ago','1–2w ago','This week'].map(l=>`<span style="flex:1;text-align:center;font-size:10px;color:var(--muted);">${l}</span>`).join('')}
+        </div>
+      </div>
+    </div>`;
+}
+
+// Also check and show risk badge on load
+async function checkRiskBadge() {
+  try {
+    const now = Date.now();
+    const days7 = new Date(now - 7 * 86400000).toISOString();
+    const [complaintsRes, acksRes] = await Promise.all([
+      sb.from('complaints').select('product_name,triage_level,created_at').eq('receiving_org_id', _orgId).gte('created_at', days7).limit(100),
+      sb.from('recall_acknowledgements').select('status,updated_at').eq('organisation_id', _orgId).eq('status', 'notified').limit(50),
+    ]);
+    const criticals = (complaintsRes.data||[]).filter(c => c.triage_level === 'critical').length;
+    const overdue = (acksRes.data||[]).filter(a => (now - new Date(a.updated_at)) > 4*3600000).length;
+    const total = criticals + overdue;
+    const badge = document.getElementById('risk-badge');
+    if (badge && total > 0) { badge.textContent = total; badge.style.display = 'inline'; badge.style.background = overdue > 0 ? 'var(--danger)' : 'var(--warn)'; }
+  } catch(e) {}
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 2. RECALL EFFECTIVENESS CHECKS (FDA 21 CFR 7.49)
+// ═══════════════════════════════════════════════════════════════
+
+function openEffectivenessCheck(recallEventId) {
+  document.getElementById('eff-modal')?.remove();
+  const modal = document.createElement('div');
+  modal.id = 'eff-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;';
+  modal.innerHTML = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:28px;width:100%;max-width:520px;max-height:90vh;overflow-y:auto;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+        <div>
+          <div style="font-size:14px;font-weight:700;color:var(--text);">🔍 Recall Effectiveness Check</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">Required by FDA 21 CFR 7.49 — verify product has been removed</div>
+        </div>
+        <button onclick="document.getElementById('eff-modal').remove()" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;">✕</button>
+      </div>
+
+      <div style="background:rgba(56,189,248,0.07);border:1px solid rgba(56,189,248,0.2);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--muted);margin-bottom:18px;line-height:1.6;">
+        FDA requires food companies to conduct effectiveness checks during an active recall to verify product is actually being removed from commerce. These checks protect against class action exposure by demonstrating due diligence.
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Store inspected *</label>
+          <select id="eff-store" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;">
+            <option value="">Select store…</option>
+          </select>
+        </div>
+
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px;">Was recalled product found in store? *</label>
+          <div style="display:flex;gap:8px;">
+            <button onclick="setEffFound(true)" id="eff-found-yes" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;">⚠ Yes — found</button>
+            <button onclick="setEffFound(false)" id="eff-found-no" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;">✓ No — clear</button>
+          </div>
+          <input type="hidden" id="eff-found-val" value="">
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Units found (if any)</label>
+          <input id="eff-units-found" type="number" min="0" placeholder="0" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+          <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Units removed</label>
+          <input id="eff-units-removed" type="number" min="0" placeholder="0" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+        </div>
+
+        <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Checker name *</label>
+        <input id="eff-checker" type="text" placeholder="Full name and role" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+
+        <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Notes / observations</label>
+        <textarea id="eff-notes" rows="3" placeholder="Describe what was found, where it was located, and what action was taken." style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 10px;color:var(--text);font-size:13px;resize:vertical;box-sizing:border-box;font-family:inherit;line-height:1.5;"></textarea></div>
+
+        <div id="eff-msg" style="display:none;border-radius:8px;padding:9px 12px;font-size:12px;"></div>
+        <div style="display:flex;justify-content:flex-end;gap:10px;">
+          <button onclick="document.getElementById('eff-modal').remove()" style="background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:9px 18px;font-size:13px;cursor:pointer;">Cancel</button>
+          <button onclick="submitEffectivenessCheck('${recallEventId}')" style="background:var(--info);color:#0c2a3d;border:none;border-radius:8px;padding:9px 18px;font-size:13px;font-weight:700;cursor:pointer;">Log Check</button>
+        </div>
+      </div>
+    </div>`;
+
+  document.body.appendChild(modal);
+
+  // Load stores
+  sb.from('stores').select('id,name').eq('organisation_id', _orgId).eq('active', true).order('name').then(({data}) => {
+    const sel = document.getElementById('eff-store');
+    if (sel && data) data.forEach(s => { const o = document.createElement('option'); o.value = s.id; o.textContent = s.name; sel.appendChild(o); });
+  });
+}
+
+function setEffFound(val) {
+  document.getElementById('eff-found-val').value = val;
+  const yes = document.getElementById('eff-found-yes');
+  const no  = document.getElementById('eff-found-no');
+  if (yes) { yes.style.background = val ? 'rgba(255,92,92,0.12)' : 'var(--surface2)'; yes.style.borderColor = val ? 'rgba(255,92,92,0.4)' : 'var(--border)'; yes.style.color = val ? 'var(--danger)' : 'var(--text)'; }
+  if (no)  { no.style.background = !val ? 'rgba(52,211,153,0.12)' : 'var(--surface2)'; no.style.borderColor = !val ? 'rgba(52,211,153,0.4)' : 'var(--border)'; no.style.color = !val ? 'var(--accent)' : 'var(--text)'; }
+}
+
+async function submitEffectivenessCheck(recallEventId) {
+  const storeEl  = document.getElementById('eff-store');
+  const storeId  = storeEl?.value;
+  const storeName = storeEl?.selectedOptions?.[0]?.textContent || '';
+  const found    = document.getElementById('eff-found-val')?.value;
+  const unitsFound   = parseInt(document.getElementById('eff-units-found')?.value || '0');
+  const unitsRemoved = parseInt(document.getElementById('eff-units-removed')?.value || '0');
+  const checker  = document.getElementById('eff-checker')?.value.trim();
+  const notes    = document.getElementById('eff-notes')?.value.trim();
+  const msg      = document.getElementById('eff-msg');
+
+  if (!storeId) { showEff('Select a store.', 'error'); return; }
+  if (found === '') { showEff('Indicate whether product was found.', 'error'); return; }
+  if (!checker) { showEff('Enter checker name.', 'error'); return; }
+
+  const session = await sb.auth.getUser();
+  const { error } = await sb.from('recall_effectiveness_checks').insert({
+    recall_event_id: recallEventId,
+    organisation_id: _orgId,
+    store_id: storeId,
+    store_name: storeName,
+    checker_name: checker,
+    product_found: found === 'true',
+    units_found: unitsFound || 0,
+    units_removed: unitsRemoved || 0,
+    confirmed_clear: found !== 'true',
+    notes: notes || null,
+    checked_by_user_id: session.data?.user?.id || null,
+    check_date: new Date().toISOString(),
+  });
+
+  if (error) { showEff('Error: ' + error.message, 'error'); return; }
+  document.getElementById('eff-modal').remove();
+  showToast('Effectiveness check logged', 'ok', 2500);
+}
+
+function showEff(txt, type) {
+  const el = document.getElementById('eff-msg');
+  if (!el) return;
+  el.style.display = 'block';
+  el.style.background = type === 'error' ? 'rgba(255,92,92,0.1)' : 'rgba(52,211,153,0.1)';
+  el.style.color = type === 'error' ? 'var(--danger)' : 'var(--accent)';
+  el.style.border = `1px solid ${type === 'error' ? 'rgba(255,92,92,0.3)' : 'rgba(52,211,153,0.3)'}`;
+  el.textContent = txt;
+}
+
+async function showEffectivenessHistory(recallEventId, btn) {
+  const container = document.getElementById('eff-history-' + recallEventId);
+  if (!container) return;
+  const isOpen = container.style.display !== 'none';
+  if (isOpen) { container.style.display = 'none'; btn.textContent = 'View checks ↓'; return; }
+  btn.textContent = 'Loading…';
+  const { data } = await sb.from('recall_effectiveness_checks')
+    .select('*').eq('recall_event_id', recallEventId).eq('organisation_id', _orgId)
+    .order('check_date', { ascending: false });
+
+  const checks = data || [];
+  container.innerHTML = checks.length === 0
+    ? `<div style="padding:12px 18px;font-size:12px;color:var(--muted);border-top:1px solid var(--border);">No effectiveness checks logged yet.</div>`
+    : `<div style="border-top:1px solid var(--border);padding:12px 18px;">
+        <div style="font-size:10px;font-weight:700;color:var(--info);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px;">FDA Effectiveness Checks (${checks.length})</div>
+        ${checks.map(c => `
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid rgba(22,61,55,0.4);">
+          <div>
+            <div style="font-size:12px;color:var(--text);">${c.store_name||'Unknown store'} — <span style="color:${c.confirmed_clear?'var(--accent)':'var(--danger)'};">${c.confirmed_clear?'✓ Clear':'⚠ Product found'}</span></div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px;">${c.checker_name} · ${c.units_found||0} found · ${c.units_removed||0} removed</div>
+            ${c.notes ? `<div style="font-size:11px;color:var(--muted);margin-top:2px;">${c.notes}</div>` : ''}
+          </div>
+          <div style="font-size:10px;color:var(--muted);white-space:nowrap;">${new Date(c.check_date).toLocaleDateString('en-GB')}</div>
+        </div>`).join('')}
+      </div>`;
+  container.style.display = 'block';
+  btn.textContent = 'Hide checks ↑';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 3. CONSUMER NOTIFICATION TRACKER
+// ═══════════════════════════════════════════════════════════════
+
+const NOTIF_TYPES = {
+  in_store_notice: { label: 'In-store notice posted', icon: '🏪', detail: 'Physical notice placed at store entrance and near product location' },
+  website:         { label: 'Website notice published', icon: '🌐', detail: 'Notice published on company/store website' },
+  social_instagram:{ label: 'Instagram post', icon: '📸', detail: 'Recall notice posted to Instagram' },
+  social_facebook: { label: 'Facebook post', icon: '📘', detail: 'Recall notice posted to Facebook page' },
+  social_other:    { label: 'Other social media', icon: '📱', detail: 'Posted on other social platform' },
+  press_release:   { label: 'Press release issued', icon: '📰', detail: 'Formal press release distributed to media' },
+  email:           { label: 'Email to customers', icon: '📧', detail: 'Direct email sent to customer/loyalty database' },
+  pa_announcement: { label: 'In-store announcement', icon: '📣', detail: 'PA/audio announcement made in-store' },
+  regulator:       { label: 'Regulator notified', icon: '🏛', detail: 'Mattilsynet or FDA notified' },
+  other:           { label: 'Other channel', icon: '📋', detail: 'Other notification method' },
+};
+
+function openConsumerNotification(recallEventId) {
+  document.getElementById('notif-modal')?.remove();
+  const modal = document.createElement('div');
+  modal.id = 'notif-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;';
+  modal.innerHTML = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:28px;width:100%;max-width:540px;max-height:90vh;overflow-y:auto;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+        <div>
+          <div style="font-size:14px;font-weight:700;color:var(--text);">📢 Log Consumer Notification</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">Document every channel used to reach consumers — protects against liability</div>
+        </div>
+        <button onclick="document.getElementById('notif-modal').remove()" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;">✕</button>
+      </div>
+
+      <div style="background:rgba(245,166,35,0.07);border:1px solid rgba(245,166,35,0.25);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--muted);margin-bottom:18px;line-height:1.6;">
+        Courts have held companies liable even after issuing recalls when consumer notification was inadequate. Every channel you document here strengthens your legal defence.
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:8px;">Notification type *</label>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:7px;" id="notif-type-grid">
+            ${Object.entries(NOTIF_TYPES).map(([k,v]) => `
+              <label style="display:flex;align-items:center;gap:9px;padding:9px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;cursor:pointer;transition:all 0.15s;" id="notif-label-${k}">
+                <input type="checkbox" id="notif-type-${k}" onchange="updateNotifType('${k}')" style="accent-color:var(--accent);width:14px;height:14px;">
+                <span style="font-size:13px;">${v.icon}</span>
+                <span style="font-size:12px;font-weight:500;color:var(--text);">${v.label}</span>
+              </label>`).join('')}
+          </div>
+        </div>
+
+        <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">URL / Reference <span style="opacity:0.6;">(website, social post, press release link)</span></label>
+        <input id="notif-url" type="url" placeholder="https://" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+
+        <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Estimated reach <span style="opacity:0.6;">(consumers reached)</span></label>
+        <input id="notif-reach" type="number" min="0" placeholder="e.g. 5000" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+
+        <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Issued by</label>
+        <input id="notif-issuer" type="text" placeholder="Name / department" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+
+        <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Notes</label>
+        <textarea id="notif-notes" rows="2" placeholder="Any additional details about this notification." style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 10px;color:var(--text);font-size:13px;resize:vertical;box-sizing:border-box;font-family:inherit;line-height:1.5;"></textarea></div>
+
+        <div id="notif-msg" style="display:none;border-radius:8px;padding:9px 12px;font-size:12px;"></div>
+        <div style="display:flex;justify-content:flex-end;gap:10px;">
+          <button onclick="document.getElementById('notif-modal').remove()" style="background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:9px 18px;font-size:13px;cursor:pointer;">Cancel</button>
+          <button onclick="submitConsumerNotification('${recallEventId}')" style="background:var(--warn);color:#1a0f00;border:none;border-radius:8px;padding:9px 18px;font-size:13px;font-weight:700;cursor:pointer;">Log Notification</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+}
+
+function updateNotifType(key) {
+  const cb = document.getElementById('notif-type-' + key);
+  const label = document.getElementById('notif-label-' + key);
+  if (!label || !cb) return;
+  label.style.borderColor = cb.checked ? 'rgba(52,211,153,0.4)' : 'var(--border)';
+  label.style.background  = cb.checked ? 'rgba(52,211,153,0.07)' : 'var(--surface2)';
+}
+
+async function submitConsumerNotification(recallEventId) {
+  const selectedTypes = Object.keys(NOTIF_TYPES).filter(k => document.getElementById('notif-type-'+k)?.checked);
+  const url     = document.getElementById('notif-url')?.value.trim();
+  const reach   = parseInt(document.getElementById('notif-reach')?.value || '0');
+  const issuer  = document.getElementById('notif-issuer')?.value.trim();
+  const notes   = document.getElementById('notif-notes')?.value.trim();
+  const msg     = document.getElementById('notif-msg');
+
+  if (!selectedTypes.length) {
+    msg.style.display='block'; msg.style.background='rgba(255,92,92,0.1)'; msg.style.color='var(--danger)'; msg.style.border='1px solid rgba(255,92,92,0.3)'; msg.textContent='Select at least one notification type.';
+    return;
+  }
+
+  const inserts = selectedTypes.map(type => ({
+    recall_event_id: recallEventId,
+    organisation_id: _orgId,
+    notification_type: type,
+    url: url || null,
+    reach_estimate: reach || null,
+    issued_by: issuer || null,
+    notes: notes || null,
+    issued_at: new Date().toISOString(),
+  }));
+
+  const { error } = await sb.from('recall_consumer_notifications').insert(inserts);
+  if (error) {
+    msg.style.display='block'; msg.style.background='rgba(255,92,92,0.1)'; msg.style.color='var(--danger)'; msg.style.border='1px solid rgba(255,92,92,0.3)'; msg.textContent='Error: ' + error.message;
+    return;
+  }
+  document.getElementById('notif-modal').remove();
+  showToast(`${selectedTypes.length} notification${selectedTypes.length!==1?'s':''} logged`, 'ok', 2500);
 }
 </script>

@@ -262,6 +262,10 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         Trading Partners
       </button>
+      <button class="nav-item" onclick="showPanel('my_suppliers')" id="nav-my-suppliers">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+        My Suppliers
+      </button>
       <div class="nav-section">Account</div>
       <button class="nav-item" onclick="showPanel('settings')">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -381,12 +385,12 @@ async function initPortal(user) {
 
 // ── Panel router ───────────────────────────────────────────────
 function showPanel(name) {
-  const titles = { overview:'Dashboard', push:'Push a Recall', history:'Recall History', acknowledgements:'Acknowledgements', partners:'Trading Partners', shipments:'Shipments', suppliers:'Supplier Risk', products:'Products', lots:'Lot Codes', triage:'Complaint Triage', widget:'Widget Setup', investigations:'Investigations', settings:'Settings', compliance:'Compliance', mock_audit:'Mock Audit', timeline:'Incident Timeline' };
+  const titles = { overview:'Dashboard', push:'Push a Recall', history:'Recall History', acknowledgements:'Acknowledgements', partners:'Trading Partners', shipments:'Shipments', suppliers:'Supplier Risk', my_suppliers:'My Suppliers', products:'Products', lots:'Lot Codes', triage:'Complaint Triage', widget:'Widget Setup', investigations:'Investigations', settings:'Settings', compliance:'Compliance', mock_audit:'Mock Audit', timeline:'Incident Timeline' };
   document.getElementById('topbar-title').textContent = titles[name] || name;
   document.querySelectorAll('.nav-item').forEach(el => {
     el.classList.toggle('active', el.getAttribute('onclick')?.includes(`'${name}'`));
   });
-  const fns = { overview: renderOverview, push: renderPush, history: renderHistory, acknowledgements: renderAcknowledgements, partners: renderPartners, products: renderProducts, lots: renderLots, shipments: renderShipments, suppliers: renderSupplierRisk, patterns: renderPatterns, triage: renderTriage, widget: renderWidgetSetup, investigations: renderInvestigations, settings: renderMfrSettings, compliance: renderMfrCompliance, mock_audit: renderMockAudit, timeline: renderIncidentTimeline };
+  const fns = { overview: renderOverview, push: renderPush, history: renderHistory, acknowledgements: renderAcknowledgements, partners: renderPartners, products: renderProducts, lots: renderLots, shipments: renderShipments, suppliers: renderSupplierRisk, my_suppliers: renderMySuppliers, patterns: renderPatterns, triage: renderTriage, widget: renderWidgetSetup, investigations: renderInvestigations, settings: renderMfrSettings, compliance: renderMfrCompliance, mock_audit: renderMockAudit, timeline: renderIncidentTimeline };
   (fns[name] || (() => {}))();
 }
 
@@ -4939,5 +4943,269 @@ function copyTraceUrl(url, btn) {
     btn.style.color = 'var(--accent)';
     setTimeout(() => { btn.textContent = orig; btn.style.color = 'var(--text)'; }, 2000);
   });
+}
+</script>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// MY SUPPLIERS (ingredient supplier traceability)
+// ═══════════════════════════════════════════════════════════════
+
+async function renderMySuppliers() {
+  const el = document.getElementById('main-content');
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading suppliers…</div>`;
+
+  const [connsRes, receiptsRes] = await Promise.all([
+    sb.from('supplier_connections').select('*, organisations!supplier_connections_supplier_id_fkey(id,name,contact_email,region)').eq('manufacturer_id', _orgId).order('created_at',{ascending:false}),
+    sb.from('ingredient_receipts').select('*').eq('manufacturer_id', _orgId).order('shipped_at',{ascending:false}).limit(50),
+  ]);
+
+  const connections = connsRes.data || [];
+  const receipts    = receiptsRes.data || [];
+  const active = connections.filter(c => c.status === 'active');
+  const pending = connections.filter(c => c.status === 'pending');
+
+  el.innerHTML = `
+    <div style="max-width:760px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;gap:16px;flex-wrap:wrap;">
+        <div>
+          <div style="font-size:15px;font-weight:600;color:var(--text);">My Suppliers</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:2px;">Ingredient and raw material suppliers — the one-step-back chain required by EU 178/2002 Art. 18 and FSMA 204.</div>
+        </div>
+        <button onclick="openAddSupplier()" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Connect Supplier
+        </button>
+      </div>
+
+      <!-- Regulatory context -->
+      <div style="background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.2);border-radius:10px;padding:14px 16px;margin-bottom:20px;font-size:12px;color:var(--muted);line-height:1.6;">
+        <strong style="color:var(--text);">One step back (ett ledd tilbake)</strong> — EU 178/2002 Art. 18 and Matloven §14 require you to identify the immediate supplier of every ingredient. FSMA 204 requires this as a Key Data Element. Connect your ingredient suppliers here so they can log what they shipped to you.
+      </div>
+
+      <!-- Pending -->
+      ${pending.length > 0 ? `
+      <div style="margin-bottom:20px;">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--warn);margin-bottom:8px;">Pending (${pending.length})</div>
+        ${pending.map(c => `
+          <div style="background:rgba(245,166,35,0.06);border:1px solid rgba(245,166,35,0.25);border-radius:10px;padding:14px 16px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+            <div>
+              <div style="font-size:13px;font-weight:600;color:var(--text);">${c.organisations?.name||'Unknown'}</div>
+              <div style="font-size:11px;color:var(--muted);">${c.organisations?.contact_email||''} · Invitation sent</div>
+            </div>
+            <span style="font-size:10px;font-family:'DM Mono',monospace;color:var(--warn);padding:2px 8px;border:1px solid rgba(245,166,35,0.3);border-radius:5px;">PENDING</span>
+          </div>`).join('')}
+      </div>` : ''}
+
+      <!-- Active connections -->
+      <div style="margin-bottom:20px;">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">Connected Suppliers (${active.length})</div>
+        ${active.length === 0 ? `
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:36px;text-align:center;">
+            <div style="font-size:28px;margin-bottom:10px;">🏭</div>
+            <div style="font-weight:600;color:var(--text);margin-bottom:6px;">No connected suppliers yet</div>
+            <div style="font-size:12px;color:var(--muted);max-width:320px;margin:0 auto 14px;">Connect your ingredient and raw material suppliers to establish the one-step-back traceability chain.</div>
+            <button onclick="openAddSupplier()" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:8px 18px;font-size:13px;font-weight:600;cursor:pointer;">Connect your first supplier →</button>
+          </div>` :
+          active.map(c => {
+            const supplierReceipts = receipts.filter(r => r.supplier_id === c.supplier_id);
+            return `
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:10px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px;">
+                <div>
+                  <div style="font-size:13px;font-weight:600;color:var(--text);">${c.organisations?.name||'Unknown'}</div>
+                  <div style="font-size:11px;color:var(--muted);">${c.organisations?.contact_email||''}</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <span style="font-size:10px;font-family:'DM Mono',monospace;color:var(--accent);padding:2px 8px;border:1px solid rgba(52,211,153,0.3);border-radius:5px;">ACTIVE</span>
+                  <span style="font-size:11px;color:var(--muted);">${supplierReceipts.length} receipt${supplierReceipts.length!==1?'s':''}</span>
+                </div>
+              </div>
+              ${supplierReceipts.length > 0 ? `
+                <table style="width:100%;border-collapse:collapse;">
+                  <thead><tr>
+                    <th style="text-align:left;padding:6px 0;font-size:10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.06em;border-bottom:1px solid var(--border);">Ingredient</th>
+                    <th style="text-align:left;padding:6px 0;font-size:10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.06em;border-bottom:1px solid var(--border);">Lot</th>
+                    <th style="text-align:left;padding:6px 0;font-size:10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.06em;border-bottom:1px solid var(--border);">Qty</th>
+                    <th style="text-align:left;padding:6px 0;font-size:10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.06em;border-bottom:1px solid var(--border);">Date</th>
+                  </tr></thead>
+                  <tbody>
+                    ${supplierReceipts.slice(0,3).map(r => `<tr>
+                      <td style="padding:7px 0;font-size:12px;color:var(--text);">${r.ingredient_name||'—'}</td>
+                      <td style="padding:7px 0;font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">${r.lot_number||'—'}</td>
+                      <td style="padding:7px 0;font-size:11px;color:var(--muted);">${r.quantity||''} ${r.unit||''}</td>
+                      <td style="padding:7px 0;font-size:11px;color:var(--muted);">${r.shipped_at ? new Date(r.shipped_at).toLocaleDateString('en-GB') : '—'}</td>
+                    </tr>`).join('')}
+                  </tbody>
+                </table>
+              ` : `<div style="font-size:12px;color:var(--muted);">No ingredient receipts logged. Ask your supplier to log shipments via the supplier portal.</div>`}
+            </div>`;
+          }).join('')}
+      </div>
+
+      <!-- Recent ingredient receipts -->
+      ${receipts.length > 0 ? `
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;">
+        <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:12px;">Recent Ingredient Receipts (${receipts.length})</div>
+        <table style="width:100%;">
+          <thead><tr>
+            ${['Ingredient','Lot / Batch','Supplier','Qty','Shipped','Ref'].map(h=>`<th style="text-align:left;padding:7px 0;font-size:10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.06em;border-bottom:1px solid var(--border);">${h}</th>`).join('')}
+          </tr></thead>
+          <tbody>
+            ${receipts.map(r=>`<tr>
+              <td style="padding:8px 0;font-size:12px;font-weight:500;color:var(--text);">${r.ingredient_name||'—'}</td>
+              <td style="padding:8px 0;font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">${r.lot_number||'—'}</td>
+              <td style="padding:8px 0;font-size:11px;color:var(--muted);">${r.supplier_name||'—'}</td>
+              <td style="padding:8px 0;font-size:11px;color:var(--muted);">${r.quantity||''} ${r.unit||''}</td>
+              <td style="padding:8px 0;font-size:11px;color:var(--muted);">${r.shipped_at ? new Date(r.shipped_at).toLocaleDateString('en-GB') : '—'}</td>
+              <td style="padding:8px 0;font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${r.reference_document||'—'}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>` : ''}
+    </div>`;
+}
+
+function openAddSupplier() {
+  document.getElementById('add-supplier-modal')?.remove();
+  const modal = document.createElement('div');
+  modal.id = 'add-supplier-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;';
+  modal.innerHTML = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:28px;width:100%;max-width:480px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+        <div style="font-size:14px;font-weight:700;color:var(--text);">Connect Ingredient Supplier</div>
+        <button onclick="document.getElementById('add-supplier-modal').remove()" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;">✕</button>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:16px;line-height:1.6;">Search for your ingredient supplier. If they are already on Batch'd, they can accept your connection and log ingredient shipments directly. If not, you can log receipts manually.</div>
+
+      <div style="display:flex;gap:8px;margin-bottom:12px;">
+        <input id="supplier-search-input" type="text" placeholder="Search by organisation name…" oninput="searchForSupplier()" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 11px;color:var(--text);font-size:13px;outline:none;">
+        <button onclick="searchForSupplier()" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 14px;color:var(--muted);cursor:pointer;">🔍</button>
+      </div>
+      <div id="supplier-search-results" style="margin-bottom:14px;"></div>
+
+      <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:4px;">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">Or log a manual receipt without a portal connection:</div>
+        <button onclick="document.getElementById('add-supplier-modal').remove();openManualReceipt()" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px;font-size:13px;font-weight:600;color:var(--text);cursor:pointer;font-family:inherit;">+ Log Manual Receipt</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+}
+
+async function searchForSupplier() {
+  const q = document.getElementById('supplier-search-input')?.value.trim();
+  const res = document.getElementById('supplier-search-results');
+  if (!res || q.length < 2) { if(res) res.innerHTML=''; return; }
+  const { data } = await sb.from('organisations').select('id,name,contact_email').ilike('name','%'+q+'%').neq('id',_orgId).limit(5);
+  res.innerHTML = (data||[]).length === 0 ? `<div style="font-size:12px;color:var(--muted);padding:8px;">No organisations found.</div>` :
+    (data||[]).map(org => `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;margin-bottom:6px;">
+        <div>
+          <div style="font-size:13px;font-weight:600;color:var(--text);">${org.name}</div>
+          <div style="font-size:11px;color:var(--muted);">${org.contact_email||''}</div>
+        </div>
+        <button onclick="connectSupplier('${org.id}','${org.name.replace(/'/g,"\\'")}',this)"
+          style="background:var(--accent);color:#065f46;border:none;border-radius:7px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;">Connect</button>
+      </div>`).join('');
+}
+
+async function connectSupplier(supplierId, supplierName, btn) {
+  btn.textContent = 'Connecting…'; btn.disabled = true;
+  const { error } = await sb.from('supplier_connections').insert({
+    manufacturer_id: _orgId,
+    supplier_id: supplierId,
+    status: 'pending',
+  });
+  if (error) { btn.textContent = 'Error'; return; }
+  document.getElementById('add-supplier-modal').remove();
+  showToast(`Connection request sent to ${supplierName}`, 'ok', 3000);
+  renderMySuppliers();
+}
+
+function openManualReceipt() {
+  document.getElementById('manual-receipt-modal')?.remove();
+  const modal = document.createElement('div');
+  modal.id = 'manual-receipt-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;';
+  modal.innerHTML = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:28px;width:100%;max-width:520px;max-height:90vh;overflow-y:auto;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+        <div>
+          <div style="font-size:14px;font-weight:700;color:var(--text);">Log Ingredient Receipt</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">One-step-back traceability record (EU 178/2002 Art. 18 · FSMA 204)</div>
+        </div>
+        <button onclick="document.getElementById('manual-receipt-modal').remove()" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;">✕</button>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:13px;">
+        <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Ingredient / raw material name *</label>
+        <input id="mr-ingredient" type="text" placeholder="e.g. Wheat flour, Tomato paste, Olive oil" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+
+        <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Supplier name *</label>
+        <input id="mr-supplier" type="text" placeholder="Supplier / producer name" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+
+        <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Lot / Batch number</label>
+        <input id="mr-lot" type="text" placeholder="Supplier lot code" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;font-family:'DM Mono',monospace;box-sizing:border-box;"></div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;">
+          <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Quantity</label>
+          <input id="mr-qty" type="number" placeholder="0" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+          <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Unit</label>
+          <select id="mr-unit" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;">
+            <option value="kg">kg</option><option value="lbs">lbs</option>
+            <option value="units">units</option><option value="cases">cases</option><option value="litres">litres</option>
+          </select></div>
+          <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Date received</label>
+          <input id="mr-date" type="date" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+        </div>
+
+        <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Reference document <span style="opacity:0.6;">(delivery note, PO, COA)</span></label>
+        <input id="mr-ref" type="text" placeholder="e.g. DN-2026-0042 or COA-L12345" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+
+        <div id="mr-msg" style="display:none;border-radius:8px;padding:9px 12px;font-size:12px;"></div>
+        <div style="display:flex;justify-content:flex-end;gap:10px;">
+          <button onclick="document.getElementById('manual-receipt-modal').remove()" style="background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:9px 18px;font-size:13px;cursor:pointer;">Cancel</button>
+          <button onclick="saveManualReceipt()" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:9px 18px;font-size:13px;font-weight:700;cursor:pointer;">Log Receipt</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+}
+
+async function saveManualReceipt() {
+  const ingredient = document.getElementById('mr-ingredient')?.value.trim();
+  const supplier   = document.getElementById('mr-supplier')?.value.trim();
+  const lot        = document.getElementById('mr-lot')?.value.trim();
+  const qty        = parseFloat(document.getElementById('mr-qty')?.value || '0');
+  const unit       = document.getElementById('mr-unit')?.value;
+  const date       = document.getElementById('mr-date')?.value;
+  const ref        = document.getElementById('mr-ref')?.value.trim();
+  const msg        = document.getElementById('mr-msg');
+
+  if (!ingredient || !supplier) {
+    msg.style.display='block'; msg.style.background='rgba(255,92,92,0.1)'; msg.style.color='var(--danger)'; msg.style.border='1px solid rgba(255,92,92,0.3)'; msg.textContent='Ingredient name and supplier are required.';
+    return;
+  }
+
+  const { error } = await sb.from('ingredient_receipts').insert({
+    manufacturer_id: _orgId,
+    ingredient_name: ingredient,
+    supplier_name: supplier,
+    lot_number: lot || null,
+    quantity: qty || null,
+    unit: unit,
+    shipped_at: date ? new Date(date).toISOString() : null,
+    received_at: new Date().toISOString(),
+    reference_document: ref || null,
+  });
+
+  if (error) {
+    msg.style.display='block'; msg.style.background='rgba(255,92,92,0.1)'; msg.style.color='var(--danger)'; msg.style.border='1px solid rgba(255,92,92,0.3)'; msg.textContent='Error: ' + error.message;
+    return;
+  }
+  document.getElementById('manual-receipt-modal').remove();
+  showToast('Receipt logged', 'ok', 2500);
+  renderMySuppliers();
 }
 </script>
