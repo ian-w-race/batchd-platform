@@ -7312,12 +7312,20 @@ async function checkRecallsOnLogin(silent = false) {
     const recalls = [...(recallsRes.data || []), ...pushedRecalls];
     if (!recalls.length) return;
 
-    // Deduplicate by product_name + lot_number — duplicate DB rows from repeated
-    // feed fetches would otherwise generate multiple identical alerts
+    // Deduplicate recalls before checking scans:
+    // - By recall_number tag [H-XXXX] in description (FDA)
+    // - By product_name prefix (first 40 chars) to handle slight variations
+    // - Falls back to product_name|lot_number for non-FDA sources
     const seenRecallKeys = new Set();
     const uniqueRecalls = recalls.filter(r => {
-      const key = `${(r.product_name||'').toLowerCase().trim()}|${(r.lot_number||'').toLowerCase().trim()}`;
-      if (seenRecallKeys.has(key)) return false;
+      // Extract recall number from description if present
+      const recallNumMatch = (r.description || '').match(/\[([A-Z0-9\-]+)\]$/);
+      const recallNum = recallNumMatch ? recallNumMatch[1] : null;
+      const nameKey = (r.product_name || '').toLowerCase().trim().slice(0, 40);
+      const lotKey  = (r.lot_number  || '').toLowerCase().trim().slice(0, 30);
+      // Primary key: recall number (most precise) or product+lot
+      const key = recallNum || (nameKey + '|' + lotKey);
+      if (!key || seenRecallKeys.has(key)) return false;
       seenRecallKeys.add(key);
       return true;
     });
@@ -7818,23 +7826,27 @@ async function fetchExternalRecalls() {
 }
 
 async function fetchFDARecalls() {
-  const url = 'https://api.fda.gov/food/enforcement.json?search=status:Ongoing&limit=20&sort=report_date:desc';
+  const url = 'https://api.fda.gov/food/enforcement.json?search=status:Ongoing&limit=50&sort=report_date:desc';
   const resp = await fetch(url);
   if (!resp.ok) throw new Error('FDA API error ' + resp.status);
   const data = await resp.json();
   const results = data.results || [];
   let added = 0;
   for (const r of results) {
+    if (!r.recall_number) continue; // skip records without a unique ID
+    // Dedup by recall_number stored as [H-XXXX-YYYY] tag in description
+    const tag = '[' + r.recall_number + ']';
     const { data: existing } = await sb.from('recalls')
       .select('id')
-      .eq('description', r.recall_number || r.product_description?.slice(0,80))
+      .eq('source', 'fda')
       .eq('organisation_id', _currentOrgId)
+      .ilike('description', '%' + r.recall_number + '%')
       .maybeSingle();
     if (existing) continue;
     const { error } = await sb.from('recalls').insert({
       product_name:    r.product_description?.slice(0, 120) || 'FDA Recall',
-      lot_number:      r.code_info || null,
-      description:     (r.reason_for_recall || '').slice(0, 200) + (r.recall_number ? ` [${r.recall_number}]` : ''),
+      lot_number:      r.code_info?.slice(0, 200) || null,
+      description:     (r.reason_for_recall || '').slice(0, 190) + ' ' + tag,
       source:          'fda',
       active:          true,
       organisation_id: _currentOrgId,
