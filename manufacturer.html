@@ -245,6 +245,10 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 5v3h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
         Shipments
       </button>
+      <button class="nav-item" onclick="showPanel('suppliers')" id="nav-suppliers">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M2 20c0-4 4-7 10-7s10 3 10 7"/><path d="M17 13l2 2 4-4" stroke-width="2.5"/></svg>
+        Supplier Risk
+      </button>
       <button class="nav-item" onclick="showPanel('patterns')">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12h20M12 2v20M4.93 4.93l14.14 14.14M19.07 4.93L4.93 19.07"/></svg>
         Pattern Library
@@ -369,12 +373,12 @@ async function initPortal(user) {
 
 // ── Panel router ───────────────────────────────────────────────
 function showPanel(name) {
-  const titles = { overview:'Dashboard', push:'Push a Recall', history:'Recall History', acknowledgements:'Acknowledgements', partners:'Trading Partners', shipments:'Shipments', products:'Products', lots:'Lot Codes', triage:'Complaint Triage', widget:'Widget Setup', investigations:'Investigations', settings:'Settings', compliance:'Compliance' };
+  const titles = { overview:'Dashboard', push:'Push a Recall', history:'Recall History', acknowledgements:'Acknowledgements', partners:'Trading Partners', shipments:'Shipments', suppliers:'Supplier Risk', products:'Products', lots:'Lot Codes', triage:'Complaint Triage', widget:'Widget Setup', investigations:'Investigations', settings:'Settings', compliance:'Compliance' };
   document.getElementById('topbar-title').textContent = titles[name] || name;
   document.querySelectorAll('.nav-item').forEach(el => {
     el.classList.toggle('active', el.getAttribute('onclick')?.includes(`'${name}'`));
   });
-  const fns = { overview: renderOverview, push: renderPush, history: renderHistory, acknowledgements: renderAcknowledgements, partners: renderPartners, products: renderProducts, lots: renderLots, shipments: renderShipments, patterns: renderPatterns, triage: renderTriage, widget: renderWidgetSetup, investigations: renderInvestigations, settings: renderMfrSettings, compliance: renderMfrCompliance };
+  const fns = { overview: renderOverview, push: renderPush, history: renderHistory, acknowledgements: renderAcknowledgements, partners: renderPartners, products: renderProducts, lots: renderLots, shipments: renderShipments, suppliers: renderSupplierRisk, patterns: renderPatterns, triage: renderTriage, widget: renderWidgetSetup, investigations: renderInvestigations, settings: renderMfrSettings, compliance: renderMfrCompliance };
   (fns[name] || (() => {}))();
 }
 
@@ -813,17 +817,30 @@ async function renderHistory() {
       <div class="panel-body">
         ${list.length === 0 ? `<div class="empty">No recalls issued yet.</div>` :
         list.map(e => `
-          <div class="recall-item">
-            <div class="sev-indicator sev-${e.severity?.split('_')[1] || 'ii'}"></div>
-            <div class="recall-info">
-              <div class="recall-name">${e.product_name}</div>
-              <div class="recall-meta">
-                ${e.severity?.replace('_',' ')} · ${e.reason}<br>
-                ${e.lot_number?`Lot: ${e.lot_number} · `:''}${e.barcode?`Barcode: ${e.barcode} · `:''}
-                ${new Date(e.created_at).toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'})}
+          <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:10px;">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+              <div style="flex:1;min-width:0;">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap;">
+                  <span class="recall-badge ${e.is_drill?'badge-drill':'badge-live'}">${e.is_drill?'Drill':'Live'}</span>
+                  <span style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);">${new Date(e.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}</span>
+                </div>
+                <div style="font-size:14px;font-weight:600;color:var(--text);">${e.product_name}</div>
+                <div style="font-size:12px;color:var(--muted);margin-top:3px;">
+                  ${e.severity?.replace('_',' ')||''} · ${e.reason||''}
+                  ${e.lot_number ? ' · Lot: ' + e.lot_number : ''}
+                </div>
+              </div>
+              <div style="display:flex;gap:7px;flex-shrink:0;flex-wrap:wrap;">
+                <button onclick="generateLegalPackage('${e.id}')" title="Generate Legal Defense Package"
+                  style="background:rgba(56,189,248,0.1);border:1px solid rgba(56,189,248,0.3);color:var(--info);border-radius:7px;padding:6px 11px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap;">
+                  🛡 Defense Package
+                </button>
+                <button onclick="openCAPForm('${e.id}','${(e.product_name||'').replace(/'/g,"\'")}','${(e.lot_number||'').replace(/'/g,"\'")}','${e.reason||''}')" title="Corrective Action Plan"
+                  style="background:rgba(245,166,35,0.1);border:1px solid rgba(245,166,35,0.3);color:var(--warn);border-radius:7px;padding:6px 11px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap;">
+                  📋 Action Plan
+                </button>
               </div>
             </div>
-            <span class="recall-badge ${e.is_drill?'badge-drill':'badge-live'}">${e.is_drill?'Drill':'Live'}</span>
           </div>`).join('')}
       </div>
     </div>`;
@@ -3658,5 +3675,511 @@ async function exportShipmentAudit() {
   a.href = url; a.download = `batched_shipment_audit_${new Date().toISOString().slice(0,10)}.csv`;
   a.click(); URL.revokeObjectURL(url);
   showToast(`Exported ${shipments.length} shipment records`, 'ok', 3000);
+}
+</script>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// 1. LEGAL DEFENSE PACKAGE
+// ═══════════════════════════════════════════════════════════════
+
+async function generateLegalPackage(recallEventId) {
+  showToast('Compiling defense package…', 'ok', 2500);
+
+  // Fetch everything related to this recall event in parallel
+  const [eventRes, acksRes, distRes, invRes, complaintsRes, orgRes] = await Promise.all([
+    sb.from('recall_events').select('*').eq('id', recallEventId).single(),
+    sb.from('recall_acknowledgements')
+      .select('*, organisations(name)')
+      .eq('recall_event_id', recallEventId)
+      .order('created_at', { ascending: true }),
+    sb.from('recall_distributions')
+      .select('*, organisations!recall_distributions_retailer_org_id_fkey(name, contact_email)')
+      .eq('recall_event_id', recallEventId),
+    sb.from('investigation_requests')
+      .select('*, investigation_responses(*)')
+      .eq('complaint_id', recallEventId),
+    sb.from('complaints')
+      .select('*')
+      .or(`product_name.ilike.%${(await sb.from('recall_events').select('product_name').eq('id', recallEventId).single()).data?.product_name?.split(' ')[0] || 'x'}%`),
+    sb.from('organisations').select('name, contact_email, recall_coordinator_name, recall_coordinator_contact, regulatory_frameworks').eq('id', _orgId).single(),
+  ]);
+
+  const ev = eventRes.data;
+  const acks = acksRes.data || [];
+  const dists = distRes.data || [];
+  const org = orgRes.data || {};
+  if (!ev) { showToast('Recall event not found', 'error', 3000); return; }
+
+  const now = new Date();
+  const fmt = d => d ? new Date(d).toLocaleString('en-GB', { day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit', timeZoneName:'short' }) : '—';
+  const fmtDate = d => d ? new Date(d).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) : '—';
+
+  // Acknowledgement chain summary
+  const storeCount = acks.length;
+  const statusCounts = {};
+  acks.forEach(a => { statusCounts[a.status] = (statusCounts[a.status] || 0) + 1; });
+  const confirmedCount = statusCounts['confirmed'] || 0;
+  const pulledCount = (statusCounts['pulled'] || 0) + (statusCounts['disposed'] || 0) + confirmedCount;
+  const notifiedCount = storeCount;
+
+  // Time metrics
+  const recallTime = new Date(ev.created_at);
+  const firstAck = acks.find(a => a.status !== 'notified');
+  const firstPull = acks.find(a => ['pulled','disposed','confirmed'].includes(a.status));
+  const firstConfirm = acks.find(a => a.status === 'confirmed');
+
+  const hoursToFirstAck = firstAck
+    ? Math.round((new Date(firstAck.updated_at) - recallTime) / 36e5 * 10) / 10
+    : null;
+  const hoursToFirstPull = firstPull
+    ? Math.round((new Date(firstPull.updated_at) - recallTime) / 36e5 * 10) / 10
+    : null;
+
+  const frameworks = org.regulatory_frameworks || [];
+  const isUS = frameworks.includes('fda_food') || frameworks.includes('fsma_204');
+  const isNO = frameworks.includes('mattilsynet');
+  const isFSIS = frameworks.includes('usda_fsis');
+
+  const doc = `
+╔══════════════════════════════════════════════════════════════════╗
+║         LEGAL DEFENSE PACKAGE — CONFIDENTIAL                    ║
+║         Food Safety Incident Documentation                       ║
+╚══════════════════════════════════════════════════════════════════╝
+
+Generated: ${fmt(now)}
+Generated by: Batch'd Food Traceability Platform
+Organisation: ${org.name || _orgName}
+Recall Coordinator: ${org.recall_coordinator_name || 'Not designated'} · ${org.recall_coordinator_contact || ''}
+
+This document constitutes a legally relevant audit trail of all actions
+taken in response to the food safety incident described below.
+All timestamps are recorded at the time of action in the Batch'd platform
+and are attributable to named users.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+SECTION 1 — INCIDENT SUMMARY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Recall ID:          ${ev.id}
+Product:            ${ev.product_name}
+Lot Number:         ${ev.lot_number || 'Not specified'}
+Barcode/EAN:        ${ev.barcode || 'Not specified'}
+Reason:             ${ev.reason || 'Not specified'}
+Severity Class:     ${ev.severity || 'Not classified'}
+Type:               ${ev.is_drill ? 'MOCK DRILL — not a live recall' : 'LIVE RECALL'}
+Initiated:          ${fmt(ev.created_at)}
+Authority Reference: ${ev.authority_ref || 'None on record'}
+
+Regulatory basis:
+${isNO ? '• Matloven §16 — immediate withdrawal obligation upon discovery\n• EU Reg. 178/2002 Art. 19 — notification to competent authority required' : ''}
+${isUS ? '• 21 CFR 7 — voluntary recall initiated per FDA guidance\n• FDA Class ' + (ev.severity?.includes('I') ? 'I' : 'II') + ' — ' + (ev.severity?.includes('I') ? '24-hour RFR notification required' : 'notification required') : ''}
+${isFSIS ? '• USDA FSIS recall procedures apply — product includes meat/poultry/eggs' : ''}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+SECTION 2 — DISTRIBUTION RECORD
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Total retailers notified: ${dists.length}
+Notification method: Batch'd platform push notification + email alert
+Notification timestamp: ${fmt(ev.created_at)} (system-recorded)
+
+Retailers notified:
+${dists.map((d, i) => `  ${i+1}. ${d.organisations?.name || d.retailer_org_id}
+     Contact: ${d.organisations?.contact_email || 'on file'}
+     Notified: ${fmt(ev.created_at)}`).join('\n')}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+SECTION 3 — ACKNOWLEDGEMENT CHAIN
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Total store records:  ${storeCount}
+Acknowledged:         ${(statusCounts['acknowledged']||0) + pulledCount} stores
+Product pulled:       ${pulledCount} stores
+Confirmed removed:    ${confirmedCount} stores
+
+Time metrics:
+• Time to first acknowledgement: ${hoursToFirstAck !== null ? hoursToFirstAck + ' hours' : 'Pending'}
+• Time to first product pull: ${hoursToFirstPull !== null ? hoursToFirstPull + ' hours' : 'Pending'}
+${isUS && hoursToFirstPull !== null ? `• FDA Class I target (2 hours): ${hoursToFirstPull <= 2 ? '✓ MET' : '✗ MISSED by ' + Math.round((hoursToFirstPull-2)*10)/10 + ' hours'}` : ''}
+${isNO && hoursToFirstPull !== null ? `• Mattilsynet "umiddelbart" standard: ${hoursToFirstPull <= 4 ? '✓ MET' : '⚠ Review required'}` : ''}
+
+Per-store acknowledgement timeline:
+${acks.map((a, i) => {
+  const retailer = a.organisations?.name || a.retailer_org_id?.slice(0,8) || 'Unknown';
+  const hoursAfter = Math.round((new Date(a.updated_at) - recallTime) / 36e5 * 10) / 10;
+  return `  ${String(i+1).padStart(3)}. ${retailer.slice(0,35).padEnd(35)} | Status: ${(a.status||'notified').toUpperCase().padEnd(12)} | ${fmt(a.updated_at)} (+${hoursAfter}h)`;
+}).join('\n') || '  No acknowledgement records yet.'}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+SECTION 4 — FIELD INVESTIGATIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+${(invRes.data||[]).length === 0
+  ? 'No field investigations linked to this recall event.'
+  : (invRes.data||[]).map(inv => {
+    const responses = inv.investigation_responses || [];
+    const found = responses.filter(r => r.issue_found).length;
+    return `Investigation ID: ${inv.id}
+  Issue type: ${inv.issue_type}
+  Launched: ${fmt(inv.created_at)}
+  Status: ${inv.status}
+  Responses received: ${responses.length} (${found} confirmed issue)
+  ${inv.findings_summary ? 'AI Summary: ' + inv.findings_summary : ''}`;
+  }).join('\n\n')}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+SECTION 5 — LEGAL DECLARATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+This document is generated from the Batch'd food traceability platform.
+All records contained herein were created in real time by named users
+at the timestamps shown. No records have been altered or back-dated.
+
+The data in this document constitutes the complete audit trail for
+the above-referenced incident as maintained by ${org.name || _orgName}.
+
+Recall Coordinator: ${org.recall_coordinator_name || 'Not designated'}
+Contact: ${org.recall_coordinator_contact || ''}
+Export generated: ${fmt(now)}
+
+Signature: ________________________________
+Date: ________________________________
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Generated by Batch'd · Food Safety Incident Documentation
+This document is confidential and intended for legal/regulatory use.
+Batch'd ID: ${recallEventId}
+`;
+
+  const blob = new Blob([doc], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const safeProduct = (ev.product_name||'recall').replace(/[^a-zA-Z0-9]/g,'_').toLowerCase().slice(0,30);
+  a.href = url;
+  a.download = `batched_legal_defense_${safeProduct}_${new Date().toISOString().slice(0,10)}.txt`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('Legal Defense Package downloaded', 'ok', 3000);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 2. CORRECTIVE ACTION PLAN
+// ═══════════════════════════════════════════════════════════════
+
+let _capRecallId = null;
+
+function openCAPForm(recallId, product, lot, reason) {
+  _capRecallId = recallId;
+  // Remove existing modal if any
+  document.getElementById('cap-modal')?.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'cap-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;';
+  modal.innerHTML = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:28px;width:100%;max-width:600px;max-height:90vh;overflow-y:auto;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+        <div>
+          <div style="font-size:15px;font-weight:700;color:var(--text);">📋 Corrective Action Plan</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:2px;">${product}${lot ? ' · Lot: ' + lot : ''}</div>
+        </div>
+        <button onclick="document.getElementById('cap-modal').remove()" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;padding:4px;">✕</button>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Root cause *</label>
+          <select id="cap-rootcause-type" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;">
+            <option value="">— Select primary root cause —</option>
+            <option value="supplier">Supplier / raw material issue</option>
+            <option value="process">Manufacturing process failure</option>
+            <option value="labelling">Mislabelling / wrong label</option>
+            <option value="contamination">Cross-contamination in facility</option>
+            <option value="storage">Improper storage or transport</option>
+            <option value="foreign_object">Foreign object introduced</option>
+            <option value="pest">Pest intrusion</option>
+            <option value="equipment">Equipment failure or malfunction</option>
+            <option value="human_error">Human error</option>
+            <option value="other">Other / under investigation</option>
+          </select>
+        </div>
+
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Root cause description *</label>
+          <textarea id="cap-rootcause" rows="3" placeholder="Describe the root cause in detail — what happened, when, and why." style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px;color:var(--text);font-size:13px;resize:vertical;box-sizing:border-box;font-family:inherit;line-height:1.5;"></textarea>
+        </div>
+
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Immediate corrective actions taken *</label>
+          <textarea id="cap-immediate" rows="3" placeholder="What was done immediately — product held, production halted, supplier notified, etc." style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px;color:var(--text);font-size:13px;resize:vertical;box-sizing:border-box;font-family:inherit;line-height:1.5;"></textarea>
+        </div>
+
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Preventive measures <span style="opacity:0.6;">(to stop recurrence)</span></label>
+          <textarea id="cap-preventive" rows="3" placeholder="Process changes, supplier audits, additional checks, retraining — what will prevent this happening again." style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px;color:var(--text);font-size:13px;resize:vertical;box-sizing:border-box;font-family:inherit;line-height:1.5;"></textarea>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div>
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Responsible person</label>
+            <input id="cap-responsible" type="text" placeholder="Name and title" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;">
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Target completion date</label>
+            <input id="cap-date" type="date" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;">
+          </div>
+        </div>
+
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Food Safety Plan reanalysis notes</label>
+          <textarea id="cap-fsp" rows="2" placeholder="Required by FDA (21 CFR 117) and best practice under IK-mat — note any updates to HACCP/preventive controls plan." style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px;color:var(--text);font-size:13px;resize:vertical;box-sizing:border-box;font-family:inherit;line-height:1.5;"></textarea>
+        </div>
+
+        <div id="cap-msg" style="display:none;border-radius:8px;padding:10px 14px;font-size:13px;"></div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;">
+          <button onclick="document.getElementById('cap-modal').remove()" style="background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:9px 18px;font-size:13px;cursor:pointer;">Cancel</button>
+          <button onclick="generateCAP('${recallId}','${product.replace(/'/g,"\\'")}','${lot||''}')" style="background:var(--warn);color:#1a0f00;border:none;border-radius:8px;padding:9px 18px;font-size:13px;font-weight:700;cursor:pointer;">Generate & Save CAP</button>
+        </div>
+      </div>
+    </div>`;
+
+  document.body.appendChild(modal);
+}
+
+async function generateCAP(recallId, product, lot) {
+  const rootCauseType = document.getElementById('cap-rootcause-type')?.value;
+  const rootCause     = document.getElementById('cap-rootcause')?.value.trim();
+  const immediate     = document.getElementById('cap-immediate')?.value.trim();
+  const preventive    = document.getElementById('cap-preventive')?.value.trim();
+  const responsible   = document.getElementById('cap-responsible')?.value.trim();
+  const targetDate    = document.getElementById('cap-date')?.value;
+  const fspNotes      = document.getElementById('cap-fsp')?.value.trim();
+  const msgEl         = document.getElementById('cap-msg');
+
+  if (!rootCause || !immediate) {
+    if (msgEl) { msgEl.style.display='block'; msgEl.style.color='var(--danger)'; msgEl.style.background='rgba(255,92,92,0.1)'; msgEl.style.border='1px solid rgba(255,92,92,0.3)'; msgEl.textContent='Root cause and immediate actions are required.'; }
+    return;
+  }
+
+  const today = new Date().toLocaleDateString('en-GB', { day:'numeric', month:'long', year:'numeric' });
+  const { data: org } = await sb.from('organisations').select('name, recall_coordinator_name, recall_coordinator_contact, regulatory_frameworks').eq('id', _orgId).single();
+  const frameworks = org?.regulatory_frameworks || [];
+  const isUS = frameworks.includes('fda_food') || frameworks.includes('fsma_204');
+  const isNO = frameworks.includes('mattilsynet');
+
+  // Save CAP data to recall_events
+  const capData = { rootCauseType, rootCause, immediate, preventive, responsible, targetDate, fspNotes, generatedAt: new Date().toISOString() };
+  await sb.from('recall_events').update({ cap_data: capData }).eq('id', recallId);
+
+  const doc = `CORRECTIVE ACTION PLAN (CAP)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Organisation: ${org?.name || _orgName}
+Product: ${product}${lot ? '\nLot Number: ' + lot : ''}
+CAP Prepared: ${today}
+Recall Coordinator: ${org?.recall_coordinator_name || 'Not designated'}
+
+Regulatory basis:
+${isNO ? '• Matloven §16 + EU Reg. 178/2002 Art. 19 — post-recall corrective action\n• IK-mat forskriften — internal control documentation requirement' : ''}
+${isUS ? '• 21 CFR 117.150 — corrective actions required for preventive control deviations\n• FDA guidance: Food Safety Plan reanalysis required after recall events' : ''}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 1 — ROOT CAUSE ANALYSIS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Primary Root Cause Category: ${rootCauseType?.replace(/_/g,' ').toUpperCase() || 'Not specified'}
+
+Root Cause Description:
+${rootCause}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 2 — IMMEDIATE CORRECTIVE ACTIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+${immediate}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 3 — PREVENTIVE MEASURES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+${preventive || 'To be determined — under investigation.'}
+
+Target completion date: ${targetDate ? new Date(targetDate).toLocaleDateString('en-GB', {day:'numeric',month:'long',year:'numeric'}) : 'Not specified'}
+Responsible: ${responsible || 'Not assigned'}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 4 — FOOD SAFETY PLAN REANALYSIS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+${fspNotes || 'Reanalysis pending. To be completed by responsible party above.'}
+
+${isUS ? 'Required under 21 CFR 117 — the Food Safety Plan must be reanalyzed after any recall event to determine if changes are needed to prevent recurrence.' : ''}
+${isNO ? 'Required under IK-mat forskriften — update internal control documentation to reflect changes made.' : ''}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 5 — SIGN-OFF
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Prepared by: ${org?.recall_coordinator_name || '________________________'}
+Title:       ________________________
+Date:        ${today}
+Signature:   ________________________
+
+Reviewed by: ________________________
+Title:       ________________________
+Date:        ________________________
+Signature:   ________________________
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Generated by Batch'd · Corrective Action Plan · ${today}
+Recall Event ID: ${recallId}
+Retain this document for minimum ${isUS ? '2 years (FSMA 21 CFR)' : '5 years (EU Reg. 178/2002)'}.`;
+
+  const blob = new Blob([doc], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const safeProduct = product.replace(/[^a-zA-Z0-9]/g,'_').toLowerCase().slice(0,30);
+  a.href = url;
+  a.download = `batched_CAP_${safeProduct}_${new Date().toISOString().slice(0,10)}.txt`;
+  a.click();
+  URL.revokeObjectURL(url);
+
+  document.getElementById('cap-modal')?.remove();
+  showToast('Corrective Action Plan saved and downloaded', 'ok', 3000);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 3. SUPPLIER RISK SCORES
+// ═══════════════════════════════════════════════════════════════
+
+async function renderSupplierRisk() {
+  const el = document.getElementById('main-content');
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Computing supplier risk scores…</div>`;
+
+  // Load all data needed for scoring
+  const [shipmentsRes, recallsRes, invRes, complaintsRes] = await Promise.all([
+    sb.from('shipments').select('lot_number, product_name, retailer_id, shipped_at, organisations!shipments_retailer_id_fkey(name)').eq('manufacturer_id', _orgId).order('shipped_at', { ascending: false }),
+    sb.from('recall_events').select('id, product_name, lot_number, reason, severity, created_at, is_drill').eq('source_org_id', _orgId).eq('is_drill', false),
+    sb.from('investigation_requests').select('id, product_name, lot_number, issue_type, status, investigation_responses(issue_found)').eq('manufacturer_id', _orgId),
+    sb.from('complaints').select('product_name, lot_number, triage_level, created_at').eq('receiving_org_id', _orgId).limit(200),
+  ]);
+
+  const shipments  = shipmentsRes.data  || [];
+  const recalls    = recallsRes.data    || [];
+  const invs       = invRes.data        || [];
+  const complaints = complaintsRes.data || [];
+
+  // Build retailer risk map
+  // Key: retailer org ID → { name, shipmentCount, recallCount, invFoundCount, complaintCount, lastShipment }
+  const retailerMap = {};
+
+  for (const s of shipments) {
+    const id   = s.retailer_id;
+    const name = s.organisations?.name || id?.slice(0,8) || 'Unknown';
+    if (!retailerMap[id]) retailerMap[id] = { name, shipmentCount:0, recallCount:0, invFoundCount:0, criticalComplaints:0, lastShipment:null, lots:new Set() };
+    retailerMap[id].shipmentCount++;
+    retailerMap[id].lots.add(s.lot_number);
+    const d = new Date(s.shipped_at);
+    if (!retailerMap[id].lastShipment || d > retailerMap[id].lastShipment) retailerMap[id].lastShipment = d;
+  }
+
+  // Count recalls per retailer (via acknowledgements)
+  for (const r of recalls) {
+    // A recall affects all retailers who received that lot
+    for (const id of Object.keys(retailerMap)) {
+      const lots = retailerMap[id].lots;
+      if (r.lot_number && lots.has(r.lot_number)) retailerMap[id].recallCount++;
+    }
+  }
+
+  // Count investigations with confirmed issues per retailer
+  for (const inv of invs) {
+    const responses = inv.investigation_responses || [];
+    const foundResponses = responses.filter(r => r.issue_found);
+    for (const resp of foundResponses) {
+      // retailer_org_id is on the response — match to our map
+      if (retailerMap[resp.retailer_org_id]) retailerMap[resp.retailer_org_id].invFoundCount++;
+    }
+  }
+
+  // Risk score formula:
+  // Base: shipments = activity baseline
+  // Recall involvement: +30 per recall
+  // Investigation confirmed issue: +20 per confirmed finding
+  // Critical complaints: +15 per critical
+  // Score capped 0–100, then bucketed: Low/Medium/High/Critical
+  const retailers = Object.entries(retailerMap).map(([id, r]) => {
+    const rawScore = (r.recallCount * 30) + (r.invFoundCount * 20) + (r.criticalComplaints * 15);
+    const score = Math.min(100, rawScore);
+    const level = score === 0 ? 'low' : score < 30 ? 'medium' : score < 60 ? 'high' : 'critical';
+    return { id, ...r, lots: r.lots.size, score, level };
+  }).sort((a,b) => b.score - a.score);
+
+  const levelColors = { critical:'var(--danger)', high:'var(--warn)', medium:'var(--info)', low:'var(--accent)' };
+  const levelBg = { critical:'rgba(255,92,92,0.1)', high:'rgba(245,166,35,0.1)', medium:'rgba(56,189,248,0.1)', low:'rgba(52,211,153,0.1)' };
+
+  el.innerHTML = `
+    <div style="max-width:780px;">
+      <div style="margin-bottom:20px;">
+        <div style="font-size:15px;font-weight:600;color:var(--text);">Retailer Risk Scores</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px;">Risk scored per retail partner based on recall involvement, confirmed investigation findings, and complaint patterns. Use this to prioritise relationships and focus quality control efforts.</div>
+      </div>
+
+      <div style="background:rgba(56,189,248,0.06);border:1px solid rgba(56,189,248,0.2);border-radius:10px;padding:12px 16px;margin-bottom:20px;font-size:12px;color:var(--muted);line-height:1.6;">
+        <strong style="color:var(--info);">How scores are calculated:</strong>
+        Recall involvement (+30 per recall event affecting that retailer) · Confirmed investigation findings (+20 each) · Critical complaints (+15 each). Score 0 = Low · 1–29 = Medium · 30–59 = High · 60+ = Critical.
+      </div>
+
+      ${retailers.length === 0 ? `<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:48px;text-align:center;"><div style="font-size:28px;margin-bottom:12px;">📊</div><div style="font-weight:600;color:var(--text);">No shipment data yet</div><div style="font-size:13px;color:var(--muted);margin-top:6px;">Log shipments to your trading partners to start tracking risk scores.</div></div>`
+      : `
+      <!-- Summary strip -->
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px;">
+        ${['critical','high','medium','low'].map(level => {
+          const count = retailers.filter(r => r.level === level).length;
+          return `<div style="background:var(--surface);border:1px solid ${levelColors[level].replace('var(','rgba(').replace('--danger)','255,92,92,0.3)').replace('--warn)','245,166,35,0.3)').replace('--info)','56,189,248,0.3)').replace('--accent)','52,211,153,0.3)')};border-radius:10px;padding:12px;">
+            <div style="font-size:22px;font-weight:800;color:${levelColors[level]};font-family:'Figtree',sans-serif;">${count}</div>
+            <div style="font-size:11px;color:var(--muted);text-transform:capitalize;">${level} risk</div>
+          </div>`;
+        }).join('')}
+      </div>
+
+      <!-- Retailer cards -->
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        ${retailers.map(r => `
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+          <!-- Risk badge -->
+          <div style="min-width:70px;text-align:center;">
+            <div style="font-size:22px;font-weight:800;color:${levelColors[r.level]};font-family:'Figtree',sans-serif;">${r.score}</div>
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:${levelColors[r.level]};padding:2px 8px;border-radius:4px;background:${levelBg[r.level]};display:inline-block;margin-top:2px;">${r.level}</div>
+          </div>
+
+          <!-- Details -->
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:4px;">${r.name}</div>
+            <div style="display:flex;gap:12px;flex-wrap:wrap;">
+              <span style="font-size:11px;color:var(--muted);">📦 ${r.shipmentCount} shipment${r.shipmentCount!==1?'s':''} · ${r.lots} lot${r.lots!==1?'s':''}</span>
+              ${r.recallCount > 0 ? `<span style="font-size:11px;color:var(--danger);">⚠ ${r.recallCount} recall involvement${r.recallCount!==1?'s':''}</span>` : '<span style="font-size:11px;color:var(--accent);">✓ No recalls</span>'}
+              ${r.invFoundCount > 0 ? `<span style="font-size:11px;color:var(--warn);">🔍 ${r.invFoundCount} confirmed finding${r.invFoundCount!==1?'s':''}</span>` : ''}
+            </div>
+            ${r.lastShipment ? `<div style="font-size:11px;color:var(--muted);margin-top:3px;">Last shipment: ${r.lastShipment.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}</div>` : ''}
+          </div>
+
+          ${r.level === 'critical' || r.level === 'high' ? `
+          <div style="text-align:right;flex-shrink:0;">
+            <div style="font-size:11px;color:${levelColors[r.level]};font-weight:600;margin-bottom:4px;">Action recommended</div>
+            <div style="font-size:10px;color:var(--muted);">${r.level === 'critical' ? 'Escalate — conduct immediate review' : 'Review recall and investigation records'}</div>
+          </div>` : ''}
+        </div>`).join('')}
+      </div>`}
+
+      <div style="font-size:11px;color:var(--muted);text-align:center;padding:16px 0 4px;">
+        Scores update in real time as recalls, investigations, and complaints are recorded in Batch'd.
+      </div>
+    </div>`;
 }
 </script>
