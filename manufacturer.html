@@ -215,6 +215,10 @@
         <span id="invest-badge" style="display:none;margin-left:auto;background:var(--warn);color:#1a0f00;font-size:10px;font-family:'DM Mono',monospace;padding:1px 6px;border-radius:10px;font-weight:700;"></span>
       </button>
       <div class="nav-section">Recalls</div>
+      <button class="nav-item" onclick="showPanel('compliance')" id="nav-compliance">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        Compliance
+      </button>
       <button class="nav-item" onclick="showPanel('push')">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
         Push Recall
@@ -365,12 +369,12 @@ async function initPortal(user) {
 
 // ── Panel router ───────────────────────────────────────────────
 function showPanel(name) {
-  const titles = { overview:'Dashboard', push:'Push a Recall', history:'Recall History', acknowledgements:'Acknowledgements', partners:'Trading Partners', shipments:'Shipments', products:'Products', lots:'Lot Codes', triage:'Complaint Triage', widget:'Widget Setup', investigations:'Investigations', settings:'Settings' };
+  const titles = { overview:'Dashboard', push:'Push a Recall', history:'Recall History', acknowledgements:'Acknowledgements', partners:'Trading Partners', shipments:'Shipments', products:'Products', lots:'Lot Codes', triage:'Complaint Triage', widget:'Widget Setup', investigations:'Investigations', settings:'Settings', compliance:'Compliance' };
   document.getElementById('topbar-title').textContent = titles[name] || name;
   document.querySelectorAll('.nav-item').forEach(el => {
     el.classList.toggle('active', el.getAttribute('onclick')?.includes(`'${name}'`));
   });
-  const fns = { overview: renderOverview, push: renderPush, history: renderHistory, acknowledgements: renderAcknowledgements, partners: renderPartners, products: renderProducts, lots: renderLots, shipments: renderShipments, patterns: renderPatterns, triage: renderTriage, widget: renderWidgetSetup, investigations: renderInvestigations, settings: renderMfrSettings };
+  const fns = { overview: renderOverview, push: renderPush, history: renderHistory, acknowledgements: renderAcknowledgements, partners: renderPartners, products: renderProducts, lots: renderLots, shipments: renderShipments, patterns: renderPatterns, triage: renderTriage, widget: renderWidgetSetup, investigations: renderInvestigations, settings: renderMfrSettings, compliance: renderMfrCompliance };
   (fns[name] || (() => {}))();
 }
 
@@ -3051,35 +3055,41 @@ async function renderMfrSettings() {
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
 
-  const { data: org } = await sb.from('organisations')
-    .select('name, contact_email, region, type')
-    .eq('id', _orgId).single();
-
-  const { data: member } = await sb.from('organisation_members')
-    .select('role')
-    .eq('organisation_id', _orgId)
-    .eq('user_id', (await sb.auth.getUser()).data?.user?.id)
-    .single();
-
+  const [orgRes, memberRes] = await Promise.all([
+    sb.from('organisations').select('name, contact_email, region, type, language, regulatory_frameworks, recall_coordinator_name, recall_coordinator_contact').eq('id', _orgId).single(),
+    sb.from('organisation_members').select('role').eq('organisation_id', _orgId).eq('user_id', (await sb.auth.getUser()).data?.user?.id).single(),
+  ]);
+  const org = orgRes.data || {};
+  const member = memberRes.data || {};
   const session = await sb.auth.getUser();
   const userEmail = session.data?.user?.email || '';
+  const frameworks = org.regulatory_frameworks || [];
+  const lang = org.language || 'en';
+
+  const ALL_FRAMEWORKS = [
+    { key:'mattilsynet', flag:'🇳🇴', label:'Mattilsynet / Matloven', sub:'Norway — primary food safety authority', market:'no' },
+    { key:'eu_178',      flag:'🇪🇺', label:'EU Reg. 178/2002 — General Food Law', sub:'Applies via EEA for Norway market', market:'no' },
+    { key:'fda_food',    flag:'🇺🇸', label:'FDA Food Safety (21 CFR 117)', sub:'US — preventive controls, HACCP', market:'us' },
+    { key:'fsma_204',    flag:'🇺🇸', label:'FSMA 204 — Food Traceability Rule', sub:'US — KDE/CTE recordkeeping, July 20 2028', market:'us' },
+    { key:'usda_fsis',   flag:'🇺🇸', label:'USDA FSIS', sub:'US — meat, poultry & eggs only', market:'us' },
+  ];
 
   el.innerHTML = `
-    <div style="max-width:580px;display:flex;flex-direction:column;gap:20px;">
+    <div style="max-width:620px;display:flex;flex-direction:column;gap:20px;">
       <div>
         <div style="font-size:15px;font-weight:600;color:var(--text);">Settings</div>
-        <div style="font-size:12px;color:var(--muted);margin-top:2px;">Manage your organisation profile and account preferences.</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px;">Organisation profile, regulatory frameworks, and account preferences.</div>
       </div>
 
       <!-- Organisation profile -->
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px;display:flex;flex-direction:column;gap:14px;">
-        <div style="font-size:13px;font-weight:600;color:var(--text);border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:2px;">Organisation Profile</div>
+        <div style="font-size:13px;font-weight:600;color:var(--text);border-bottom:1px solid var(--border);padding-bottom:10px;">Organisation Profile</div>
 
         <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Organisation name</label>
-        <input id="mfr-set-name" type="text" value="${(org?.name||'').replace(/"/g,'&quot;')}" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 11px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+        <input id="mfr-set-name" type="text" value="${(org.name||'').replace(/"/g,'&quot;')}" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 11px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
 
         <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Contact email <span style="opacity:0.6;">(used for trading partner notifications)</span></label>
-        <input id="mfr-set-email" type="email" value="${(org?.contact_email||'').replace(/"/g,'&quot;')}" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 11px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+        <input id="mfr-set-email" type="email" value="${(org.contact_email||'').replace(/"/g,'&quot;')}" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 11px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
 
         <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px;">Primary market</label>
         <div style="display:flex;gap:8px;">
@@ -3087,7 +3097,14 @@ async function renderMfrSettings() {
           <button onclick="selectMfrRegion('us')" id="mfr-reg-us" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:all 0.15s;">🇺🇸 United States</button>
           <button onclick="selectMfrRegion('both')" id="mfr-reg-both" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:all 0.15s;">🌍 Norway + USA</button>
         </div>
-        <input type="hidden" id="mfr-set-region" value="${org?.region||'no'}"></div>
+        <input type="hidden" id="mfr-set-region" value="${org.region||'no'}"></div>
+
+        <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px;">Interface language</label>
+        <div style="display:flex;gap:8px;">
+          <button onclick="selectMfrLang('en')" id="mfr-lang-en" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:all 0.15s;">🇬🇧 English</button>
+          <button onclick="selectMfrLang('no')" id="mfr-lang-no" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:all 0.15s;">🇳🇴 Norsk</button>
+        </div>
+        <input type="hidden" id="mfr-set-lang" value="${lang}"></div>
 
         <div id="mfr-set-msg" style="display:none;border-radius:7px;padding:9px 12px;font-size:12px;"></div>
         <div style="display:flex;justify-content:flex-end;">
@@ -3095,31 +3112,52 @@ async function renderMfrSettings() {
         </div>
       </div>
 
-      <!-- Account -->
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px;">
-        <div style="font-size:13px;font-weight:600;color:var(--text);border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:14px;">Account</div>
-        <div style="display:flex;flex-direction:column;gap:10px;">
-          <div style="display:flex;justify-content:space-between;align-items:center;">
-            <div>
-              <div style="font-size:13px;color:var(--text);">${userEmail}</div>
-              <div style="font-size:11px;color:var(--muted);margin-top:2px;">${member?.role === 'mfr_admin' ? 'Manufacturer Admin' : member?.role === 'mfr_qa' ? 'QA / Food Safety' : member?.role || 'Member'}</div>
-            </div>
-            <span style="font-size:10px;font-family:'DM Mono',monospace;padding:3px 9px;border-radius:5px;background:rgba(52,211,153,0.1);color:var(--accent);font-weight:700;">ACTIVE</span>
-          </div>
+      <!-- Regulatory frameworks -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px;display:flex;flex-direction:column;gap:14px;">
+        <div>
+          <div style="font-size:13px;font-weight:600;color:var(--text);border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:2px;">Regulatory Frameworks</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:8px;line-height:1.6;">Select every regulatory framework your organisation must comply with. This drives compliance checklists, authority contacts, investigation templates, document generators, and audit exports throughout the platform.</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;" id="mfr-fw-list">
+          ${ALL_FRAMEWORKS.map(fw => {
+            const checked = frameworks.includes(fw.key);
+            return `<label style="display:flex;align-items:flex-start;gap:12px;padding:12px 14px;background:var(--surface2);border:1px solid ${checked?'rgba(52,211,153,0.4)':'var(--border)'};border-radius:10px;cursor:pointer;transition:all 0.15s;" id="mfr-fw-label-${fw.key}">
+              <input type="checkbox" id="mfr-fw-${fw.key}" ${checked?'checked':''} onchange="toggleMfrFramework('${fw.key}')" style="margin-top:2px;accent-color:var(--accent);width:15px;height:15px;flex-shrink:0;">
+              <div>
+                <div style="font-size:13px;font-weight:600;color:var(--text);">${fw.flag} ${fw.label}</div>
+                <div style="font-size:11px;color:var(--muted);margin-top:2px;">${fw.sub}</div>
+              </div>
+            </label>`;
+          }).join('')}
+        </div>
+        <div id="mfr-fw-msg" style="display:none;border-radius:7px;padding:9px 12px;font-size:12px;"></div>
+        <div style="display:flex;justify-content:flex-end;">
+          <button onclick="saveMfrFrameworks()" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;">Save frameworks</button>
         </div>
       </div>
 
-      <!-- Recall notification preferences -->
+      <!-- Account -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px;">
+        <div style="font-size:13px;font-weight:600;color:var(--text);border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:14px;">Account</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div>
+            <div style="font-size:13px;color:var(--text);">${userEmail}</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px;">${member.role === 'mfr_admin' ? 'Manufacturer Admin' : member.role === 'mfr_qa' ? 'QA / Food Safety' : member.role === 'corp_admin' ? 'Corp Admin' : member.role || 'Member'}</div>
+          </div>
+          <span style="font-size:10px;font-family:'DM Mono',monospace;padding:3px 9px;border-radius:5px;background:rgba(52,211,153,0.1);color:var(--accent);font-weight:700;">ACTIVE</span>
+        </div>
+      </div>
+
+      <!-- Recall Coordinator -->
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px;display:flex;flex-direction:column;gap:14px;">
-        <div style="font-size:13px;font-weight:600;color:var(--text);border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:2px;">Recall Coordinator</div>
-        <div style="font-size:12px;color:var(--muted);line-height:1.6;">Designated contact for recall communications. Name and contact details are included in recall push notifications to retailers.</div>
-
-        <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Coordinator name</label>
-        <input id="mfr-coord-name" type="text" placeholder="Full name and title" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 11px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
-
-        <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Direct phone / contact</label>
-        <input id="mfr-coord-contact" type="text" placeholder="+47 xxx xx xxx or email" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 11px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
-
+        <div>
+          <div style="font-size:13px;font-weight:600;color:var(--text);border-bottom:1px solid var(--border);padding-bottom:10px;">Recall Coordinator</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:8px;line-height:1.6;">Required for FSMA 204 Traceability Plan and FDA recall documentation. This person is the named contact for all regulatory communications and must be reachable within 24 hours of an FDA or Mattilsynet request.</div>
+        </div>
+        <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Coordinator name and title</label>
+        <input id="mfr-coord-name" type="text" value="${(org.recall_coordinator_name||'').replace(/"/g,'&quot;')}" placeholder="e.g. Jane Smith, Quality Assurance Manager" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 11px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+        <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Direct phone / contact <span style="opacity:0.6;">(must be reachable 24/7 during recall events)</span></label>
+        <input id="mfr-coord-contact" type="text" value="${(org.recall_coordinator_contact||'').replace(/"/g,'&quot;')}" placeholder="+47 xxx xx xxx or direct email" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 11px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
         <div id="mfr-coord-msg" style="display:none;border-radius:7px;padding:9px 12px;font-size:12px;"></div>
         <div style="display:flex;justify-content:flex-end;">
           <button onclick="saveMfrCoordinator()" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;">Save coordinator</button>
@@ -3128,14 +3166,14 @@ async function renderMfrSettings() {
 
       <!-- Danger zone -->
       <div style="background:rgba(255,92,92,0.04);border:1px solid rgba(255,92,92,0.2);border-radius:12px;padding:18px;">
-        <div style="font-size:13px;font-weight:600;color:var(--danger);margin-bottom:8px;">Danger Zone</div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">Permanently delete your organisation and all associated data. This cannot be undone.</div>
-        <button onclick="if(confirm('Are you sure? This will permanently delete your organisation and all data.')) showToast('Please contact support@batchdapp.com to delete your account.','warn',5000)" style="background:transparent;border:1px solid rgba(255,92,92,0.4);color:var(--danger);border-radius:8px;padding:7px 14px;font-size:12px;cursor:pointer;font-family:inherit;">Delete organisation…</button>
+        <div style="font-size:13px;font-weight:600;color:var(--danger);margin-bottom:6px;">Danger Zone</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">To delete your organisation, contact support. All data including products, lot codes, shipment records, and recall history will be permanently removed.</div>
+        <button onclick="showToast('Contact support@batchdapp.com to delete your account.','warn',5000)" style="background:transparent;border:1px solid rgba(255,92,92,0.4);color:var(--danger);border-radius:8px;padding:7px 14px;font-size:12px;cursor:pointer;font-family:inherit;">Delete organisation…</button>
       </div>
     </div>`;
 
-  // Highlight current region
-  selectMfrRegion(org?.region || 'no');
+  selectMfrRegion(org.region || 'no');
+  selectMfrLang(org.language || 'en');
 }
 
 function selectMfrRegion(val) {
@@ -3149,17 +3187,45 @@ function selectMfrRegion(val) {
   });
 }
 
+function selectMfrLang(val) {
+  document.getElementById('mfr-set-lang').value = val;
+  ['en','no'].forEach(k => {
+    const btn = document.getElementById('mfr-lang-' + k);
+    if (!btn) return;
+    btn.style.background = k === val ? 'rgba(52,211,153,0.1)' : 'var(--surface2)';
+    btn.style.borderColor = k === val ? 'var(--accent)' : 'var(--border)';
+    btn.style.color = k === val ? 'var(--accent)' : 'var(--text)';
+  });
+}
+
+function toggleMfrFramework(key) {
+  const label = document.getElementById('mfr-fw-label-' + key);
+  const cb = document.getElementById('mfr-fw-' + key);
+  if (!label || !cb) return;
+  label.style.borderColor = cb.checked ? 'rgba(52,211,153,0.4)' : 'var(--border)';
+}
+
 async function saveMfrSettings() {
   const name   = document.getElementById('mfr-set-name')?.value.trim();
   const email  = document.getElementById('mfr-set-email')?.value.trim();
   const region = document.getElementById('mfr-set-region')?.value;
+  const lang   = document.getElementById('mfr-set-lang')?.value || 'en';
   const msg    = document.getElementById('mfr-set-msg');
   if (!name) { showMfrMsg(msg, 'Organisation name is required.', 'error'); return; }
-  const { error } = await sb.from('organisations').update({ name, contact_email: email, region }).eq('id', _orgId);
+  const { error } = await sb.from('organisations').update({ name, contact_email: email, region, language: lang }).eq('id', _orgId);
   if (error) { showMfrMsg(msg, 'Error: ' + error.message, 'error'); return; }
   _orgName = name;
   document.getElementById('topbar-sub').textContent = _orgName + ' · ' + (_userRole === 'corp_admin' ? 'Corp Admin' : 'Manufacturer');
   showMfrMsg(msg, '✓ Changes saved', 'ok');
+}
+
+async function saveMfrFrameworks() {
+  const keys = ['mattilsynet','eu_178','fda_food','fsma_204','usda_fsis'];
+  const selected = keys.filter(k => document.getElementById('mfr-fw-' + k)?.checked);
+  const msg = document.getElementById('mfr-fw-msg');
+  const { error } = await sb.from('organisations').update({ regulatory_frameworks: selected }).eq('id', _orgId);
+  if (error) { showMfrMsg(msg, 'Error: ' + error.message, 'error'); return; }
+  showMfrMsg(msg, '✓ Frameworks saved — compliance panel updated', 'ok');
 }
 
 async function saveMfrCoordinator() {
@@ -3179,5 +3245,418 @@ function showMfrMsg(el, txt, type) {
   el.style.border = `1px solid ${type === 'error' ? 'rgba(255,92,92,0.3)' : 'rgba(52,211,153,0.3)'}`;
   el.textContent = txt;
   setTimeout(() => { el.style.display = 'none'; }, 3000);
+}
+</script>
+
+<script>
+// ── MANUFACTURER COMPLIANCE PANEL ────────────────────────────────
+
+const MFR_FRAMEWORKS = {
+  mattilsynet: {
+    flag:'🇳🇴', label:'Mattilsynet / Matloven',
+    color:'#34d399',
+    authority: { name:'Mattilsynet', phone:'22 40 00 00', url:'https://www.mattilsynet.no/skjemaer/meldeskjema-for-virksomhetene', label:'Report online' },
+    deadlines: [
+      { label:'Recall notification', detail:'"Umiddelbart" — immediately upon discovery (Matloven §16)', urgency:'high' },
+      { label:'Record retention', detail:'Shelf-life + 6 months (perishables) · 5 years (general)', urgency:'med' },
+      { label:'Labels in Norwegian', detail:'Matinformasjonsforskriften §2 — all product labels sold in Norway', urgency:'med' },
+    ],
+    checklist: [
+      { id:'mf_coord',    label:'Recall Coordinator designated', detail:'Named person with 24/7 contact — required for Mattilsynet notifications' },
+      { id:'mf_lots',     label:'Lot codes registered', detail:'All products on shelf have partinummer documented' },
+      { id:'mf_ship',     label:'Shipment records logged', detail:'One step forward — who received each lot (EU 178/2002 Art. 18)' },
+      { id:'mf_partner',  label:'Retailer trading partners connected', detail:'Distribution network documented for recall reach' },
+      { id:'mf_drill',    label:'Mock recall drill conducted', detail:'Recommended annually under IK-mat guidelines' },
+      { id:'mf_plan',     label:'Written recall procedure', detail:'Documented withdrawal/recall process per IK-mat forskriften' },
+    ],
+  },
+  eu_178: {
+    flag:'🇪🇺', label:'EU Reg. 178/2002',
+    color:'#60a5fa',
+    authority: { name:'EFSA', phone:'+39 0521 036 111', url:'https://www.efsa.europa.eu', label:'EFSA website' },
+    deadlines: [
+      { label:'One-step-back traceability', detail:'Article 18 — identify immediate supplier of each ingredient/lot', urgency:'high' },
+      { label:'One-step-forward traceability', detail:'Article 18 — identify all customers who received each lot', urgency:'high' },
+      { label:'Withdrawal obligation', detail:'Article 19 — immediately withdraw if unsafe food placed on market', urgency:'high' },
+    ],
+    checklist: [
+      { id:'eu_supplier',  label:'Supplier documentation', detail:'Immediate previous source for all ingredients and lots' },
+      { id:'eu_customer',  label:'Customer/distributor records', detail:'Who received each lot — enables forward traceability' },
+      { id:'eu_hazard',    label:'Hazard analysis documented', detail:'Risk assessment for food safety hazards per product' },
+      { id:'eu_notify',    label:'Competent authority notification process', detail:'Documented procedure for notifying Mattilsynet / EFSA' },
+    ],
+  },
+  fda_food: {
+    flag:'🇺🇸', label:'FDA 21 CFR 117 — Preventive Controls',
+    color:'#93c5fd',
+    authority: { name:'FDA', phone:'1-888-INFO-FDA (1-888-463-6332)', url:'https://www.accessdata.fda.gov/scripts/rfr/index.cfm', label:'FDA RFR Portal' },
+    deadlines: [
+      { label:'Class I recall — RFR notification', detail:'Within 24 hours via FDA Reportable Food Registry (21 CFR 7)', urgency:'high' },
+      { label:'Customer notification', detail:'Within 24 hours for Class I recalls', urgency:'high' },
+      { label:'Recall effectiveness checks', detail:'Required during recall to verify product is being removed', urgency:'med' },
+      { label:'Food Safety Plan reanalysis', detail:'Required after every recall event — document findings', urgency:'med' },
+    ],
+    checklist: [
+      { id:'fda_coord',   label:'Recall Coordinator designated', detail:'Required for FDA Recall Plan documentation (21 CFR 117 Subpart F)' },
+      { id:'fda_plan',    label:'Written Recall Plan', detail:'Documented procedures per 21 CFR 117 Subpart F' },
+      { id:'fda_haccp',   label:'HACCP / Preventive Controls plan', detail:'Hazard analysis and preventive controls documented (21 CFR 117)' },
+      { id:'fda_partner', label:'Customer/distributor records', detail:'Who received each lot — required for effective recalls' },
+      { id:'fda_mock',    label:'Mock recall drill', detail:'FDA and industry guidance (FMI) recommend annual mock recalls' },
+      { id:'fda_rfr',     label:'RFR notification process documented', detail:'Procedure for 24-hour reportable food submission' },
+    ],
+  },
+  fsma_204: {
+    flag:'🇺🇸', label:'FSMA 204 — Food Traceability Rule',
+    color:'#a78bfa',
+    authority: { name:'FDA FSMA 204', phone:'1-888-INFO-FDA', url:'https://www.fda.gov/food/food-safety-modernization-act-fsma/fsma-final-rule-requirements-additional-traceability-records-certain-foods', label:'FDA FSMA 204 page' },
+    deadlines: [
+      { label:'Compliance deadline', detail:'July 20, 2028 — 21 CFR Part 1 Subpart S (extended 30 months)', urgency:'med' },
+      { label:'24-hour data provision', detail:'Electronic sortable spreadsheet of KDEs to FDA within 24h of request', urgency:'high' },
+      { label:'Traceability Plan', detail:'Required under § 1.1315 — document your KDE/CTE procedures', urgency:'high' },
+      { label:'Record retention', detail:'Minimum 2 years from date created (§ 1.1455)', urgency:'med' },
+    ],
+    checklist: [
+      { id:'f204_plan',   label:'Traceability Plan documented', detail:'§ 1.1315 — 5 required elements including TLC assignment method' },
+      { id:'f204_lots',   label:'TLC (Traceability Lot Codes) assigned', detail:'All FTL foods have lot codes assigned and recorded' },
+      { id:'f204_kde',    label:'KDEs captured at receiving', detail:'Lot code, quantity, supplier, reference document at each CTE' },
+      { id:'f204_export', label:'24-hour CSV export ready', detail:'Can produce electronic sortable spreadsheet on FDA request' },
+      { id:'f204_coord',  label:'Traceability contact designated', detail:'§ 1.1315(d) — named point of contact for FDA data requests' },
+    ],
+  },
+  usda_fsis: {
+    flag:'🇺🇸', label:'USDA FSIS — Meat, Poultry & Eggs',
+    color:'#f59e0b',
+    authority: { name:'USDA FSIS', phone:'1-888-MPHotline (1-888-674-6854)', url:'https://www.fsis.usda.gov/recalls', label:'FSIS Recalls page' },
+    deadlines: [
+      { label:'Class I recall notification', detail:'Notify FSIS immediately — meat/poultry recalls are mandatory', urgency:'high' },
+      { label:'Press release', detail:'FSIS issues public press release for Class I/II recalls', urgency:'high' },
+      { label:'Product disposition', detail:'Document destruction or return of all recalled product', urgency:'med' },
+    ],
+    checklist: [
+      { id:'fsis_coord',  label:'FSIS Recall Coordinator', detail:'Separate contact may be required for FSIS vs FDA' },
+      { id:'fsis_est',    label:'FSIS establishment number documented', detail:'Required on all meat/poultry product labels' },
+      { id:'fsis_plan',   label:'Written FSIS recall procedure', detail:'Separate from FDA plan — covers mandatory recall authority' },
+    ],
+  },
+};
+
+async function renderMfrCompliance() {
+  const el = document.getElementById('main-content');
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading compliance data…</div>`;
+
+  // Load org data + activity counts for scoring
+  const [orgRes, productsRes, lotsRes, shipmentsRes, partnersRes, recallsRes] = await Promise.all([
+    sb.from('organisations').select('recall_coordinator_name, recall_coordinator_contact, regulatory_frameworks, region').eq('id', _orgId).single(),
+    sb.from('products').select('id').eq('manufacturer_id', _orgId),
+    sb.from('product_lots').select('id').eq('manufacturer_id', _orgId),
+    sb.from('shipments').select('id').eq('manufacturer_id', _orgId),
+    sb.from('trading_partners').select('id').eq('manufacturer_id', _orgId).eq('status', 'active'),
+    sb.from('recall_events').select('id').eq('source_org_id', _orgId),
+  ]);
+
+  const org = orgRes.data || {};
+  const frameworks = org.regulatory_frameworks || (org.region === 'us' ? ['fda_food','fsma_204'] : ['mattilsynet','eu_178']);
+  const hasCoord = !!(org.recall_coordinator_name && org.recall_coordinator_contact);
+  const hasLots = (lotsRes.data||[]).length > 0;
+  const hasShipments = (shipmentsRes.data||[]).length > 0;
+  const hasPartners = (partnersRes.data||[]).length > 0;
+  const hasProducts = (productsRes.data||[]).length > 0;
+
+  // Overall readiness score
+  const scores = { hasCoord, hasLots, hasShipments, hasPartners, hasProducts };
+  const scoreCount = Object.values(scores).filter(Boolean).length;
+  const overallPct = Math.round(scoreCount / Object.keys(scores).length * 100);
+  const scoreColor = overallPct >= 80 ? 'var(--accent)' : overallPct >= 50 ? 'var(--warn)' : 'var(--danger)';
+
+  el.innerHTML = `
+    <div style="max-width:760px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;gap:16px;flex-wrap:wrap;">
+        <div>
+          <div style="font-size:15px;font-weight:600;color:var(--text);">Compliance Centre</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:2px;">Regulatory readiness across your active frameworks. Your legal protection depends on this.</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 18px;">
+          <div>
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;">Overall Readiness</div>
+            <div style="font-size:28px;font-weight:800;color:${scoreColor};font-family:'Figtree',sans-serif;line-height:1;">${overallPct}%</div>
+          </div>
+          <div style="width:48px;height:48px;border-radius:50%;background:conic-gradient(${scoreColor} ${overallPct*3.6}deg, var(--surface2) 0deg);display:flex;align-items:center;justify-content:center;">
+            <div style="width:36px;height:36px;border-radius:50%;background:var(--surface);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:${scoreColor};">${scoreCount}/${Object.keys(scores).length}</div>
+          </div>
+        </div>
+      </div>
+
+      ${!frameworks.length ? `
+        <div style="background:rgba(245,166,35,0.08);border:1px solid rgba(245,166,35,0.3);border-radius:12px;padding:20px;margin-bottom:20px;">
+          <div style="font-size:13px;font-weight:600;color:var(--warn);margin-bottom:6px;">⚠ No regulatory frameworks configured</div>
+          <div style="font-size:12px;color:var(--muted);">Go to <button onclick="showPanel('settings')" style="background:none;border:none;color:var(--accent);cursor:pointer;font-family:inherit;font-size:12px;padding:0;text-decoration:underline;">Settings → Regulatory Frameworks</button> to tell Batch'd which frameworks apply to your organisation. This drives everything in this panel.</div>
+        </div>` : ''}
+
+      ${frameworks.map(fwKey => {
+        const fw = MFR_FRAMEWORKS[fwKey];
+        if (!fw) return '';
+
+        // Score checklist items
+        const checkResults = {
+          // cross-cutting
+          mf_coord: hasCoord, fda_coord: hasCoord, f204_coord: hasCoord, fsis_coord: hasCoord,
+          mf_lots: hasLots,   f204_lots: hasLots,
+          mf_ship: hasShipments, eu_customer: hasShipments, fda_partner: hasPartners,
+          mf_partner: hasPartners,
+          mf_drill: false, // TODO: check mock_recall_drills
+          mf_plan: hasCoord && hasPartners,
+          eu_supplier: hasShipments,
+          eu_hazard: false,
+          eu_notify: hasCoord,
+          fda_plan: hasCoord,
+          fda_haccp: false,
+          fda_mock: false,
+          fda_rfr: hasCoord,
+          f204_plan: hasLots && hasCoord,
+          f204_kde: hasLots && hasShipments,
+          f204_export: hasShipments,
+          fsis_est: false,
+          fsis_plan: hasCoord,
+        };
+
+        const items = fw.checklist || [];
+        const passed = items.filter(i => checkResults[i.id]).length;
+        const pct = items.length ? Math.round(passed/items.length*100) : 0;
+
+        return `
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-bottom:16px;">
+          <!-- Framework header -->
+          <div style="background:linear-gradient(135deg,rgba(${fw.color.includes('34d')?'52,211,153':fw.color.includes('60a')?'96,165,250':fw.color.includes('93c')?'147,197,253':fw.color.includes('a78')?'167,139,250':'245,158,11'},0.1) 0%,transparent 100%);padding:18px 20px;border-bottom:1px solid var(--border);">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+              <div>
+                <div style="font-size:14px;font-weight:700;color:var(--text);">${fw.flag} ${fw.label}</div>
+                <div style="font-size:12px;color:var(--muted);margin-top:3px;">
+                  <strong style="color:${fw.color};">${fw.authority.name}</strong> ·
+                  ${fw.authority.phone} ·
+                  <a href="${fw.authority.url}" target="_blank" style="color:${fw.color};text-decoration:none;">${fw.authority.label} ↗</a>
+                </div>
+              </div>
+              <div style="text-align:right;">
+                <div style="font-size:20px;font-weight:800;color:${pct>=80?'var(--accent)':pct>=50?'var(--warn)':'var(--danger)'};">${pct}%</div>
+                <div style="font-size:10px;color:var(--muted);">${passed}/${items.length} checks</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Key deadlines -->
+          <div style="padding:16px 20px;border-bottom:1px solid var(--border);">
+            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px;">Key Obligations & Deadlines</div>
+            <div style="display:flex;flex-direction:column;gap:7px;">
+              ${(fw.deadlines||[]).map(d => `
+                <div style="display:flex;align-items:flex-start;gap:10px;">
+                  <span style="width:7px;height:7px;border-radius:50%;margin-top:4px;flex-shrink:0;background:${d.urgency==='high'?'var(--danger)':'var(--warn)'};"></span>
+                  <div>
+                    <span style="font-size:12px;font-weight:600;color:var(--text);">${d.label}:</span>
+                    <span style="font-size:12px;color:var(--muted);"> ${d.detail}</span>
+                  </div>
+                </div>`).join('')}
+            </div>
+          </div>
+
+          <!-- Compliance checklist -->
+          <div style="padding:16px 20px;">
+            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px;">Compliance Checklist</div>
+            ${items.map(item => {
+              const pass = checkResults[item.id];
+              return `<div style="display:flex;align-items:flex-start;gap:10px;padding:9px 0;border-bottom:1px solid rgba(22,61,55,0.4);">
+                <div style="width:18px;height:18px;border-radius:50%;flex-shrink:0;margin-top:1px;
+                  background:${pass?'rgba(52,211,153,0.15)':'rgba(255,92,92,0.1)'};
+                  border:1px solid ${pass?'rgba(52,211,153,0.4)':'rgba(255,92,92,0.3)'};
+                  display:flex;align-items:center;justify-content:center;font-size:9px;
+                  color:${pass?'var(--accent)':'var(--danger)'};">${pass?'✓':'✗'}</div>
+                <div>
+                  <div style="font-size:12px;color:${pass?'var(--text)':'var(--muted)'};">${item.label}</div>
+                  <div style="font-size:11px;color:${pass?'var(--muted)':'var(--warn)'};margin-top:1px;line-height:1.4;">${item.detail}</div>
+                </div>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>`;
+      }).join('')}
+
+      <!-- Export & Documents section -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:16px;">
+        <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:6px;">Documents & Exports</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:14px;line-height:1.6;">Generate audit-ready documents. These serve as your legal record during regulatory inspections, recall events, and litigation.</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;">
+          ${[
+            { label:'Traceability Plan', sub:'FSMA 204 § 1.1315 — 5 required elements', icon:'📋', fn:'showPanel("shipments")', applicable: frameworks.includes('fsma_204') },
+            { label:'Recall Procedure Document', sub:'21 CFR 117 Subpart F / IK-mat forskriften', icon:'🗂', fn:'generateRecallProcedure()', applicable: true },
+            { label:'Shipment Audit Export', sub:'Full lot-to-retailer chain, CSV', icon:'📊', fn:'exportShipmentAudit()', applicable: true },
+            { label:'Recall History Export', sub:'All recall events with timestamps', icon:'⚠️', fn:'showPanel("history")', applicable: true },
+          ].filter(d => d.applicable).map(doc => `
+            <button onclick="${doc.fn}" style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:left;cursor:pointer;font-family:inherit;transition:all 0.15s;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+              <div style="font-size:18px;margin-bottom:6px;">${doc.icon}</div>
+              <div style="font-size:12px;font-weight:600;color:var(--text);">${doc.label}</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:3px;line-height:1.4;">${doc.sub}</div>
+            </button>`).join('')}
+        </div>
+      </div>
+
+      <div style="font-size:11px;color:var(--muted);text-align:center;padding:8px;">
+        Compliance status is based on data in Batch'd. Update your <button onclick="showPanel('settings')" style="background:none;border:none;color:var(--accent);cursor:pointer;font-family:inherit;font-size:11px;padding:0;text-decoration:underline;">regulatory frameworks</button> if your obligations have changed.
+      </div>
+    </div>`;
+}
+
+async function generateRecallProcedure() {
+  const { data: org } = await sb.from('organisations')
+    .select('name, contact_email, recall_coordinator_name, recall_coordinator_contact, region, regulatory_frameworks')
+    .eq('id', _orgId).single();
+
+  const today = new Date().toLocaleDateString('en-GB', { day:'numeric', month:'long', year:'numeric' });
+  const frameworks = org?.regulatory_frameworks || [];
+  const isUS = frameworks.includes('fda_food') || frameworks.includes('fsma_204');
+  const isNO = frameworks.includes('mattilsynet') || frameworks.includes('eu_178');
+  const isFSIS = frameworks.includes('usda_fsis');
+
+  const text = `RECALL AND WITHDRAWAL PROCEDURE
+${org?.name || 'Organisation'}
+Generated by Batch'd · ${today}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. PURPOSE AND SCOPE
+
+This procedure establishes the process for initiating, executing, and documenting product withdrawals and recalls for ${org?.name || 'this organisation'}.
+
+Regulatory basis:
+${isNO ? '• Matloven (Norwegian Food Act 2003) §14–16 — traceability and withdrawal obligations\n• EU Regulation 178/2002 Article 19 — immediate withdrawal when unsafe food placed on market\n• IK-mat forskriften — internal control requirements' : ''}
+${isUS ? '• 21 CFR 117 Subpart F — FDA Withdrawal and Recall Procedures\n• FDA Guidance: Product Recalls Including Removals and Corrections' : ''}
+${isFSIS ? '• USDA FSIS — mandatory recall authority for meat, poultry, and egg products' : ''}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+2. RECALL COORDINATOR
+
+Name / Title: ${org?.recall_coordinator_name || '________________________'}
+Direct Contact: ${org?.recall_coordinator_contact || '________________________'}
+Backup Contact: ________________________
+
+The Recall Coordinator is responsible for:
+• Initiating recall/withdrawal actions via the Batch'd platform
+• Notifying all affected trading partners within required timeframes
+• Reporting to regulatory authorities (${isNO ? 'Mattilsynet 22 40 00 00' : ''}${isUS ? (isNO ? ' / ' : '') + 'FDA 1-888-INFO-FDA' : ''}${isFSIS ? ' / FSIS 1-888-674-6854' : ''})
+• Maintaining the complete audit trail in Batch'd
+• Reanalysing the Food Safety Plan following any recall event
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+3. RECALL TRIGGER CRITERIA
+
+A recall or withdrawal is initiated when:
+• A product is confirmed or suspected to present a health risk
+• A regulatory authority requests withdrawal
+• Internal quality control identifies a safety deviation
+• A complaint or investigation confirms a systemic issue
+• A trading partner reports a confirmed safety finding
+
+${isNO ? 'Under Matloven §16 and EU 178/2002 Art. 19, withdrawal is mandatory "immediately" (umiddelbart) upon discovery.' : ''}
+${isUS ? 'Under 21 CFR 7, Class I recalls (risk of serious adverse health consequence or death) require FDA Reportable Food Registry notification within 24 hours.' : ''}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+4. RECALL EXECUTION — STEP BY STEP
+
+Step 1: IDENTIFICATION (Target: within 1 hour)
+□ Identify the affected product, lot number(s), and date range
+□ Query Batch'd shipment records to identify all recipients
+□ Determine scope: withdrawal (pre-consumer) or recall (post-consumer)
+
+Step 2: NOTIFICATION (Target: ${isUS ? 'within 24 hours' : 'immediately / umiddelbart'})
+□ Push recall notification to all affected trading partners via Batch'd
+□ Batch'd automatically creates a distribution record and acknowledgement chain
+□ Notify regulatory authority: ${isNO ? 'Mattilsynet (mattilsynet.no/skjemaer)' : ''}${isUS ? (isNO ? ' and/or ' : '') + 'FDA RFR portal (accessdata.fda.gov/scripts/rfr)' : ''}${isFSIS ? ' and USDA FSIS' : ''}
+
+Step 3: REMOVAL (Target: ${isUS ? 'Class I within 2 hours of retailer notification (FMI guidance)' : 'within working day'})
+□ Retailers confirm removal via Batch'd acknowledgement chain
+□ Document quantity removed per store
+□ Arrange product return or destruction
+
+Step 4: VERIFICATION
+□ Monitor acknowledgement chain in Batch'd dashboard
+□ Conduct effectiveness checks — confirm product removed from all locations
+□ Document any stores that have not responded within deadline
+
+Step 5: INVESTIGATION & CORRECTIVE ACTION
+□ Determine root cause of the issue
+□ Reanalyse Food Safety Plan / HACCP
+□ Document corrective actions taken
+□ Update this procedure if gaps identified
+
+Step 6: CLOSE-OUT
+□ Confirm all product accounted for
+□ Generate Batch'd compliance export package
+□ File with regulatory authority as required
+□ Archive all records for minimum ${isUS ? '2 years (FSMA)' : 'shelf-life + 6 months or 5 years (EU 178/2002)'}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+5. TRACEABILITY — BATCH'D PLATFORM
+
+This organisation uses Batch'd to maintain:
+• Product and lot code registry (partinummer / TLC)
+• Shipment records: lot → retailer → store (one step forward)
+• Supplier records: lot ← supplier (one step back)
+• Recall push notifications with timestamped acknowledgement chain
+• Investigation requests with retailer photo responses
+• Full audit export available as CSV or PDF at any time
+
+All records are timestamped, attributed to named users, and stored in a tamper-evident cloud database. Records can be provided to ${isNO ? 'Mattilsynet' : ''}${isUS ? (isNO ? ' and/or ' : '') + 'FDA' : ''} within 24 hours of request.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+6. DOCUMENT CONTROL
+
+Prepared by: ${org?.recall_coordinator_name || '________________________'}
+Date: ${today}
+Review frequency: Annually, or after any recall event
+Retain previous versions for: ${isUS ? '2 years minimum' : 'minimum 5 years'}
+
+Signature: ________________
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Generated by Batch'd · Recall Procedure · ${today}
+${org?.name || ''} · Batch'd food traceability platform`;
+
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const dateStr = new Date().toISOString().slice(0,10);
+  const safeName = (org?.name || 'org').replace(/[^a-zA-Z0-9]/g,'_').toLowerCase();
+  a.href = url; a.download = `batched_recall_procedure_${safeName}_${dateStr}.txt`;
+  a.click(); URL.revokeObjectURL(url);
+  showToast('Recall Procedure document downloaded', 'ok', 3000);
+}
+
+async function exportShipmentAudit() {
+  const { data: shipments } = await sb.from('shipments')
+    .select('*, organisations!shipments_retailer_id_fkey(name)')
+    .eq('manufacturer_id', _orgId)
+    .order('shipped_at', { ascending: false });
+
+  if (!shipments?.length) { showToast('No shipment records to export', 'warn', 3000); return; }
+
+  const rows = [['Shipped At','Product','Lot Number','Barcode','Retailer','Store','Quantity','Unit','Reference Doc']];
+  for (const s of shipments) {
+    rows.push([
+      s.shipped_at ? new Date(s.shipped_at).toISOString() : '',
+      s.product_name || '', s.lot_number || '', s.barcode || '',
+      s.organisations?.name || s.retailer_id || '',
+      s.store_name || '', s.quantity || '', s.unit || '',
+      s.reference_document || '',
+    ]);
+  }
+  const csv = rows.map(r => r.map(v => '"' + String(v).replace(/"/g,'""') + '"').join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `batched_shipment_audit_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click(); URL.revokeObjectURL(url);
+  showToast(`Exported ${shipments.length} shipment records`, 'ok', 3000);
 }
 </script>
