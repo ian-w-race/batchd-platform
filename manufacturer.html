@@ -205,6 +205,10 @@
         Triage
         <span id="triage-badge" style="display:none;margin-left:auto;background:var(--danger);color:#fff;font-size:10px;font-family:'DM Mono',monospace;padding:1px 6px;border-radius:10px;"></span>
       </button>
+      <button class="nav-item" onclick="showPanel('widget')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 9h6M9 12h4"/><circle cx="16" cy="16" r="2" fill="currentColor" stroke="none"/></svg>
+        Widget Setup
+      </button>
       <div class="nav-section">Recalls</div>
       <button class="nav-item" onclick="showPanel('push')">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
@@ -351,12 +355,12 @@ async function initPortal(user) {
 
 // ── Panel router ───────────────────────────────────────────────
 function showPanel(name) {
-  const titles = { overview:'Dashboard', push:'Push a Recall', history:'Recall History', acknowledgements:'Acknowledgements', partners:'Trading Partners', shipments:'Shipments', products:'Products', lots:'Lot Codes', triage:'Complaint Triage' };
+  const titles = { overview:'Dashboard', push:'Push a Recall', history:'Recall History', acknowledgements:'Acknowledgements', partners:'Trading Partners', shipments:'Shipments', products:'Products', lots:'Lot Codes', triage:'Complaint Triage', widget:'Widget Setup' };
   document.getElementById('topbar-title').textContent = titles[name] || name;
   document.querySelectorAll('.nav-item').forEach(el => {
     el.classList.toggle('active', el.getAttribute('onclick')?.includes(`'${name}'`));
   });
-  const fns = { overview: renderOverview, push: renderPush, history: renderHistory, acknowledgements: renderAcknowledgements, partners: renderPartners, products: renderProducts, lots: renderLots, shipments: renderShipments, patterns: renderPatterns, triage: renderTriage };
+  const fns = { overview: renderOverview, push: renderPush, history: renderHistory, acknowledgements: renderAcknowledgements, partners: renderPartners, products: renderProducts, lots: renderLots, shipments: renderShipments, patterns: renderPatterns, triage: renderTriage, widget: renderWidgetSetup };
   (fns[name] || (() => {}))();
 }
 
@@ -1955,6 +1959,158 @@ async function loadTriageBadge() {
     const badge = document.getElementById('triage-badge');
     if (badge && data?.length) { badge.textContent = data.length; badge.style.display = 'inline'; }
   } catch(e) {}
+}
+
+// ── Widget Setup ───────────────────────────────────────────────
+function renderWidgetSetup() {
+  const el = document.getElementById('main-content');
+  const orgId   = _orgId || '';
+  const orgName = encodeURIComponent(_orgName || '');
+  const baseUrl = 'https://app.batchdapp.com';
+
+  const scriptSnippetEN = `<script src="${baseUrl}/complaint-widget.js?org=${orgId}&name=${orgName}"><\/script>`;
+  const scriptSnippetNO = `<script src="${baseUrl}/complaint-widget.js?org=${orgId}&name=${orgName}&lang=no"><\/script>`;
+  const standaloneEN    = `${baseUrl}/complaint.html?org=${orgId}&name=${orgName}`;
+  const standaloneNO    = `${baseUrl}/complaint.html?org=${orgId}&name=${orgName}&lang=no`;
+
+  el.innerHTML = `
+    <div style="max-width:700px;display:flex;flex-direction:column;gap:20px;">
+
+      <div>
+        <div style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:4px;">Complaint Intake Widget</div>
+        <div style="font-size:13px;color:var(--muted);line-height:1.6;">Two ways to collect complaints from customers and retailers. Both feed directly into your Triage panel and are triaged automatically by Batch'd AI.</div>
+      </div>
+
+      <!-- Embedded widget -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px;display:flex;flex-direction:column;gap:16px;">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;">
+          <div>
+            <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px;">Website widget</div>
+            <div style="font-size:12px;color:var(--muted);line-height:1.5;">Paste one line of code into your website. A floating "Report a concern" button appears in the bottom-right corner. Clicking it opens a complaint form — no page navigation, no separate URL.</div>
+          </div>
+          <div style="flex-shrink:0;width:44px;height:44px;background:var(--accent);border-radius:100px;display:flex;align-items:center;justify-content:center;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#065f46" stroke-width="2.5"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 9h6M9 12h4"/><circle cx="16.5" cy="16.5" r="1.5" fill="#065f46" stroke="none"/></svg>
+          </div>
+        </div>
+
+        <div>
+          <div style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);margin-bottom:6px;">English (default)</div>
+          <div style="display:flex;gap:8px;align-items:stretch;">
+            <code id="snippet-en" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:11px;font-family:'DM Mono',monospace;color:var(--accent);word-break:break-all;line-height:1.6;">${scriptSnippetEN}</code>
+            <button onclick="copyToClipboard('snippet-en', this)" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:0 14px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0;">Copy</button>
+          </div>
+        </div>
+
+        <div>
+          <div style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);margin-bottom:6px;">Norwegian</div>
+          <div style="display:flex;gap:8px;align-items:stretch;">
+            <code id="snippet-no" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:11px;font-family:'DM Mono',monospace;color:var(--accent);word-break:break-all;line-height:1.6;">${scriptSnippetNO}</code>
+            <button onclick="copyToClipboard('snippet-no', this)" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:0 14px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0;">Copy</button>
+          </div>
+        </div>
+
+        <div style="background:rgba(56,189,248,0.07);border:1px solid rgba(56,189,248,0.2);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--info);line-height:1.6;">
+          Place this snippet just before the <code style="font-family:'DM Mono',monospace;">&lt;/body&gt;</code> tag on any page of your website. Works on any site builder: Wordpress, Webflow, Squarespace, custom HTML.
+        </div>
+      </div>
+
+      <!-- Standalone page -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px;display:flex;flex-direction:column;gap:16px;">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;">
+          <div>
+            <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px;">Standalone complaint page</div>
+            <div style="font-size:12px;color:var(--muted);line-height:1.5;">A full-page complaint form hosted on Batch'd. Use this for QR codes on packaging, email footers, or any situation where a direct link is easier than embedding code.</div>
+          </div>
+          <div style="flex-shrink:0;width:44px;height:44px;background:var(--surface2);border:1px solid var(--border);border-radius:12px;display:flex;align-items:center;justify-content:center;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          </div>
+        </div>
+
+        <div>
+          <div style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);margin-bottom:6px;">English</div>
+          <div style="display:flex;gap:8px;align-items:stretch;">
+            <code id="url-en" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:11px;font-family:'DM Mono',monospace;color:var(--muted);word-break:break-all;line-height:1.6;">${standaloneEN}</code>
+            <button onclick="copyToClipboard('url-en', this)" style="background:var(--surface2);border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:0 14px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0;">Copy</button>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:6px;">
+            <a href="${standaloneEN}" target="_blank" style="font-size:11px;color:var(--accent);text-decoration:none;">Preview →</a>
+          </div>
+        </div>
+
+        <div>
+          <div style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);margin-bottom:6px;">Norwegian</div>
+          <div style="display:flex;gap:8px;align-items:stretch;">
+            <code id="url-no" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:11px;font-family:'DM Mono',monospace;color:var(--muted);word-break:break-all;line-height:1.6;">${standaloneNO}</code>
+            <button onclick="copyToClipboard('url-no', this)" style="background:var(--surface2);border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:0 14px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0;">Copy</button>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:6px;">
+            <a href="${standaloneNO}" target="_blank" style="font-size:11px;color:var(--accent);text-decoration:none;">Preview →</a>
+          </div>
+        </div>
+      </div>
+
+      <!-- Your org ID -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px;">
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:10px;">Your organisation ID</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.5;">This is embedded in all your snippets automatically. If you need it for a custom integration:</div>
+        <div style="display:flex;gap:8px;align-items:stretch;">
+          <code id="org-id" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:13px;font-family:'DM Mono',monospace;color:var(--text);">${orgId}</code>
+          <button onclick="copyToClipboard('org-id', this)" style="background:var(--surface2);border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:0 14px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0;">Copy</button>
+        </div>
+      </div>
+
+      <!-- How it works -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px;">
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:12px;">How it works</div>
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          ${[
+            ['Customer submits a complaint', 'Via your website widget or the standalone page. Takes under a minute.'],
+            ['AI triage fires instantly', 'Batch'd classifies severity, detects keywords, and assigns a category. Critical complaints trigger an immediate alert to your team.'],
+            ['Follow-up email sent automatically', 'The customer receives a reference number and targeted follow-up questions based on the complaint type.'],
+            ['Complaint appears in Triage', 'Every submission lands in your Triage panel with full audit trail. Pattern detection runs on every new complaint — if a product generates multiple complaints, you'll know.'],
+            ['One click to push a recall', 'If the triage or pattern analysis warrants it, the recall form is pre-filled from the complaint data.']
+          ].map(([title, desc], i) => `
+            <div style="display:flex;gap:12px;align-items:flex-start;">
+              <div style="width:22px;height:22px;border-radius:50%;background:rgba(52,211,153,0.12);color:var(--accent);font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;">${i+1}</div>
+              <div>
+                <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:2px;">${title}</div>
+                <div style="font-size:12px;color:var(--muted);line-height:1.5;">${desc}</div>
+              </div>
+            </div>`).join('')}
+        </div>
+      </div>
+
+    </div>
+  `;
+}
+
+function copyToClipboard(elementId, btn) {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+  const text = el.textContent.trim();
+  navigator.clipboard.writeText(text).then(() => {
+    const original = btn.textContent;
+    btn.textContent = '✓ Copied';
+    btn.style.background = 'rgba(52,211,153,0.2)';
+    btn.style.color = 'var(--accent)';
+    btn.style.borderColor = 'rgba(52,211,153,0.4)';
+    setTimeout(() => {
+      btn.textContent = original;
+      btn.style.background = '';
+      btn.style.color = '';
+      btn.style.borderColor = '';
+    }, 2000);
+  }).catch(() => {
+    // Fallback for older browsers
+    const range = document.createRange();
+    range.selectNode(el);
+    window.getSelection().removeAllRanges();
+    window.getSelection().addRange(range);
+    document.execCommand('copy');
+    window.getSelection().removeAllRanges();
+    btn.textContent = '✓ Copied';
+    setTimeout(() => { btn.textContent = btn.getAttribute('data-original') || 'Copy'; }, 2000);
+  });
 }
 
 // ── Pattern Library ────────────────────────────────────────────
