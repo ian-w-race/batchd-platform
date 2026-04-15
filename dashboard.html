@@ -399,6 +399,11 @@
         Dashboard
       </button>
       <div class="nav-section">Complaints</div>
+      <button class="nav-item" onclick="showPanel('investigations')" id="nav-investigations">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6M8 11h6"/></svg>
+        Investigations
+        <span id="dash-invest-badge" style="display:none;margin-left:auto;background:var(--warn);color:#1a0f00;font-size:10px;font-family:'DM Mono',monospace;padding:1px 6px;border-radius:10px;font-weight:700;"></span>
+      </button>
       <button class="nav-item" onclick="showPanel('triage')" id="nav-triage">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 19h20L12 2z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17" r="0.5" fill="currentColor" stroke="currentColor" stroke-width="1"/></svg>
         Triage
@@ -626,7 +631,7 @@ function showPanel(name) {
   document.querySelectorAll('.nav-item').forEach(el => {
     if (el.getAttribute('onclick')?.includes(`'${name}'`)) el.classList.add('active');
   });
-  const fns = { overview: renderOverview, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, shipments: renderShipments, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, partners: renderPartners, triage: renderDashboardTriage };
+  const fns = { overview: renderOverview, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, shipments: renderShipments, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, partners: renderPartners, triage: renderDashboardTriage, investigations: renderDashInvestigations };
   (fns[name] || renderComingSoon)(name);
 }
 
@@ -3387,6 +3392,19 @@ async function updateDashTriageStatus(id, newStatus) {
 async function loadDashboardTriageBadge() {
   try {
     const { data } = await sb.from('complaints').select('id').eq('receiving_org_id', _orgId).eq('triage_level', 'critical').not('status', 'in', '("closed","resolved")');
+    // Investigation badge
+    try {
+      const { data: openInvs } = await sb.from('investigation_requests')
+        .select('id')
+        .contains('target_org_ids', [_orgId])
+        .eq('status', 'open');
+      // Also check via investigation_responses to find ones targeting this org
+      const { data: myInvs } = await sb.from('investigation_requests')
+        .select('id, investigation_responses(id)')
+        .eq('status', 'open');
+      const badge = document.getElementById('dash-invest-badge');
+      if (badge && myInvs?.length) { badge.textContent = myInvs.length; badge.style.display = 'inline'; }
+    } catch(e) {}
     const badge = document.getElementById('triage-badge');
     if (badge && data?.length) { badge.textContent = data.length; badge.style.display = 'inline'; }
   } catch(e) {}
@@ -3509,3 +3527,330 @@ async function rejectPartner(id) {
 </script>
 </body>
 </html>
+
+<script>
+// ── DASHBOARD INVESTIGATIONS (Retailer side) ───────────────────
+
+const DASH_ISSUE_TYPES = {
+  foreign_object:'Foreign Object', mold:'Mold / Fungal Growth',
+  mislabeling:'Mislabeling', allergen:'Undeclared Allergen',
+  contamination:'Contamination', discoloration:'Discoloration',
+  pest:'Pest', packaging:'Packaging Defect', other:'Product Issue',
+};
+
+let _dashInvestView = 'list';
+let _dashInvestId = null;
+
+async function renderDashInvestigations() {
+  const el = document.getElementById('main-content');
+  if (_dashInvestView === 'respond' && _dashInvestId) { await renderDashInvestRespond(el, _dashInvestId); return; }
+  await renderDashInvestList(el);
+}
+
+async function renderDashInvestList(el) {
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading investigations…</div>`;
+
+  // Get all open investigations from manufacturers we trade with
+  const { data: partners } = await sb.from('trading_partners')
+    .select('manufacturer_id')
+    .eq('retailer_id', _orgId)
+    .eq('status', 'active');
+
+  const mfrIds = (partners||[]).map(p => p.manufacturer_id);
+  if (!mfrIds.length) {
+    el.innerHTML = `<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:48px;text-align:center;"><div style="font-size:28px;margin-bottom:12px;">🔍</div><div style="font-weight:600;color:var(--text);">No active manufacturer partners</div><div style="font-size:13px;color:var(--muted);margin-top:6px;">Connect with manufacturers to receive investigation requests.</div></div>`;
+    return;
+  }
+
+  const { data: invs } = await sb.from('investigation_requests')
+    .select('*, investigation_responses!left(id, retailer_org_id)')
+    .in('manufacturer_id', mfrIds)
+    .not('status', 'eq', 'closed')
+    .order('created_at', { ascending: false });
+
+  // Update badge
+  const pending = (invs||[]).filter(i => !(i.investigation_responses||[]).some(r => r.retailer_org_id === _orgId));
+  const badge = document.getElementById('dash-invest-badge');
+  if (badge) { badge.textContent = pending.length; badge.style.display = pending.length ? 'inline' : 'none'; }
+
+  el.innerHTML = `
+    <div style="margin-bottom:20px;">
+      <div style="font-size:15px;font-weight:600;color:var(--text);">Investigations</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:2px;">Inspection requests from your manufacturer partners. Respond with photos and findings.</div>
+    </div>
+    ${!invs?.length ? `
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:48px;text-align:center;">
+        <div style="font-size:28px;margin-bottom:12px;">✅</div>
+        <div style="font-weight:600;color:var(--text);">No active investigations</div>
+        <div style="font-size:13px;color:var(--muted);margin-top:6px;">No manufacturers have requested product inspections.</div>
+      </div>
+    ` : `<div style="display:flex;flex-direction:column;gap:10px;">
+      ${(invs||[]).map(inv => {
+        const responded = (inv.investigation_responses||[]).some(r => r.retailer_org_id === _orgId);
+        const deadline = inv.deadline_at ? new Date(inv.deadline_at) : null;
+        const overdue = deadline && deadline < new Date();
+        const urgColor = inv.urgency_class === 1 ? 'var(--danger)' : inv.urgency_class === 2 ? 'var(--warn)' : 'var(--muted)';
+        return `
+        <div onclick="_dashInvestView='respond';_dashInvestId='${inv.id}';renderDashInvestigations()"
+          style="background:var(--surface);border:1px solid ${!responded&&overdue?'rgba(255,92,92,0.35)':responded?'var(--border)':'rgba(56,189,248,0.3)'};border-radius:12px;padding:16px;cursor:pointer;"
+          onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='${!responded&&overdue?'rgba(255,92,92,0.35)':responded?'var(--border)':'rgba(56,189,248,0.3)'}'">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+            <div style="flex:1;">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;flex-wrap:wrap;">
+                <span style="font-size:10px;font-weight:700;font-family:'DM Mono',monospace;color:${urgColor};text-transform:uppercase;">${DASH_ISSUE_TYPES[inv.issue_type]||'Issue'}</span>
+                ${responded ? `<span style="font-size:10px;font-family:'DM Mono',monospace;color:var(--accent);padding:1px 7px;border-radius:4px;background:rgba(52,211,153,0.1);">✓ Responded</span>` : `<span style="font-size:10px;font-family:'DM Mono',monospace;color:var(--info);padding:1px 7px;border-radius:4px;background:rgba(56,189,248,0.1);">Response needed</span>`}
+              </div>
+              <div style="font-size:14px;font-weight:600;color:var(--text);">${inv.product_name}</div>
+              ${inv.lot_number ? `<div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">Lot: ${inv.lot_number}</div>` : ''}
+            </div>
+            ${deadline ? `<div style="text-align:right;font-size:11px;color:${overdue&&!responded?'var(--danger)':'var(--muted)'};font-family:'DM Mono',monospace;">⏰ ${deadline.toLocaleDateString('en-GB',{day:'numeric',month:'short'})}</div>` : ''}
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`}`;
+}
+
+async function renderDashInvestRespond(el, id) {
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
+
+  const [invRes, myRespRes] = await Promise.all([
+    sb.from('investigation_requests').select('*').eq('id', id).single(),
+    sb.from('investigation_responses').select('*').eq('investigation_id', id).eq('retailer_org_id', _orgId).maybeSingle(),
+  ]);
+
+  const inv = invRes.data;
+  const myResp = myRespRes.data;
+  if (!inv) { el.innerHTML = `<div style="color:var(--danger)">Investigation not found.</div>`; return; }
+
+  const it = DASH_ISSUE_TYPES[inv.issue_type] || 'Product Issue';
+  const urg = inv.urgency_class === 1 ? 'Class I — 24h' : inv.urgency_class === 2 ? 'Class II — 72h' : 'Standard — 7 days';
+  const urgColor = inv.urgency_class === 1 ? 'var(--danger)' : inv.urgency_class === 2 ? 'var(--warn)' : 'var(--muted)';
+
+  el.innerHTML = `
+    <div style="max-width:660px;">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;">
+        <button onclick="_dashInvestView='list';renderDashInvestigations()" style="background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer;">← Back</button>
+        <div>
+          <div style="font-size:10px;font-family:'DM Mono',monospace;color:${urgColor};font-weight:700;text-transform:uppercase;margin-bottom:3px;">${it} · ${urg}</div>
+          <div style="font-size:15px;font-weight:600;color:var(--text);">${inv.product_name}</div>
+        </div>
+      </div>
+
+      <!-- Investigation brief -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px;">
+        <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:8px;">What to inspect</div>
+        ${inv.lot_number ? `<div style="font-size:12px;color:var(--muted);margin-bottom:6px;">Target lot: <span style="font-family:'DM Mono',monospace;color:var(--text);">${inv.lot_number}</span></div>` : ''}
+        <div style="font-size:13px;color:var(--text);line-height:1.6;margin-bottom:${inv.instructions?'10px':'0'};">${inv.issue_description}</div>
+        ${inv.instructions ? `<div style="background:rgba(245,166,35,0.07);border-left:3px solid var(--warn);padding:10px 14px;border-radius:4px;font-size:12px;color:var(--muted);line-height:1.6;"><strong style="color:var(--text);">Instructions:</strong><br>${inv.instructions}</div>` : ''}
+      </div>
+
+      ${myResp ? `
+      <!-- Already responded -->
+      <div style="background:rgba(52,211,153,0.07);border:1px solid rgba(52,211,153,0.25);border-radius:12px;padding:18px;margin-bottom:16px;">
+        <div style="font-size:13px;font-weight:600;color:var(--accent);margin-bottom:8px;">✓ Your response submitted ${new Date(myResp.submitted_at).toLocaleDateString('en-GB')}</div>
+        <div style="font-size:12px;color:var(--muted);">Issue found: <strong style="color:${myResp.issue_found?'var(--danger)':'var(--accent)'};">${myResp.issue_found?'Yes':'No'}</strong></div>
+        ${myResp.units_inspected ? `<div style="font-size:12px;color:var(--muted);">Units inspected: ${myResp.units_inspected}</div>` : ''}
+        ${myResp.issue_description ? `<div style="font-size:13px;color:var(--text);margin-top:8px;line-height:1.5;">${myResp.issue_description}</div>` : ''}
+        ${(myResp.photos||[]).length > 0 ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">${(myResp.photos||[]).map(p=>`<img src="data:${p.media_type||'image/jpeg'};base64,${p.b64}" style="width:90px;height:72px;object-fit:cover;border-radius:7px;border:1px solid var(--border);">`).join('')}</div>` : ''}
+      </div>
+      <button onclick="_dashInvestView='list';renderDashInvestigations()" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:9px 18px;font-size:13px;color:var(--muted);cursor:pointer;">← Back to investigations</button>
+      ` : `
+      <!-- Response form -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;display:flex;flex-direction:column;gap:16px;">
+        <div style="font-size:13px;font-weight:600;color:var(--text);">Submit your findings</div>
+
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:8px;">Did you find the issue? *</label>
+          <div style="display:flex;gap:8px;">
+            <button onclick="setInvestFound(true,this)" id="inv-resp-yes" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;color:var(--muted);">⚠ Yes, issue found</button>
+            <button onclick="setInvestFound(false,this)" id="inv-resp-no" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;color:var(--muted);">✓ No issue found</button>
+          </div>
+          <input type="hidden" id="inv-resp-found" value="">
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Units inspected</label>
+          <input id="inv-resp-units" type="number" min="0" placeholder="0" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+          <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Units affected <span style="opacity:0.6;">(if any)</span></label>
+          <input id="inv-resp-affected" type="number" min="0" placeholder="0" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+        </div>
+
+        <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Store inspected</label>
+        <select id="inv-resp-store" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;">
+          <option value="">Select store…</option>
+          ${await getStoreOptionsHtml()}
+        </select></div>
+
+        <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Findings / notes <span style="opacity:0.6;">(describe what you found)</span></label>
+        <textarea id="inv-resp-desc" rows="4" placeholder="Describe what you found or did not find. Include any relevant details about the product condition, packaging, storage, etc." style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px;color:var(--text);font-size:13px;resize:vertical;box-sizing:border-box;font-family:inherit;line-height:1.5;"></textarea></div>
+
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px;">Photos <span style="opacity:0.6;">(up to 4 — AI will analyze for the reported issue)</span></label>
+          <div id="inv-photo-previews" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;"></div>
+          <label style="background:var(--surface2);border:1px dashed var(--border);border-radius:8px;padding:12px;text-align:center;cursor:pointer;display:block;font-size:12px;color:var(--muted);">
+            <input type="file" accept="image/*" multiple style="display:none;" onchange="handleInvestPhotos(event)">
+            📷 Add photos (tap to browse or drag files)
+          </label>
+          <div id="inv-photo-analysis" style="display:none;margin-top:8px;background:rgba(56,189,248,0.07);border:1px solid rgba(56,189,248,0.2);border-radius:8px;padding:10px 12px;font-size:12px;color:var(--info);line-height:1.5;"></div>
+        </div>
+
+        <input type="hidden" id="inv-resp-photos-data" value="[]">
+
+        <div id="inv-resp-msg" style="display:none;border-radius:8px;padding:10px 14px;font-size:13px;"></div>
+        <div style="display:flex;justify-content:flex-end;gap:10px;">
+          <button onclick="_dashInvestView='list';renderDashInvestigations()" style="background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:9px 18px;font-size:13px;cursor:pointer;">Cancel</button>
+          <button onclick="submitDashInvestResponse('${id}')" id="inv-resp-submit" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer;">Submit Findings</button>
+        </div>
+      </div>`}
+    </div>`;
+}
+
+async function getStoreOptionsHtml() {
+  const { data: stores } = await sb.from('stores').select('id,name').eq('organisation_id', _orgId).eq('active', true).order('name');
+  return (stores||[]).map(s => `<option value="${s.id}" data-name="${s.name}">${s.name}</option>`).join('');
+}
+
+function setInvestFound(val, btn) {
+  document.getElementById('inv-resp-found').value = val;
+  const yes = document.getElementById('inv-resp-yes');
+  const no  = document.getElementById('inv-resp-no');
+  if (yes) { yes.style.background = val ? 'rgba(255,92,92,0.1)' : 'var(--surface2)'; yes.style.borderColor = val ? 'rgba(255,92,92,0.4)' : 'var(--border)'; yes.style.color = val ? 'var(--danger)' : 'var(--muted)'; }
+  if (no)  { no.style.background = !val ? 'rgba(52,211,153,0.1)' : 'var(--surface2)'; no.style.borderColor = !val ? 'rgba(52,211,153,0.4)' : 'var(--border)'; no.style.color = !val ? 'var(--accent)' : 'var(--muted)'; }
+}
+
+let _investPhotos = [];
+
+async function handleInvestPhotos(event) {
+  const files = Array.from(event.target.files).slice(0, 4 - _investPhotos.length);
+  for (const file of files) {
+    const b64 = await compressAndEncodeImage(file, 800);
+    _investPhotos.push({ b64, media_type: file.type || 'image/jpeg', filename: file.name });
+  }
+  renderInvestPhotosPreviews();
+  // Analyze most recent photo
+  if (files.length > 0) analyzeInvestPhoto(_investPhotos[_investPhotos.length - 1]);
+}
+
+function renderInvestPhotosPreviews() {
+  const el = document.getElementById('inv-photo-previews');
+  if (!el) return;
+  el.innerHTML = _investPhotos.map((p, i) => `
+    <div style="position:relative;">
+      <img src="data:${p.media_type};base64,${p.b64}" style="width:90px;height:72px;object-fit:cover;border-radius:7px;border:1px solid var(--border);">
+      <button onclick="removeInvestPhoto(${i})" style="position:absolute;top:-4px;right:-4px;width:18px;height:18px;background:var(--danger);color:#fff;border:none;border-radius:50%;cursor:pointer;font-size:10px;line-height:1;display:flex;align-items:center;justify-content:center;">✕</button>
+    </div>`).join('');
+  document.getElementById('inv-resp-photos-data').value = JSON.stringify(_investPhotos.map(p => ({ b64: p.b64, media_type: p.media_type })));
+}
+
+function removeInvestPhoto(idx) {
+  _investPhotos.splice(idx, 1);
+  renderInvestPhotosPreviews();
+}
+
+async function analyzeInvestPhoto(photo) {
+  const analysisEl = document.getElementById('inv-photo-analysis');
+  if (!analysisEl) return;
+  // Get current investigation type from URL context
+  const issueType = document.querySelector('[data-inv-issue-type]')?.dataset.invIssueType || 'other';
+  const productName = document.getElementById('inv-resp-desc')?.placeholder?.includes('found') ? '' : '';
+
+  analysisEl.style.display = 'block';
+  analysisEl.textContent = '🔍 Analyzing photo with AI…';
+
+  try {
+    const res = await fetch('/.netlify/functions/investigation-notify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'analyze_photo', photo_b64: photo.b64, issue_type: issueType, product_name: '', media_type: photo.media_type }),
+    });
+    const data = await res.json();
+    if (data.findings) {
+      const found = data.issue_detected;
+      const conf = data.confidence || 'medium';
+      analysisEl.innerHTML = `<strong style="color:${found?'var(--danger)':'var(--accent)'};">AI: ${found ? 'Issue detected' : 'No issue detected'}</strong> (${conf} confidence)<br>${data.findings}`;
+      // Auto-fill found toggle
+      if (found !== null) setInvestFound(found, null);
+    }
+  } catch(e) {
+    analysisEl.textContent = 'AI analysis unavailable.';
+    console.warn('Photo analysis failed:', e);
+  }
+}
+
+async function compressAndEncodeImage(file, maxSize) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      let w = img.width, h = img.height;
+      if (w > maxSize || h > maxSize) {
+        if (w > h) { h = Math.round(h * maxSize / w); w = maxSize; }
+        else { w = Math.round(w * maxSize / h); h = maxSize; }
+      }
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      const b64 = canvas.toDataURL('image/jpeg', 0.82).split(',')[1];
+      resolve(b64);
+    };
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+async function submitDashInvestResponse(investigationId) {
+  const found = document.getElementById('inv-resp-found')?.value;
+  const desc  = document.getElementById('inv-resp-desc')?.value.trim();
+  const units = parseInt(document.getElementById('inv-resp-units')?.value || '0');
+  const affected = parseInt(document.getElementById('inv-resp-affected')?.value || '0');
+  const storeEl = document.getElementById('inv-resp-store');
+  const storeId = storeEl?.value || null;
+  const storeName = storeEl?.selectedOptions?.[0]?.dataset?.name || '';
+  const photosData = JSON.parse(document.getElementById('inv-resp-photos-data')?.value || '[]');
+  const analysisText = document.getElementById('inv-photo-analysis')?.textContent || '';
+  const cleanAnalysis = analysisText.replace('AI: ','').replace('🔍 Analyzing photo with AI…','').trim();
+
+  if (found === '') { showDashInvestMsg('Please select whether you found the issue.', 'error'); return; }
+
+  const btn = document.getElementById('inv-resp-submit');
+  btn.disabled = true; btn.textContent = 'Submitting…';
+
+  const session = await sb.auth.getUser();
+  const userId = session.data?.user?.id;
+
+  const { error } = await sb.from('investigation_responses').insert({
+    investigation_id: investigationId,
+    retailer_org_id: _orgId,
+    store_id: storeId || null,
+    store_name: storeName,
+    responder_user_id: userId || null,
+    responder_name: session.data?.user?.email?.split('@')[0] || null,
+    units_inspected: units || null,
+    units_affected: affected || 0,
+    issue_found: found === 'true',
+    issue_description: desc || null,
+    photos: photosData.length ? photosData : [],
+    ai_analysis: cleanAnalysis.slice(0, 400) || null,
+    status: 'submitted',
+    submitted_at: new Date().toISOString(),
+  });
+
+  if (error) { showDashInvestMsg('Error: ' + error.message, 'error'); btn.disabled = false; btn.textContent = 'Submit Findings'; return; }
+
+  // Update investigation status to in_progress
+  await sb.from('investigation_requests').update({ status: 'in_progress' }).eq('id', investigationId).eq('status', 'open');
+
+  showToast('Findings submitted — thank you', 'ok', 3000);
+  _investPhotos = [];
+  _dashInvestView = 'list';
+  renderDashInvestigations();
+}
+
+function showDashInvestMsg(txt, type) {
+  const el = document.getElementById('inv-resp-msg');
+  if (!el) return;
+  el.style.display = 'block';
+  el.style.background = type === 'error' ? 'rgba(255,92,92,0.1)' : 'rgba(52,211,153,0.1)';
+  el.style.color = type === 'error' ? 'var(--danger)' : 'var(--accent)';
+  el.style.border = `1px solid ${type === 'error' ? 'rgba(255,92,92,0.3)' : 'rgba(52,211,153,0.3)'}`;
+  el.textContent = txt;
+}
+</script>

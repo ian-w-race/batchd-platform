@@ -209,6 +209,11 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 9h6M9 12h4"/><circle cx="16" cy="16" r="2" fill="currentColor" stroke="none"/></svg>
         Widget Setup
       </button>
+      <button class="nav-item" onclick="showPanel('investigations')" id="nav-investigations">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6M8 11h6"/></svg>
+        Investigations
+        <span id="invest-badge" style="display:none;margin-left:auto;background:var(--warn);color:#1a0f00;font-size:10px;font-family:'DM Mono',monospace;padding:1px 6px;border-radius:10px;font-weight:700;"></span>
+      </button>
       <div class="nav-section">Recalls</div>
       <button class="nav-item" onclick="showPanel('push')">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
@@ -355,12 +360,12 @@ async function initPortal(user) {
 
 // ── Panel router ───────────────────────────────────────────────
 function showPanel(name) {
-  const titles = { overview:'Dashboard', push:'Push a Recall', history:'Recall History', acknowledgements:'Acknowledgements', partners:'Trading Partners', shipments:'Shipments', products:'Products', lots:'Lot Codes', triage:'Complaint Triage', widget:'Widget Setup' };
+  const titles = { overview:'Dashboard', push:'Push a Recall', history:'Recall History', acknowledgements:'Acknowledgements', partners:'Trading Partners', shipments:'Shipments', products:'Products', lots:'Lot Codes', triage:'Complaint Triage', widget:'Widget Setup', investigations:'Investigations' };
   document.getElementById('topbar-title').textContent = titles[name] || name;
   document.querySelectorAll('.nav-item').forEach(el => {
     el.classList.toggle('active', el.getAttribute('onclick')?.includes(`'${name}'`));
   });
-  const fns = { overview: renderOverview, push: renderPush, history: renderHistory, acknowledgements: renderAcknowledgements, partners: renderPartners, products: renderProducts, lots: renderLots, shipments: renderShipments, patterns: renderPatterns, triage: renderTriage, widget: renderWidgetSetup };
+  const fns = { overview: renderOverview, push: renderPush, history: renderHistory, acknowledgements: renderAcknowledgements, partners: renderPartners, products: renderProducts, lots: renderLots, shipments: renderShipments, patterns: renderPatterns, triage: renderTriage, widget: renderWidgetSetup, investigations: renderInvestigations };
   (fns[name] || (() => {}))();
 }
 
@@ -1774,6 +1779,10 @@ async function submitPhoneComplaint() {
           ` : ''}
           ${payload.customer_email ? `<div style="font-size:12px;color:var(--muted);margin-bottom:20px;">Follow-up email sent automatically to ${payload.customer_email}.</div>` : ''}
           <div style="display:flex;justify-content:center;gap:10px;">
+            <button onclick="launchInvestigationFromComplaint(_triageComplaint)" style="background:var(--warn);color:#1a0f00;border:none;border-radius:8px;padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+              Launch Investigation
+            </button>
             <button onclick="_triageView='list';renderTriage()" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer;">View All Complaints</button>
             <button onclick="triageShowNew()" style="background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:9px 18px;font-size:13px;cursor:pointer;">Log Another</button>
           </div>
@@ -2576,3 +2585,456 @@ function showLotMsg(txt, type) {
 </script>
 </body>
 </html>
+
+<script>
+// ── INVESTIGATIONS ─────────────────────────────────────────────
+
+const ISSUE_TYPES = {
+  foreign_object:  { label: 'Foreign Object',          icon: '⚠️',  color: 'var(--danger)' },
+  mold:            { label: 'Mold / Fungal Growth',     icon: '🍄',  color: 'var(--danger)' },
+  mislabeling:     { label: 'Mislabeling / Wrong Product', icon: '🏷️', color: 'var(--warn)' },
+  allergen:        { label: 'Undeclared Allergen',      icon: '⚡',  color: 'var(--danger)' },
+  contamination:   { label: 'Contamination',            icon: '☣️',  color: 'var(--danger)' },
+  discoloration:   { label: 'Discoloration / Quality',  icon: '🎨',  color: 'var(--warn)' },
+  pest:            { label: 'Pest Contamination',       icon: '🐛',  color: 'var(--danger)' },
+  packaging:       { label: 'Packaging Defect',         icon: '📦',  color: 'var(--warn)' },
+  other:           { label: 'Other Issue',              icon: '❓',  color: 'var(--muted)' },
+};
+
+const URGENCY = {
+  1: { label: 'Class I — 24h', color: 'var(--danger)', hours: 24 },
+  2: { label: 'Class II — 72h', color: 'var(--warn)',   hours: 72 },
+  3: { label: 'Standard — 7 days', color: 'var(--muted)', hours: 168 },
+};
+
+let _investView = 'list'; // list | create | detail
+let _investId = null;
+let _investComplaintId = null;
+let _investPrefill = {};
+
+async function renderInvestigations() {
+  const el = document.getElementById('main-content');
+  if (_investView === 'create') { renderInvestigationCreate(el); return; }
+  if (_investView === 'detail' && _investId) { await renderInvestigationDetail(el, _investId); return; }
+  await renderInvestigationList(el);
+}
+
+async function renderInvestigationList(el) {
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading investigations…</div>`;
+  const { data: invs, error } = await sb.from('investigation_requests')
+    .select('*, investigation_responses(id, issue_found)')
+    .eq('manufacturer_id', _orgId)
+    .order('created_at', { ascending: false });
+  if (error) { el.innerHTML = `<div style="color:var(--danger)">Error: ${error.message}</div>`; return; }
+
+  // Update badge
+  const open = (invs||[]).filter(i => i.status === 'open' || i.status === 'in_progress');
+  const badge = document.getElementById('invest-badge');
+  if (badge) { badge.textContent = open.length; badge.style.display = open.length ? 'inline' : 'none'; }
+
+  el.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:20px;flex-wrap:wrap;">
+      <div>
+        <div style="font-size:15px;font-weight:600;color:var(--text);">Field Investigations</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px;">Send inspection requests to retailers — collect photos and findings before deciding on a recall.</div>
+      </div>
+      <button onclick="_investView='create';_investPrefill={};renderInvestigations()" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        New Investigation
+      </button>
+    </div>
+
+    ${!invs?.length ? `
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:48px;text-align:center;">
+        <div style="font-size:28px;margin-bottom:12px;">🔍</div>
+        <div style="font-weight:600;color:var(--text);margin-bottom:6px;">No investigations yet</div>
+        <div style="font-size:13px;color:var(--muted);max-width:320px;margin:0 auto;">Launch an investigation from a complaint to request retailers to inspect and report back.</div>
+      </div>
+    ` : `
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        ${invs.map(inv => {
+          const it = ISSUE_TYPES[inv.issue_type] || ISSUE_TYPES.other;
+          const urg = URGENCY[inv.urgency_class] || URGENCY[2];
+          const responses = inv.investigation_responses || [];
+          const found = responses.filter(r => r.issue_found).length;
+          const deadline = inv.deadline_at ? new Date(inv.deadline_at) : null;
+          const overdue = deadline && deadline < new Date() && inv.status !== 'closed';
+          const statusColor = inv.status === 'closed' ? 'var(--muted)' : inv.status === 'escalated' ? 'var(--danger)' : overdue ? 'var(--danger)' : responses.length > 0 ? 'var(--warn)' : 'var(--info)';
+          const statusLabel = inv.status === 'closed' ? 'Closed' : inv.status === 'escalated' ? 'Escalated' : overdue ? 'Overdue' : responses.length > 0 ? 'Responses in' : 'Awaiting responses';
+          return `
+          <div onclick="_investView='detail';_investId='${inv.id}';renderInvestigations()" style="background:var(--surface);border:1px solid ${overdue?'rgba(255,92,92,0.35)':'var(--border)'};border-radius:12px;padding:16px;cursor:pointer;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='${overdue?'rgba(255,92,92,0.35)':'var(--border)'}'">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+              <div style="flex:1;min-width:0;">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;flex-wrap:wrap;">
+                  <span style="font-size:11px;font-weight:700;font-family:'DM Mono',monospace;color:${it.color};text-transform:uppercase;">${it.icon} ${it.label}</span>
+                  <span style="font-size:10px;font-family:'DM Mono',monospace;color:${urg.color};padding:1px 7px;border-radius:4px;background:${urg.color.replace('var(','rgba(').replace('--danger)','255,92,92,0.1)').replace('--warn)','245,166,35,0.1)').replace('--muted)','106,175,158,0.1)')};">${urg.label}</span>
+                </div>
+                <div style="font-size:14px;font-weight:600;color:var(--text);">${inv.product_name || 'Unknown product'}</div>
+                <div style="font-size:11px;color:var(--muted);margin-top:3px;">${inv.lot_number ? 'Lot: ' + inv.lot_number + ' · ' : ''}${new Date(inv.created_at).toLocaleDateString('en-GB')}</div>
+              </div>
+              <div style="text-align:right;flex-shrink:0;">
+                <div style="font-size:20px;font-weight:700;color:${statusColor};">${responses.length}</div>
+                <div style="font-size:10px;color:var(--muted);">responses</div>
+                ${found > 0 ? `<div style="font-size:10px;color:var(--danger);font-weight:600;margin-top:2px;">${found} found issue</div>` : ''}
+              </div>
+            </div>
+            ${deadline ? `<div style="font-size:11px;color:${overdue?'var(--danger)':'var(--muted)'};margin-top:8px;font-family:'DM Mono',monospace;">⏰ Deadline: ${deadline.toLocaleDateString('en-GB', {day:'numeric',month:'short'})} ${deadline.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}</div>` : ''}
+          </div>`;
+        }).join('')}
+      </div>
+    `}`;
+}
+
+function launchInvestigationFromComplaint(complaintId) {
+  // Pre-fill from complaint
+  const prefill = {};
+  // Try to get complaint data from the detail view elements
+  const productEl = document.querySelector('[data-invest-product]');
+  if (productEl) prefill.product_name = productEl.dataset.investProduct;
+  _investComplaintId = complaintId;
+  _investPrefill = prefill;
+  _investView = 'create';
+  showPanel('investigations');
+}
+
+function renderInvestigationCreate(el) {
+  const pf = _investPrefill || {};
+  el.innerHTML = `
+    <div style="max-width:660px;">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px;">
+        <button onclick="_investView='list';renderInvestigations()" style="background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer;">← Back</button>
+        <div>
+          <div style="font-size:15px;font-weight:600;color:var(--text);">Launch Field Investigation</div>
+          <div style="font-size:12px;color:var(--muted);">Request retailers to visually inspect and report back with photos.</div>
+        </div>
+      </div>
+
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;display:flex;flex-direction:column;gap:18px;">
+
+        <div style="background:rgba(56,189,248,0.07);border:1px solid rgba(56,189,248,0.2);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--info);line-height:1.6;">
+          All connected trading partners with this product in their scan history will receive an email alert and can respond through their Batch'd dashboard.
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+          <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Product name *</label>
+          <input id="inv-product" type="text" value="${pf.product_name||''}" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+          <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Lot / Batch number</label>
+          <input id="inv-lot" type="text" value="${pf.lot_number||''}" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;font-family:'DM Mono',monospace;box-sizing:border-box;"></div>
+        </div>
+
+        <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Barcode / EAN</label>
+        <input id="inv-barcode" type="text" value="${pf.barcode||''}" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;font-family:'DM Mono',monospace;box-sizing:border-box;"></div>
+
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:8px;">Issue type *</label>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;" id="inv-type-grid">
+            ${Object.entries(ISSUE_TYPES).map(([k,v]) => `
+              <button onclick="selectInvestType('${k}')" id="inv-type-${k}"
+                style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;text-align:left;cursor:pointer;display:flex;align-items:center;gap:8px;font-family:inherit;transition:all 0.15s;">
+                <span style="font-size:16px;">${v.icon}</span>
+                <span style="font-size:12px;color:var(--text);font-weight:500;">${v.label}</span>
+              </button>`).join('')}
+          </div>
+          <input type="hidden" id="inv-type-val" value="">
+        </div>
+
+        <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Issue description *</label>
+        <textarea id="inv-desc" rows="3" placeholder="Describe what was found or reported — what retailers should be looking for." style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px;color:var(--text);font-size:13px;resize:vertical;box-sizing:border-box;font-family:inherit;line-height:1.5;"></textarea></div>
+
+        <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Inspection instructions <span style="opacity:0.6;">(optional — what exactly to look for)</span></label>
+        <textarea id="inv-instructions" rows="3" placeholder="e.g. Check the bottom of the package for any metal fragments. Photograph the seal area. Check for any unusual smell or discoloration of the product." style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px;color:var(--text);font-size:13px;resize:vertical;box-sizing:border-box;font-family:inherit;line-height:1.5;"></textarea></div>
+
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:8px;">Urgency / response deadline *</label>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            ${Object.entries(URGENCY).map(([k,v]) => `
+              <button onclick="selectInvestUrgency(${k})" id="inv-urg-${k}"
+                style="flex:1;min-width:140px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;cursor:pointer;font-family:inherit;transition:all 0.15s;text-align:center;">
+                <div style="font-size:13px;font-weight:600;color:${v.color};">${v.label}</div>
+                <div style="font-size:10px;color:var(--muted);margin-top:3px;">Deadline: ${new Date(Date.now()+v.hours*3600000).toLocaleDateString('en-GB',{day:'numeric',month:'short'})}</div>
+              </button>`).join('')}
+          </div>
+          <input type="hidden" id="inv-urgency-val" value="2">
+        </div>
+
+        <div id="inv-msg" style="display:none;border-radius:8px;padding:10px 14px;font-size:13px;"></div>
+        <div style="display:flex;justify-content:flex-end;gap:10px;">
+          <button onclick="_investView='list';renderInvestigations()" style="background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:9px 18px;font-size:13px;cursor:pointer;">Cancel</button>
+          <button onclick="submitInvestigation()" id="inv-submit" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer;">Launch Investigation</button>
+        </div>
+      </div>
+    </div>`;
+
+  // Pre-select urgency 2
+  selectInvestUrgency(2);
+}
+
+function selectInvestType(key) {
+  document.getElementById('inv-type-val').value = key;
+  document.querySelectorAll('[id^="inv-type-"]').forEach(btn => {
+    const k = btn.id.replace('inv-type-','');
+    if (k === key) {
+      btn.style.background = ISSUE_TYPES[k]?.color?.replace('var(','rgba(').replace('--danger)','255,92,92,0.12)').replace('--warn)','245,166,35,0.12)').replace('--muted)','106,175,158,0.1)') || 'rgba(52,211,153,0.1)';
+      btn.style.borderColor = ISSUE_TYPES[k]?.color || 'var(--accent)';
+    } else {
+      btn.style.background = 'var(--surface2)';
+      btn.style.borderColor = 'var(--border)';
+    }
+  });
+}
+
+function selectInvestUrgency(val) {
+  document.getElementById('inv-urgency-val').value = val;
+  [1,2,3].forEach(k => {
+    const btn = document.getElementById('inv-urg-'+k);
+    if (!btn) return;
+    if (k === parseInt(val)) {
+      btn.style.borderColor = URGENCY[k].color;
+      btn.style.background = URGENCY[k].color.replace('var(','rgba(').replace('--danger)','255,92,92,0.12)').replace('--warn)','245,166,35,0.12)').replace('--muted)','106,175,158,0.1)');
+    } else {
+      btn.style.borderColor = 'var(--border)';
+      btn.style.background = 'var(--surface2)';
+    }
+  });
+}
+
+function showInvestMsg(txt, type) {
+  const el = document.getElementById('inv-msg');
+  if (!el) return;
+  el.style.display = 'block';
+  el.style.background = type === 'error' ? 'rgba(255,92,92,0.1)' : 'rgba(52,211,153,0.1)';
+  el.style.color = type === 'error' ? 'var(--danger)' : 'var(--accent)';
+  el.style.border = `1px solid ${type === 'error' ? 'rgba(255,92,92,0.3)' : 'rgba(52,211,153,0.3)'}`;
+  el.textContent = txt;
+}
+
+async function submitInvestigation() {
+  const product = document.getElementById('inv-product')?.value.trim();
+  const lot     = document.getElementById('inv-lot')?.value.trim();
+  const barcode = document.getElementById('inv-barcode')?.value.trim();
+  const type    = document.getElementById('inv-type-val')?.value;
+  const desc    = document.getElementById('inv-desc')?.value.trim();
+  const instructions = document.getElementById('inv-instructions')?.value.trim();
+  const urgency = parseInt(document.getElementById('inv-urgency-val')?.value || '2');
+
+  if (!product) { showInvestMsg('Product name is required.', 'error'); return; }
+  if (!type)    { showInvestMsg('Please select an issue type.', 'error'); return; }
+  if (!desc)    { showInvestMsg('Issue description is required.', 'error'); return; }
+
+  const btn = document.getElementById('inv-submit');
+  btn.disabled = true; btn.textContent = 'Launching…';
+
+  const hours = URGENCY[urgency]?.hours || 72;
+  const deadline = new Date(Date.now() + hours * 3600000).toISOString();
+
+  const { data: inv, error } = await sb.from('investigation_requests').insert({
+    complaint_id: _investComplaintId || null,
+    manufacturer_id: _orgId,
+    product_name: product,
+    lot_number: lot || null,
+    barcode: barcode || null,
+    issue_type: type,
+    issue_description: desc,
+    instructions: instructions || null,
+    urgency_class: urgency,
+    deadline_at: deadline,
+    status: 'open',
+    created_by: (await sb.auth.getUser()).data?.user?.id || null,
+  }).select().single();
+
+  if (error) { showInvestMsg('Error: ' + error.message, 'error'); btn.disabled = false; btn.textContent = 'Launch Investigation'; return; }
+
+  // Notify trading partners
+  try {
+    const { data: partners } = await sb.from('trading_partners')
+      .select('organisations!trading_partners_retailer_id_fkey(name, contact_email)')
+      .eq('manufacturer_id', _orgId)
+      .eq('status', 'active');
+
+    const emails = (partners||[])
+      .map(p => p.organisations?.contact_email)
+      .filter(Boolean);
+
+    if (emails.length) {
+      await fetch('/.netlify/functions/investigation-notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'notify_retailers',
+          investigation_id: inv.id,
+          product_name: product,
+          lot_number: lot,
+          issue_type: type,
+          issue_description: desc,
+          instructions,
+          urgency_class: urgency,
+          deadline_at: deadline,
+          manufacturer_name: _orgName,
+          retailer_emails: emails,
+        }),
+      });
+    }
+  } catch(e) { console.warn('Notification failed:', e); }
+
+  showToast('Investigation launched — retailers have been notified', 'ok', 3000);
+  _investComplaintId = null;
+  _investView = 'detail';
+  _investId = inv.id;
+  renderInvestigations();
+}
+
+async function renderInvestigationDetail(el, id) {
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
+
+  const [invRes, respRes] = await Promise.all([
+    sb.from('investigation_requests').select('*').eq('id', id).single(),
+    sb.from('investigation_responses').select('*').eq('investigation_id', id).order('submitted_at', { ascending: false }),
+  ]);
+
+  const inv = invRes.data;
+  const responses = respRes.data || [];
+  if (!inv) { el.innerHTML = `<div style="color:var(--danger)">Investigation not found.</div>`; return; }
+
+  const it = ISSUE_TYPES[inv.issue_type] || ISSUE_TYPES.other;
+  const urg = URGENCY[inv.urgency_class] || URGENCY[2];
+  const deadline = inv.deadline_at ? new Date(inv.deadline_at) : null;
+  const overdue = deadline && deadline < new Date() && inv.status !== 'closed';
+  const foundCount = responses.filter(r => r.issue_found).length;
+  const totalResponded = responses.length;
+
+  el.innerHTML = `
+    <div style="max-width:780px;">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap;">
+        <button onclick="_investView='list';renderInvestigations()" style="background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer;">← Investigations</button>
+        <div style="flex:1;">
+          <div style="font-size:10px;font-family:'DM Mono',monospace;color:${it.color};font-weight:700;text-transform:uppercase;margin-bottom:3px;">${it.icon} ${it.label}</div>
+          <div style="font-size:16px;font-weight:700;color:var(--text);">${inv.product_name}</div>
+        </div>
+        ${inv.status !== 'closed' && inv.status !== 'escalated' ? `
+          <div style="display:flex;gap:8px;">
+            <button onclick="closeInvestigation('${id}')" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:7px 12px;font-size:12px;color:var(--muted);cursor:pointer;">Close</button>
+            <button onclick="escalateInvestigationToRecall('${id}')" style="background:var(--danger);color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;">Escalate to Recall</button>
+          </div>` : `<span style="font-size:12px;font-family:'DM Mono',monospace;color:var(--muted);padding:4px 10px;border:1px solid var(--border);border-radius:6px;">${inv.status.toUpperCase()}</span>`}
+      </div>
+
+      <!-- Summary cards -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:20px;">
+        ${[
+          { label:'Responses', value: totalResponded, color: 'var(--text)' },
+          { label:'Issue found', value: foundCount, color: foundCount > 0 ? 'var(--danger)' : 'var(--accent)' },
+          { label:'Urgency', value: urg.label.split('—')[0].trim(), color: urg.color },
+          { label:'Deadline', value: deadline ? (overdue ? 'Overdue' : deadline.toLocaleDateString('en-GB',{day:'numeric',month:'short'})) : '—', color: overdue ? 'var(--danger)' : 'var(--muted)' },
+        ].map(k => `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;">
+          <div style="font-size:18px;font-weight:700;color:${k.color};font-family:'Figtree',sans-serif;">${k.value}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:3px;">${k.label}</div>
+        </div>`).join('')}
+      </div>
+
+      <!-- Investigation details -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px;">
+        <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px;">Investigation Details</div>
+        ${inv.lot_number ? `<div style="font-size:12px;color:var(--muted);margin-bottom:4px;">Lot: <span style="color:var(--text);font-family:'DM Mono',monospace;">${inv.lot_number}</span></div>` : ''}
+        <div style="font-size:13px;color:var(--text);margin-bottom:8px;line-height:1.6;">${inv.issue_description}</div>
+        ${inv.instructions ? `<div style="background:var(--surface2);border-left:3px solid var(--accent);padding:10px 14px;border-radius:4px;font-size:12px;color:var(--muted);line-height:1.6;margin-top:8px;"><strong style="color:var(--text);">Inspection instructions:</strong><br>${inv.instructions}</div>` : ''}
+      </div>
+
+      <!-- AI Summary -->
+      ${inv.findings_summary ? `
+        <div style="background:rgba(52,211,153,0.07);border:1px solid rgba(52,211,153,0.25);border-radius:12px;padding:16px;margin-bottom:16px;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <span style="font-size:12px;font-weight:700;color:var(--accent);">AI FINDINGS SUMMARY</span>
+          </div>
+          <div style="font-size:13px;color:var(--text);line-height:1.6;">${inv.findings_summary}</div>
+        </div>` : responses.length >= 2 ? `
+        <button onclick="generateInvestigationSummary('${id}')" id="btn-gen-summary" style="width:100%;background:var(--surface);border:1px solid rgba(52,211,153,0.3);border-radius:10px;padding:12px;font-size:13px;font-weight:600;color:var(--accent);cursor:pointer;margin-bottom:16px;font-family:inherit;">
+          ✨ Generate AI Findings Summary (${responses.length} responses)
+        </button>` : ''}
+
+      <!-- Responses -->
+      <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px;">Retailer Responses (${responses.length})</div>
+      ${responses.length === 0 ? `
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:24px;text-align:center;font-size:13px;color:var(--muted);">
+          No responses yet. Retailers have been notified and can respond through their dashboard.
+        </div>` : `
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          ${responses.map(r => {
+            const photos = r.photos || [];
+            return `
+            <div style="background:var(--surface);border:1px solid ${r.issue_found?'rgba(255,92,92,0.3)':'var(--border)'};border-radius:12px;padding:16px;">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:10px;">
+                <div>
+                  <div style="font-size:13px;font-weight:600;color:var(--text);">${r.store_name || 'Unknown store'}</div>
+                  <div style="font-size:11px;color:var(--muted);">${r.responder_name || ''} · ${new Date(r.submitted_at).toLocaleDateString('en-GB')}</div>
+                </div>
+                <span style="font-size:11px;font-weight:700;font-family:'DM Mono',monospace;padding:3px 10px;border-radius:6px;
+                  background:${r.issue_found?'rgba(255,92,92,0.1)':'rgba(52,211,153,0.1)'};
+                  color:${r.issue_found?'var(--danger)':'var(--accent)'};">
+                  ${r.issue_found ? '⚠ ISSUE FOUND' : '✓ No issue found'}
+                </span>
+              </div>
+              ${r.units_inspected ? `<div style="font-size:12px;color:var(--muted);margin-bottom:6px;">Inspected ${r.units_inspected} unit${r.units_inspected!==1?'s':''}${r.units_affected?' · '+r.units_affected+' affected':''}</div>` : ''}
+              ${r.issue_description ? `<div style="font-size:13px;color:var(--text);line-height:1.5;margin-bottom:8px;">${r.issue_description}</div>` : ''}
+              ${r.ai_analysis ? `<div style="background:rgba(56,189,248,0.07);border:1px solid rgba(56,189,248,0.2);border-radius:7px;padding:8px 12px;font-size:12px;color:var(--muted);margin-bottom:8px;"><strong style="color:var(--info);">AI:</strong> ${r.ai_analysis}</div>` : ''}
+              ${photos.length > 0 ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+                ${photos.map(p => `<img src="data:${p.media_type||'image/jpeg'};base64,${p.b64}" style="width:100px;height:80px;object-fit:cover;border-radius:8px;border:1px solid var(--border);cursor:pointer;" onclick="window.open(this.src,'_blank')">`).join('')}
+              </div>` : ''}
+            </div>`;
+          }).join('')}
+        </div>
+      `}
+    </div>`;
+}
+
+async function generateInvestigationSummary(id) {
+  const btn = document.getElementById('btn-gen-summary');
+  if (btn) { btn.disabled = true; btn.textContent = '✨ Generating summary…'; }
+
+  const { data: inv } = await sb.from('investigation_requests').select('*').eq('id', id).single();
+  const { data: responses } = await sb.from('investigation_responses').select('*').eq('investigation_id', id);
+
+  const res = await fetch('/.netlify/functions/investigation-notify', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      type: 'summarize_findings',
+      investigation_id: id,
+      product_name: inv.product_name,
+      issue_type: inv.issue_type,
+      issue_description: inv.issue_description,
+      responses: responses || [],
+    }),
+  });
+
+  const data = await res.json();
+  if (data.summary) {
+    await sb.from('investigation_requests').update({ findings_summary: data.summary }).eq('id', id);
+    showToast('AI summary generated', 'ok', 2500);
+    renderInvestigationDetail(document.getElementById('main-content'), id);
+  }
+}
+
+async function closeInvestigation(id) {
+  await sb.from('investigation_requests').update({ status: 'closed' }).eq('id', id);
+  renderInvestigationDetail(document.getElementById('main-content'), id);
+}
+
+async function escalateInvestigationToRecall(id) {
+  const { data: inv } = await sb.from('investigation_requests').select('*').eq('id', id).single();
+  if (!inv) return;
+  await sb.from('investigation_requests').update({ status: 'escalated', recall_escalated: true }).eq('id', id);
+  showToast('Escalated — pre-filling Push Recall form', 'ok', 2500);
+  // Pre-fill push recall form
+  _pushDraft = {
+    product: inv.product_name || '',
+    lot: inv.lot_number || '',
+    barcode: inv.barcode || '',
+    reason: ISSUE_TYPES[inv.issue_type]?.label || inv.issue_type,
+    description: inv.issue_description || '',
+    severity: inv.urgency_class === 1 ? 'Critical' : inv.urgency_class === 2 ? 'High' : 'Medium',
+    authority: '',
+    is_drill: false,
+  };
+  showPanel('push');
+}
+</script>
