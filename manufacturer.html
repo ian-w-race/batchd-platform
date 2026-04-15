@@ -1965,13 +1965,12 @@ async function loadTriageBadge() {
 function renderWidgetSetup() {
   const el = document.getElementById('main-content');
   const orgId   = _orgId || '';
-  const orgName = encodeURIComponent(_orgName || '');
+  const cleanName = (_orgName || '').replace(/['"]/g, '').trim();
+  const orgName = encodeURIComponent(cleanName);
   const baseUrl = 'https://app.batchdapp.com';
 
-  const scriptSnippetEN = `<script src="${baseUrl}/complaint-widget.js?org=${orgId}&name=${orgName}"><\/script>`;
-  const scriptSnippetNO = `<script src="${baseUrl}/complaint-widget.js?org=${orgId}&name=${orgName}&lang=no"><\/script>`;
-  const standaloneEN    = `${baseUrl}/complaint.html?org=${orgId}&name=${orgName}`;
-  const standaloneNO    = `${baseUrl}/complaint.html?org=${orgId}&name=${orgName}&lang=no`;
+  const standaloneEN = `${baseUrl}/complaint.html?org=${orgId}&name=${orgName}`;
+  const standaloneNO = `${baseUrl}/complaint.html?org=${orgId}&name=${orgName}&lang=no`;
 
   el.innerHTML = `
     <div style="max-width:700px;display:flex;flex-direction:column;gap:20px;">
@@ -1996,7 +1995,7 @@ function renderWidgetSetup() {
         <div>
           <div style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);margin-bottom:6px;">English (default)</div>
           <div style="display:flex;gap:8px;align-items:stretch;">
-            <code id="snippet-en" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:11px;font-family:'DM Mono',monospace;color:var(--accent);word-break:break-all;line-height:1.6;">${scriptSnippetEN}</code>
+            <code id="snippet-en" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:11px;font-family:'DM Mono',monospace;color:var(--accent);word-break:break-all;line-height:1.6;"></code>
             <button onclick="copyToClipboard('snippet-en', this)" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:0 14px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0;">Copy</button>
           </div>
         </div>
@@ -2004,7 +2003,7 @@ function renderWidgetSetup() {
         <div>
           <div style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);margin-bottom:6px;">Norwegian</div>
           <div style="display:flex;gap:8px;align-items:stretch;">
-            <code id="snippet-no" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:11px;font-family:'DM Mono',monospace;color:var(--accent);word-break:break-all;line-height:1.6;">${scriptSnippetNO}</code>
+            <code id="snippet-no" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:11px;font-family:'DM Mono',monospace;color:var(--accent);word-break:break-all;line-height:1.6;"></code>
             <button onclick="copyToClipboard('snippet-no', this)" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:0 14px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0;">Copy</button>
           </div>
         </div>
@@ -2082,6 +2081,12 @@ function renderWidgetSetup() {
 
     </div>
   `;
+
+  // Set script snippet text via textContent to avoid browser parsing <script> tags
+  const snEn = document.getElementById('snippet-en');
+  const snNo = document.getElementById('snippet-no');
+  if (snEn) snEn.textContent = `<script src="${baseUrl}/complaint-widget.js?org=${orgId}&name=${orgName}"></` + `script>`;
+  if (snNo) snNo.textContent = `<script src="${baseUrl}/complaint-widget.js?org=${orgId}&name=${orgName}&lang=no"></` + `script>`;
 }
 
 function copyToClipboard(elementId, btn) {
