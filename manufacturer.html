@@ -5894,104 +5894,150 @@ function csvParseText(text) {
 }
 
 // ── Preview ───────────────────────────────────────────────────
+// ── CSV column mapper ─────────────────────────────────────────
+
 async function csvParseAndPreview(text, filename) {
-  const modal = document.getElementById('csv-import-modal');
+  const modal  = document.getElementById('csv-import-modal');
   const config = modal._csvConfig;
   const { headers, rows } = csvParseText(text);
-  modal._csvRows = rows;
+  modal._csvRows    = rows;
   modal._csvHeaders = headers;
 
-  // Map raw headers to field keys
-  const fieldMap = {};
+  // Auto-detect best column match for each field (suggestion only)
+  const autoMap = {};
   config.fields.forEach(f => {
-    // Try exact match, then label match, then partial match
-    const fLabel = f.label.toLowerCase();
-    const match = headers.find(h => h === fLabel || h === f.key || h.includes(fLabel.split(' ')[0]));
-    if (match) fieldMap[f.key] = match;
+    const fLabel = f.label.toLowerCase().replace(/[^a-z0-9]/g,'');
+    const fKey   = f.key.toLowerCase();
+    const match  = headers.find(h => {
+      const hn = h.toLowerCase().replace(/[^a-z0-9]/g,'');
+      return hn === fLabel || hn === fKey || hn.includes(fLabel.slice(0,6)) || fLabel.includes(hn.slice(0,6));
+    });
+    if (match) autoMap[f.key] = match;
   });
-  modal._csvFieldMap = fieldMap;
-
-  // Check required fields mapped
-  const missing = config.fields.filter(f => f.required && !fieldMap[f.key]).map(f => f.label);
-
-  // Build preview
-  const preview = rows.slice(0, 5);
-  const mappedFields = config.fields.filter(f => fieldMap[f.key]);
 
   document.getElementById('csv-step-upload').style.display = 'none';
   document.getElementById('csv-step-preview').style.display = '';
 
-  const previewEl = document.getElementById('csv-preview-content');
-  previewEl.innerHTML = `
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;">
-      <div style="background:rgba(52,211,153,0.1);border:1px solid rgba(52,211,153,0.3);border-radius:8px;padding:6px 12px;font-size:12px;color:var(--accent);">
-        ✓ ${rows.length} rows detected
-      </div>
+  const optionsHtml = `<option value="">— skip this field —</option>${headers.map(h =>
+    `<option value="${h}">${h}</option>`).join('')}`;
+
+  const sel = (key) => {
+    const suggested = autoMap[key] || '';
+    return `<select id="csv-map-${key}" onchange="csvUpdatePreview()" style="background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:6px 10px;color:var(--text);font-size:12px;font-family:'DM Mono',monospace;min-width:180px;cursor:pointer;outline:none;appearance:auto;">
+      ${optionsHtml}
+    </select>`;
+  };
+
+  document.getElementById('csv-preview-content').innerHTML = `
+    <!-- File info -->
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;flex-wrap:wrap;">
+      <div style="background:rgba(52,211,153,0.1);border:1px solid rgba(52,211,153,0.3);border-radius:8px;padding:6px 12px;font-size:12px;color:var(--accent);">✓ ${rows.length} rows · ${headers.length} columns</div>
       <div style="font-size:12px;color:var(--muted);">${filename}</div>
     </div>
 
-    ${missing.length > 0 ? `
-    <div style="background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.3);border-radius:8px;padding:11px 14px;margin-bottom:14px;font-size:12px;color:var(--danger);">
-      <strong>Missing required columns:</strong> ${missing.join(', ')}<br>
-      <span style="opacity:0.8;">Check that your column headings match the template. Column names are not case-sensitive.</span>
-    </div>` : ''}
-
-    <!-- Column mapping -->
-    <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:13px;margin-bottom:16px;">
-      <div style="font-size:11px;font-weight:600;color:var(--muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.07em;">Column mapping</div>
-      <div style="display:flex;flex-direction:column;gap:6px;">
-        ${config.fields.map(f => {
-          const mapped = fieldMap[f.key];
-          return `<div style="display:flex;align-items:center;gap:8px;font-size:12px;">
-            <div style="width:8px;height:8px;border-radius:50%;background:${mapped ? 'var(--accent)' : f.required ? 'var(--danger)' : 'var(--border)'};flex-shrink:0;"></div>
-            <div style="min-width:160px;color:var(--text);">${f.label}${f.required ? ' <span style="color:var(--accent)">*</span>' : ''}</div>
-            <div style="color:var(--muted);">→</div>
-            <div style="font-family:'DM Mono',monospace;font-size:11px;color:${mapped ? 'var(--accent)' : 'var(--muted)'};">
-              ${mapped ? '"' + mapped + '"' : f.required ? '⚠ not found' : 'will be blank'}
+    <!-- Column mapper -->
+    <div style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:18px;">
+      <div style="font-size:11px;font-weight:700;color:var(--text);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.07em;">Map your columns</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:14px;">Match each Batch'd field to a column from your file. Fields marked <span style="color:var(--accent)">★</span> are needed for import — others are optional.</div>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        ${config.fields.map(f => `
+          <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:center;">
+            <div style="font-size:13px;color:var(--text);font-weight:500;">
+              ${f.label}
+              ${f.required ? '<span style="color:var(--accent);margin-left:4px;">★</span>' : '<span style="font-size:10px;color:var(--muted);margin-left:4px;">(optional)</span>'}
             </div>
-          </div>`;
-        }).join('')}
+            <div style="font-size:12px;color:var(--muted);">→</div>
+            <div>${sel(f.key)}</div>
+          </div>`).join('')}
       </div>
     </div>
 
-    <!-- Data preview table -->
-    <div style="font-size:11px;font-weight:600;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.07em;">
-      Preview (first ${Math.min(5, rows.length)} of ${rows.length} rows)
-    </div>
-    <div style="overflow-x:auto;border:1px solid var(--border);border-radius:10px;">
-      <table style="width:100%;border-collapse:collapse;min-width:400px;">
-        <thead>
-          <tr>
-            ${mappedFields.map(f => `<th style="font-size:10px;color:var(--muted);text-align:left;padding:9px 10px;border-bottom:1px solid var(--border);background:rgba(0,0,0,0.2);white-space:nowrap;">${f.label}</th>`).join('')}
-          </tr>
-        </thead>
-        <tbody>
-          ${preview.map((row, i) => `
-          <tr style="background:${i%2?'rgba(0,0,0,0.1)':'transparent'};">
-            ${mappedFields.map(f => {
-              const val = row[fieldMap[f.key]] || '';
-              return `<td style="font-size:11px;color:${val ? 'var(--text)' : 'var(--muted)'};padding:8px 10px;border-bottom:1px solid rgba(22,61,55,0.4);font-family:${f.type==='mono'?'DM Mono,monospace':'inherit'};max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${val || '—'}</td>`;
-            }).join('')}
-          </tr>`).join('')}
-        </tbody>
-      </table>
-    </div>
-    ${rows.length > 5 ? `<div style="font-size:11px;color:var(--muted);text-align:center;padding:8px 0;">+ ${rows.length - 5} more rows</div>` : ''}`;
+    <!-- Live preview table -->
+    <div id="csv-live-preview">
+      <div style="font-size:11px;font-weight:600;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.07em;">Preview (first 5 rows)</div>
+      <div id="csv-preview-table" style="overflow-x:auto;border:1px solid var(--border);border-radius:10px;"></div>
+      ${rows.length > 5 ? `<div style="font-size:11px;color:var(--muted);text-align:center;padding:8px 0;">+ ${rows.length - 5} more rows</div>` : ''}
+    </div>`;
 
-  // Footer buttons
-  const btns = document.getElementById('csv-footer-btns');
-  const info = document.getElementById('csv-footer-info');
-  info.textContent = `${rows.length} rows ready to import`;
-  btns.innerHTML = `
+  // Set auto-suggested values
+  config.fields.forEach(f => {
+    const el = document.getElementById('csv-map-' + f.key);
+    if (el && autoMap[f.key]) el.value = autoMap[f.key];
+  });
+
+  csvUpdatePreview();
+
+  document.getElementById('csv-footer-info').textContent = `${rows.length} rows ready`;
+  document.getElementById('csv-footer-btns').innerHTML = `
     <button onclick="csvGoBack()" style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:8px 18px;font-size:13px;cursor:pointer;font-family:inherit;">← Back</button>
-    <button onclick="csvRunImport()" ${missing.length > 0 ? 'disabled style="opacity:0.4;cursor:not-allowed;"' : ''} style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:8px 22px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">
-      Import ${rows.length} row${rows.length !== 1 ? 's' : ''}
-    </button>`;
+    <button onclick="csvRunImport()" id="csv-import-btn" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:8px 22px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">Import ${rows.length} row${rows.length!==1?'s':''}</button>`;
+}
+
+function csvGetCurrentMapping() {
+  const modal  = document.getElementById('csv-import-modal');
+  const config = modal._csvConfig;
+  const map    = {};
+  config.fields.forEach(f => {
+    const el = document.getElementById('csv-map-' + f.key);
+    if (el && el.value) map[f.key] = el.value;
+  });
+  return map;
+}
+
+function csvUpdatePreview() {
+  const modal   = document.getElementById('csv-import-modal');
+  const config  = modal._csvConfig;
+  const rows    = modal._csvRows || [];
+  const fieldMap = csvGetCurrentMapping();
+  const mapped  = config.fields.filter(f => fieldMap[f.key]);
+  const preview = rows.slice(0, 5);
+  const tableEl = document.getElementById('csv-preview-table');
+  if (!tableEl) return;
+
+  if (mapped.length === 0) {
+    tableEl.innerHTML = `<div style="padding:20px;text-align:center;font-size:12px;color:var(--muted);">Assign at least one column above to see a preview.</div>`;
+    return;
+  }
+
+  // Check required fields
+  const missingRequired = config.fields.filter(f => f.required && !fieldMap[f.key]);
+  const btn = document.getElementById('csv-import-btn');
+  if (btn) {
+    if (missingRequired.length > 0) {
+      btn.disabled = true;
+      btn.style.opacity = '0.45';
+      btn.style.cursor  = 'not-allowed';
+      btn.title = 'Assign required fields (★) to continue';
+    } else {
+      btn.disabled = false;
+      btn.style.opacity = '1';
+      btn.style.cursor  = 'pointer';
+      btn.title = '';
+    }
+  }
+
+  tableEl.innerHTML = `<table style="width:100%;border-collapse:collapse;min-width:300px;">
+    <thead><tr>
+      ${mapped.map(f => `<th style="font-size:10px;color:var(--muted);text-align:left;padding:9px 10px;border-bottom:1px solid var(--border);background:rgba(0,0,0,0.2);white-space:nowrap;">
+        ${f.label}${f.required?'<span style="color:var(--accent);margin-left:3px;">★</span>':''}
+        <div style="font-size:9px;color:rgba(106,175,158,0.5);font-family:'DM Mono',monospace;margin-top:1px;">← ${fieldMap[f.key]}</div>
+      </th>`).join('')}
+    </tr></thead>
+    <tbody>
+      ${preview.map((row, i) => `<tr style="background:${i%2?'rgba(0,0,0,0.1)':'transparent'};">
+        ${mapped.map(f => {
+          const val = row[fieldMap[f.key]] || '';
+          return `<td style="font-size:11px;color:${val?'var(--text)':'rgba(106,175,158,0.3)'};padding:8px 10px;border-bottom:1px solid rgba(22,61,55,0.4);font-family:${f.type==='mono'?'DM Mono,monospace':'inherit'};max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${val||'—'}</td>`;
+        }).join('')}
+      </tr>`).join('')}
+    </tbody>
+  </table>
+  ${missingRequired.length > 0 ? `<div style="padding:10px 14px;background:rgba(52,211,153,0.05);border-top:1px solid var(--border);font-size:11px;color:var(--muted);">Assign these required fields to import: <strong style="color:var(--accent);">${missingRequired.map(f=>f.label).join(', ')}</strong></div>` : ''}`;
 }
 
 function csvGoBack() {
   document.getElementById('csv-step-preview').style.display = 'none';
-  document.getElementById('csv-step-upload').style.display = '';
+  document.getElementById('csv-step-upload').style.display  = '';
   document.getElementById('csv-footer-btns').innerHTML = `
     <button onclick="document.getElementById('csv-import-modal').remove()" style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:8px 18px;font-size:13px;cursor:pointer;font-family:inherit;">Cancel</button>`;
   document.getElementById('csv-footer-info').textContent = '';
@@ -5999,36 +6045,28 @@ function csvGoBack() {
 
 // ── Import runner ─────────────────────────────────────────────
 async function csvRunImport() {
-  const modal = document.getElementById('csv-import-modal');
-  const config = modal._csvConfig;
-  const rows = modal._csvRows;
-  const fieldMap = modal._csvFieldMap;
+  const modal    = document.getElementById('csv-import-modal');
+  const config   = modal._csvConfig;
+  const rows     = modal._csvRows;
+  const fieldMap = csvGetCurrentMapping();
 
-  // Show progress step
-  document.getElementById('csv-step-preview').style.display = 'none';
+  document.getElementById('csv-step-preview').style.display  = 'none';
   document.getElementById('csv-step-progress').style.display = '';
   document.getElementById('csv-footer-btns').innerHTML = '';
   document.getElementById('csv-footer-info').textContent = 'Do not close this window…';
 
-  // Map rows to clean objects
   const mapped = rows.map(row => {
     const obj = {};
-    config.fields.forEach(f => {
-      if (fieldMap[f.key]) obj[f.key] = row[fieldMap[f.key]] || '';
-    });
+    config.fields.forEach(f => { obj[f.key] = fieldMap[f.key] ? (row[fieldMap[f.key]] || '') : ''; });
     return obj;
-  }).filter(r => config.fields.filter(f => f.required).every(f => r[f.key]));
+  }).filter(r => config.fields.filter(f => f.required).every(f => r[f.key]?.trim()));
 
   document.getElementById('csv-progress-label').textContent = `Importing ${mapped.length} rows…`;
 
-  // Run the config's insert function
   let inserted = 0, failed = 0, errors = [];
-
   for (let i = 0; i < mapped.length; i++) {
-    const pct = Math.round((i / mapped.length) * 100);
-    document.getElementById('csv-progress-bar').style.width = pct + '%';
+    document.getElementById('csv-progress-bar').style.width = Math.round((i / mapped.length) * 100) + '%';
     document.getElementById('csv-progress-sub').textContent = `${i + 1} of ${mapped.length}`;
-
     try {
       const result = await config.insertRow(mapped[i]);
       if (result.error) { failed++; errors.push(`Row ${i+2}: ${result.error}`); }
@@ -6037,35 +6075,28 @@ async function csvRunImport() {
   }
 
   document.getElementById('csv-progress-bar').style.width = '100%';
-
-  // Show result
   document.getElementById('csv-step-progress').style.display = 'none';
-  document.getElementById('csv-step-result').style.display = '';
+  document.getElementById('csv-step-result').style.display   = '';
   document.getElementById('csv-step-result').innerHTML = `
     <div style="text-align:center;padding:16px 0 8px;">
-      <div style="font-size:40px;margin-bottom:12px;">${failed === 0 ? '✅' : inserted > 0 ? '⚠️' : '❌'}</div>
+      <div style="font-size:40px;margin-bottom:12px;">${failed===0?'✅':inserted>0?'⚠️':'❌'}</div>
       <div style="font-size:17px;font-weight:700;color:${failed===0?'var(--accent)':inserted>0?'var(--warn)':'var(--danger)'};margin-bottom:6px;">
-        ${failed === 0 ? 'Import complete' : inserted > 0 ? 'Partially imported' : 'Import failed'}
+        ${failed===0?'Import complete':inserted>0?'Partially imported':'Import failed'}
       </div>
       <div style="font-size:13px;color:var(--muted);margin-bottom:16px;">
-        ${inserted > 0 ? `<span style="color:var(--accent)">${inserted} row${inserted!==1?'s':''} imported successfully</span>` : ''}
-        ${failed > 0 ? `${inserted>0?' · ':''}<span style="color:var(--danger)">${failed} row${failed!==1?'s':''} failed</span>` : ''}
+        ${inserted>0?`<span style="color:var(--accent)">${inserted} row${inserted!==1?'s':''} imported</span>`:''}
+        ${failed>0?`${inserted>0?' · ':''}<span style="color:var(--danger)">${failed} failed</span>`:''}
       </div>
-      ${errors.length > 0 ? `
-      <div style="background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.2);border-radius:8px;padding:10px 14px;text-align:left;font-size:11px;color:var(--danger);max-height:120px;overflow-y:auto;">
-        ${errors.slice(0,10).map(e => `<div>• ${e}</div>`).join('')}
-        ${errors.length > 10 ? `<div style="color:var(--muted);margin-top:4px;">…and ${errors.length - 10} more</div>` : ''}
-      </div>` : ''}
+      ${errors.length>0?`<div style="background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.2);border-radius:8px;padding:10px 14px;text-align:left;font-size:11px;color:var(--danger);max-height:120px;overflow-y:auto;">
+        ${errors.slice(0,10).map(e=>`<div>• ${e}</div>`).join('')}
+        ${errors.length>10?`<div style="color:var(--muted);margin-top:4px;">…and ${errors.length-10} more</div>`:''}
+      </div>`:''}
     </div>`;
 
   document.getElementById('csv-footer-btns').innerHTML = `
-    <button onclick="document.getElementById('csv-import-modal').remove();${config.onComplete||''}" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:8px 22px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">Done</button>`;
+    <button onclick="document.getElementById('csv-import-modal').remove()" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:8px 22px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">Done</button>`;
   document.getElementById('csv-footer-info').textContent = '';
-
-  // Call refresh callback
-  if (config.onComplete) {
-    try { new Function(config.onComplete)(); } catch(e) {}
-  }
+  if (config.onComplete) { try { new Function(config.onComplete)(); } catch(e) {} }
 }
 
 
