@@ -331,6 +331,7 @@ let _isDrill = false;
 
 // Draft state for Push Recall form — persists across panel switches
 let _pushDraft = { product: '', lot: '', barcode: '', reason: '', description: '', authority: '' };
+let _pushStep = 1;
 
 // ── Auth ───────────────────────────────────────────────────────
 async function doAuth() {
@@ -412,6 +413,7 @@ function showPanel(name) {
   document.querySelectorAll('.nav-item').forEach(el => {
     el.classList.toggle('active', el.getAttribute('onclick')?.includes(`'${name}'`));
   });
+  _pushStep = 1;
   const fns = { overview: renderOverview, push: renderPush, history: renderHistory, acknowledgements: renderAcknowledgements, partners: renderPartners, products: renderProducts, lots: renderLots, shipments: renderShipments, suppliers: renderSupplierRisk, my_suppliers: renderMySuppliers, patterns: renderPatterns, triage: renderTriage, widget: renderWidgetSetup, investigations: renderInvestigations, settings: renderMfrSettings, compliance: renderMfrCompliance, mock_audit: renderMockAudit, timeline: renderIncidentTimeline };
   const panelFn = fns[name];
   if (panelFn) {
@@ -538,44 +540,68 @@ async function renderOverview() {
 // ── Push recall form ───────────────────────────────────────────
 function renderPush() {
   const el = document.getElementById('main-content');
-  el.innerHTML = `
-    <div style="max-width:640px;">
-      <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;margin-bottom:4px;">Push a recall to retailers</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:20px;">This will instantly notify all retailer partners who have this product in their scan history.</div>
+  const TOTAL = 4;
+  const step  = _pushStep;
 
+  const progressBar = `
+    <div style="display:flex;gap:6px;margin-bottom:6px;">
+      ${[1,2,3,4].map(i=>`<div style="flex:1;height:3px;border-radius:2px;background:${i<=step?'var(--accent)':'var(--border)'};transition:background 0.25s;"></div>`).join('')}
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:20px;">
+      ${['Product details','Classification','Review impact','Confirm & push'].map((l,i)=>`<div style="font-size:10px;color:${i+1===step?'var(--accent)':i+1<step?'var(--muted)':'var(--border)'};font-weight:${i+1===step?'600':'400'};flex:1;${i>0?'text-align:center':''}${i===3?';text-align:right':''}">${l}</div>`).join('')}
+    </div>`;
+
+  if (step === 1) {
+    el.innerHTML = `<div style="max-width:600px;">
+      <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;margin-bottom:4px;">${_isDrill?'Mock recall drill':'Push a recall'}</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:20px;">Step 1 of 4 — identify the product</div>
+      ${progressBar}
       <div class="panel">
-        <div class="panel-header"><div class="panel-title">Recall details</div></div>
+        <div class="panel-header"><div class="panel-title">Product identification</div><div class="panel-sub">Enter the product and lot details to identify what's being recalled</div></div>
         <div class="panel-body">
           <div id="push-msg" style="display:none;" class="msg"></div>
 
-          <!-- Drill toggle -->
           <div class="drill-toggle" id="drill-toggle" onclick="toggleDrill()">
-            <div class="toggle-track" id="drill-track"><div class="toggle-knob"></div></div>
-            <div>
-              <div class="drill-label">Mock recall drill</div>
-              <div class="drill-sub">Retailers will be notified this is a test — no real action required</div>
-            </div>
+            <div class="toggle-track ${_isDrill?'on':''}" id="drill-track"><div class="toggle-knob"></div></div>
+            <div><div class="drill-label">Mock recall drill</div><div class="drill-sub">Retailers will be notified this is a test — no real action required</div></div>
           </div>
+
+          ${_isDrill?`<div style="background:rgba(245,166,35,0.08);border:1px solid rgba(245,166,35,0.25);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:11px;color:var(--warn);line-height:1.6;"><strong>Drill mode active.</strong> This will be clearly labelled as a drill in all retailer notifications. Use it to test your recall response procedures.</div>`:''}
 
           <div class="field">
             <label>Product name *</label>
             <input id="p-product" type="text" placeholder="e.g. Tine Helmelk 1L" value="${_pushDraft.product}" oninput="_pushDraft.product=this.value" />
           </div>
-
           <div class="field-row">
             <div class="field">
               <label>Lot / batch number</label>
-              <input id="p-lot" type="text" placeholder="e.g. L2024-03-15A" value="${_pushDraft.lot}" oninput="_pushDraft.lot=this.value;scheduleImpactPreview()" />
+              <input id="p-lot" type="text" placeholder="e.g. L2024-03-15A" value="${_pushDraft.lot}" oninput="_pushDraft.lot=this.value" />
             </div>
             <div class="field">
               <label>Barcode (EAN/UPC)</label>
-              <input id="p-barcode" type="text" placeholder="e.g. 7038010013882" value="${_pushDraft.barcode}" oninput="_pushDraft.barcode=this.value;scheduleImpactPreview()" />
+              <input id="p-barcode" type="text" placeholder="e.g. 7038010013882" value="${_pushDraft.barcode}" oninput="_pushDraft.barcode=this.value" />
             </div>
           </div>
 
-          <!-- Shelf impact preview -->
-          <div id="impact-preview" style="display:none;margin-bottom:14px;"></div>
+          <div style="display:flex;justify-content:flex-end;margin-top:8px;">
+            <button onclick="pushStep1Next()" class="btn-primary" style="padding:10px 24px;">
+              Continue to classification →
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+    return;
+  }
 
+  if (step === 2) {
+    el.innerHTML = `<div style="max-width:600px;">
+      <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;margin-bottom:4px;">Recall classification</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:20px;">Step 2 of 4 — ${_isDrill?'[DRILL] ':''}${_pushDraft.product}${_pushDraft.lot?' · Lot '+_pushDraft.lot:''}</div>
+      ${progressBar}
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">Classification</div><div class="panel-sub">Define severity and the reason for recall</div></div>
+        <div class="panel-body">
           <div class="field">
             <label>Severity *</label>
             <div class="sev-grid">
@@ -587,7 +613,7 @@ function renderPush() {
               <div class="sev-btn ${_selectedSeverity==='class_ii'?'active-ii':''}" onclick="selectSev('class_ii')">
                 <div class="sev-dot" style="background:var(--warn)"></div>
                 <div class="sev-name" style="color:var(--warn)">Class II</div>
-                <div class="sev-desc">Potential adverse health effect · low probability of serious harm</div>
+                <div class="sev-desc">Potential health effect · low probability of serious harm</div>
               </div>
               <div class="sev-btn ${_selectedSeverity==='class_iii'?'active-iii':''}" onclick="selectSev('class_iii')">
                 <div class="sev-dot" style="background:var(--muted)"></div>
@@ -596,123 +622,134 @@ function renderPush() {
               </div>
             </div>
           </div>
-
           <div class="field">
             <label>Reason for recall *</label>
             <input id="p-reason" type="text" placeholder="e.g. Undeclared allergen — milk" value="${_pushDraft.reason}" oninput="_pushDraft.reason=this.value" />
           </div>
-
           <div class="field">
             <label>Description / additional details</label>
             <textarea id="p-description" rows="3" placeholder="Include any additional context for retailers — affected date ranges, affected markets, recommended customer action, etc." oninput="_pushDraft.description=this.value">${_pushDraft.description}</textarea>
           </div>
-
           <div class="field">
             <label>Authority reference <span style="color:var(--muted);font-size:10px;">optional</span></label>
-            <input id="p-authority" type="text" placeholder="e.g. Mattilsynet 2026/1234, FDA recall #H-0622-2026, or internal ref" value="${_pushDraft.authority}" oninput="_pushDraft.authority=this.value" />
+            <input id="p-authority" type="text" placeholder="e.g. Mattilsynet 2026/1234, FDA recall #H-0622-2026" value="${_pushDraft.authority}" oninput="_pushDraft.authority=this.value" />
           </div>
-
-          <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:16px;font-size:11px;color:var(--muted);line-height:1.6;">
-            <strong style="color:var(--text);">What happens when you push:</strong><br>
-            1. All retailer partners with matching products in their scan history are identified<br>
-            2. A recall distribution is created for each affected retailer<br>
-            3. Each affected store gets a notification record<br>
-            4. Branded email alerts are sent to each retailer's corporate admin<br>
-            5. Retailers acknowledge per-store in their dashboard<br><br>
-            <strong style="color:var(--text);">Your obligations as manufacturer:</strong><br>
-            <span style="color:var(--accent);">🇳🇴 Norwegian/EU retailers:</span> Under EU Reg. 178/2002 Art. 19 and Matloven §16, you must notify Mattilsynet and cooperate with affected retailers — pushing through Batch'd creates the digital audit trail.<br>
-            <span style="color:var(--info);">🇺🇸 US retailers:</span> Under FSMA, Class I recalls require FDA Reportable Food Registry (RFR) notification within 24 hours. USDA FSIS applies for meat, poultry, and eggs.
+          <div style="display:flex;justify-content:space-between;margin-top:8px;">
+            <button onclick="_pushStep=1;renderPush()" class="btn-ghost">← Back</button>
+            <button onclick="pushStep2Next()" class="btn-primary" style="padding:10px 24px;">Review impact →</button>
           </div>
-
-          <button class="btn-danger" onclick="pushRecall()" id="btn-push" style="width:100%;justify-content:center;padding:13px;">
-            🚨 Push recall to all affected retailers →
-          </button>
         </div>
       </div>
     </div>`;
+    return;
+  }
+
+  if (step === 3) {
+    el.innerHTML = `<div style="max-width:600px;">
+      <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;margin-bottom:4px;">Review shelf impact</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:20px;">Step 3 of 4 — confirm what's on shelf before pushing</div>
+      ${progressBar}
+
+      <!-- Summary card -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:14px;">
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:10px;">Recall summary</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12px;">
+          <div><span style="color:var(--muted);">Product</span><br><strong style="color:var(--text);">${_pushDraft.product}</strong></div>
+          <div><span style="color:var(--muted);">Lot</span><br><strong style="color:var(--text);font-family:'DM Mono',monospace;">${_pushDraft.lot||'—'}</strong></div>
+          <div><span style="color:var(--muted);">Severity</span><br><strong style="color:${_selectedSeverity==='class_i'?'var(--danger)':_selectedSeverity==='class_ii'?'var(--warn)':'var(--muted)'};">${_selectedSeverity.replace('_',' ').toUpperCase()}</strong></div>
+          <div><span style="color:var(--muted);">Barcode</span><br><strong style="color:var(--text);font-family:'DM Mono',monospace;">${_pushDraft.barcode||'—'}</strong></div>
+        </div>
+        <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:12px;color:var(--muted);">
+          <strong style="color:var(--text);">Reason:</strong> ${_pushDraft.reason}
+          ${_pushDraft.description?`<br><strong style="color:var(--text);">Details:</strong> ${_pushDraft.description}`:''}
+        </div>
+        <button onclick="_pushStep=1;renderPush()" style="margin-top:8px;font-size:11px;color:var(--muted);background:none;border:none;cursor:pointer;padding:0;text-decoration:underline;">Edit details</button>
+      </div>
+
+      <!-- Impact preview loads here -->
+      <div id="impact-preview-step3" style="margin-bottom:14px;"><div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);padding:12px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px;"><div class="spinner"></div> Calculating shelf impact…</div></div>
+
+      <!-- Regulatory obligations -->
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:16px;font-size:11px;color:var(--muted);line-height:1.7;">
+        <strong style="color:var(--text);">Regulatory obligations:</strong><br>
+        <span style="color:var(--accent);">🇳🇴 Norway/EU:</span> Under EU Reg. 178/2002 Art. 19, you must notify Mattilsynet. Pushing through Batch'd creates the audit trail.<br>
+        <span style="color:var(--info);">🇺🇸 USA:</span> Class I recalls require FDA RFR notification within 24 hours. USDA FSIS applies for meat, poultry, and eggs.
+      </div>
+
+      <div style="display:flex;justify-content:space-between;">
+        <button onclick="_pushStep=2;renderPush()" class="btn-ghost">← Back</button>
+        <button onclick="pushRecall()" id="btn-push" class="${_isDrill?'btn-primary':'btn-danger'}" style="padding:10px 24px;">
+          ${_isDrill?'⚠ Send drill to all partners →':'🚨 Push recall to all retailers →'}
+        </button>
+      </div>
+    </div>`;
+    // Auto-load impact
+    calculateImpactPreviewStep3();
+    return;
+  }
+}
+
+function pushStep1Next() {
+  const product = document.getElementById('p-product')?.value.trim();
+  const lot     = document.getElementById('p-lot')?.value.trim();
+  const barcode = document.getElementById('p-barcode')?.value.trim();
+  _pushDraft.product = product;
+  _pushDraft.lot     = lot;
+  _pushDraft.barcode = barcode;
+  if (!product) { showPushMsg('Product name is required.', 'error'); return; }
+  _pushStep = 2;
+  renderPush();
+}
+
+function pushStep2Next() {
+  const reason      = document.getElementById('p-reason')?.value.trim();
+  const description = document.getElementById('p-description')?.value.trim();
+  const authority   = document.getElementById('p-authority')?.value.trim();
+  _pushDraft.reason      = reason;
+  _pushDraft.description = description;
+  _pushDraft.authority   = authority;
+  if (!reason) { showPushMsg('Reason for recall is required.', 'error'); return; }
+  _pushStep = 3;
+  renderPush();
+}
+
+async function calculateImpactPreviewStep3() {
+  const lot     = _pushDraft.lot;
+  const barcode = _pushDraft.barcode;
+  const preview = document.getElementById('impact-preview-step3');
+  if (!preview) return;
+  if (!lot && !barcode) {
+    preview.innerHTML = `<div style="padding:12px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;font-size:11px;color:var(--muted);">No lot or barcode entered — shelf impact unknown. Recall will still push to all trading partners.</div>`;
+    return;
+  }
+  const shipmentSelect = 'id, lot_number, barcode, quantity, unit, shipped_at, stores(name), organisations!shipments_retailer_id_fkey(name)';
+  let hits = [];
+  if (lot) { const { data } = await sb.from('shipments').select(shipmentSelect).eq('manufacturer_id', _orgId).eq('lot_number', lot); hits = [...hits, ...(data||[])]; }
+  if (barcode) { const { data } = await sb.from('shipments').select(shipmentSelect).eq('manufacturer_id', _orgId).eq('barcode', barcode); const existing = new Set(hits.map(h=>h.id)); hits = [...hits, ...(data||[]).filter(h=>!existing.has(h.id))]; }
+  if (hits.length === 0) {
+    preview.innerHTML = `<div style="padding:12px 14px;background:rgba(106,175,158,0.06);border:1px solid var(--border);border-radius:8px;font-size:11px;color:var(--muted);">No shipment records found for this lot/barcode — shelf impact unknown. Recall will still push to all trading partners.</div>`;
+    return;
+  }
+  const byStore   = {};
+  hits.forEach(h => { const k=h.stores?.name||'Unknown'; if (!byStore[k]) byStore[k]={retailer:h.organisations?.name||'—',qty:0,unit:h.unit,latest:h.shipped_at}; byStore[k].qty+=h.quantity; if(h.shipped_at>byStore[k].latest) byStore[k].latest=h.shipped_at; });
+  const storeCount = Object.keys(byStore).length;
+  const totalQty   = hits.reduce((s,h)=>s+h.quantity,0);
+  const unit       = hits[0]?.unit||'units';
+  const breakdown  = Object.entries(byStore).map(([store,d])=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(22,61,55,0.4);"><div><div style="font-size:11px;color:var(--text);font-weight:500;">${store}</div><div style="font-size:10px;color:var(--muted);">${d.retailer} · shipped ${new Date(d.latest).toLocaleDateString('en-GB')}</div></div><div style="font-size:11px;font-weight:600;color:var(--warn);">${d.qty} ${d.unit}</div></div>`).join('');
+  preview.innerHTML = `<div style="background:rgba(245,166,35,0.06);border:1px solid rgba(245,166,35,0.3);border-radius:8px;overflow:hidden;"><div style="padding:12px 14px;border-bottom:1px solid rgba(245,166,35,0.2);display:flex;align-items:center;justify-content:space-between;"><div style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span style="font-size:12px;font-weight:700;color:var(--warn);">Shelf impact: ${totalQty} ${unit} across ${storeCount} store${storeCount!==1?'s':''}</span></div><span style="font-size:10px;color:var(--muted);">From shipment records</span></div><div style="padding:4px 14px 8px;">${breakdown}</div></div>`;
 }
 
 let _impactTimer;
 function scheduleImpactPreview() {
   clearTimeout(_impactTimer);
-  _impactTimer = setTimeout(calculateImpactPreview, 600);
+  _impactTimer = setTimeout(calculateImpactPreviewStep3, 600);
 }
 
-async function calculateImpactPreview() {
-  const lot     = document.getElementById('p-lot')?.value.trim();
-  const barcode = document.getElementById('p-barcode')?.value.trim();
-  const preview = document.getElementById('impact-preview');
-  if (!preview) return;
-  if (!lot && !barcode) { preview.style.display = 'none'; return; }
-
-  preview.style.display = 'block';
-  preview.innerHTML = `<div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;"><div class="spinner"></div> Calculating shelf impact…</div>`;
-
-  // Query shipments — use separate queries to avoid .or() interpolation issues with spaces/special chars
-  const shipmentSelect = 'id, lot_number, barcode, quantity, unit, shipped_at, stores(name), organisations!shipments_retailer_id_fkey(name)';
-  let hits = [];
-  if (lot) {
-    const { data } = await sb.from('shipments').select(shipmentSelect).eq('manufacturer_id', _orgId).eq('lot_number', lot);
-    hits = [...hits, ...(data||[])];
-  }
-  if (barcode) {
-    const { data } = await sb.from('shipments').select(shipmentSelect).eq('manufacturer_id', _orgId).eq('barcode', barcode);
-    // Deduplicate by id
-    const existingIds = new Set(hits.map(h=>h.id));
-    hits = [...hits, ...(data||[]).filter(h=>!existingIds.has(h.id))];
-  }
-
-  if (hits.length === 0) {
-    preview.innerHTML = `
-      <div style="padding:12px 14px;background:rgba(106,175,158,0.06);border:1px solid var(--border);border-radius:8px;">
-        <div style="font-size:11px;color:var(--muted);">No shipment records found for this lot/barcode — shelf impact unknown. Recall will still be pushed to all trading partners.</div>
-      </div>`;
-    return;
-  }
-
-  // Group by store
-  const byStore = {};
-  hits.forEach(h => {
-    const key = h.stores?.name || 'Unknown store';
-    if (!byStore[key]) byStore[key] = { retailer: h.organisations?.name || '—', qty: 0, unit: h.unit, latest: h.shipped_at };
-    byStore[key].qty += h.quantity;
-    if (h.shipped_at > byStore[key].latest) byStore[key].latest = h.shipped_at;
-  });
-
-  const storeCount  = Object.keys(byStore).length;
-  const totalQty    = hits.reduce((s, h) => s + h.quantity, 0);
-  const unit        = hits[0]?.unit || 'units';
-
-  // Store breakdown HTML
-  const breakdown = Object.entries(byStore).map(([store, d]) => `
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(22,61,55,0.4);">
-      <div>
-        <div style="font-size:11px;color:var(--text);font-weight:500;">${store}</div>
-        <div style="font-size:10px;color:var(--muted);">${d.retailer} · shipped ${new Date(d.latest).toLocaleDateString('en-GB')}</div>
-      </div>
-      <div style="font-size:11px;font-weight:600;color:var(--warn);">${d.qty} ${d.unit}</div>
-    </div>`).join('');
-
-  preview.innerHTML = `
-    <div style="background:rgba(245,166,35,0.06);border:1px solid rgba(245,166,35,0.3);border-radius:8px;overflow:hidden;">
-      <div style="padding:12px 14px;border-bottom:1px solid rgba(245,166,35,0.2);display:flex;align-items:center;justify-content:space-between;">
-        <div style="display:flex;align-items:center;gap:8px;">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-          <span style="font-size:12px;font-weight:700;color:var(--warn);">Shelf impact: ${totalQty} ${unit} across ${storeCount} store${storeCount!==1?'s':''}</span>
-        </div>
-        <span style="font-size:10px;color:var(--muted);">Based on shipment records</span>
-      </div>
-      <div style="padding:4px 14px 8px;">${breakdown}</div>
-    </div>`;
-}
+async function calculateImpactPreview() { await calculateImpactPreviewStep3(); }
 
 function selectSev(sev) {
   _selectedSeverity = sev;
-  // Update button styles without re-rendering the whole form
-  document.querySelectorAll('.sev-btn').forEach(btn => {
-    btn.className = 'sev-btn';
-  });
-  const sevMap = { class_i: 'active-i', class_ii: 'active-ii', class_iii: 'active-iii' };
+  document.querySelectorAll('.sev-btn').forEach(btn => { btn.className = 'sev-btn'; });
   const btns = document.querySelectorAll('.sev-btn');
   if (sev === 'class_i'   && btns[0]) btns[0].classList.add('active-i');
   if (sev === 'class_ii'  && btns[1]) btns[1].classList.add('active-ii');
@@ -722,15 +759,15 @@ function selectSev(sev) {
 function toggleDrill() {
   _isDrill = !_isDrill;
   const track = document.getElementById('drill-track');
-  track.classList.toggle('on', _isDrill);
+  if (track) track.classList.toggle('on', _isDrill);
   const btn = document.getElementById('btn-push');
-  if (btn) {
-    btn.textContent = _isDrill
-      ? '⚠ Send mock drill to all retail partners →'
-      : '🚨 Push recall to all affected retailers →';
-    btn.className = _isDrill ? 'btn-primary' : 'btn-danger';
-    btn.style.width = '100%'; btn.style.justifyContent = 'center'; btn.style.padding = '13px';
-  }
+  if (btn) { btn.textContent = _isDrill ? '⚠ Send drill to all partners →' : '🚨 Push recall to all retailers →'; btn.className = _isDrill ? 'btn-primary' : 'btn-danger'; }
+}
+
+function showPushMsg(txt, type) {
+  const el = document.getElementById('push-msg');
+  if (!el) return;
+  el.textContent = txt; el.className = 'msg ' + type; el.style.display = 'block';
 }
 
 async function pushRecall() {
@@ -868,11 +905,6 @@ async function pushRecall() {
   }
 }
 
-function showPushMsg(txt, type) {
-  const el = document.getElementById('push-msg');
-  if (!el) return;
-  el.textContent = txt; el.className = 'msg ' + type; el.style.display = 'block';
-}
 
 // ── Recall history ─────────────────────────────────────────────
 async function renderHistory() {
