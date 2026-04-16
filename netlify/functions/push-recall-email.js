@@ -1,152 +1,169 @@
-const SUPABASE_URL = 'https://lurxucdmrugikdlvvebc.supabase.co';
-const RESEND_KEY = 're_hfJMphfo_4jQcxm42VWsQ83X9JbyaRpRB';
-const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1cnh1Y2RtcnVnaWtkbHZ2ZWJjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTU5NTQsImV4cCI6MjA4OTgzMTk1NH0.ewNhBbF8nUzpF9Ve822D9t8VLwB_hjk27KuFFEXct0A';
+// netlify/functions/push-recall-email.js
+// Sends recall alert emails to retailer org admins when a manufacturer pushes a recall.
+// Called by the manufacturer portal after a successful push_recall() RPC call.
+//
+// Expected POST body:
+// {
+//   recall_event_id: string,     -- the recall_event.id just created
+//   product_name:   string,
+//   lot_number:     string|null,
+//   severity:       string|null,  -- e.g. "class_i", "class_ii"
+//   reason:         string|null,
+//   description:    string|null,
+//   is_drill:       boolean,
+//   manufacturer_name: string,
+//   retailer_emails: string[],   -- list of corp_admin emails to notify
+// }
 
-const CORS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const FROM_ADDRESS   = 'Batch\'d Recalls <recalls@batchdapp.com>';
+const DASHBOARD_URL  = 'https://corporate.batchdapp.com/dashboard.html';
 
 exports.handler = async (event) => {
+  const headers = {
+    'Access-Control-Allow-Origin':  '*',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Content-Type': 'application/json',
+  };
+
   if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 200, headers: CORS, body: '' };
+    return { statusCode: 200, headers, body: '' };
   }
+
   if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, headers: CORS, body: 'Method not allowed' };
+    return { statusCode: 405, headers, body: JSON.stringify({ error: 'Method not allowed' }) };
+  }
+
+  if (!RESEND_API_KEY) {
+    console.error('push-recall-email: RESEND_API_KEY not set');
+    return { statusCode: 500, headers, body: JSON.stringify({ error: 'Email service not configured' }) };
+  }
+
+  let body;
+  try {
+    body = JSON.parse(event.body || '{}');
+  } catch (e) {
+    return { statusCode: 400, headers, body: JSON.stringify({ error: 'Invalid JSON body' }) };
   }
 
   const {
-    recallEventId,
-    productName,
-    lotNumber,
-    barcode,
+    recall_event_id,
+    product_name,
+    lot_number,
     severity,
     reason,
-    manufacturerName,
-    affectedStores,
-    isDrill,
-  } = JSON.parse(event.body);
+    description,
+    is_drill,
+    manufacturer_name,
+    retailer_emails,
+  } = body;
 
-  // Get retailer emails directly from Supabase
-  let retailerEmails = [];
-  try {
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/rpc/get_retailer_emails`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': ANON_KEY,
-          'Authorization': `Bearer ${ANON_KEY}`,
-        },
-        body: JSON.stringify({ p_recall_event_id: recallEventId }),
-      }
-    );
-    const emails = await res.json();
-    retailerEmails = Array.isArray(emails) ? emails : [];
-  } catch(e) {
-    console.error('Email lookup failed:', e.message);
+  // Validate required fields
+  if (!product_name) {
+    return { statusCode: 400, headers, body: JSON.stringify({ error: 'product_name is required' }) };
+  }
+  if (!Array.isArray(retailer_emails) || retailer_emails.length === 0) {
+    // No recipients — not an error, just nothing to do
+    return { statusCode: 200, headers, body: JSON.stringify({ sent: 0, message: 'No recipient emails provided' }) };
   }
 
-  if (retailerEmails.length === 0) {
-    return {
-      statusCode: 200,
-      headers: CORS,
-      body: JSON.stringify({ sent: 0, failed: 0, reason: 'No retailer emails found' }),
-    };
+  // Filter out any obviously invalid emails
+  const validEmails = retailer_emails.filter(e => typeof e === 'string' && e.includes('@'));
+  if (validEmails.length === 0) {
+    return { statusCode: 200, headers, body: JSON.stringify({ sent: 0, message: 'No valid emails after filtering' }) };
   }
 
-  const severityLabel = {
-    class_i:   'Class I — Serious health hazard',
-    class_ii:  'Class II — Potential health risk',
-    class_iii: 'Class III — Minor / labelling issue',
-  }[severity] || severity;
+  // Format severity for display
+  const severityLabel = (() => {
+    if (!severity) return null;
+    const s = severity.toLowerCase();
+    if (s.includes('i') && !s.includes('ii') && !s.includes('iii')) return 'Class I (High Risk)';
+    if (s.includes('ii') && !s.includes('iii')) return 'Class II (Moderate Risk)';
+    if (s.includes('iii')) return 'Class III (Low Risk)';
+    if (s === 'critical') return 'Critical';
+    if (s === 'serious') return 'Serious';
+    return severity;
+  })();
 
-  const severityColor = {
-    class_i:   '#ff5c5c',
-    class_ii:  '#f5a623',
-    class_iii: '#6aaf9e',
-  }[severity] || '#6aaf9e';
+  const drillBanner = is_drill
+    ? '\n\n*** THIS IS A MOCK RECALL DRILL — NO ACTION REQUIRED ON REAL PRODUCT ***\n'
+    : '';
 
-  const drillBanner = isDrill ? `
-    <div style="background:#f5a623;color:#080f12;padding:10px 16px;border-radius:6px;font-weight:700;font-size:12px;margin-bottom:20px;text-align:center;">
-      ⚠ THIS IS A MOCK RECALL DRILL — No real action required
-    </div>` : '';
+  const urgencyLine = !is_drill && (severity?.toLowerCase().includes('i') || severity?.toLowerCase().includes('critical'))
+    ? '\nThis is a Class I recall. Affected product should be pulled from shelves within 2 hours of receipt of this notice.\n'
+    : '';
 
-  const html = `
-    <div style="font-family:monospace;background:#080f12;color:#edfdf8;padding:40px;max-width:560px;margin:0 auto;border-radius:12px;">
-      <div style="font-size:24px;font-weight:800;color:#34d399;margin-bottom:4px;">Batch'd</div>
-      <div style="font-size:12px;color:#6aaf9e;margin-bottom:28px;">Food traceability platform</div>
-      ${drillBanner}
-      <div style="background:${isDrill?'rgba(245,166,35,0.1)':'rgba(255,92,92,0.1)'};border:1px solid ${isDrill?'rgba(245,166,35,0.3)':'rgba(255,92,92,0.3)'};border-radius:8px;padding:16px;margin-bottom:24px;">
-        <div style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:${isDrill?'#f5a623':'#ff5c5c'};margin-bottom:6px;">
-          ${isDrill?'⚠ Mock Recall Drill':'🚨 Recall Alert'}
-        </div>
-        <div style="font-size:20px;font-weight:700;color:#edfdf8;margin-bottom:4px;">${productName}</div>
-        <div style="font-size:12px;color:#6aaf9e;">
-          ${lotNumber?`Lot: <strong style="color:#edfdf8;">${lotNumber}</strong>`:''}
-          ${barcode?` · Barcode: <strong style="color:#edfdf8;">${barcode}</strong>`:''}
-        </div>
-      </div>
-      <table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
-        <tr><td style="padding:8px 0;border-bottom:1px solid #163d37;font-size:11px;color:#6aaf9e;width:40%;">Severity</td><td style="padding:8px 0;border-bottom:1px solid #163d37;font-size:11px;color:${severityColor};font-weight:600;">${severityLabel}</td></tr>
-        <tr><td style="padding:8px 0;border-bottom:1px solid #163d37;font-size:11px;color:#6aaf9e;">Reason</td><td style="padding:8px 0;border-bottom:1px solid #163d37;font-size:11px;color:#edfdf8;">${reason}</td></tr>
-        <tr><td style="padding:8px 0;border-bottom:1px solid #163d37;font-size:11px;color:#6aaf9e;">Issued by</td><td style="padding:8px 0;border-bottom:1px solid #163d37;font-size:11px;color:#edfdf8;">${manufacturerName}</td></tr>
-        <tr><td style="padding:8px 0;font-size:11px;color:#6aaf9e;">Stores affected</td><td style="padding:8px 0;font-size:11px;color:#edfdf8;font-weight:600;">${affectedStores} store${affectedStores!==1?'s':''} in your network</td></tr>
-      </table>
-      <p style="font-size:13px;color:#6aaf9e;line-height:1.7;margin-bottom:24px;">
-        ${isDrill
-          ?'This is a simulated recall drill. Please follow your standard recall procedure as if this were a real recall, then log your response in the dashboard.'
-          :'Immediate action required. Please check your dashboard to see which stores are affected, acknowledge the recall, and confirm product removal.'}
-      </p>
-      <a href="https://app.batchdapp.com" style="display:inline-block;background:#34d399;color:#080f12;font-weight:700;font-size:14px;padding:14px 28px;border-radius:8px;text-decoration:none;margin-bottom:24px;">
-        View recall in dashboard →
-      </a>
-      <p style="font-size:11px;color:#6aaf9e;line-height:1.6;">
-        Recall ID: <span style="color:#edfdf8;">${recallEventId}</span>
-      </p>
-      <div style="border-top:1px solid #163d37;margin-top:24px;padding-top:16px;font-size:10px;color:#6aaf9e;">
-        © 2026 Batch'd · <a href="https://batchdapp.com" style="color:#34d399;">batchdapp.com</a>
-      </div>
-    </div>`;
+  const subject = is_drill
+    ? `[MOCK DRILL] Recall drill: ${product_name}`
+    : `Recall notice: ${product_name}${lot_number ? ' — Lot ' + lot_number : ''}`;
 
-  const subject = isDrill
-    ? `[DRILL] Mock recall: ${productName} — Action required`
-    : `🚨 Recall alert: ${productName} — Immediate action required`;
+  const emailText = `${is_drill ? '[MOCK RECALL DRILL]\n' : ''}You are receiving this notice because your organisation is a connected trading partner of ${manufacturer_name || 'a manufacturer'} on the Batch'd network.
+${drillBanner}${urgencyLine}
+RECALL NOTICE
+=============
+Product:      ${product_name}
+Lot number:   ${lot_number || 'See below or contact manufacturer'}
+${severityLabel ? 'Severity:     ' + severityLabel + '\n' : ''}Reason:       ${reason || 'See Batch\'d dashboard for details'}
+From:         ${manufacturer_name || 'Unknown manufacturer'}
+${description ? '\nAdditional details:\n' + description + '\n' : ''}
+WHAT TO DO
+==========
+1. Log in to your Batch'd dashboard to review the full recall details
+2. Check which of your stores received the affected lot code
+3. Acknowledge receipt and begin your 5-step response chain
+4. Confirm removal once product has been pulled from shelves
 
-  const results = await Promise.allSettled(
-    retailerEmails.map(async email => {
+Dashboard: ${DASHBOARD_URL}
+${recall_event_id ? '\nRecall reference: ' + recall_event_id : ''}
+
+---
+This is an automated notification from the Batch'd food traceability platform.
+Notification to regulatory authorities remains the responsibility of your organisation.
+Do not reply to this email.`;
+
+  // Send to all valid recipients
+  let sent = 0;
+  const errors = [];
+
+  for (const email of validEmails) {
+    try {
       const res = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${RESEND_KEY}`,
-          'Content-Type': 'application/json',
+          'Content-Type':  'application/json',
+          'Authorization': `Bearer ${RESEND_API_KEY}`,
         },
         body: JSON.stringify({
-          from: "Batch'd <invite@batchdapp.com>",
-          to: [email],
+          from:    FROM_ADDRESS,
+          to:      email,
           subject,
-          html,
+          text:    emailText,
         }),
       });
-      if (!res.ok) {
-        const err = await res.text();
-        throw new Error(`Resend rejected ${email}: ${res.status} ${err}`);
-      }
-      return email;
-    })
-  );
 
-  const sent   = results.filter(r => r.status === 'fulfilled').length;
-  const failed = results.filter(r => r.status === 'rejected').length;
-  if (failed > 0) {
-    results.filter(r => r.status === 'rejected').forEach(r => console.error(r.reason?.message));
+      const data = await res.json();
+      if (!res.ok) {
+        console.error(`push-recall-email: Resend error for ${email}:`, data);
+        errors.push({ email, error: data?.message || `HTTP ${res.status}` });
+      } else {
+        sent++;
+      }
+    } catch (e) {
+      console.error(`push-recall-email: Exception sending to ${email}:`, e.message);
+      errors.push({ email, error: e.message });
+    }
   }
+
+  console.log(`push-recall-email: sent=${sent}, failed=${errors.length}, recall=${recall_event_id}`);
 
   return {
     statusCode: 200,
-    headers: CORS,
-    body: JSON.stringify({ sent, failed, emails: retailerEmails }),
+    headers,
+    body: JSON.stringify({
+      sent,
+      failed: errors.length,
+      errors: errors.length > 0 ? errors : undefined,
+    }),
   };
 };
