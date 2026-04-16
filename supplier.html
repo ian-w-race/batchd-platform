@@ -209,7 +209,38 @@ async function initApp(session) {
   document.getElementById('user-avatar').textContent=_userEmail[0].toUpperCase();
   document.getElementById('topbar-meta').textContent=_orgName;
   if (isBypass) document.getElementById('user-role-label').textContent='Corp Admin';
+
+  // Auto-accept any pending email invitations for this user's email
+  await acceptPendingInvites(_userEmail, _orgId);
+
   showPanel('overview');
+}
+
+async function acceptPendingInvites(email, orgId) {
+  // Find any pending supplier_connections where supplier_email matches this user's email
+  // and supplier_id is null — meaning they were invited but haven't accepted yet
+  try {
+    const { data: pending } = await sb.from('supplier_connections')
+      .select('id')
+      .eq('supplier_email', email.toLowerCase().trim())
+      .is('supplier_id', null)
+      .eq('status', 'pending');
+
+    if (!pending?.length) return;
+
+    // Update each pending connection with this org's ID and mark active
+    for (const conn of pending) {
+      await sb.from('supplier_connections')
+        .update({ supplier_id: orgId, status: 'active' })
+        .eq('id', conn.id);
+    }
+
+    if (pending.length > 0) {
+      showToast(pending.length + ' manufacturer connection' + (pending.length > 1 ? 's' : '') + ' accepted', 'ok', 3500);
+    }
+  } catch(e) {
+    console.warn('acceptPendingInvites error:', e.message);
+  }
 }
 
 async function signOut() { await sb.auth.signOut(); location.reload(); }
