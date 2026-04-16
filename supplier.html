@@ -1,838 +1,555 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Supplier Portal — Batch'd</title>
-<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Batch'd - Supplier Portal</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700;800;900&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
-:root{
-  --bg:#080f12;--surface:#0d1e1c;--surface2:#13302b;--border:#163d37;
-  --accent:#34d399;--accent-dim:#059669;--text:#edfdf8;--muted:#6aaf9e;
-  --danger:#ff5c5c;--warn:#f5a623;--info:#38bdf8;--radius:12px;
-}
-html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Figtree',sans-serif;}
-
-/* ── Auth screen ── */
-.auth-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;}
-.auth-card{background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:40px;width:100%;max-width:420px;}
-.auth-logo{display:flex;align-items:center;gap:10px;margin-bottom:28px;}
-.auth-logo-icon{width:32px;height:32px;background:var(--accent);border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
-.auth-title{font-size:22px;font-weight:800;color:var(--accent);}
-.auth-sub{font-size:12px;color:var(--muted);margin-top:2px;}
-.field{display:flex;flex-direction:column;gap:6px;margin-bottom:14px;}
-.field label{font-size:12px;color:var(--muted);}
-.field input,.field select,.field textarea{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;font-family:'Figtree',sans-serif;outline:none;transition:border-color 0.15s;width:100%;}
-.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--accent);}
-.btn-primary{width:100%;background:var(--accent);color:#065f46;border:none;border-radius:9px;padding:11px;font-size:14px;font-weight:700;cursor:pointer;font-family:'Figtree',sans-serif;transition:opacity 0.15s;}
-.btn-primary:hover{opacity:0.9;}
-.btn-primary:disabled{opacity:0.5;cursor:not-allowed;}
-.btn-ghost{background:none;border:1px solid var(--border);border-radius:8px;padding:8px 14px;color:var(--muted);font-size:12px;cursor:pointer;font-family:'Figtree',sans-serif;transition:all 0.15s;}
-.btn-ghost:hover{border-color:var(--muted);color:var(--text);}
-.auth-switch{font-size:12px;color:var(--muted);text-align:center;margin-top:14px;}
-.auth-switch button{background:none;border:none;color:var(--accent);cursor:pointer;font-size:12px;font-family:'Figtree',sans-serif;text-decoration:underline;}
-.auth-err{font-size:12px;color:var(--danger);text-align:center;margin-bottom:12px;display:none;}
-
-/* ── App shell ── */
-.app{display:flex;min-height:100vh;}
-.sidebar{width:220px;flex-shrink:0;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:fixed;top:0;left:0;bottom:0;z-index:100;}
-.sidebar-logo{height:54px;padding:0 18px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border);flex-shrink:0;}
-.logo-icon{width:32px;height:32px;background:var(--accent);border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
-.logo-icon svg{color:#080f12;}
-.logo-text{font-family:'Figtree',sans-serif;font-weight:800;font-size:17px;color:var(--accent);line-height:1;}
-.logo-sub{font-size:9px;color:var(--muted);letter-spacing:0.08em;text-transform:uppercase;margin-top:2px;}
-.sidebar-nav{flex:1;padding:12px 10px;overflow-y:auto;min-height:0;}
-.nav-section{font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);padding:10px 8px 4px;}
-.nav-item{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;cursor:pointer;font-size:12px;color:var(--muted);transition:all 0.15s;border:none;background:none;width:100%;text-align:left;font-family:'Figtree',sans-serif;}
-.nav-item:hover{background:var(--surface2);color:var(--text);}
-.nav-item.active{background:rgba(52,211,153,0.1);color:var(--accent);}
-.sidebar-footer{padding:12px 10px;border-top:1px solid var(--border);}
-.user-chip{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;background:var(--surface2);}
-.user-avatar{width:28px;height:28px;border-radius:50%;background:var(--accent-dim);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--text);flex-shrink:0;}
-.user-name{font-size:11px;color:var(--text);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.user-role{font-size:9px;color:var(--muted);}
-.sign-out-btn{background:none;border:none;cursor:pointer;color:var(--muted);padding:2px;transition:color 0.15s;margin-left:auto;flex-shrink:0;}
-.sign-out-btn:hover{color:var(--danger);}
-.main{margin-left:220px;flex:1;display:flex;flex-direction:column;min-height:100vh;}
-.topbar{height:54px;padding:0 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:rgba(8,15,18,0.9);backdrop-filter:blur(8px);position:sticky;top:0;z-index:50;}
-.topbar-title{font-weight:700;font-size:16px;color:var(--text);}
-.topbar-sub{font-size:11px;color:var(--muted);margin-top:1px;}
-.content{padding:28px;flex:1;}
-
-/* ── Components ── */
-.spinner{width:20px;height:20px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 0.8s linear infinite;display:inline-block;}
-@keyframes spin{to{transform:rotate(360deg);}}
-.panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;}
-.panel-header{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
-.panel-title{font-weight:700;font-size:13px;color:var(--text);}
-.panel-sub{font-size:11px;color:var(--muted);margin-top:2px;}
-.panel-body{padding:18px;}
-.badge{display:inline-flex;align-items:center;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;font-family:'DM Mono',monospace;text-transform:uppercase;}
-.badge-active{background:rgba(52,211,153,0.12);color:var(--accent);border:1px solid rgba(52,211,153,0.3);}
-.badge-pending{background:rgba(245,166,35,0.12);color:var(--warn);border:1px solid rgba(245,166,35,0.3);}
-.badge-info{background:rgba(56,189,248,0.12);color:var(--info);border:1px solid rgba(56,189,248,0.3);}
-.kpi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:20px;}
-.kpi-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;}
-.kpi-value{font-size:22px;font-weight:700;font-family:'Figtree',sans-serif;}
-.kpi-label{font-size:11px;color:var(--muted);margin-top:3px;}
-table{width:100%;border-collapse:collapse;}
-th{padding:10px 0;font-size:10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.06em;text-align:left;border-bottom:1px solid var(--border);}
-td{padding:10px 0;font-size:12px;border-bottom:1px solid rgba(22,61,55,0.4);}
-tr:last-child td{border-bottom:none;}
-.empty-state{text-align:center;padding:48px 20px;color:var(--muted);}
-.empty-state .icon{font-size:36px;margin-bottom:12px;}
-.empty-state .title{font-size:14px;font-weight:600;color:var(--text);margin-bottom:6px;}
-.empty-state .sub{font-size:12px;line-height:1.6;max-width:320px;margin:0 auto;}
-/* Invite banner */
-.invite-banner{background:rgba(52,211,153,0.08);border:1px solid rgba(52,211,153,0.3);border-radius:12px;padding:18px 20px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;}
-.invite-banner-text{font-size:13px;color:var(--text);}
-.invite-banner-sub{font-size:11px;color:var(--muted);margin-top:3px;}
-
-/* Onboarding */
-.onboard-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:var(--bg);}
-.onboard-card{background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:40px;width:100%;max-width:480px;}
-.step-indicator{display:flex;align-items:center;gap:8px;margin-bottom:28px;}
-.step{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;border:2px solid var(--border);color:var(--muted);}
-.step.done{background:var(--accent);border-color:var(--accent);color:#065f46;}
-.step.active{border-color:var(--accent);color:var(--accent);}
-.step-line{flex:1;height:2px;background:var(--border);border-radius:1px;}
-.step-line.done{background:var(--accent);}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#040c0e;--surface:#091918;--surface2:#0e2622;--border:#12352f;--accent:#34d399;--accent-dim:#059669;--text:#edfdf8;--muted:#6aaf9e;--danger:#ff5c5c;--warn:#f5a623;--info:#38bdf8;--radius:12px}
+html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:"DM Mono",monospace;overflow-x:hidden}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;background:radial-gradient(ellipse 70% 40% at 15% 0%,rgba(52,211,153,0.08) 0%,transparent 60%),radial-gradient(ellipse 50% 30% at 85% 100%,rgba(5,150,105,0.06) 0%,transparent 55%)}
+.app{display:flex;min-height:100vh;position:relative;z-index:1}
+.sidebar{width:240px;flex-shrink:0;background:linear-gradient(180deg,#091d1a 0%,#091918 60%,#080f12 100%);border-right:1px solid var(--border);display:flex;flex-direction:column;position:fixed;top:0;left:0;bottom:0;z-index:100}
+.sidebar-logo{height:58px;padding:0 18px;display:flex;align-items:center;gap:11px;border-bottom:1px solid var(--border);flex-shrink:0}
+.logo-text{font-family:"Figtree",sans-serif;font-weight:800;font-size:17px;color:var(--accent);line-height:1}
+.logo-sub{font-size:9px;color:var(--muted);letter-spacing:0.07em;text-transform:uppercase;margin-top:3px;font-family:"DM Mono",monospace}
+.sidebar-nav{flex:1;padding:8px 10px 10px;display:flex;flex-direction:column;gap:1px;overflow-y:auto}
+.nav-section{font-size:9.5px;font-weight:600;letter-spacing:0.09em;text-transform:uppercase;color:rgba(106,175,158,0.45);padding:13px 8px 4px;display:flex;align-items:center;gap:6px;font-family:"DM Mono",monospace}
+.nav-section::before{content:"";width:3px;height:3px;border-radius:50%;background:rgba(52,211,153,0.3);flex-shrink:0}
+.nav-item{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:8px;cursor:pointer;font-size:13px;font-family:"Figtree",sans-serif;font-weight:500;color:var(--muted);transition:all 0.15s ease;text-decoration:none;border:none;background:none;width:100%;text-align:left}
+.nav-item svg{flex-shrink:0;opacity:0.55;transition:opacity 0.15s}
+.nav-item:hover{background:rgba(52,211,153,0.06);color:var(--text)}
+.nav-item:hover svg{opacity:0.9}
+.nav-item.active{background:rgba(52,211,153,0.1);color:var(--accent);box-shadow:inset 3px 0 0 var(--accent);padding-left:13px}
+.nav-item.active svg{opacity:1;color:var(--accent)}
+.sidebar-footer{padding:10px 10px 12px;border-top:1px solid var(--border);flex-shrink:0}
+.user-chip{display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:9px;background:rgba(255,255,255,0.03);border:1px solid var(--border)}
+.user-avatar{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,#0284c7,#0c4a6e);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;flex-shrink:0}
+.user-info{min-width:0;flex:1}
+.user-name{font-size:12px;color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:"Figtree",sans-serif}
+.user-role{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin-top:1px}
+.main{margin-left:240px;flex:1;display:flex;flex-direction:column;min-height:100vh}
+.topbar{height:58px;padding:0 28px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);background:rgba(9,25,24,0.95);position:sticky;top:0;z-index:50}
+.topbar-left{display:flex;flex-direction:column}
+.topbar-title{font-family:"Figtree",sans-serif;font-weight:700;font-size:15px}
+.topbar-meta{font-size:11px;color:var(--muted);margin-top:1px}
+.main-content{flex:1;padding:28px 32px;max-width:1100px}
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.panel-header{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.panel-title{font-family:"Figtree",sans-serif;font-weight:700;font-size:13px}
+.panel-sub{font-size:10px;color:var(--muted);margin-top:2px}
+.panel-body{padding:16px 18px}
+.panel-action{font-size:11px;color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:5px 12px;cursor:pointer;background:none;transition:all 0.15s}
+.panel-action:hover{border-color:var(--accent);color:var(--accent)}
+.empty{text-align:center;padding:32px 16px;color:var(--muted);font-size:12px;line-height:1.6}
+.btn-primary{background:var(--accent);color:#080f12;border:none;border-radius:8px;padding:9px 16px;font-family:"DM Mono",monospace;font-size:12px;font-weight:700;cursor:pointer;transition:all 0.15s;display:flex;align-items:center;gap:6px}
+.btn-primary:hover{background:#6ee7b7}
+.btn-ghost{background:none;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:7px 14px;font-family:"DM Mono",monospace;font-size:11px;cursor:pointer;transition:all 0.15s}
+.btn-ghost:hover{border-color:var(--accent);color:var(--accent)}
+.field{margin-bottom:14px}
+.field label{display:block;font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);margin-bottom:5px}
+.field input,.field select,.field textarea{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-family:"DM Mono",monospace;font-size:13px;color:var(--text);outline:none;transition:border-color 0.15s}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--accent)}
+.field select{cursor:pointer;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236aaf9e' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:32px}
+.data-table{width:100%;border-collapse:collapse}
+.data-table th{font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);text-align:left;padding:10px 16px;border-bottom:1px solid var(--border)}
+.data-table td{padding:11px 16px;border-bottom:1px solid rgba(18,53,47,0.5);font-size:12px;vertical-align:middle}
+.data-table tr:last-child td{border-bottom:none}
+.pill{font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600;white-space:nowrap}
+.pill-green{background:rgba(52,211,153,0.12);color:var(--accent)}
+.pill-amber{background:rgba(245,166,35,0.12);color:var(--warn)}
+.pill-muted{background:rgba(106,175,158,0.1);color:var(--muted)}
+.spinner{width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 0.7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.auth-gate{position:fixed;inset:0;background:var(--bg);z-index:200;display:flex;align-items:center;justify-content:center}
+.auth-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:36px;width:100%;max-width:380px}
 </style>
 </head>
 <body>
 
-<!-- ── Auth screen ── -->
-<div id="auth-screen" class="auth-wrap" style="display:none;">
+<div class="auth-gate" id="auth-gate">
   <div class="auth-card">
-    <div class="auth-logo">
-      <div class="auth-logo-icon">
-        <svg width="18" height="18" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="512" height="512" rx="113" fill="#34D399"/><rect x="172" y="75" width="167" height="167" rx="24" fill="#055A46"/><rect x="75" y="270" width="167" height="167" rx="24" fill="#055A46"/><rect x="270" y="270" width="167" height="167" rx="24" fill="#055A46"/></svg>
-      </div>
-      <div>
-        <div class="auth-title">Batch'd</div>
-        <div class="auth-sub">Supplier Portal</div>
-      </div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px;">
+      <svg width="28" height="28" viewBox="0 0 512 512" fill="none"><rect width="512" height="512" rx="113" fill="#34D399"/><rect x="172" y="75" width="167" height="167" rx="24" fill="#055A46"/><rect x="75" y="270" width="167" height="167" rx="24" fill="#055A46"/><rect x="270" y="270" width="167" height="167" rx="24" fill="#055A46"/></svg>
+      <div><div style="font-family:Figtree,sans-serif;font-weight:800;font-size:22px;">Batch'd</div><div style="font-size:10px;color:var(--muted);letter-spacing:0.07em;text-transform:uppercase;">Supplier Portal</div></div>
     </div>
-
-    <div id="auth-invite-notice" style="display:none;background:rgba(52,211,153,0.08);border:1px solid rgba(52,211,153,0.25);border-radius:10px;padding:12px 14px;margin-bottom:18px;font-size:12px;color:var(--muted);line-height:1.6;">
-      <strong style="color:var(--accent);">You have a pending connection request.</strong><br>
-      Sign in or create an account to accept it and start logging ingredient shipments.
-    </div>
-
-    <div id="auth-err" class="auth-err"></div>
-
-    <!-- Sign in -->
-    <div id="sign-in-form">
-      <div class="field"><label>Email</label><input id="si-email" type="email" placeholder="you@company.com" autocomplete="email"></div>
-      <div class="field"><label>Password</label><input id="si-pwd" type="password" placeholder="••••••••" autocomplete="current-password"></div>
-      <button class="btn-primary" onclick="signIn()" id="btn-signin">Sign in →</button>
-      <div class="auth-switch">New to Batch'd? <button onclick="showSignup()">Create a supplier account</button></div>
-      <div class="auth-switch" style="margin-top:6px;"><button onclick="showReset()" style="color:var(--muted);">Forgot password?</button></div>
-    </div>
-
-    <!-- Sign up -->
-    <div id="sign-up-form" style="display:none;">
-      <div class="field"><label>Your name</label><input id="su-name" type="text" placeholder="Jane Smith" autocomplete="name"></div>
-      <div class="field"><label>Work email</label><input id="su-email" type="email" placeholder="you@company.com" autocomplete="email"></div>
-      <div class="field"><label>Password</label><input id="su-pwd" type="password" placeholder="Min. 8 characters" autocomplete="new-password"></div>
-      <button class="btn-primary" onclick="signUp()" id="btn-signup">Create account →</button>
-      <div class="auth-switch">Already have an account? <button onclick="showSignin()">Sign in</button></div>
-    </div>
-
-    <!-- Reset -->
-    <div id="reset-form" style="display:none;">
-      <div class="field"><label>Email</label><input id="reset-email" type="email" placeholder="you@company.com"></div>
-      <button class="btn-primary" onclick="sendReset()">Send reset link →</button>
-      <div class="auth-switch"><button onclick="showSignin()">Back to sign in</button></div>
-    </div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:20px;line-height:1.6;">Log in to manage your ingredient lot codes, log shipments to manufacturers, and respond to quality investigations.</div>
+    <div id="auth-msg" style="display:none;font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;"></div>
+    <div class="field"><label>Email</label><input id="auth-email" type="email" placeholder="you@supplier.com" onkeydown="if(event.key==='Enter')doAuth()"></div>
+    <div class="field"><label>Password</label><input id="auth-pw" type="password" placeholder="••••••••" onkeydown="if(event.key==='Enter')doAuth()"></div>
+    <button style="width:100%;background:var(--accent);color:#080f12;border:none;border-radius:8px;padding:12px;font-family:DM Mono,monospace;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;" id="auth-btn" onclick="doAuth()">
+      <span id="auth-btn-text">Sign in</span>
+    </button>
   </div>
 </div>
 
-<!-- ── Onboarding — new supplier org setup ── -->
-<div id="onboard-screen" class="onboard-wrap" style="display:none;">
-  <div class="onboard-card">
-    <div class="step-indicator">
-      <div class="step done" id="step1">✓</div>
-      <div class="step-line done"></div>
-      <div class="step active" id="step2">2</div>
-      <div class="step-line"></div>
-      <div class="step" id="step3">3</div>
-    </div>
-    <div style="font-size:18px;font-weight:700;color:var(--text);margin-bottom:6px;">Set up your supplier profile</div>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:24px;line-height:1.5;">Your organisation details are visible to manufacturers you connect with. This is the one-step-back record required by EU 178/2002 and FSMA 204.</div>
-
-    <div id="onboard-err" style="display:none;background:rgba(255,92,92,0.1);border:1px solid rgba(255,92,92,0.3);border-radius:8px;padding:10px 12px;font-size:12px;color:var(--danger);margin-bottom:14px;"></div>
-
-    <div class="field"><label>Company / Organisation name *</label><input id="ob-name" type="text" placeholder="e.g. Nordic Ingredients AS" autocomplete="organization"></div>
-    <div class="field"><label>Contact email *</label><input id="ob-email" type="email" placeholder="supply@company.com"></div>
-    <div class="field"><label>Primary region</label>
-      <select id="ob-region">
-        <option value="no">🇳🇴 Norway / EU</option>
-        <option value="us">🇺🇸 United States</option>
-        <option value="both">🌍 Both markets</option>
-      </select>
-    </div>
-    <div class="field"><label>What do you supply? <span style="opacity:0.6;">(helps manufacturers find you)</span></label>
-      <input id="ob-supply-type" type="text" placeholder="e.g. Dairy ingredients, Seafood, Grain & flour"></div>
-
-    <button class="btn-primary" onclick="createSupplierOrg()" id="btn-create-org" style="margin-top:8px;">Create profile →</button>
-  </div>
-</div>
-
-<!-- ── Main app ── -->
-<div id="app-screen" style="display:none;" class="app">
+<div class="app" id="app-shell" style="display:none;">
   <aside class="sidebar">
     <div class="sidebar-logo">
-      <div class="logo-icon">
-        <svg width="18" height="18" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="512" height="512" rx="113" fill="#34D399"/><rect x="172" y="75" width="167" height="167" rx="24" fill="#055A46"/><rect x="75" y="270" width="167" height="167" rx="24" fill="#055A46"/><rect x="270" y="270" width="167" height="167" rx="24" fill="#055A46"/></svg>
-      </div>
-      <div>
-        <div class="logo-text">Batch'd</div>
-        <div class="logo-sub">Supplier Portal</div>
-      </div>
+      <svg width="28" height="28" viewBox="0 0 512 512" fill="none"><rect width="512" height="512" rx="113" fill="#34D399"/><rect x="172" y="75" width="167" height="167" rx="24" fill="#055A46"/><rect x="75" y="270" width="167" height="167" rx="24" fill="#055A46"/><rect x="270" y="270" width="167" height="167" rx="24" fill="#055A46"/></svg>
+      <div><div class="logo-text">Batch'd</div><div class="logo-sub">Supplier</div></div>
     </div>
-
     <nav class="sidebar-nav">
       <div class="nav-section">Overview</div>
-      <button class="nav-item" onclick="showPanel('overview')" id="nav-overview">
+      <button class="nav-item active" onclick="showPanel('overview')">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-        Overview
+        Dashboard
       </button>
-
-      <div class="nav-section">Connections</div>
-      <button class="nav-item" onclick="showPanel('connections')" id="nav-connections">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-        My Manufacturers
-        <span id="conn-badge" style="display:none;margin-left:auto;background:var(--warn);color:#1a0f00;font-size:10px;font-family:'DM Mono',monospace;padding:1px 6px;border-radius:10px;font-weight:700;"></span>
+      <div class="nav-section">Ingredients</div>
+      <button class="nav-item" onclick="showPanel('ingredients')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        My Ingredients
       </button>
-
-      <div class="nav-section">Activity</div>
-      <button class="nav-item" onclick="showPanel('shipments')" id="nav-shipments">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
-        Shipment History
+      <button class="nav-item" onclick="showPanel('lots')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        Lot Codes
       </button>
-      <button class="nav-item" onclick="showPanel('log')" id="nav-log">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        Log a Shipment
+      <button class="nav-item" onclick="showPanel('shipments')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+        Shipments
       </button>
-
-      <div class="nav-section">Account</div>
-      <button class="nav-item" onclick="showPanel('settings')" id="nav-settings">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-        Settings
+      <div class="nav-section">Network</div>
+      <button class="nav-item" onclick="showPanel('manufacturers')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        Manufacturer Links
+      </button>
+      <button class="nav-item" onclick="showPanel('investigations')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        Investigations
       </button>
     </nav>
-
     <div class="sidebar-footer">
       <div class="user-chip">
         <div class="user-avatar" id="user-avatar">S</div>
-        <div style="flex:1;min-width:0;">
-          <div class="user-name" id="user-name">Loading…</div>
-          <div class="user-role" id="org-name-label">Supplier</div>
+        <div class="user-info">
+          <div class="user-name" id="user-name">Loading...</div>
+          <div class="user-role">Supplier</div>
         </div>
-        <button class="sign-out-btn" onclick="signOut()" title="Sign out">
+        <button onclick="signOut()" title="Sign out" style="background:none;border:none;color:var(--muted);cursor:pointer;padding:4px;border-radius:4px;">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
         </button>
       </div>
     </div>
   </aside>
-
-  <main class="main">
-    <div class="topbar">
-      <div>
-        <div class="topbar-title" id="topbar-title">Overview</div>
-        <div class="topbar-sub" id="topbar-sub">Supplier Portal</div>
+  <div class="main">
+    <header class="topbar">
+      <div class="topbar-left">
+        <div class="topbar-title" id="topbar-title">Dashboard</div>
+        <div class="topbar-meta" id="topbar-meta"></div>
       </div>
+      <div style="font-size:11px;color:var(--muted);" id="topbar-time"></div>
+    </header>
+    <div class="main-content" id="main-content">
+      <div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading...</div>
     </div>
-    <div class="content" id="main-content">
-      <div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>
-    </div>
-  </main>
+  </div>
 </div>
 
 <script>
 const SUPABASE_URL = 'https://lurxucdmrugikdlvvebc.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1cnh1Y2RtcnVnaWtkbHZ2ZWJjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTU5NTQsImV4cCI6MjA4OTgzMTk1NH0.ewNhBbF8nUzpF9Ve822D9t8VLwB_hjk27KuFFEXct0A';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1cnh1Y2RtcnVnaWtkbHZ2ZWJjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MTM3MDc2MDAsImV4cCI6MjAyOTI4MzYwMH0.kFQMfCkWiGLmT9XIQR3G-dXuB15x7s5J_7bPfBQnj0E';
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-let _session = null, _orgId = null, _orgName = '', _userId = null;
-let _pendingInviteToken = null;
+let _session = null, _orgId = null, _orgName = 'My Company', _userEmail = '';
 
-// ── Routing ──────────────────────────────────────────────
-const PANEL_TITLES = { overview:'Overview', connections:'My Manufacturers', shipments:'Shipment History', log:'Log a Shipment', settings:'Settings' };
+setInterval(() => {
+  const el = document.getElementById('topbar-time');
+  if (el) el.textContent = new Date().toLocaleString('en-GB',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+}, 1000);
 
-function showPanel(name) {
-  document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
-  const nav = document.getElementById('nav-' + name);
-  if (nav) nav.classList.add('active');
-  document.getElementById('topbar-title').textContent = PANEL_TITLES[name] || name;
-  const fns = { overview: renderOverview, connections: renderConnections, shipments: renderShipments, log: renderLogShipment, settings: renderSettings };
-  if (fns[name]) fns[name]();
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function fmtDate(d) { return d ? new Date(d).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : '—'; }
+
+function showToast(msg, type, ms) {
+  const t = document.createElement('div');
+  t.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:9999;padding:10px 18px;border-radius:10px;font-size:13px;font-weight:600;font-family:Figtree,sans-serif;box-shadow:0 4px 24px rgba(0,0,0,0.4);background:' + (type==='ok'?'#065f46':'#7f1d1d') + ';color:' + (type==='ok'?'#34d399':'#fca5a5') + ';border:1px solid ' + (type==='ok'?'rgba(52,211,153,0.3)':'rgba(255,92,92,0.3)') + ';';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => { t.style.opacity='0'; setTimeout(() => t.remove(), 300); }, ms||3000);
 }
 
-// ── Boot ─────────────────────────────────────────────────
-(async function boot() {
-  // Check for invite token in URL
-  const params = new URLSearchParams(window.location.search);
-  _pendingInviteToken = params.get('invite') || null;
-
-  const { data: { session } } = await sb.auth.getSession();
-  if (!session) {
-    if (_pendingInviteToken) document.getElementById('auth-invite-notice').style.display = 'block';
-    document.getElementById('auth-screen').style.display = 'flex';
-    return;
-  }
-  await initApp(session);
-})();
-
-async function initApp(session) {
-  _session = session;
-  _userId = session.user.id;
-
-  // Get org membership
-  const { data: membership } = await sb.from('organisation_members').select('organisation_id, role').eq('user_id', _userId).maybeSingle();
-
-  if (!membership) {
-    // New user — show onboarding
-    document.getElementById('onboard-screen').style.display = 'flex';
-    const email = session.user.email || '';
-    document.getElementById('ob-email').value = email;
-    return;
-  }
-
-  _orgId = membership.organisation_id;
-
-  // Get org details
-  const { data: org } = await sb.from('organisations').select('name').eq('id', _orgId).single();
-  _orgName = org?.name || 'My Organisation';
-
-  // Set UI
-  const email = session.user.email || '';
-  const firstName = email.split('@')[0];
-  document.getElementById('user-avatar').textContent = firstName[0]?.toUpperCase() || 'S';
-  document.getElementById('user-name').textContent = firstName;
-  document.getElementById('org-name-label').textContent = _orgName;
-  document.getElementById('topbar-sub').textContent = _orgName + ' · Supplier';
-
-  // Handle pending invite
-  if (_pendingInviteToken) await acceptInvite(_pendingInviteToken);
-
-  // Check pending connections for badge
-  checkConnectionBadge();
-
-  document.getElementById('auth-screen').style.display = 'none';
-  document.getElementById('onboard-screen').style.display = 'none';
-  document.getElementById('app-screen').style.display = 'flex';
-  showPanel('overview');
-}
-
-async function acceptInvite(token) {
-  // Token is the supplier_connection id with status='invited'
-  const { data: conn } = await sb.from('supplier_connections').select('*').eq('id', token).eq('status','invited').maybeSingle();
-  if (!conn) return;
-  await sb.from('supplier_connections').update({ supplier_id: _orgId, status: 'active' }).eq('id', token);
-  _pendingInviteToken = null;
-  // Clean URL
-  window.history.replaceState({}, '', window.location.pathname);
-  showToast('Connection accepted! You are now connected as a supplier.', 'ok', 4000);
-}
-
-async function checkConnectionBadge() {
-  const { count } = await sb.from('supplier_connections').select('id', {count:'exact',head:true}).eq('supplier_id', _orgId).eq('status','pending');
-  const badge = document.getElementById('conn-badge');
-  if (badge && count > 0) { badge.textContent = count; badge.style.display = 'inline'; }
-}
-
-// ── Auth functions ────────────────────────────────────────
-function showSignin() { document.getElementById('sign-in-form').style.display=''; document.getElementById('sign-up-form').style.display='none'; document.getElementById('reset-form').style.display='none'; clearAuthErr(); }
-function showSignup() { document.getElementById('sign-in-form').style.display='none'; document.getElementById('sign-up-form').style.display=''; document.getElementById('reset-form').style.display='none'; clearAuthErr(); }
-function showReset()  { document.getElementById('sign-in-form').style.display='none'; document.getElementById('sign-up-form').style.display='none'; document.getElementById('reset-form').style.display=''; clearAuthErr(); }
-function clearAuthErr() { const e = document.getElementById('auth-err'); e.style.display='none'; e.textContent=''; }
-function setAuthErr(msg) { const e = document.getElementById('auth-err'); e.textContent = msg; e.style.display='block'; }
-
-async function signIn() {
-  const email = document.getElementById('si-email').value.trim();
-  const pwd   = document.getElementById('si-pwd').value;
-  const btn   = document.getElementById('btn-signin');
-  if (!email || !pwd) { setAuthErr('Email and password required.'); return; }
-  btn.disabled = true; btn.textContent = 'Signing in…';
-  const { data, error } = await sb.auth.signInWithPassword({ email, password: pwd });
-  if (error) { setAuthErr(error.message); btn.disabled=false; btn.textContent='Sign in →'; return; }
+// Auth
+async function doAuth() {
+  const email = document.getElementById('auth-email').value.trim();
+  const pw    = document.getElementById('auth-pw').value;
+  const btn   = document.getElementById('auth-btn');
+  const msgEl = document.getElementById('auth-msg');
+  if (!email || !pw) { msgEl.textContent='Please enter email and password.'; msgEl.style.cssText='display:block;background:rgba(255,92,92,0.1);color:var(--danger);border:1px solid rgba(255,92,92,0.3);'; return; }
+  btn.disabled=true; document.getElementById('auth-btn-text').textContent='Signing in...';
+  const { data, error } = await sb.auth.signInWithPassword({ email, password: pw });
+  if (error) { msgEl.textContent=error.message; msgEl.style.cssText='display:block;background:rgba(255,92,92,0.1);color:var(--danger);border:1px solid rgba(255,92,92,0.3);font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;'; btn.disabled=false; document.getElementById('auth-btn-text').textContent='Sign in'; return; }
   await initApp(data.session);
 }
 
-async function signUp() {
-  const name  = document.getElementById('su-name').value.trim();
-  const email = document.getElementById('su-email').value.trim();
-  const pwd   = document.getElementById('su-pwd').value;
-  const btn   = document.getElementById('btn-signup');
-  if (!name || !email || !pwd) { setAuthErr('All fields required.'); return; }
-  if (pwd.length < 8) { setAuthErr('Password must be at least 8 characters.'); return; }
-  btn.disabled = true; btn.textContent = 'Creating account…';
-  const { data, error } = await sb.auth.signUp({ email, password: pwd, options: { data: { full_name: name } } });
-  if (error) { setAuthErr(error.message); btn.disabled=false; btn.textContent='Create account →'; return; }
-  if (data.session) {
-    await initApp(data.session);
-  } else {
-    clearAuthErr();
-    document.getElementById('sign-up-form').innerHTML = `<div style="text-align:center;padding:16px;"><div style="font-size:24px;margin-bottom:10px;">📧</div><div style="font-weight:600;color:var(--text);">Check your email</div><div style="font-size:12px;color:var(--muted);margin-top:6px;">We sent a confirmation link to ${email}. Click it to activate your account.</div></div>`;
+async function initApp(session) {
+  _session=session; _userEmail=session.user.email;
+  const { data: member, error } = await sb.from('organisation_members').select('organisation_id,role,organisations(name,type)').eq('user_id',session.user.id).maybeSingle();
+  if (!member || error) {
+    document.getElementById('auth-msg').textContent='No supplier account found. Contact your manufacturer partner to be invited.';
+    document.getElementById('auth-msg').style.cssText='display:block;background:rgba(255,92,92,0.1);color:var(--danger);border:1px solid rgba(255,92,92,0.3);font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;';
+    await sb.auth.signOut(); document.getElementById('auth-btn').disabled=false; document.getElementById('auth-btn-text').textContent='Sign in'; return;
   }
-}
-
-async function sendReset() {
-  const email = document.getElementById('reset-email').value.trim();
-  if (!email) { setAuthErr('Enter your email.'); return; }
-  await sb.auth.resetPasswordForEmail(email, { redirectTo: window.location.href });
-  document.getElementById('reset-form').innerHTML = '<div style="text-align:center;font-size:13px;color:var(--muted);">Reset link sent — check your email.</div>';
-}
-
-async function signOut() {
-  await sb.auth.signOut();
-  window.location.reload();
-}
-
-// ── Onboarding ────────────────────────────────────────────
-async function createSupplierOrg() {
-  const name   = document.getElementById('ob-name')?.value.trim();
-  const email  = document.getElementById('ob-email')?.value.trim();
-  const region = document.getElementById('ob-region')?.value;
-  const supply = document.getElementById('ob-supply-type')?.value.trim();
-  const errEl  = document.getElementById('onboard-err');
-  const btn    = document.getElementById('btn-create-org');
-
-  if (!name || !email) {
-    errEl.style.display = 'block'; errEl.textContent = 'Company name and email are required.'; return;
+  const orgType = member.organisations?.type;
+  const role = member.role;
+  if (orgType !== 'supplier' && !role?.includes('supplier')) {
+    document.getElementById('auth-msg').textContent='This portal is for supplier accounts only. Manufacturers use manufacturer.batchdapp.com.';
+    document.getElementById('auth-msg').style.cssText='display:block;background:rgba(255,92,92,0.1);color:var(--danger);border:1px solid rgba(255,92,92,0.3);font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;';
+    await sb.auth.signOut(); document.getElementById('auth-btn').disabled=false; document.getElementById('auth-btn-text').textContent='Sign in'; return;
   }
-
-  btn.disabled = true; btn.textContent = 'Creating profile…';
-
-  // Create org
-  const { data: org, error: orgErr } = await sb.from('organisations').insert({
-    name, contact_email: email, type: 'supplier', region,
-    supply_type: supply || null,
-  }).select('id').single();
-
-  if (orgErr) {
-    errEl.style.display = 'block'; errEl.textContent = orgErr.message;
-    btn.disabled = false; btn.textContent = 'Create profile →'; return;
-  }
-
-  // Add membership
-  await sb.from('organisation_members').insert({
-    organisation_id: org.id,
-    user_id: _userId,
-    role: 'supplier_admin',
-  });
-
-  _orgId = org.id;
-  _orgName = name;
-
-  // Handle pending invite
-  if (_pendingInviteToken) await acceptInvite(_pendingInviteToken);
-
-  document.getElementById('onboard-screen').style.display = 'none';
-  document.getElementById('app-screen').style.display = 'flex';
-  document.getElementById('user-avatar').textContent = (name[0] || 'S').toUpperCase();
-  document.getElementById('user-name').textContent = email.split('@')[0];
-  document.getElementById('org-name-label').textContent = name;
-  document.getElementById('topbar-sub').textContent = name + ' · Supplier';
+  _orgId=member.organisation_id; _orgName=member.organisations?.name||'My Company';
+  document.getElementById('auth-gate').style.display='none';
+  document.getElementById('app-shell').style.display='flex';
+  document.getElementById('user-name').textContent=_userEmail.split('@')[0];
+  document.getElementById('user-avatar').textContent=_userEmail[0].toUpperCase();
+  document.getElementById('topbar-meta').textContent=_orgName;
   showPanel('overview');
 }
 
-// ── Toast ─────────────────────────────────────────────────
-function showToast(msg, type, duration) {
-  const t = document.createElement('div');
-  t.style.cssText = `position:fixed;bottom:24px;right:24px;z-index:99999;background:${type==='ok'?'var(--accent)':type==='warn'?'var(--warn)':'var(--danger)'};color:${type==='ok'?'#065f46':'#fff'};padding:10px 16px;border-radius:9px;font-size:13px;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,0.4);max-width:320px;`;
-  t.textContent = msg;
-  document.body.appendChild(t);
-  setTimeout(() => t.remove(), duration || 3000);
-}
+async function signOut() { await sb.auth.signOut(); location.reload(); }
+sb.auth.getSession().then(({data:{session}}) => { if(session) initApp(session); });
 
-// ── Panels ────────────────────────────────────────────────
+// Navigation
+const PANEL_NAMES = {overview:'Dashboard',ingredients:'My Ingredients',lots:'Lot Codes',shipments:'Shipments',manufacturers:'Manufacturer Links',investigations:'Investigations'};
+function showPanel(name) {
+  document.getElementById('topbar-title').textContent = PANEL_NAMES[name]||name;
+  document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.getAttribute('onclick')?.includes("'"+name+"'")));
+  ({overview:renderOverview,ingredients:renderIngredients,lots:renderLots,shipments:renderShipments,manufacturers:renderManufacturers,investigations:renderInvestigations}[name]||renderComingSoon)();
+}
+function renderComingSoon() { document.getElementById('main-content').innerHTML='<div style="padding:60px 0;text-align:center;color:var(--muted);font-size:14px;">Coming soon</div>'; }
+
+// Overview
 async function renderOverview() {
   const el = document.getElementById('main-content');
-  el.innerHTML = '<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>';
-
-  const [connsRes, shipmentsRes] = await Promise.all([
-    sb.from('supplier_connections').select('*, organisations!supplier_connections_manufacturer_id_fkey(name,contact_email)').eq('supplier_id', _orgId).eq('status','active'),
-    sb.from('ingredient_receipts').select('*').eq('supplier_id', _orgId).order('shipped_at',{ascending:false}).limit(20),
-  ]);
-
-  const connections = connsRes.data || [];
-  const shipments   = shipmentsRes.data || [];
-  const pending30   = shipments.filter(s => s.shipped_at && (Date.now() - new Date(s.shipped_at)) < 30*86400000).length;
-
-  el.innerHTML = `
-    <div class="kpi-grid">
-      ${[
-        { label:'Connected manufacturers', value: connections.length, color:'var(--text)' },
-        { label:'Shipments (30 days)', value: pending30, color:'var(--text)' },
-        { label:'Total receipts logged', value: shipments.length, color:'var(--text)' },
-      ].map(k=>`<div class="kpi-card"><div class="kpi-value" style="color:${k.color};">${k.value}</div><div class="kpi-label">${k.label}</div></div>`).join('')}
-    </div>
-
-    <!-- Regulatory notice -->
-    <div style="background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.2);border-radius:12px;padding:16px 18px;margin-bottom:20px;font-size:12px;color:var(--muted);line-height:1.6;">
-      <strong style="color:var(--text);">Your role in the traceability chain</strong><br>
-      EU 178/2002 Art. 18 and FSMA 204 require food manufacturers to identify their immediate ingredient suppliers (one step back). By logging shipments here, you create the verified traceability record your manufacturing partners need for regulatory compliance and recall readiness.
-    </div>
-
-    ${connections.length > 0 ? `
-    <div style="margin-bottom:20px;">
-      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:10px;">Connected Manufacturers (${connections.length})</div>
-      ${connections.map(c=>`
-        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
-          <div>
-            <div style="font-size:13px;font-weight:600;color:var(--text);">${c.organisations?.name||'Unknown'}</div>
-            <div style="font-size:11px;color:var(--muted);">${c.organisations?.contact_email||''}</div>
-          </div>
-          <button onclick="showPanel('log')" style="background:rgba(52,211,153,0.1);border:1px solid rgba(52,211,153,0.3);color:var(--accent);border-radius:7px;padding:6px 12px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;">
-            + Log shipment
-          </button>
-        </div>`).join('')}
-    </div>` : `
-    <div class="panel"><div class="empty-state">
-      <div class="icon">🏭</div>
-      <div class="title">No manufacturer connections yet</div>
-      <div class="sub">When a manufacturer sends you a connection request, it will appear in <strong>My Manufacturers</strong>. You can then log ingredient shipments for their traceability records.</div>
-    </div></div>`}
-
-    ${shipments.length > 0 ? `
-    <div class="panel">
-      <div class="panel-header"><div class="panel-title">Recent Shipments</div></div>
-      <div style="padding:0 18px;">
-        <table>
-          <thead><tr>
-            <th>Ingredient</th><th>Lot</th><th>Manufacturer</th><th>Qty</th><th>Shipped</th>
-          </tr></thead>
-          <tbody>
-            ${shipments.slice(0,8).map(s=>`<tr>
-              <td style="font-weight:500;color:var(--text);">${s.ingredient_name||'—'}</td>
-              <td style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);">${s.lot_number||'—'}</td>
-              <td style="color:var(--muted);">${s.manufacturer_name||'—'}</td>
-              <td style="color:var(--muted);">${s.quantity||''} ${s.unit||''}</td>
-              <td style="color:var(--muted);">${s.shipped_at?new Date(s.shipped_at).toLocaleDateString('en-GB'):'—'}</td>
-            </tr>`).join('')}
-          </tbody>
-        </table>
+  el.innerHTML='<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading...</div>';
+  try {
+    const [ingR, lotR, shipR, linkR] = await Promise.all([
+      sb.from('supplier_ingredients').select('id').eq('supplier_org_id',_orgId),
+      sb.from('supplier_lot_codes').select('id').eq('supplier_org_id',_orgId),
+      sb.from('supplier_shipments').select('id,ingredient_name,lot_code,shipped_at').eq('supplier_org_id',_orgId).order('shipped_at',{ascending:false}).limit(5),
+      sb.from('supplier_manufacturer_links').select('status,organisations!supplier_manufacturer_links_manufacturer_org_id_fkey(name)').eq('supplier_org_id',_orgId),
+    ]);
+    const active = (linkR.data||[]).filter(l=>l.status==='active');
+    el.innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px;">
+        ${[
+          {l:'Ingredients',val:(ingR.data||[]).length,p:'ingredients'},
+          {l:'Lot codes',val:(lotR.data||[]).length,p:'lots'},
+          {l:'Shipments',val:(shipR.data||[]).length,p:'shipments'},
+          {l:'Manufacturer links',val:active.length,p:'manufacturers'},
+        ].map(k=>'<div data-panel="'+k.p+'" class="kpi-nav-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;cursor:pointer;transition:all 0.15s;"><div style="font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;">'+k.l+'</div><div style="font-family:Figtree,sans-serif;font-weight:800;font-size:28px;color:var(--accent);line-height:1;">'+k.val+'</div></div>').join('')}
       </div>
-    </div>` : ''}`;
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div class="panel"><div class="panel-header"><div class="panel-title">How it works</div></div><div class="panel-body" style="padding:0;">
+          ${[['1','Register your ingredients','Add the ingredient products you supply — names, barcodes, categories.'],
+             ['2','Log lot codes','When you produce or pack a batch, register the lot code here.'],
+             ['3','Record shipments','Log which lot codes shipped to which manufacturer and when.'],
+             ['4','Respond to investigations','If a manufacturer flags a quality issue, respond directly from here.']].map((s,i,a)=>'<div style="display:flex;gap:14px;padding:14px 18px;'+(i<a.length-1?'border-bottom:1px solid var(--border)':'')+'"><div style="width:26px;height:26px;border-radius:50%;background:rgba(52,211,153,0.12);border:1px solid rgba(52,211,153,0.25);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--accent);flex-shrink:0;">'+s[0]+'</div><div><div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:3px;">'+s[1]+'</div><div style="font-size:11px;color:var(--muted);line-height:1.5;">'+s[2]+'</div></div></div>').join('')}
+        </div></div>
+        <div class="panel"><div class="panel-header"><div><div class="panel-title">Recent shipments</div></div><button class="panel-action" onclick="showPanel('shipments')">All →</button></div><div class="panel-body" style="padding:${(shipR.data||[]).length?'0 18px':'18px'};">
+          ${!(shipR.data||[]).length?'<div class="empty">No shipments yet. Log your first shipment to start building traceability.</div>':
+          (shipR.data||[]).map(s=>'<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(18,53,47,0.5);"><div style="width:6px;height:6px;border-radius:50%;background:var(--accent);flex-shrink:0;"></div><div style="flex:1;min-width:0;"><div style="font-size:12px;font-weight:500;color:var(--text);">'+esc(s.ingredient_name||'—')+'</div><div style="font-size:10px;color:var(--muted);margin-top:1px;">Lot: <span style="font-family:DM Mono,monospace;">'+esc(s.lot_code||'—')+'</span> · '+fmtDate(s.shipped_at)+'</div></div></div>').join('')}
+        </div></div>
+      </div>`;
+  } catch(e) { el.innerHTML='<div style="color:var(--danger);font-size:12px;padding:20px;">Error: '+e.message+'</div>'; }
 }
 
-async function renderConnections() {
+// Ingredients
+async function renderIngredients() {
   const el = document.getElementById('main-content');
-  el.innerHTML = '<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>';
-
-  const { data: conns } = await sb.from('supplier_connections')
-    .select('*, organisations!supplier_connections_manufacturer_id_fkey(id,name,contact_email,region)')
-    .eq('supplier_id', _orgId)
-    .order('created_at', { ascending: false });
-
-  const all = conns || [];
-  const pending = all.filter(c => c.status === 'pending');
-  const active  = all.filter(c => c.status === 'active');
-
-  // Update badge
-  const badge = document.getElementById('conn-badge');
-  if (badge) { badge.textContent = pending.length; badge.style.display = pending.length ? 'inline' : 'none'; }
-
-  el.innerHTML = `
-    <div style="max-width:700px;">
-      <div style="margin-bottom:20px;">
-        <div style="font-size:15px;font-weight:600;color:var(--text);">My Manufacturers</div>
-        <div style="font-size:12px;color:var(--muted);margin-top:2px;">Manufacturers who have sent you connection requests or are actively connected to your supplier account.</div>
+  el.innerHTML='<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading...</div>';
+  try {
+    const {data:items} = await sb.from('supplier_ingredients').select('*').eq('supplier_org_id',_orgId).order('name');
+    el.innerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px;"><div><div style="font-family:Figtree,sans-serif;font-weight:700;font-size:16px;">${(items||[]).length} ingredient${(items||[]).length!==1?'s':''}</div><div style="font-size:11px;color:var(--muted);margin-top:2px;">Ingredient products you supply</div></div><button class="btn-primary" onclick="toggleIngredientForm()"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add ingredient</button></div>
+    <div id="ingredient-form" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px;">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:12px;">Add ingredient</div>
+      <div id="ingr-msg" style="display:none;font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+        <div class="field" style="margin:0;"><label>Name *</label><input id="ingr-name" type="text" placeholder="e.g. Refined Olive Oil"></div>
+        <div class="field" style="margin:0;"><label>Barcode / EAN</label><input id="ingr-barcode" type="text" placeholder="e.g. 7038010013882"></div>
       </div>
-
-      ${pending.length > 0 ? `
-      <div style="margin-bottom:20px;">
-        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--warn);margin-bottom:10px;">Pending Requests (${pending.length})</div>
-        ${pending.map(c=>`
-          <div style="background:rgba(245,166,35,0.06);border:1px solid rgba(245,166,35,0.25);border-radius:12px;padding:16px 18px;margin-bottom:8px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
-              <div>
-                <div style="font-size:13px;font-weight:600;color:var(--text);">${c.organisations?.name||'Unknown'}</div>
-                <div style="font-size:11px;color:var(--muted);">${c.organisations?.contact_email||''} wants to connect with you as a supplier.</div>
-              </div>
-              <div style="display:flex;gap:8px;">
-                <button onclick="respondToConnection('${c.id}','rejected',this)" style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:7px;padding:6px 12px;font-size:11px;cursor:pointer;font-family:inherit;">Decline</button>
-                <button onclick="respondToConnection('${c.id}','active',this)" style="background:var(--accent);color:#065f46;border:none;border-radius:7px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;">Accept →</button>
-              </div>
-            </div>
-          </div>`).join('')}
-      </div>` : ''}
-
-      <div>
-        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:10px;">Active Connections (${active.length})</div>
-        ${active.length === 0 ? `
-          <div class="panel"><div class="empty-state">
-            <div class="icon">🤝</div>
-            <div class="title">No active connections</div>
-            <div class="sub">Once a manufacturer connects with you, they will appear here and you can start logging ingredient shipments.</div>
-          </div></div>` :
-          active.map(c=>`
-          <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
-            <div>
-              <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
-                <div style="font-size:13px;font-weight:600;color:var(--text);">${c.organisations?.name||'—'}</div>
-                <span class="badge badge-active">Active</span>
-              </div>
-              <div style="font-size:11px;color:var(--muted);">${c.organisations?.contact_email||''}</div>
-            </div>
-            <button onclick="_logManufacturerId='${c.manufacturer_id}';_logManufacturerName='${(c.organisations?.name||'').replace(/'/g,"\\'")}';showPanel('log')"
-              style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:6px 12px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;">
-              + Log shipment
-            </button>
-          </div>`).join('')}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+        <div class="field" style="margin:0;"><label>Category</label><select id="ingr-category"><option value="">— Select —</option><option value="oils">Oils & Fats</option><option value="dairy">Dairy</option><option value="grains">Grains & Cereals</option><option value="proteins">Proteins</option><option value="produce">Produce</option><option value="spices">Spices</option><option value="additives">Additives</option><option value="allergens">Allergen-containing</option><option value="other">Other</option></select></div>
+        <div class="field" style="margin:0;"><label>Unit</label><input id="ingr-unit" type="text" placeholder="e.g. kg, L, units"></div>
       </div>
-    </div>`;
+      <div class="field" style="margin-bottom:12px;"><label>Notes</label><input id="ingr-desc" type="text" placeholder="Optional specification notes"></div>
+      <div style="display:flex;gap:8px;"><button class="btn-primary" onclick="saveIngredient()" style="flex:1;justify-content:center;">Save</button><button class="btn-ghost" onclick="toggleIngredientForm()">Cancel</button></div>
+    </div>
+    <div class="panel"><div class="panel-body" style="padding:${!(items||[]).length?'18px':'0'};">
+      ${!(items||[]).length?'<div class="empty">No ingredients yet. Add your first ingredient to start logging lot codes.</div>':
+      '<table class="data-table"><thead><tr><th>Name</th><th>Category</th><th>Barcode</th><th>Unit</th><th>Added</th></tr></thead><tbody>'+
+      (items||[]).map(i=>'<tr><td><div style="font-weight:600;color:var(--text);">'+esc(i.name)+'</div>'+
+        (i.description?'<div style="font-size:10px;color:var(--muted);margin-top:2px;">'+esc(i.description)+'</div>':'')+'</td>'+
+        '<td><span class="pill pill-muted">'+esc(i.category||'—')+'</span></td>'+
+        '<td style="font-family:DM Mono,monospace;font-size:10px;color:var(--muted);">'+esc(i.barcode||'—')+'</td>'+
+        '<td style="font-size:11px;color:var(--muted);">'+esc(i.unit||'—')+'</td>'+
+        '<td style="font-size:10px;color:var(--muted);">'+fmtDate(i.created_at)+'</td></tr>').join('')+
+      '</tbody></table>'}
+    </div></div>`;
+  } catch(e) { el.innerHTML='<div style="color:var(--danger);font-size:12px;padding:20px;">Error: '+e.message+'</div>'; }
+}
+function toggleIngredientForm() { const f=document.getElementById('ingredient-form'); if(f) f.style.display=f.style.display==='none'?'':'none'; }
+async function saveIngredient() {
+  const name=document.getElementById('ingr-name')?.value.trim(), msg=document.getElementById('ingr-msg');
+  if (!name) { msg.style.cssText='display:block;color:var(--danger);'; msg.textContent='Name required.'; return; }
+  const {error} = await sb.from('supplier_ingredients').insert({supplier_org_id:_orgId,name,barcode:document.getElementById('ingr-barcode')?.value.trim()||null,category:document.getElementById('ingr-category')?.value||null,unit:document.getElementById('ingr-unit')?.value.trim()||null,description:document.getElementById('ingr-desc')?.value.trim()||null});
+  if (error) { msg.style.cssText='display:block;color:var(--danger);'; msg.textContent='Error: '+error.message; return; }
+  showToast('Ingredient saved','ok',2500); renderIngredients();
 }
 
-async function respondToConnection(connId, status, btn) {
-  btn.disabled = true; btn.textContent = status === 'active' ? 'Accepting…' : 'Declining…';
-  const { error } = await sb.from('supplier_connections').update({ status }).eq('id', connId);
-  if (error) { btn.disabled=false; btn.textContent='Error'; return; }
-  showToast(status === 'active' ? 'Connection accepted' : 'Connection declined', status==='active'?'ok':'warn', 2500);
-  renderConnections();
-}
-
-// Log shipment
-let _logManufacturerId = null, _logManufacturerName = '';
-
-async function renderLogShipment() {
+// Lot Codes
+async function renderLots() {
   const el = document.getElementById('main-content');
-
-  // Get active manufacturer connections to populate dropdown
-  const { data: conns } = await sb.from('supplier_connections')
-    .select('manufacturer_id, organisations!supplier_connections_manufacturer_id_fkey(id,name)')
-    .eq('supplier_id', _orgId).eq('status','active');
-
-  const manufacturers = (conns || []).map(c => ({ id: c.manufacturer_id, name: c.organisations?.name || 'Unknown' }));
-
-  const today = new Date().toISOString().split('T')[0];
-
-  el.innerHTML = `
-    <div style="max-width:560px;">
-      <div style="margin-bottom:20px;">
-        <div style="font-size:15px;font-weight:600;color:var(--text);">Log a Shipment</div>
-        <div style="font-size:12px;color:var(--muted);margin-top:2px;">Record an ingredient lot shipped to a manufacturer. This creates the one-step-back traceability record.</div>
+  el.innerHTML='<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading...</div>';
+  try {
+    const [{data:ingredients},{data:lots}] = await Promise.all([
+      sb.from('supplier_ingredients').select('id,name').eq('supplier_org_id',_orgId).order('name'),
+      sb.from('supplier_lot_codes').select('*,supplier_ingredients(name)').eq('supplier_org_id',_orgId).order('created_at',{ascending:false}),
+    ]);
+    el.innerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px;"><div><div style="font-family:Figtree,sans-serif;font-weight:700;font-size:16px;">${(lots||[]).length} lot code${(lots||[]).length!==1?'s':''}</div><div style="font-size:11px;color:var(--muted);margin-top:2px;">Production batches logged by ${_orgName}</div></div>${(ingredients||[]).length?'<button class="btn-primary" onclick="toggleLotForm()"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Register lot</button>':''}</div>
+    <div id="lot-form" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px;">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:12px;">Register lot code</div>
+      <div id="lot-msg" style="display:none;font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+        <div class="field" style="margin:0;"><label>Ingredient *</label><select id="lot-ingredient"><option value="">— Select —</option>${(ingredients||[]).map(i=>'<option value="'+i.id+'">'+esc(i.name)+'</option>').join('')}</select></div>
+        <div class="field" style="margin:0;"><label>Lot code *</label><input id="lot-code" type="text" placeholder="e.g. L2026-04-01A"></div>
       </div>
-
-      ${manufacturers.length === 0 ? `
-        <div class="panel"><div class="empty-state">
-          <div class="icon">🏭</div>
-          <div class="title">No manufacturers connected</div>
-          <div class="sub">Accept a connection request from a manufacturer before logging shipments.</div>
-        </div></div>` : `
-
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;display:flex;flex-direction:column;gap:14px;">
-
-        <div class="field" style="margin:0;">
-          <label>Ship to (manufacturer) *</label>
-          <select id="log-mfr" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 11px;color:var(--text);font-size:13px;width:100%;">
-            <option value="">Select manufacturer…</option>
-            ${manufacturers.map(m=>`<option value="${m.id}" ${m.id===_logManufacturerId?'selected':''}>${m.name}</option>`).join('')}
-          </select>
-        </div>
-
-        <div class="field" style="margin:0;">
-          <label>Ingredient / raw material *</label>
-          <input id="log-ingredient" type="text" placeholder="e.g. Olive oil, Wheat flour, Tomato paste" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 11px;color:var(--text);font-size:13px;width:100%;">
-        </div>
-
-        <div class="field" style="margin:0;">
-          <label>Lot / Batch number</label>
-          <input id="log-lot" type="text" placeholder="Your internal lot code" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 11px;color:var(--text);font-size:13px;width:100%;font-family:'DM Mono',monospace;">
-        </div>
-
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
-          <div class="field" style="margin:0;">
-            <label>Quantity</label>
-            <input id="log-qty" type="number" min="0" placeholder="0" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 11px;color:var(--text);font-size:13px;width:100%;">
-          </div>
-          <div class="field" style="margin:0;">
-            <label>Unit</label>
-            <select id="log-unit" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 11px;color:var(--text);font-size:13px;width:100%;">
-              <option value="kg">kg</option><option value="lbs">lbs</option>
-              <option value="units">units</option><option value="cases">cases</option>
-              <option value="litres">litres</option><option value="tonnes">tonnes</option>
-            </select>
-          </div>
-          <div class="field" style="margin:0;">
-            <label>Ship date</label>
-            <input id="log-date" type="date" value="${today}" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 11px;color:var(--text);font-size:13px;width:100%;">
-          </div>
-        </div>
-
-        <div class="field" style="margin:0;">
-          <label>Reference document <span style="opacity:0.6;">(delivery note, COA, PO number)</span></label>
-          <input id="log-ref" type="text" placeholder="e.g. DN-2026-0042 or COA-L98765" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 11px;color:var(--text);font-size:13px;width:100%;">
-        </div>
-
-        <div class="field" style="margin:0;">
-          <label>Notes <span style="opacity:0.6;">(optional)</span></label>
-          <textarea id="log-notes" rows="2" placeholder="Any additional information about this shipment." style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 11px;color:var(--text);font-size:13px;width:100%;resize:vertical;font-family:'Figtree',sans-serif;line-height:1.5;"></textarea>
-        </div>
-
-        <div id="log-msg" style="display:none;border-radius:8px;padding:10px 12px;font-size:12px;"></div>
-
-        <button onclick="submitShipment()" style="background:var(--accent);color:#065f46;border:none;border-radius:9px;padding:11px;font-size:14px;font-weight:700;cursor:pointer;font-family:'Figtree',sans-serif;">
-          Log Shipment →
-        </button>
-      </div>`}
-    </div>`;
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px;">
+        <div class="field" style="margin:0;"><label>Production date</label><input id="lot-prod" type="date"></div>
+        <div class="field" style="margin:0;"><label>Expiry date</label><input id="lot-exp" type="date"></div>
+        <div class="field" style="margin:0;"><label>Quantity</label><input id="lot-qty" type="number" min="0" placeholder="e.g. 500"></div>
+      </div>
+      <div class="field" style="margin-bottom:12px;"><label>Notes</label><input id="lot-notes" type="text" placeholder="Optional"></div>
+      <div style="display:flex;gap:8px;"><button class="btn-primary" onclick="saveLot()" style="flex:1;justify-content:center;">Register</button><button class="btn-ghost" onclick="toggleLotForm()">Cancel</button></div>
+    </div>
+    <div class="panel"><div class="panel-body" style="padding:${!(lots||[]).length?'18px':'0'};">
+      ${!(lots||[]).length?'<div class="empty">'+(!(ingredients||[]).length?'Add ingredients first, then register lot codes.':'No lot codes yet. Register a lot code for each production batch.')+'</div>':
+      '<table class="data-table"><thead><tr><th>Ingredient</th><th>Lot code</th><th>Produced</th><th>Expiry</th><th>Qty</th><th>Notes</th></tr></thead><tbody>'+
+      (lots||[]).map(l=>'<tr><td style="font-weight:500;color:var(--text);">'+esc(l.supplier_ingredients?.name||'—')+'</td><td style="font-family:DM Mono,monospace;font-size:11px;color:var(--accent);">'+esc(l.lot_code||'—')+'</td><td style="font-size:11px;color:var(--muted);">'+fmtDate(l.production_date)+'</td><td style="font-size:11px;color:var(--muted);">'+fmtDate(l.expiry_date)+'</td><td style="font-size:11px;color:var(--muted);">'+(l.quantity||'—')+'</td><td style="font-size:10px;color:var(--muted);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+esc(l.notes||'—')+'</td></tr>').join('')+
+      '</tbody></table>'}
+    </div></div>`;
+  } catch(e) { el.innerHTML='<div style="color:var(--danger);font-size:12px;padding:20px;">Error: '+e.message+'</div>'; }
+}
+function toggleLotForm() { const f=document.getElementById('lot-form'); if(f) f.style.display=f.style.display==='none'?'':'none'; }
+async function saveLot() {
+  const ingId=document.getElementById('lot-ingredient')?.value, code=document.getElementById('lot-code')?.value.trim().toUpperCase(), msg=document.getElementById('lot-msg');
+  if (!ingId||!code) { msg.style.cssText='display:block;color:var(--danger);'; msg.textContent='Ingredient and lot code are required.'; return; }
+  const {error} = await sb.from('supplier_lot_codes').insert({supplier_org_id:_orgId,ingredient_id:ingId,lot_code:code,production_date:document.getElementById('lot-prod')?.value||null,expiry_date:document.getElementById('lot-exp')?.value||null,quantity:document.getElementById('lot-qty')?.value?parseFloat(document.getElementById('lot-qty').value):null,notes:document.getElementById('lot-notes')?.value.trim()||null});
+  if (error) { msg.style.cssText='display:block;color:var(--danger);'; msg.textContent='Error: '+error.message; return; }
+  showToast('Lot code registered','ok',2500); renderLots();
 }
 
-async function submitShipment() {
-  const mfrId     = document.getElementById('log-mfr')?.value;
-  const ingredient = document.getElementById('log-ingredient')?.value.trim();
-  const lot       = document.getElementById('log-lot')?.value.trim();
-  const qty       = parseFloat(document.getElementById('log-qty')?.value || '0');
-  const unit      = document.getElementById('log-unit')?.value;
-  const date      = document.getElementById('log-date')?.value;
-  const ref       = document.getElementById('log-ref')?.value.trim();
-  const notes     = document.getElementById('log-notes')?.value.trim();
-  const msg       = document.getElementById('log-msg');
-
-  const showMsg = (txt, type) => {
-    msg.style.display='block';
-    msg.style.background = type==='error' ? 'rgba(255,92,92,0.1)' : 'rgba(52,211,153,0.1)';
-    msg.style.color = type==='error' ? 'var(--danger)' : 'var(--accent)';
-    msg.style.border = `1px solid ${type==='error' ? 'rgba(255,92,92,0.3)' : 'rgba(52,211,153,0.3)'}`;
-    msg.textContent = txt;
-  };
-
-  if (!mfrId)      { showMsg('Select a manufacturer.', 'error'); return; }
-  if (!ingredient) { showMsg('Enter the ingredient name.', 'error'); return; }
-
-  // Get manufacturer name
-  const { data: mfrOrg } = await sb.from('organisations').select('name').eq('id', mfrId).single();
-
-  const { error } = await sb.from('ingredient_receipts').insert({
-    manufacturer_id: mfrId,
-    manufacturer_name: mfrOrg?.name || null,
-    supplier_id: _orgId,
-    supplier_name: _orgName,
-    ingredient_name: ingredient,
-    lot_number: lot || null,
-    quantity: qty || null,
-    unit,
-    shipped_at: date ? new Date(date).toISOString() : null,
-    received_at: new Date().toISOString(),
-    reference_document: ref || null,
-    notes: notes || null,
-  });
-
-  if (error) { showMsg('Error: ' + error.message, 'error'); return; }
-
-  showMsg('Shipment logged successfully! The manufacturer can now see this in their traceability records.', 'ok');
-  // Reset form
-  ['log-ingredient','log-lot','log-qty','log-ref','log-notes'].forEach(id => { const el=document.getElementById(id); if(el) el.value=''; });
-  document.getElementById('log-mfr').value = '';
-  _logManufacturerId = null;
-}
-
+// Shipments
 async function renderShipments() {
   const el = document.getElementById('main-content');
-  el.innerHTML = '<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>';
-
-  const { data } = await sb.from('ingredient_receipts').select('*').eq('supplier_id', _orgId).order('shipped_at', { ascending: false }).limit(200);
-  const shipments = data || [];
-
-  el.innerHTML = `
-    <div>
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:12px;flex-wrap:wrap;">
-        <div>
-          <div style="font-size:15px;font-weight:600;color:var(--text);">Shipment History</div>
-          <div style="font-size:12px;color:var(--muted);margin-top:2px;">${shipments.length} ingredient receipts logged</div>
-        </div>
-        <button onclick="showPanel('log')" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;font-family:'Figtree',sans-serif;">+ Log Shipment</button>
+  el.innerHTML='<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading...</div>';
+  try {
+    const [{data:shipments},{data:ingredients},{data:partners}] = await Promise.all([
+      sb.from('supplier_shipments').select('*,organisations!supplier_shipments_manufacturer_org_id_fkey(name)').eq('supplier_org_id',_orgId).order('shipped_at',{ascending:false}).limit(100),
+      sb.from('supplier_ingredients').select('id,name').eq('supplier_org_id',_orgId).order('name'),
+      sb.from('supplier_manufacturer_links').select('manufacturer_org_id,organisations!supplier_manufacturer_links_manufacturer_org_id_fkey(id,name)').eq('supplier_org_id',_orgId).eq('status','active'),
+    ]);
+    el.innerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px;"><div><div style="font-family:Figtree,sans-serif;font-weight:700;font-size:16px;">${(shipments||[]).length} shipment${(shipments||[]).length!==1?'s':''}</div><div style="font-size:11px;color:var(--muted);margin-top:2px;">Ingredient shipments logged to manufacturer partners</div></div>${(ingredients||[]).length&&(partners||[]).length?'<button class="btn-primary" onclick="toggleShipmentForm()"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Log shipment</button>':'<div style="font-size:11px;color:var(--warn);">'+(!(partners||[]).length?'Connect a manufacturer first':'Add ingredients first')+'</div>'}</div>
+    <div id="shipment-form" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px;">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:12px;">Log ingredient shipment</div>
+      <div id="ss-msg" style="display:none;font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+        <div class="field" style="margin:0;"><label>Ingredient *</label><select id="ss-ingredient"><option value="">— Select —</option>${(ingredients||[]).map(i=>'<option value="'+i.id+'">'+esc(i.name)+'</option>').join('')}</select></div>
+        <div class="field" style="margin:0;"><label>Lot code *</label><input id="ss-lot" type="text" placeholder="e.g. L2026-04-01A"></div>
       </div>
-
-      ${shipments.length === 0 ? `
-        <div class="panel"><div class="empty-state">
-          <div class="icon">📦</div>
-          <div class="title">No shipments logged yet</div>
-          <div class="sub">Start logging ingredient shipments to build your traceability record.</div>
-        </div></div>` : `
-      <div class="panel">
-        <div style="padding:0 18px;">
-          <table>
-            <thead><tr>
-              <th>Ingredient</th><th>Lot / Batch</th><th>Shipped to</th><th>Quantity</th><th>Date</th><th>Ref</th>
-            </tr></thead>
-            <tbody>
-              ${shipments.map(s=>`<tr>
-                <td style="font-weight:500;color:var(--text);">${s.ingredient_name||'—'}</td>
-                <td style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);">${s.lot_number||'—'}</td>
-                <td style="color:var(--muted);">${s.manufacturer_name||'—'}</td>
-                <td style="color:var(--muted);">${s.quantity||''} ${s.unit||''}</td>
-                <td style="color:var(--muted);white-space:nowrap;">${s.shipped_at?new Date(s.shipped_at).toLocaleDateString('en-GB'):'—'}</td>
-                <td style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">${s.reference_document||'—'}</td>
-              </tr>`).join('')}
-            </tbody>
-          </table>
-        </div>
-      </div>`}
-    </div>`;
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+        <div class="field" style="margin:0;"><label>Shipped to *</label><select id="ss-mfr"><option value="">— Select manufacturer —</option>${(partners||[]).map(p=>'<option value="'+p.organisations?.id+'">'+esc(p.organisations?.name||'—')+'</option>').join('')}</select></div>
+        <div class="field" style="margin:0;"><label>Shipped date *</label><input id="ss-date" type="date"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px;">
+        <div class="field" style="margin:0;"><label>Quantity</label><input id="ss-qty" type="number" min="0" placeholder="e.g. 200"></div>
+        <div class="field" style="margin:0;"><label>Unit</label><select id="ss-unit"><option value="kg">kg</option><option value="L">L</option><option value="units">units</option><option value="cases">cases</option><option value="pallets">pallets</option></select></div>
+        <div class="field" style="margin:0;"><label>Reference / PO</label><input id="ss-ref" type="text" placeholder="e.g. PO-2026-001"></div>
+      </div>
+      <div style="display:flex;gap:8px;"><button class="btn-primary" onclick="saveShipment()" style="flex:1;justify-content:center;">Log shipment</button><button class="btn-ghost" onclick="toggleShipmentForm()">Cancel</button></div>
+    </div>
+    <div class="panel"><div class="panel-body" style="padding:${!(shipments||[]).length?'18px':'0'};">
+      ${!(shipments||[]).length?'<div class="empty">No shipments logged yet. Log ingredient shipments to give manufacturers upstream traceability for FSMA 204.</div>':
+      '<table class="data-table"><thead><tr><th>Ingredient</th><th>Lot code</th><th>Shipped to</th><th>Date</th><th>Qty</th><th>Ref</th></tr></thead><tbody>'+
+      (shipments||[]).map(s=>'<tr><td style="font-weight:500;color:var(--text);">'+esc(s.ingredient_name||'—')+'</td><td style="font-family:DM Mono,monospace;font-size:11px;color:var(--accent);">'+esc(s.lot_code||'—')+'</td><td style="font-size:11px;color:var(--text);">'+esc(s.organisations?.name||'—')+'</td><td style="font-size:11px;color:var(--muted);">'+fmtDate(s.shipped_at)+'</td><td style="font-size:11px;color:var(--muted);">'+(s.quantity||'—')+' '+(s.unit||'')+'</td><td style="font-size:10px;color:var(--muted);font-family:DM Mono,monospace;">'+esc(s.reference||'—')+'</td></tr>').join('')+
+      '</tbody></table>'}
+    </div></div>`;
+  } catch(e) { el.innerHTML='<div style="color:var(--danger);font-size:12px;padding:20px;">Error: '+e.message+'</div>'; }
+}
+function toggleShipmentForm() {
+  const f=document.getElementById('shipment-form'); if(f) f.style.display=f.style.display==='none'?'':'none';
+  const d=document.getElementById('ss-date'); if(d&&!d.value) d.value=new Date().toISOString().split('T')[0];
+}
+async function saveShipment() {
+  const ingId=document.getElementById('ss-ingredient')?.value, lot=document.getElementById('ss-lot')?.value.trim().toUpperCase(), mfrId=document.getElementById('ss-mfr')?.value, date=document.getElementById('ss-date')?.value, msg=document.getElementById('ss-msg');
+  if (!ingId||!lot||!mfrId||!date) { msg.style.cssText='display:block;color:var(--danger);'; msg.textContent='Please fill in all required fields.'; return; }
+  // Also get the ingredient name for denormalized storage
+  const ingEl = document.getElementById('ss-ingredient');
+  const ingredientName = ingEl?.selectedOptions?.[0]?.textContent || '';
+  const {error} = await sb.from('supplier_shipments').insert({supplier_org_id:_orgId,ingredient_id:ingId,ingredient_name:ingredientName,manufacturer_org_id:mfrId,lot_code:lot,shipped_at:new Date(date).toISOString(),quantity:document.getElementById('ss-qty')?.value?parseFloat(document.getElementById('ss-qty').value):null,unit:document.getElementById('ss-unit')?.value||'kg',reference:document.getElementById('ss-ref')?.value.trim()||null});
+  if (error) { msg.style.cssText='display:block;color:var(--danger);'; msg.textContent='Error: '+error.message; return; }
+  showToast('Shipment logged','ok',2500); renderShipments();
 }
 
-async function renderSettings() {
+// Manufacturers
+async function renderManufacturers() {
+  const el=document.getElementById('main-content');
+  el.innerHTML='<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading...</div>';
+  try {
+    const {data:links} = await sb.from('supplier_manufacturer_links').select('*,organisations!supplier_manufacturer_links_manufacturer_org_id_fkey(name,contact_email)').eq('supplier_org_id',_orgId).order('created_at',{ascending:false});
+    const header = '<div style="margin-bottom:20px;"><div style="font-family:Figtree,sans-serif;font-weight:700;font-size:16px;">'+(links||[]).length+' manufacturer connection'+((links||[]).length!==1?'s':'')+'</div><div style="font-size:11px;color:var(--muted);margin-top:2px;">Manufacturers invite you via email to join their supplier network</div></div>';
+    const body = !(links||[]).length
+      ? '<div class="panel"><div class="panel-body"><div class="empty"><div style="font-size:24px;margin-bottom:12px;">&#x1F91D;</div><div style="font-weight:600;color:var(--text);margin-bottom:6px;">No connections yet</div><div>Manufacturer partners will invite you by email. Once accepted, they appear here.</div></div></div></div>'
+      : '<div class="panel"><div class="panel-body" style="padding:0;"><table class="data-table"><thead><tr><th>Manufacturer</th><th>Status</th><th>Since</th></tr></thead><tbody>' +
+        (links||[]).map(l=>'<tr><td><div style="font-weight:600;color:var(--text);">'+esc(l.organisations?.name||'—')+'</div>'+(l.organisations?.contact_email?'<div style="font-size:10px;color:var(--muted);margin-top:2px;">'+esc(l.organisations.contact_email)+'</div>':'')+'</td><td><span class="pill '+(l.status==='active'?'pill-green':l.status==='pending'?'pill-amber':'pill-muted')+'">'+l.status+'</span></td><td style="font-size:11px;color:var(--muted);">'+fmtDate(l.created_at)+'</td></tr>').join('') +
+        '</tbody></table></div></div>';
+    el.innerHTML = header + body;
+  } catch(e) { el.innerHTML='<div style="color:var(--danger);font-size:12px;padding:20px;">Error: '+e.message+'</div>'; }
+}
+
+// Investigations
+async function renderInvestigations() {
   const el = document.getElementById('main-content');
+  el.innerHTML = '<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading...</div>';
+  try {
+    const { data: links } = await sb.from('supplier_manufacturer_links')
+      .select('manufacturer_org_id').eq('supplier_org_id', _orgId).eq('status', 'active');
+    const mfrIds = (links || []).map(l => l.manufacturer_org_id);
 
-  const { data: org } = await sb.from('organisations').select('*').eq('id', _orgId).single();
-  if (!org) { el.innerHTML = '<div style="color:var(--danger)">Could not load org.</div>'; return; }
+    let invs = [];
+    if (mfrIds.length) {
+      const { data } = await sb.from('investigation_requests')
+        .select('*, investigation_responses(id, supplier_org_id, submitted_at)')
+        .in('manufacturer_id', mfrIds)
+        .order('created_at', { ascending: false });
+      invs = data || [];
+    }
 
-  el.innerHTML = `
-    <div style="max-width:560px;">
-      <div style="margin-bottom:20px;">
-        <div style="font-size:15px;font-weight:600;color:var(--text);">Settings</div>
-        <div style="font-size:12px;color:var(--muted);margin-top:2px;">Your supplier profile visible to connected manufacturers.</div>
-      </div>
+    const responded   = new Set(invs.filter(inv => (inv.investigation_responses || []).some(r => r.supplier_org_id === _orgId)).map(inv => inv.id));
+    const needsResp   = invs.filter(inv => !responded.has(inv.id) && (inv.status === 'open' || inv.status === 'in_progress'));
+    const urgColors   = { 1: 'var(--danger)', 2: 'var(--warn)', 3: 'var(--muted)' };
 
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;display:flex;flex-direction:column;gap:14px;">
-        <div style="font-size:13px;font-weight:600;color:var(--text);border-bottom:1px solid var(--border);padding-bottom:10px;">Organisation Profile</div>
+    let html = '<div style="margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">';
+    html += '<div><div style="font-family:Figtree,sans-serif;font-weight:700;font-size:16px;">' + invs.length + ' investigation' + (invs.length !== 1 ? 's' : '') + '</div>';
+    html += '<div style="font-size:11px;color:var(--muted);margin-top:2px;">Quality investigation requests from manufacturer partners</div></div>';
+    if (needsResp.length) {
+      html += '<div style="background:rgba(245,166,35,0.1);border:1px solid rgba(245,166,35,0.3);border-radius:8px;padding:8px 14px;font-size:12px;color:var(--warn);">' + needsResp.length + ' awaiting your response</div>';
+    }
+    html += '</div>';
 
-        <div class="field" style="margin:0;"><label>Organisation name</label>
-        <input id="set-name" type="text" value="${(org.name||'').replace(/"/g,'&quot;')}" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 11px;color:var(--text);font-size:13px;width:100%;"></div>
+    if (!invs.length) {
+      html += '<div class="panel"><div class="panel-body"><div class="empty">';
+      html += '<div style="font-size:24px;margin-bottom:12px;">&#x1F50D;</div>';
+      html += '<div style="font-weight:600;color:var(--text);margin-bottom:6px;">No investigations</div>';
+      html += '<div>When a manufacturer needs you to investigate a quality issue, requests appear here.</div>';
+      html += '</div></div></div>';
+    } else {
+      invs.forEach(function(inv) {
+        const border = (!responded.has(inv.id) && (inv.status === 'open' || inv.status === 'in_progress'))
+          ? 'rgba(245,166,35,0.3)' : 'var(--border)';
+        html += '<div style="background:var(--surface);border:1px solid ' + border + ';border-radius:12px;padding:18px;margin-bottom:12px;">';
+        html += '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">';
+        html += '<div style="flex:1;">';
+        html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">';
+        html += '<div style="width:7px;height:7px;border-radius:50%;background:' + (urgColors[inv.urgency_class || 2]) + ';flex-shrink:0;"></div>';
+        html += '<div style="font-size:14px;font-weight:700;color:var(--text);">' + esc(inv.product_name || '—') + '</div>';
+        html += '<span class="pill ' + (inv.status === 'open' ? 'pill-amber' : 'pill-muted') + '">' + inv.status + '</span>';
+        html += '</div>';
+        if (inv.lot_number) {
+          html += '<div style="font-size:11px;color:var(--muted);margin-bottom:4px;">Lot: <span style="font-family:DM Mono,monospace;color:var(--text);">' + esc(inv.lot_number) + '</span></div>';
+        }
+        if (inv.issue_description) {
+          const desc = inv.issue_description.slice(0, 200) + (inv.issue_description.length > 200 ? '…' : '');
+          html += '<div style="font-size:12px;color:var(--muted);background:var(--surface2);border-radius:6px;padding:8px 10px;margin-top:8px;line-height:1.5;">' + esc(desc) + '</div>';
+        }
+        html += '</div>';
+        html += '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px;">';
+        html += '<div style="font-size:10px;color:var(--muted);">' + fmtDate(inv.created_at) + '</div>';
+        if (responded.has(inv.id)) {
+          html += '<span class="pill pill-green">Responded</span>';
+        } else if (inv.status === 'open' || inv.status === 'in_progress') {
+          html += '<button onclick="openInvResponse(&quot;' + inv.id + '&quot;)" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer;">Respond</button>';
+        }
+        html += '</div></div></div>';
+      });
+    }
 
-        <div class="field" style="margin:0;"><label>Contact email</label>
-        <input id="set-email" type="email" value="${(org.contact_email||'').replace(/"/g,'&quot;')}" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 11px;color:var(--text);font-size:13px;width:100%;"></div>
-
-        <div class="field" style="margin:0;"><label>What do you supply?</label>
-        <input id="set-supply" type="text" value="${(org.supply_type||'').replace(/"/g,'&quot;')}" placeholder="e.g. Dairy, Grain, Seafood" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 11px;color:var(--text);font-size:13px;width:100%;"></div>
-
-        <div class="field" style="margin:0;"><label>Primary region</label>
-        <select id="set-region" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 11px;color:var(--text);font-size:13px;width:100%;">
-          <option value="no" ${org.region==='no'?'selected':''}>🇳🇴 Norway / EU</option>
-          <option value="us" ${org.region==='us'?'selected':''}>🇺🇸 United States</option>
-          <option value="both" ${org.region==='both'?'selected':''}>🌍 Both markets</option>
-        </select></div>
-
-        <div id="set-msg" style="display:none;border-radius:8px;padding:9px 12px;font-size:12px;"></div>
-        <div style="display:flex;justify-content:flex-end;">
-          <button onclick="saveSettings()" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:9px 20px;font-size:13px;font-weight:600;cursor:pointer;font-family:'Figtree',sans-serif;">Save changes</button>
-        </div>
-      </div>
-    </div>`;
+    el.innerHTML = html;
+  } catch(e) {
+    el.innerHTML = '<div style="color:var(--danger);font-size:12px;padding:20px;">Error: ' + e.message + '</div>';
+  }
 }
 
-async function saveSettings() {
-  const name   = document.getElementById('set-name')?.value.trim();
-  const email  = document.getElementById('set-email')?.value.trim();
-  const supply = document.getElementById('set-supply')?.value.trim();
-  const region = document.getElementById('set-region')?.value;
-  const msg    = document.getElementById('set-msg');
 
-  if (!name) { msg.style.display='block'; msg.style.background='rgba(255,92,92,0.1)'; msg.style.color='var(--danger)'; msg.style.border='1px solid rgba(255,92,92,0.3)'; msg.textContent='Name required.'; return; }
-  const { error } = await sb.from('organisations').update({ name, contact_email: email, supply_type: supply, region }).eq('id', _orgId);
-  if (error) { msg.style.display='block'; msg.style.background='rgba(255,92,92,0.1)'; msg.style.color='var(--danger)'; msg.style.border='1px solid rgba(255,92,92,0.3)'; msg.textContent=error.message; return; }
-  _orgName = name;
-  document.getElementById('org-name-label').textContent = name;
-  document.getElementById('topbar-sub').textContent = name + ' · Supplier';
-  msg.style.display='block'; msg.style.background='rgba(52,211,153,0.1)'; msg.style.color='var(--accent)'; msg.style.border='1px solid rgba(52,211,153,0.3)'; msg.textContent='Changes saved.';
+
+async function openInvResponse(invId) {
+  const { data: inv } = await sb.from('investigation_requests').select('*').eq('id', invId).single();
+  if (!inv) return;
+  document.getElementById('sinv-modal')?.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'sinv-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(4,12,14,0.92);z-index:9500;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(4px);';
+
+  const descHtml = inv.issue_description
+    ? '<div style="font-size:11px;color:var(--info);margin-top:6px;padding:8px 10px;background:rgba(56,189,248,0.06);border-radius:6px;line-height:1.5;">' + esc(inv.issue_description) + '</div>'
+    : '';
+
+  modal.innerHTML =
+    '<div style="background:var(--surface);border:1px solid var(--border);border-radius:18px;width:100%;max-width:540px;max-height:90vh;overflow-y:auto;">' +
+    '<div style="padding:22px 26px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:12px;">' +
+    '<div><div style="font-family:Figtree,sans-serif;font-weight:700;font-size:15px;">Respond to investigation</div>' +
+    '<div style="font-size:12px;color:var(--muted);margin-top:3px;">' + esc(inv.product_name || '—') + '</div>' +
+    descHtml + '</div>' +
+    '<button onclick="document.getElementById(&quot;sinv-modal&quot;).remove()" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;">&#x2715;</button></div>' +
+    '<div style="padding:22px 26px;display:flex;flex-direction:column;gap:14px;">' +
+    '<div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.07em;">Did you find the issue? *</label>' +
+    '<div style="display:flex;gap:10px;">' +
+    '<button id="sinv-yes" onclick="sFoundToggle(true)" style="flex:1;padding:10px;border:2px solid var(--border);border-radius:9px;background:transparent;color:var(--muted);font-size:13px;font-family:Figtree,sans-serif;font-weight:600;cursor:pointer;">Yes</button>' +
+    '<button id="sinv-no" onclick="sFoundToggle(false)" style="flex:1;padding:10px;border:2px solid var(--border);border-radius:9px;background:transparent;color:var(--muted);font-size:13px;font-family:Figtree,sans-serif;font-weight:600;cursor:pointer;">Not found</button>' +
+    '</div><input type="hidden" id="sinv-found" value=""></div>' +
+    '<div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:5px;">Findings *</label>' +
+    '<textarea id="sinv-desc" rows="4" placeholder="Describe your findings, lot codes checked, quantities..." style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:13px;resize:vertical;box-sizing:border-box;font-family:inherit;outline:none;line-height:1.5;"></textarea></div>' +
+    '<div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:5px;">Lot codes affected</label>' +
+    '<input id="sinv-lots" type="text" placeholder="e.g. L2026-04-01A, L2026-04-01B" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:13px;box-sizing:border-box;outline:none;"></div>' +
+    '<div id="sinv-msg" style="display:none;font-size:12px;padding:9px 12px;border-radius:8px;"></div>' +
+    '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
+    '<button onclick="document.getElementById(&quot;sinv-modal&quot;).remove()" style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:9px 18px;font-size:13px;cursor:pointer;font-family:inherit;">Cancel</button>' +
+    '<button onclick="submitInvResponse(&quot;' + invId + '&quot;)" id="sinv-submit" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:9px 22px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">Submit</button>' + +
+    '</div></div></div>';
+
+  document.body.appendChild(modal);
 }
+
+
+
+function sFoundToggle(found) {
+  document.getElementById('sinv-found').value=found?'yes':'no';
+  const y=document.getElementById('sinv-yes'),n=document.getElementById('sinv-no');
+  if(found){y.style.borderColor='var(--accent)';y.style.color='var(--accent)';y.style.background='rgba(52,211,153,0.08)';n.style.borderColor='var(--border)';n.style.color='var(--muted)';n.style.background='transparent';}
+  else{n.style.borderColor='var(--accent)';n.style.color='var(--accent)';n.style.background='rgba(52,211,153,0.08)';y.style.borderColor='var(--border)';y.style.color='var(--muted)';y.style.background='transparent';}
+}
+
+async function submitInvResponse(invId) {
+  const found=document.getElementById('sinv-found').value, desc=document.getElementById('sinv-desc')?.value.trim(), lots=document.getElementById('sinv-lots')?.value.trim(), msg=document.getElementById('sinv-msg'), btn=document.getElementById('sinv-submit');
+  const showMsg=(t,ok)=>{msg.style.cssText='display:block;background:'+(ok?'rgba(52,211,153,0.1)':'rgba(255,92,92,0.1)')+';color:'+(ok?'var(--accent)':'var(--danger)')+';border:1px solid '+(ok?'rgba(52,211,153,0.3)':'rgba(255,92,92,0.3)')+';font-size:12px;padding:9px 12px;border-radius:8px;';msg.textContent=t;};
+  if(!found){showMsg('Please indicate whether the issue was found.',false);return;}
+  if(!desc){showMsg('Please describe your findings.',false);return;}
+  btn.disabled=true; btn.textContent='Submitting...';
+  const {error} = await sb.from('investigation_responses').insert({investigation_id:invId,supplier_org_id:_orgId,issue_found:found==='yes',issue_description:desc,affected_lots:lots||null,status:'submitted'});
+  if(error){showMsg('Error: '+error.message,false);btn.disabled=false;btn.textContent='Submit';return;}
+  await sb.from('investigation_requests').update({status:'in_progress'}).eq('id',invId).eq('status','open');
+  document.getElementById('sinv-modal').remove();
+  showToast('Response submitted','ok',3000);
+  renderInvestigations();
+}
+// KPI card click delegation
+document.addEventListener('click', function(e) {
+  const card = e.target.closest('.kpi-nav-card');
+  if (card && card.dataset.panel) showPanel(card.dataset.panel);
+});
 </script>
 </body>
 </html>

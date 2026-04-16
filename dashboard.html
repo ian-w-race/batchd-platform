@@ -413,6 +413,10 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
         Investigations
       </button>
+      <button class="nav-item" onclick="showPanel('consumer-notify')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+        Consumer Notify
+      </button>
       <button class="nav-item" onclick="showPanel('triage')" id="nav-triage">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
         Complaint Triage
@@ -629,12 +633,12 @@ async function initDashboard(user) {
 function showPanel(name) {
   _activePanel = name;
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-  const panels = { overview:'Dashboard', recalls:'Recalls', stores:'Stores', traceability:'Traceability', shipments:'Incoming Shipments', staff:'Staff', compliance:'Compliance', reports:'Reports', settings:'Settings', partners:'Manufacturer Partners', triage:'Complaint Triage' };
+  const panels = { overview:'Dashboard', recalls:'Recalls', stores:'Stores', traceability:'Traceability', shipments:'Incoming Shipments', staff:'Staff', compliance:'Compliance', reports:'Reports', settings:'Settings', partners:'Manufacturer Partners', triage:'Complaint Triage', 'consumer-notify':'Consumer Notifications', investigations:'Investigations' };
   document.getElementById('topbar-title').textContent = panels[name] || name;
   document.querySelectorAll('.nav-item').forEach(el => {
     if (el.getAttribute('onclick')?.includes(`'${name}'`)) el.classList.add('active');
   });
-  const fns = { overview: renderOverview, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, shipments: renderShipments, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, partners: renderPartners, triage: renderDashboardTriage, investigations: renderDashInvestigations };
+  const fns = { overview: renderOverview, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, shipments: renderShipments, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, partners: renderPartners, triage: renderDashboardTriage, investigations: renderDashInvestigations, 'consumer-notify': renderConsumerNotification };
   (fns[name] || renderComingSoon)(name);
 }
 
@@ -1977,7 +1981,11 @@ async function renderCompliance() {
       sb.from('scans').select('lot_number, supplier_name, is_ftl, created_at, store_name, recall_resolved').eq('organisation_id', _orgId),
       sb.from('stores').select('id, name, active').eq('organisation_id', _orgId),
       sb.from('recall_acknowledgements').select('status, acknowledged_at, created_at').eq('organisation_id', _orgId),
-      sb.from('mock_recall_drills').select('id, created_at').eq('retailer_org_id', _orgId).gte('created_at', days365),
+      sb.from('mock_recall_drills')
+        .select('id, created_at, recall_event_id, initiating_org_id')
+        .eq('retailer_org_id', _orgId)
+        .gte('created_at', days365)
+        .order('created_at', { ascending: false }),
       sb.from('trading_partners').select('status').eq('retailer_id', _orgId),
       sb.from('organisation_members').select('user_id, role').eq('organisation_id', _orgId),
     ]);
@@ -1985,7 +1993,18 @@ async function renderCompliance() {
     const scans   = scansRes.data   || [];
     const stores  = storesRes.data  || [];
     const acks    = acksRes.data    || [];
-    const drills  = drillsRes.data  || [];
+    const rawDrills = drillsRes.data || [];
+    // Enrich drills with recall_event product data
+    let drills = rawDrills;
+    const drillEventIds = rawDrills.map(d => d.recall_event_id).filter(Boolean);
+    if (drillEventIds.length > 0) {
+      const { data: drillEvents } = await sb.from('recall_events')
+        .select('id, product_name, lot_number, reason, severity')
+        .in('id', drillEventIds);
+      const evMap = {};
+      (drillEvents||[]).forEach(e => { evMap[e.id] = e; });
+      drills = rawDrills.map(d => ({ ...d, ...(evMap[d.recall_event_id] || {}) }));
+    }
     const partners = partnersRes.data || [];
     const members  = membersRes.data  || [];
 
@@ -2151,26 +2170,32 @@ async function renderCompliance() {
       <div class="panel">
         <div class="panel-header">
           <div><div class="panel-title">Mock recall drill history</div><div class="panel-sub">Last 12 months · ${isUS ? 'FDA recommends annual drills' : 'Best practice: at least one drill per year'}</div></div>
-          <a href="https://batchd-app.netlify.app" target="_blank">
-            <button class="panel-action">Run a drill ↗</button>
-          </a>
+          <div style="display:flex;gap:8px;">
+            ${drills.length > 0 ? `<button class="panel-action" onclick="generateDrillReport()" style="color:var(--accent);border-color:rgba(52,211,153,0.3);">↓ Compliance report</button>` : ''}
+            <a href="https://batchd-app.netlify.app" target="_blank"><button class="panel-action">Run a drill ↗</button></a>
+          </div>
         </div>
-        <div class="panel-body">
+        <div class="panel-body" style="padding:${drills.length===0?'18px':'0 18px'};">
           ${drills.length === 0
             ? `<div class="empty">No mock recall drills on record.<br>Open the scanning app → Manager Dashboard → Mock Recall Drill to run your first drill.</div>`
             : `<table class="store-table" style="width:100%;">
                 <thead><tr>
-                  <th>Date</th>
-                  <th>Drill ID</th>
-                  <th>Result</th>
+                  <th>Date</th><th>Product</th><th>Stores notified</th><th>Completion</th><th>Report</th>
                 </tr></thead>
                 <tbody>
-                  ${drills.map(d => `
-                    <tr>
-                      <td style="font-size:11px;color:var(--muted);">${new Date(d.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}</td>
-                      <td style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${d.id.slice(0,8)}…</td>
-                      <td><span class="recall-status status-resolved">Completed</span></td>
-                    </tr>`).join('')}
+                  ${drills.map(d => {
+                    const drillAcks = acks.filter(a => a.recall_event_id === d.recall_event_id);
+                    const confirmed = drillAcks.filter(a => a.status === 'confirmed').length;
+                    const total     = drillAcks.length;
+                    const pct       = total > 0 ? Math.round((confirmed/total)*100) : 0;
+                    return '<tr>' +
+                      '<td style="font-size:11px;color:var(--muted);white-space:nowrap;">' + new Date(d.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) + '</td>' +
+                      '<td style="font-size:11px;color:var(--text);">' + (d.product_name || '—') + '</td>' +
+                      '<td style="font-size:11px;color:var(--text);">' + total + ' store' + (total!==1?'s':'') + '</td>' +
+                      '<td><div style="display:flex;align-items:center;gap:8px;"><div style="width:60px;height:4px;background:var(--border);border-radius:2px;overflow:hidden;"><div style="height:100%;width:' + pct + '%;background:' + (pct===100?'var(--accent)':'var(--warn)') + ';border-radius:2px;"></div></div><span style="font-size:11px;color:' + (pct===100?'var(--accent)':'var(--muted)') + ';">' + pct + '%</span></div></td>' +
+                      '<td><button onclick="generateDrillReport(\'' + d.id + '\')" style="font-size:10px;padding:3px 10px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;">↓ PDF</button></td>' +
+                    '</tr>';
+                  }).join('')}
                 </tbody>
               </table>`}
         </div>
@@ -4251,5 +4276,558 @@ async function submitDashInvestResponse(invId) {
   document.getElementById('dash-invest-resp-modal').remove();
   showToast('Response submitted successfully', 'ok', 3000);
   renderDashInvestigations();
+}
+</script>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// GAP 4: DRILL COMPLIANCE REPORT GENERATOR
+// ═══════════════════════════════════════════════════════════════
+
+async function generateDrillReport(drillId) {
+  // Show loading
+  const btn = event?.target;
+  const origText = btn?.textContent;
+  if (btn) { btn.textContent = '…'; btn.disabled = true; }
+
+  try {
+    // Fetch all drills or a specific one
+    let drillsQuery = sb.from('mock_recall_drills')
+      .select('id, created_at, recall_event_id, initiating_org_id')
+      .eq('retailer_org_id', _orgId)
+      .order('created_at', { ascending: false });
+    if (drillId) drillsQuery = drillsQuery.eq('id', drillId);
+    else drillsQuery = drillsQuery.gte('created_at', new Date(Date.now() - 365*86400000).toISOString());
+
+    const { data: drills } = await drillsQuery;
+    if (!drills?.length) { if (btn) { btn.textContent = origText; btn.disabled = false; } showToast('No drill data found', 'error', 3000); return; }
+
+    // Enrich with recall_event data
+    const evIds = drills.map(d => d.recall_event_id).filter(Boolean);
+    let evMap = {};
+    if (evIds.length) {
+      const { data: evs } = await sb.from('recall_events')
+        .select('id, product_name, lot_number, reason, severity, published_at, source_org_id')
+        .in('id', evIds);
+      (evs||[]).forEach(e => { evMap[e.id] = e; });
+    }
+
+    // Fetch acks for all drill events
+    let ackMap = {};
+    if (evIds.length) {
+      const { data: acksData } = await sb.from('recall_acknowledgements')
+        .select('recall_event_id, store_id, status, acknowledged_at, updated_at, stores(name)')
+        .in('recall_event_id', evIds)
+        .eq('organisation_id', _orgId);
+      (acksData||[]).forEach(a => {
+        if (!ackMap[a.recall_event_id]) ackMap[a.recall_event_id] = [];
+        ackMap[a.recall_event_id].push(a);
+      });
+    }
+
+    // Org info
+    const { data: org } = await sb.from('organisations').select('name, contact_email, region').eq('id', _orgId).single();
+
+    // Build report HTML
+    const isUS = _orgRegion === 'us';
+    const regRef = isUS ? 'FDA FSMA Section 204 / 21 CFR 117' : 'EU Regulation 178/2002 / Mattilsynet';
+    const today = new Date().toLocaleDateString('en-GB', { day:'numeric', month:'long', year:'numeric' });
+
+    const drillSections = drills.map(d => {
+      const ev = evMap[d.recall_event_id] || {};
+      const acks = ackMap[d.recall_event_id] || [];
+      const confirmed = acks.filter(a => a.status === 'confirmed').length;
+      const pulled    = acks.filter(a => ['pulled','disposed','confirmed'].includes(a.status)).length;
+      const total     = acks.length;
+      const pct       = total > 0 ? Math.round((confirmed/total)*100) : 0;
+      const drillDate = new Date(d.created_at).toLocaleDateString('en-GB', {day:'numeric',month:'long',year:'numeric'});
+
+      // Response time analysis
+      const responseTimes = acks
+        .filter(a => a.acknowledged_at && a.created_at)
+        .map(a => (new Date(a.acknowledged_at) - new Date(a.updated_at)) / 3600000);
+      const avgHours = responseTimes.length
+        ? (responseTimes.reduce((s,v) => s+v, 0) / responseTimes.length).toFixed(1)
+        : '—';
+
+      return `
+        <div style="margin-bottom:32px;padding-bottom:24px;border-bottom:1px solid #ddd;">
+          <h3 style="font-size:14px;color:#111;margin:0 0 4px;">Drill: ${ev.product_name || 'Unknown product'}</h3>
+          <div style="font-size:11px;color:#666;margin-bottom:14px;">${drillDate} · Lot: ${ev.lot_number || '—'} · ${ev.severity || 'Simulated'} severity · Reason: ${ev.reason || 'Mock drill exercise'}</div>
+          <table style="width:100%;border-collapse:collapse;margin-bottom:12px;">
+            <thead><tr style="background:#f5f5f5;">
+              <th style="text-align:left;padding:6px 10px;font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:#555;border-bottom:1px solid #ddd;">Store</th>
+              <th style="text-align:left;padding:6px 10px;font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:#555;border-bottom:1px solid #ddd;">Status</th>
+              <th style="text-align:left;padding:6px 10px;font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:#555;border-bottom:1px solid #ddd;">Acknowledged</th>
+            </tr></thead>
+            <tbody>
+              ${total === 0
+                ? `<tr><td colspan="3" style="padding:10px;font-size:11px;color:#888;font-style:italic;">No store acknowledgement records for this drill.</td></tr>`
+                : acks.map(a => `
+                  <tr style="border-bottom:1px solid #eee;">
+                    <td style="padding:7px 10px;font-size:11px;">${a.stores?.name || '—'}</td>
+                    <td style="padding:7px 10px;font-size:11px;">
+                      <span style="padding:2px 8px;border-radius:10px;background:${a.status==='confirmed'?'#d1fae5':a.status==='notified'?'#fef3c7':'#e0f2fe'};color:${a.status==='confirmed'?'#065f46':a.status==='notified'?'#92400e':'#0c4a6e'};font-size:10px;font-weight:600;">${a.status.charAt(0).toUpperCase()+a.status.slice(1)}</span>
+                    </td>
+                    <td style="padding:7px 10px;font-size:11px;color:#555;">${a.acknowledged_at ? new Date(a.acknowledged_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '—'}</td>
+                  </tr>`).join('')}
+            </tbody>
+          </table>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:10px;">
+            ${[
+              {label:'Stores notified', val:total},
+              {label:'Product pulled', val:pulled},
+              {label:'Fully confirmed', val:confirmed},
+              {label:'Completion rate', val:pct+'%'},
+            ].map(s => `<div style="background:#f9f9f9;border:1px solid #eee;border-radius:6px;padding:10px 12px;text-align:center;">
+              <div style="font-size:20px;font-weight:700;color:#111;">${s.val}</div>
+              <div style="font-size:10px;color:#666;margin-top:2px;">${s.label}</div>
+            </div>`).join('')}
+          </div>
+          <div style="margin-top:12px;padding:10px 14px;background:#f0fdf4;border-left:3px solid #34d399;font-size:11px;color:#065f46;">
+            <strong>Assessment:</strong>
+            ${pct === 100
+              ? `All ${total} store${total!==1?'s':''} completed the full 5-step drill response chain. Recall procedures are functioning as required.`
+              : pct >= 80
+                ? `${confirmed} of ${total} stores completed the full response chain. ${total-confirmed} store${total-confirmed!==1?'s':''} did not reach confirmed status — review and follow up with non-compliant locations.`
+                : `Only ${confirmed} of ${total} stores completed the full response chain. Recall procedures require improvement. Targeted retraining recommended for underperforming locations.`}
+          </div>
+        </div>`;
+    }).join('');
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Recall Drill Compliance Report — ${org?.name || _orgName}</title>
+<style>
+  body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 12px; color: #111; margin: 0; padding: 32px 48px; max-width: 800px; }
+  @media print { body { padding: 20px; } .no-print { display: none; } @page { margin: 20mm; } }
+  h1 { font-size: 22px; color: #111; margin: 0 0 4px; }
+  h2 { font-size: 15px; color: #333; margin: 24px 0 8px; border-bottom: 2px solid #34d399; padding-bottom: 6px; }
+  .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 2px solid #111; }
+  .logo { font-weight: 800; font-size: 18px; color: #34d399; }
+  .meta { font-size: 11px; color: #666; text-align: right; line-height: 1.7; }
+  .summary-box { background: #f9f9f9; border: 1px solid #ddd; border-radius: 8px; padding: 16px 20px; margin-bottom: 24px; display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; }
+  .summary-item { text-align: center; }
+  .summary-item .val { font-size: 28px; font-weight: 800; color: #111; }
+  .summary-item .lbl { font-size: 10px; color: #666; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid #ddd; font-size: 10px; color: #999; display: flex; justify-content: space-between; }
+  .disclaimer { font-size: 10px; color: #888; background: #fafafa; border: 1px solid #eee; border-radius: 6px; padding: 10px 14px; margin-top: 20px; line-height: 1.6; }
+</style>
+</head>
+<body>
+  <div class="no-print" style="background:#34d399;color:#065f46;padding:10px 16px;border-radius:8px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;">
+    <span style="font-weight:700;">Recall Drill Compliance Report — ready to print or save as PDF</span>
+    <button onclick="window.print()" style="background:#065f46;color:#fff;border:none;border-radius:6px;padding:7px 16px;font-weight:700;cursor:pointer;">Print / Save PDF</button>
+  </div>
+
+  <div class="header">
+    <div>
+      <div class="logo">Batch'd</div>
+      <h1 style="margin-top:6px;">Recall Drill Compliance Report</h1>
+      <div style="font-size:12px;color:#555;margin-top:4px;">${org?.name || _orgName} · Generated ${today}</div>
+    </div>
+    <div class="meta">
+      Regulatory reference: ${regRef}<br>
+      Organisation: ${org?.name || _orgName}<br>
+      Contact: ${org?.contact_email || '—'}<br>
+      Report period: Last 12 months<br>
+      Drills on record: ${drills.length}
+    </div>
+  </div>
+
+  <div class="summary-box">
+    <div class="summary-item">
+      <div class="val">${drills.length}</div>
+      <div class="lbl">Drills conducted</div>
+    </div>
+    <div class="summary-item">
+      <div class="val">${Object.values(ackMap).reduce((s,a) => s+a.filter(x=>x.status==='confirmed').length, 0)}</div>
+      <div class="lbl">Store completions</div>
+    </div>
+    <div class="summary-item">
+      <div class="val">${drills.length >= 1 ? '<span style="color:#065f46;">✓</span>' : '<span style="color:#dc2626;">✗</span>'}</div>
+      <div class="lbl">Annual drill requirement</div>
+    </div>
+  </div>
+
+  <h2>Executive Summary</h2>
+  <p style="line-height:1.7;color:#333;">
+    ${org?.name || _orgName} has conducted <strong>${drills.length} mock recall drill${drills.length!==1?'s':''}</strong>
+    in the past 12 months. ${drills.length >= 1
+      ? `This satisfies the ${isUS?'FDA-recommended':'industry best practice'} requirement for at least one annual recall readiness exercise.`
+      : `This does not satisfy the ${isUS?'FDA-recommended':'industry best practice'} requirement for annual recall readiness exercises. A drill should be conducted as soon as possible.`}
+    Drills were executed using the Batch'd manufacturer recall push network, distributing simulated recall alerts to connected retail stores and tracking acknowledgement through a 5-step confirmation chain (Notified → Acknowledged → Pulled → Disposed → Confirmed).
+  </p>
+
+  <h2>Drill Details</h2>
+  ${drillSections}
+
+  <div class="disclaimer">
+    <strong>Note:</strong> This report is generated from traceability records maintained in the Batch'd platform. It documents the organisation's recall readiness exercises as required under ${regRef}.
+    Notification to regulatory authorities, adherence to retention deadlines, and all legal compliance responsibility remain with ${org?.name || _orgName}.
+    This document does not constitute legal advice and should be reviewed by qualified food safety or legal counsel before submission to regulatory bodies.
+  </div>
+
+  <div class="footer">
+    <span>Batch'd · batchd.no · Confidential — ${org?.name || _orgName} internal use</span>
+    <span>Generated ${today} · ${window.location.hostname}</span>
+  </div>
+</body>
+</html>`;
+
+    // Open in new window for print/save
+    const win = window.open('', '_blank');
+    win.document.write(html);
+    win.document.close();
+
+  } catch(e) {
+    showToast('Error generating report: ' + e.message, 'error', 4000);
+    console.error('generateDrillReport error:', e);
+  } finally {
+    if (btn) { btn.textContent = origText; btn.disabled = false; }
+  }
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// GAP 3: COMPLAINT PATTERN DETECTION
+// ═══════════════════════════════════════════════════════════════
+
+// Called after a complaint is saved — checks for patterns
+// Also surfaces in the dashboard as a banner
+async function checkComplaintPatterns(productName, orgId) {
+  if (!productName || !orgId) return null;
+  const cutoff = new Date(Date.now() - 30 * 86400000).toISOString();
+  try {
+    const { data: recent } = await sb.from('complaints')
+      .select('id, product_name, triage_level, store_id, created_at, triage_category')
+      .eq('receiving_org_id', orgId)
+      .gte('created_at', cutoff)
+      .ilike('product_name', `%${productName.split(' ')[0]}%`);
+
+    if (!recent || recent.length < 2) return null;
+
+    // Count unique stores
+    const stores = new Set(recent.map(c => c.store_id).filter(Boolean));
+    const criticalCount = recent.filter(c => c.triage_level === 'critical').length;
+
+    // Pattern threshold: 2+ complaints, 2+ stores OR any critical
+    if (stores.size >= 2 || (recent.length >= 2 && criticalCount > 0)) {
+      return {
+        product_name: productName,
+        complaint_count: recent.length,
+        store_count: stores.size,
+        has_critical: criticalCount > 0,
+        complaint_ids: recent.map(c => c.id),
+      };
+    }
+  } catch(e) {
+    console.warn('checkComplaintPatterns error:', e);
+  }
+  return null;
+}
+
+// Renders pattern alert banners in the complaint triage panel
+async function renderPatternAlerts() {
+  const el = document.getElementById('pattern-alerts-container');
+  if (!el) return;
+
+  const cutoff = new Date(Date.now() - 30 * 86400000).toISOString();
+  try {
+    const { data: complaints } = await sb.from('complaints')
+      .select('product_name, store_id, triage_level, created_at')
+      .eq('receiving_org_id', _orgId)
+      .gte('created_at', cutoff)
+      .not('product_name', 'is', null);
+
+    if (!complaints?.length) { el.innerHTML = ''; return; }
+
+    // Group by first word of product name (rough clustering)
+    const groups = {};
+    complaints.forEach(c => {
+      const key = c.product_name.trim().toLowerCase().split(/\s+/).slice(0,2).join(' ');
+      if (!groups[key]) groups[key] = { name: c.product_name, items: [] };
+      groups[key].items.push(c);
+    });
+
+    const patterns = Object.values(groups).filter(g => {
+      const stores = new Set(g.items.map(i => i.store_id).filter(Boolean));
+      const hasCritical = g.items.some(i => i.triage_level === 'critical');
+      return (g.items.length >= 2 && stores.size >= 2) || (g.items.length >= 2 && hasCritical);
+    });
+
+    if (!patterns.length) { el.innerHTML = ''; return; }
+
+    el.innerHTML = patterns.map(p => {
+      const stores = new Set(p.items.map(i => i.store_id).filter(Boolean));
+      const hasCritical = p.items.some(i => i.triage_level === 'critical');
+      return `
+        <div style="display:flex;align-items:flex-start;gap:12px;padding:12px 16px;background:${hasCritical?'rgba(255,92,92,0.08)':'rgba(245,166,35,0.07)'};border:1px solid ${hasCritical?'rgba(255,92,92,0.3)':'rgba(245,166,35,0.25)'};border-radius:10px;margin-bottom:10px;">
+          <div style="width:8px;height:8px;border-radius:50%;background:${hasCritical?'var(--danger)':'var(--warn)'};flex-shrink:0;margin-top:4px;animation:blink 1.5s ease-in-out infinite;"></div>
+          <div style="flex:1;">
+            <div style="font-size:13px;font-weight:700;color:${hasCritical?'var(--danger)':'var(--warn)'};">
+              ${hasCritical?'⚠ Pattern alert — critical complaints':'Pattern alert — multiple stores affected'}
+            </div>
+            <div style="font-size:12px;color:var(--text);margin-top:2px;">
+              <strong>${p.name}</strong> — ${p.items.length} complaints across ${stores.size} store${stores.size!==1?'s':''} in the last 30 days
+            </div>
+            <div style="font-size:11px;color:var(--muted);margin-top:4px;">This may warrant a supplier investigation or proactive recall assessment.</div>
+          </div>
+          <button onclick="openInvestigationFromPattern('${encodeURIComponent(p.name)}')"
+            style="background:${hasCritical?'rgba(255,92,92,0.15)':'rgba(245,166,35,0.12)'};border:1px solid ${hasCritical?'rgba(255,92,92,0.4)':'rgba(245,166,35,0.35)'};color:${hasCritical?'var(--danger)':'var(--warn)'};border-radius:7px;padding:7px 12px;font-size:11px;font-weight:700;cursor:pointer;flex-shrink:0;font-family:inherit;white-space:nowrap;">
+            Raise investigation →
+          </button>
+        </div>`;
+    }).join('');
+  } catch(e) {
+    console.warn('renderPatternAlerts error:', e);
+  }
+}
+
+async function openInvestigationFromPattern(encodedProductName) {
+  const productName = decodeURIComponent(encodedProductName);
+  // Pre-fill and open the investigation request form
+  // For now, navigate to investigations panel with context
+  showPanel('investigations');
+  setTimeout(() => {
+    showToast(`Opening investigation for "${productName}" — fill in the details below`, 'ok', 4000);
+  }, 500);
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// GAP 2: CONSUMER RECALL NOTIFICATION
+// ═══════════════════════════════════════════════════════════════
+
+let _consumerNotifRecallId = null;
+let _consumerNotifCustomers = []; // { email, product_name, lot_number } from CSV
+
+async function renderConsumerNotification() {
+  const el = document.getElementById('main-content');
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading recalls…</div>`;
+
+  try {
+    // Load active recalls distributed to this org
+    const { data: dists } = await sb.from('recall_distributions')
+      .select('recall_event_id, distributed_at')
+      .eq('retailer_org_id', _orgId);
+
+    let recallEvents = [];
+    if (dists?.length) {
+      const evIds = [...new Set(dists.map(d => d.recall_event_id))];
+      const { data: evs } = await sb.from('recall_events')
+        .select('id, product_name, lot_number, severity, reason, published_at, is_drill')
+        .in('id', evIds)
+        .eq('is_drill', false)
+        .order('published_at', { ascending: false });
+      recallEvents = evs || [];
+    }
+
+    // Also add manual recalls
+    const { data: manualRecalls } = await sb.from('recalls')
+      .select('id, product_name, lot_number, active, created_at, source')
+      .eq('organisation_id', _orgId)
+      .eq('active', true)
+      .not('source', 'in', '("fda","rasff","FDA","RASFF")');
+
+    const allRecalls = [
+      ...recallEvents.map(e => ({ ...e, _type: 'pushed' })),
+      ...(manualRecalls||[]).map(r => ({ ...r, _type: 'manual', published_at: r.created_at })),
+    ];
+
+    el.innerHTML = `
+      <div style="margin-bottom:20px;">
+        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Consumer recall notifications</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px;">Notify customers who may have purchased recalled products — matched by purchase history or broadcast to your customer list</div>
+      </div>
+
+      ${allRecalls.length === 0 ? `
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:48px 24px;text-align:center;">
+          <div style="font-size:32px;margin-bottom:12px;">✅</div>
+          <div style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:6px;">No active recalls</div>
+          <div style="font-size:13px;color:var(--muted);">Consumer notifications will appear here when recalls are active for your network.</div>
+        </div>` : `
+
+      <!-- Step 1: Select recall -->
+      <div class="panel" style="margin-bottom:16px;">
+        <div class="panel-header">
+          <div class="panel-title">Step 1 — Select recall to notify about</div>
+        </div>
+        <div class="panel-body" style="padding:0;">
+          ${allRecalls.map(r => {
+            const isSelected = _consumerNotifRecallId === r.id;
+            return `<div onclick="selectNotifRecall('${r.id}','${encodeURIComponent(r.product_name||'')}','${encodeURIComponent(r.lot_number||'')}','${encodeURIComponent(r.reason||'')}')"
+              style="display:flex;align-items:center;gap:14px;padding:14px 18px;border-bottom:1px solid var(--border);cursor:pointer;background:${isSelected?'rgba(52,211,153,0.06)':'transparent'};transition:background 0.15s;"
+              onmouseover="this.style.background='rgba(52,211,153,0.04)'" onmouseout="this.style.background='${isSelected?'rgba(52,211,153,0.06)':'transparent'}'">
+              <div style="width:20px;height:20px;border-radius:50%;border:2px solid ${isSelected?'var(--accent)':'var(--border)'};background:${isSelected?'var(--accent)':'transparent'};display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                ${isSelected?`<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#065f46" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>`:''}
+              </div>
+              <div style="flex:1;">
+                <div style="font-size:13px;font-weight:600;color:var(--text);">${r.product_name||'—'}</div>
+                <div style="font-size:11px;color:var(--muted);margin-top:2px;">
+                  ${r.lot_number?`Lot: <span style="font-family:'DM Mono',monospace;">${r.lot_number}</span> · `:''}
+                  ${r._type==='pushed'?'Manufacturer push':'Manual'} · ${new Date(r.published_at||r.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}
+                </div>
+              </div>
+              ${r.severity?`<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(255,92,92,0.1);color:var(--danger);">${r.severity}</span>`:''}
+            </div>`;
+          }).join('')}
+        </div>
+      </div>
+
+      <!-- Step 2: Customer data -->
+      <div class="panel" style="margin-bottom:16px;${!_consumerNotifRecallId?'opacity:0.5;pointer-events:none;':''}">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Step 2 — Customer data</div>
+            <div class="panel-sub">Upload purchase history for matched notification, or an email list for broadcast</div>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+
+            <!-- Option A: Matched notification -->
+            <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:16px;">
+              <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:4px;">Option A — Matched notification</div>
+              <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6;">Upload customer purchase history. Only customers who bought the recalled product/lot will be notified.</div>
+              <button onclick="openConsumerCSVImport('matched')" style="width:100%;background:rgba(52,211,153,0.08);border:1px solid rgba(52,211,153,0.25);color:var(--accent);border-radius:8px;padding:9px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">
+                ↑ Upload purchase history
+              </button>
+              <div style="font-size:10px;color:var(--muted);margin-top:8px;">Required columns: Customer Email, Product Name, Lot Number (optional)</div>
+            </div>
+
+            <!-- Option B: Broadcast -->
+            <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:16px;">
+              <div style="font-size:12px;font-weight:700;color:var(--warn);margin-bottom:4px;">Option B — Broadcast</div>
+              <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6;">Upload your customer email list. All customers will receive the recall notice (no purchase matching).</div>
+              <button onclick="openConsumerCSVImport('broadcast')" style="width:100%;background:rgba(245,166,35,0.08);border:1px solid rgba(245,166,35,0.25);color:var(--warn);border-radius:8px;padding:9px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">
+                ↑ Upload customer emails
+              </button>
+              <div style="font-size:10px;color:var(--muted);margin-top:8px;">Required column: Customer Email</div>
+            </div>
+
+          </div>
+
+          ${_consumerNotifCustomers.length > 0 ? `
+          <div style="margin-top:14px;background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.2);border-radius:8px;padding:11px 14px;display:flex;align-items:center;justify-content:space-between;">
+            <div style="font-size:12px;color:var(--accent);">✓ ${_consumerNotifCustomers.length} customer${_consumerNotifCustomers.length!==1?'s':''} loaded</div>
+            <button onclick="_consumerNotifCustomers=[];renderConsumerNotification()" style="background:none;border:none;color:var(--muted);font-size:11px;cursor:pointer;">Clear ✕</button>
+          </div>` : ''}
+        </div>
+      </div>
+
+      <!-- Step 3: Preview + Send -->
+      <div class="panel" style="${(!_consumerNotifRecallId||!_consumerNotifCustomers.length)?'opacity:0.5;pointer-events:none;':''}">
+        <div class="panel-header">
+          <div class="panel-title">Step 3 — Review and send</div>
+        </div>
+        <div class="panel-body">
+          <div id="notif-preview">
+            ${_consumerNotifRecallId && _consumerNotifCustomers.length ? `
+            <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:14px;font-size:12px;line-height:1.7;color:var(--muted);">
+              <strong style="color:var(--text);">Email preview:</strong><br>
+              Subject: <em>Important: Product recall notice — ${_consumerNotifCustomers[0]?._product||'[Product Name]'}</em><br>
+              <br>
+              Dear Customer,<br>
+              We are writing to inform you about a recall affecting a product you may have purchased from us. Please stop using this product immediately and return it to any of our stores for a full refund…
+            </div>
+            <button onclick="sendConsumerNotifications()" style="background:var(--danger);color:#fff;border:none;border-radius:8px;padding:10px 24px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">
+              Send to ${_consumerNotifCustomers.length} customer${_consumerNotifCustomers.length!==1?'s':''} →
+            </button>` : `<div class="empty">Complete steps 1 and 2 to preview and send notifications.</div>`}
+          </div>
+        </div>
+      </div>`}`;
+
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error: ${e.message}</div>`;
+  }
+}
+
+function selectNotifRecall(id, productEncoded, lotEncoded, reasonEncoded) {
+  _consumerNotifRecallId = id;
+  // Store context on customers
+  _consumerNotifCustomers.forEach(c => {
+    c._product = decodeURIComponent(productEncoded);
+    c._lot     = decodeURIComponent(lotEncoded);
+    c._reason  = decodeURIComponent(reasonEncoded);
+  });
+  renderConsumerNotification();
+}
+
+function openConsumerCSVImport(mode) {
+  const isMatched = mode === 'matched';
+  openCSVImport({
+    title: isMatched ? 'Upload Purchase History' : 'Upload Customer Emails',
+    description: isMatched
+      ? 'Customers matching the recalled product/lot will be notified'
+      : 'All uploaded customers will receive the recall broadcast',
+    fields: isMatched
+      ? [
+          { key:'email',        label:'Customer Email',  required:true,  type:'text' },
+          { key:'product_name', label:'Product Name',    required:false, type:'text' },
+          { key:'lot_number',   label:'Lot Number',      required:false, type:'mono' },
+        ]
+      : [
+          { key:'email', label:'Customer Email', required:true, type:'text' },
+          { key:'name',  label:'Customer Name',  required:false, type:'text' },
+        ],
+    templateExample: isMatched
+      ? [['sarah@example.com','Organic Olive Oil 500ml','L2026-04-01A'],['tom@example.com','Gilde Bacon 200g','B2026-03-15']]
+      : [['sarah@example.com','Sarah Hansen'],['tom@example.com','Tom Nilsen']],
+    insertRow: async (row) => {
+      // Don't insert to DB — just collect locally
+      const recallProduct = _consumerNotifCustomers[0]?._product || '';
+      const recallLot     = _consumerNotifCustomers[0]?._lot || '';
+
+      if (isMatched) {
+        // Only include if product name or lot matches recall
+        const productMatch = !row.product_name || !recallProduct ||
+          row.product_name.toLowerCase().includes(recallProduct.toLowerCase().split(' ')[0]) ||
+          recallProduct.toLowerCase().includes(row.product_name.toLowerCase().split(' ')[0]);
+        const lotMatch = !row.lot_number || !recallLot ||
+          row.lot_number.toLowerCase() === recallLot.toLowerCase();
+        if (productMatch || lotMatch || (!row.product_name && !row.lot_number)) {
+          _consumerNotifCustomers.push({ email: row.email, name: row.name || '', mode: 'matched' });
+        }
+      } else {
+        _consumerNotifCustomers.push({ email: row.email, name: row.name || '', mode: 'broadcast' });
+      }
+      return { error: null };
+    },
+    onComplete: 'renderConsumerNotification()',
+  });
+}
+
+async function sendConsumerNotifications() {
+  if (!_consumerNotifRecallId || !_consumerNotifCustomers.length) return;
+
+  const btn = event?.target;
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+
+  try {
+    const res = await fetch('/.netlify/functions/notify-consumers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        recall_event_id: _consumerNotifRecallId,
+        org_id:   _orgId,
+        org_name: _orgName,
+        customers: _consumerNotifCustomers,
+        product_name: _consumerNotifCustomers[0]?._product || 'Recalled product',
+        lot_number:   _consumerNotifCustomers[0]?._lot || null,
+        reason:       _consumerNotifCustomers[0]?._reason || null,
+      }),
+    });
+
+    const data = await res.json();
+    showToast(`Sent to ${data.sent || 0} customer${(data.sent||0)!==1?'s':''}`, 'ok', 4000);
+    _consumerNotifCustomers = [];
+    _consumerNotifRecallId  = null;
+    renderConsumerNotification();
+
+  } catch(e) {
+    showToast('Send failed: ' + e.message, 'error', 4000);
+    if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
+  }
 }
 </script>
