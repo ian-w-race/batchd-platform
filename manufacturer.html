@@ -1176,10 +1176,16 @@ async function renderShipments() {
         <div style="font-size:11px;color:var(--muted);margin-top:2px;">Lot codes shipped to retail partners — used to calculate shelf impact when a recall fires</div>
       </div>
       ${partners.length > 0 && products.length > 0
-        ? `<button class="btn-primary" onclick="openShipmentForm()">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            Log shipment
-          </button>`
+        ? `<div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn-ghost" onclick="importShipments()" style="display:flex;align-items:center;gap:6px;font-size:12px;padding:7px 13px;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              Import CSV
+            </button>
+            <button class="btn-primary" onclick="openShipmentForm()">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Log shipment
+            </button>
+          </div>`
         : `<div style="font-size:11px;color:var(--warn);">${partners.length === 0 ? '⚠ Add a trading partner first' : '⚠ Register products first'}</div>`}
     </div>
 
@@ -2381,10 +2387,16 @@ async function renderProducts() {
         <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">${list.length} product${list.length!==1?'s':''}</div>
         <div style="font-size:11px;color:var(--muted);margin-top:2px;">Registered in ${_orgName}'s product catalogue</div>
       </div>
-      <button class="btn-primary" onclick="openProductForm()">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        Add product
-      </button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn-ghost" onclick="importProducts()" style="display:flex;align-items:center;gap:6px;font-size:12px;padding:7px 13px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          Import CSV
+        </button>
+        <button class="btn-primary" onclick="openProductForm()">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Add product
+        </button>
+      </div>
     </div>
 
     <!-- Product form -->
@@ -2557,10 +2569,16 @@ async function renderLots() {
         <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">${lots.length} lot code${lots.length!==1?'s':''}</div>
         <div style="font-size:11px;color:var(--muted);margin-top:2px;">Registered lot codes for ${_orgName}</div>
       </div>
-      ${products.length > 0 ? `<button class="btn-primary" onclick="openLotForm()">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        Register lot code
-      </button>` : ''}
+      ${products.length > 0 ? `<div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn-ghost" onclick="importLotCodes()" style="display:flex;align-items:center;gap:6px;font-size:12px;padding:7px 13px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          Import CSV
+        </button>
+        <button class="btn-primary" onclick="openLotForm()">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Register lot code
+        </button>
+      </div>` : ''}
     </div>
 
     <!-- Lot form -->
@@ -5683,5 +5701,529 @@ async function obConnectRetailer(retailerId, retailerName, btn) {
   btn.style.cssText = 'background:var(--surface);border:1px solid rgba(52,211,153,0.3);color:var(--accent);border-radius:7px;padding:6px 12px;font-size:11px;font-weight:700;font-family:inherit;cursor:default;';
   await sb.from('trading_partners').upsert({ manufacturer_id: _orgId, retailer_id: retailerId, status: 'pending' }, { onConflict: 'manufacturer_id,retailer_id' });
   showToast('Connection request sent to ' + retailerName, 'ok', 2500);
+}
+</script>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// UNIVERSAL CSV IMPORT ENGINE
+// ═══════════════════════════════════════════════════════════════
+
+/*
+  openCSVImport(config) — universal import modal
+
+  config = {
+    title:       string            // "Import Shipments"
+    description: string            // subtitle
+    templateHeaders: string[]      // CSV column headers for template download
+    templateExample: string[][]    // 2–3 example rows
+    fields: [                      // schema for parsing
+      { key, label, required, type, match }
+      // match: optional lookup function async(value) => id|null
+    ],
+    validate: async(rows) => { rows: cleanRows, errors: string[] }
+    insert:   async(rows) => { inserted, failed, errors }
+  }
+*/
+
+async function openCSVImport(config) {
+  document.getElementById('csv-import-modal')?.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'csv-import-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(4,12,14,0.92);z-index:9500;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(4px);';
+
+  modal.innerHTML = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:20px;width:100%;max-width:680px;max-height:90vh;overflow:hidden;display:flex;flex-direction:column;">
+
+      <!-- Header -->
+      <div style="padding:22px 26px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-shrink:0;">
+        <div>
+          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:15px;color:var(--text);display:flex;align-items:center;gap:8px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            ${config.title}
+          </div>
+          <div style="font-size:12px;color:var(--muted);margin-top:3px;">${config.description}</div>
+        </div>
+        <button onclick="document.getElementById('csv-import-modal').remove()" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;padding:4px;flex-shrink:0;">✕</button>
+      </div>
+
+      <!-- Body -->
+      <div style="flex:1;overflow-y:auto;padding:22px 26px;" id="csv-import-body">
+        <!-- Step 1: Drop zone + template download -->
+        <div id="csv-step-upload">
+          <!-- Template download -->
+          <div style="background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.2);border-radius:10px;padding:13px 16px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+            <div>
+              <div style="font-size:12px;font-weight:600;color:var(--accent);">Start with our template</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:2px;">Download a pre-formatted CSV with the correct column headings</div>
+            </div>
+            <button onclick="csvDownloadTemplate()" style="background:var(--accent);color:#065f46;border:none;border-radius:7px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;flex-shrink:0;">
+              ↓ Download template
+            </button>
+          </div>
+
+          <!-- Drop zone -->
+          <div id="csv-dropzone"
+            ondragover="event.preventDefault();this.style.borderColor='var(--accent)';this.style.background='rgba(52,211,153,0.08)';"
+            ondragleave="this.style.borderColor='var(--border)';this.style.background='var(--surface2)';"
+            ondrop="csvHandleDrop(event)"
+            onclick="document.getElementById('csv-file-input').click()"
+            style="border:2px dashed var(--border);border-radius:12px;background:var(--surface2);padding:36px 20px;text-align:center;cursor:pointer;transition:all 0.2s;">
+            <div style="font-size:28px;margin-bottom:8px;">📄</div>
+            <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:4px;">Drop your CSV here</div>
+            <div style="font-size:12px;color:var(--muted);">or click to browse — .csv files only</div>
+          </div>
+          <input type="file" id="csv-file-input" accept=".csv" style="display:none;" onchange="csvHandleFile(this.files[0])">
+
+          <!-- Column guide -->
+          <div style="margin-top:16px;">
+            <div style="font-size:11px;font-weight:600;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.07em;">Expected columns</div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;">
+              ${config.fields.map(f => `
+                <div style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:'DM Mono',monospace;color:${f.required ? 'var(--text)' : 'var(--muted)'};">
+                  ${f.label}${f.required ? ' <span style="color:var(--accent)">*</span>' : ''}
+                </div>`).join('')}
+            </div>
+            <div style="font-size:10px;color:var(--muted);margin-top:8px;"><span style="color:var(--accent)">*</span> required column</div>
+          </div>
+        </div>
+
+        <!-- Step 2: Preview (hidden initially) -->
+        <div id="csv-step-preview" style="display:none;">
+          <div id="csv-preview-content"></div>
+        </div>
+
+        <!-- Step 3: Progress (hidden initially) -->
+        <div id="csv-step-progress" style="display:none;">
+          <div style="text-align:center;padding:20px 0;">
+            <div class="spinner" style="margin:0 auto 16px;"></div>
+            <div style="font-size:14px;font-weight:600;color:var(--text);" id="csv-progress-label">Importing…</div>
+            <div style="background:var(--surface2);border-radius:8px;height:6px;margin:12px 0;overflow:hidden;">
+              <div id="csv-progress-bar" style="height:100%;background:var(--accent);border-radius:8px;width:0%;transition:width 0.2s;"></div>
+            </div>
+            <div style="font-size:12px;color:var(--muted);" id="csv-progress-sub"></div>
+          </div>
+        </div>
+
+        <!-- Step 4: Result (hidden initially) -->
+        <div id="csv-step-result" style="display:none;"></div>
+      </div>
+
+      <!-- Footer -->
+      <div style="padding:14px 26px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-shrink:0;" id="csv-footer">
+        <div style="font-size:11px;color:var(--muted);" id="csv-footer-info"></div>
+        <div style="display:flex;gap:8px;" id="csv-footer-btns">
+          <button onclick="document.getElementById('csv-import-modal').remove()" style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:8px 18px;font-size:13px;cursor:pointer;font-family:inherit;">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+
+  document.body.appendChild(modal);
+
+  // Store config on modal for access by handlers
+  modal._csvConfig = config;
+}
+
+// ── Template download ─────────────────────────────────────────
+function csvDownloadTemplate() {
+  const modal = document.getElementById('csv-import-modal');
+  const config = modal._csvConfig;
+  const headers = config.fields.map(f => f.label).join(',');
+  const examples = (config.templateExample || [[]]).map(row =>
+    row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')
+  ).join('\n');
+  const csv = headers + '\n' + examples;
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const slug = config.title.toLowerCase().replace(/\s+/g, '_');
+  a.href = url; a.download = `batched_${slug}_template.csv`; a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ── File handling ─────────────────────────────────────────────
+function csvHandleDrop(e) {
+  e.preventDefault();
+  const dz = document.getElementById('csv-dropzone');
+  dz.style.borderColor = 'var(--border)';
+  dz.style.background = 'var(--surface2)';
+  const file = e.dataTransfer.files[0];
+  if (file) csvHandleFile(file);
+}
+
+function csvHandleFile(file) {
+  if (!file || !file.name.endsWith('.csv')) {
+    showToast('Please upload a .csv file', 'error', 3000);
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = e => csvParseAndPreview(e.target.result, file.name);
+  reader.readAsText(file);
+}
+
+// ── Parser ────────────────────────────────────────────────────
+function csvParseText(text) {
+  const lines = text.trim().split(/\r?\n/);
+  if (lines.length < 2) return { headers: [], rows: [] };
+
+  const parseRow = line => {
+    const cells = [];
+    let cur = '', inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQ && line[i+1] === '"') { cur += '"'; i++; }
+        else inQ = !inQ;
+      } else if (ch === ',' && !inQ) {
+        cells.push(cur.trim()); cur = '';
+      } else cur += ch;
+    }
+    cells.push(cur.trim());
+    return cells;
+  };
+
+  const headers = parseRow(lines[0]).map(h => h.toLowerCase().trim());
+  const rows = lines.slice(1).filter(l => l.trim()).map(l => {
+    const cells = parseRow(l);
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = (cells[i] || '').trim(); });
+    return obj;
+  });
+  return { headers, rows };
+}
+
+// ── Preview ───────────────────────────────────────────────────
+async function csvParseAndPreview(text, filename) {
+  const modal = document.getElementById('csv-import-modal');
+  const config = modal._csvConfig;
+  const { headers, rows } = csvParseText(text);
+  modal._csvRows = rows;
+  modal._csvHeaders = headers;
+
+  // Map raw headers to field keys
+  const fieldMap = {};
+  config.fields.forEach(f => {
+    // Try exact match, then label match, then partial match
+    const fLabel = f.label.toLowerCase();
+    const match = headers.find(h => h === fLabel || h === f.key || h.includes(fLabel.split(' ')[0]));
+    if (match) fieldMap[f.key] = match;
+  });
+  modal._csvFieldMap = fieldMap;
+
+  // Check required fields mapped
+  const missing = config.fields.filter(f => f.required && !fieldMap[f.key]).map(f => f.label);
+
+  // Build preview
+  const preview = rows.slice(0, 5);
+  const mappedFields = config.fields.filter(f => fieldMap[f.key]);
+
+  document.getElementById('csv-step-upload').style.display = 'none';
+  document.getElementById('csv-step-preview').style.display = '';
+
+  const previewEl = document.getElementById('csv-preview-content');
+  previewEl.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;">
+      <div style="background:rgba(52,211,153,0.1);border:1px solid rgba(52,211,153,0.3);border-radius:8px;padding:6px 12px;font-size:12px;color:var(--accent);">
+        ✓ ${rows.length} rows detected
+      </div>
+      <div style="font-size:12px;color:var(--muted);">${filename}</div>
+    </div>
+
+    ${missing.length > 0 ? `
+    <div style="background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.3);border-radius:8px;padding:11px 14px;margin-bottom:14px;font-size:12px;color:var(--danger);">
+      <strong>Missing required columns:</strong> ${missing.join(', ')}<br>
+      <span style="opacity:0.8;">Check that your column headings match the template. Column names are not case-sensitive.</span>
+    </div>` : ''}
+
+    <!-- Column mapping -->
+    <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:13px;margin-bottom:16px;">
+      <div style="font-size:11px;font-weight:600;color:var(--muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.07em;">Column mapping</div>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        ${config.fields.map(f => {
+          const mapped = fieldMap[f.key];
+          return `<div style="display:flex;align-items:center;gap:8px;font-size:12px;">
+            <div style="width:8px;height:8px;border-radius:50%;background:${mapped ? 'var(--accent)' : f.required ? 'var(--danger)' : 'var(--border)'};flex-shrink:0;"></div>
+            <div style="min-width:160px;color:var(--text);">${f.label}${f.required ? ' <span style="color:var(--accent)">*</span>' : ''}</div>
+            <div style="color:var(--muted);">→</div>
+            <div style="font-family:'DM Mono',monospace;font-size:11px;color:${mapped ? 'var(--accent)' : 'var(--muted)'};">
+              ${mapped ? '"' + mapped + '"' : f.required ? '⚠ not found' : 'will be blank'}
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+
+    <!-- Data preview table -->
+    <div style="font-size:11px;font-weight:600;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.07em;">
+      Preview (first ${Math.min(5, rows.length)} of ${rows.length} rows)
+    </div>
+    <div style="overflow-x:auto;border:1px solid var(--border);border-radius:10px;">
+      <table style="width:100%;border-collapse:collapse;min-width:400px;">
+        <thead>
+          <tr>
+            ${mappedFields.map(f => `<th style="font-size:10px;color:var(--muted);text-align:left;padding:9px 10px;border-bottom:1px solid var(--border);background:rgba(0,0,0,0.2);white-space:nowrap;">${f.label}</th>`).join('')}
+          </tr>
+        </thead>
+        <tbody>
+          ${preview.map((row, i) => `
+          <tr style="background:${i%2?'rgba(0,0,0,0.1)':'transparent'};">
+            ${mappedFields.map(f => {
+              const val = row[fieldMap[f.key]] || '';
+              return `<td style="font-size:11px;color:${val ? 'var(--text)' : 'var(--muted)'};padding:8px 10px;border-bottom:1px solid rgba(22,61,55,0.4);font-family:${f.type==='mono'?'DM Mono,monospace':'inherit'};max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${val || '—'}</td>`;
+            }).join('')}
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+    ${rows.length > 5 ? `<div style="font-size:11px;color:var(--muted);text-align:center;padding:8px 0;">+ ${rows.length - 5} more rows</div>` : ''}`;
+
+  // Footer buttons
+  const btns = document.getElementById('csv-footer-btns');
+  const info = document.getElementById('csv-footer-info');
+  info.textContent = `${rows.length} rows ready to import`;
+  btns.innerHTML = `
+    <button onclick="csvGoBack()" style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:8px 18px;font-size:13px;cursor:pointer;font-family:inherit;">← Back</button>
+    <button onclick="csvRunImport()" ${missing.length > 0 ? 'disabled style="opacity:0.4;cursor:not-allowed;"' : ''} style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:8px 22px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">
+      Import ${rows.length} row${rows.length !== 1 ? 's' : ''}
+    </button>`;
+}
+
+function csvGoBack() {
+  document.getElementById('csv-step-preview').style.display = 'none';
+  document.getElementById('csv-step-upload').style.display = '';
+  document.getElementById('csv-footer-btns').innerHTML = `
+    <button onclick="document.getElementById('csv-import-modal').remove()" style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:8px 18px;font-size:13px;cursor:pointer;font-family:inherit;">Cancel</button>`;
+  document.getElementById('csv-footer-info').textContent = '';
+}
+
+// ── Import runner ─────────────────────────────────────────────
+async function csvRunImport() {
+  const modal = document.getElementById('csv-import-modal');
+  const config = modal._csvConfig;
+  const rows = modal._csvRows;
+  const fieldMap = modal._csvFieldMap;
+
+  // Show progress step
+  document.getElementById('csv-step-preview').style.display = 'none';
+  document.getElementById('csv-step-progress').style.display = '';
+  document.getElementById('csv-footer-btns').innerHTML = '';
+  document.getElementById('csv-footer-info').textContent = 'Do not close this window…';
+
+  // Map rows to clean objects
+  const mapped = rows.map(row => {
+    const obj = {};
+    config.fields.forEach(f => {
+      if (fieldMap[f.key]) obj[f.key] = row[fieldMap[f.key]] || '';
+    });
+    return obj;
+  }).filter(r => config.fields.filter(f => f.required).every(f => r[f.key]));
+
+  document.getElementById('csv-progress-label').textContent = `Importing ${mapped.length} rows…`;
+
+  // Run the config's insert function
+  let inserted = 0, failed = 0, errors = [];
+
+  for (let i = 0; i < mapped.length; i++) {
+    const pct = Math.round((i / mapped.length) * 100);
+    document.getElementById('csv-progress-bar').style.width = pct + '%';
+    document.getElementById('csv-progress-sub').textContent = `${i + 1} of ${mapped.length}`;
+
+    try {
+      const result = await config.insertRow(mapped[i]);
+      if (result.error) { failed++; errors.push(`Row ${i+2}: ${result.error}`); }
+      else inserted++;
+    } catch(e) { failed++; errors.push(`Row ${i+2}: ${e.message}`); }
+  }
+
+  document.getElementById('csv-progress-bar').style.width = '100%';
+
+  // Show result
+  document.getElementById('csv-step-progress').style.display = 'none';
+  document.getElementById('csv-step-result').style.display = '';
+  document.getElementById('csv-step-result').innerHTML = `
+    <div style="text-align:center;padding:16px 0 8px;">
+      <div style="font-size:40px;margin-bottom:12px;">${failed === 0 ? '✅' : inserted > 0 ? '⚠️' : '❌'}</div>
+      <div style="font-size:17px;font-weight:700;color:${failed===0?'var(--accent)':inserted>0?'var(--warn)':'var(--danger)'};margin-bottom:6px;">
+        ${failed === 0 ? 'Import complete' : inserted > 0 ? 'Partially imported' : 'Import failed'}
+      </div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:16px;">
+        ${inserted > 0 ? `<span style="color:var(--accent)">${inserted} row${inserted!==1?'s':''} imported successfully</span>` : ''}
+        ${failed > 0 ? `${inserted>0?' · ':''}<span style="color:var(--danger)">${failed} row${failed!==1?'s':''} failed</span>` : ''}
+      </div>
+      ${errors.length > 0 ? `
+      <div style="background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.2);border-radius:8px;padding:10px 14px;text-align:left;font-size:11px;color:var(--danger);max-height:120px;overflow-y:auto;">
+        ${errors.slice(0,10).map(e => `<div>• ${e}</div>`).join('')}
+        ${errors.length > 10 ? `<div style="color:var(--muted);margin-top:4px;">…and ${errors.length - 10} more</div>` : ''}
+      </div>` : ''}
+    </div>`;
+
+  document.getElementById('csv-footer-btns').innerHTML = `
+    <button onclick="document.getElementById('csv-import-modal').remove();${config.onComplete||''}" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:8px 22px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">Done</button>`;
+  document.getElementById('csv-footer-info').textContent = '';
+
+  // Call refresh callback
+  if (config.onComplete) {
+    try { new Function(config.onComplete)(); } catch(e) {}
+  }
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// IMPORT CONFIGS — one per panel
+// ═══════════════════════════════════════════════════════════════
+
+// ── 1. Shipments import ───────────────────────────────────────
+async function importShipments() {
+  // Pre-load lookup data
+  const [partnersRes, productsRes] = await Promise.all([
+    sb.from('trading_partners')
+      .select('organisations!trading_partners_retailer_id_fkey(id,name)')
+      .eq('manufacturer_id', _orgId).eq('status','active'),
+    sb.from('products').select('id,name').eq('manufacturer_id',_orgId),
+  ]);
+  const partners = (partnersRes.data||[]).map(p => p.organisations).filter(Boolean);
+  const products = productsRes.data || [];
+
+  // Cache stores per partner org
+  const storeCache = {};
+  const getStores = async (orgId) => {
+    if (!storeCache[orgId]) {
+      const { data } = await sb.from('stores').select('id,name').eq('organisation_id',orgId);
+      storeCache[orgId] = data || [];
+    }
+    return storeCache[orgId];
+  };
+
+  openCSVImport({
+    title: 'Import Shipments',
+    description: 'Bulk-upload your shipment records from a spreadsheet or ERP export',
+    fields: [
+      { key:'product_name',  label:'Product Name',    required:true,  type:'text' },
+      { key:'lot_number',    label:'Lot Number',      required:true,  type:'mono' },
+      { key:'retailer_name', label:'Retailer Name',   required:true,  type:'text' },
+      { key:'store_name',    label:'Store Name',      required:false, type:'text' },
+      { key:'quantity',      label:'Quantity',        required:true,  type:'text' },
+      { key:'unit',          label:'Unit',            required:false, type:'text' },
+      { key:'shipped_date',  label:'Shipped Date',    required:true,  type:'text' },
+      { key:'reference',     label:'Reference / PO',  required:false, type:'text' },
+    ],
+    templateExample: [
+      ['Organic Olive Oil 500ml','L2026-04-01A','Batch Admin','Oslo - Grünerløkka','48','cases','2026-04-01','PO-2026-0042'],
+      ['Organic Olive Oil 500ml','L2026-04-01A','Batch Admin','Bergen - Sentrum','24','cases','2026-04-01','PO-2026-0043'],
+    ],
+    insertRow: async (row) => {
+      // Match product by name (fuzzy)
+      const product = products.find(p =>
+        p.name.toLowerCase() === row.product_name.toLowerCase() ||
+        p.name.toLowerCase().includes(row.product_name.toLowerCase()) ||
+        row.product_name.toLowerCase().includes(p.name.toLowerCase().split(' ')[0])
+      );
+
+      // Match retailer by name
+      const partner = partners.find(p =>
+        p.name.toLowerCase() === row.retailer_name.toLowerCase() ||
+        p.name.toLowerCase().includes(row.retailer_name.toLowerCase()) ||
+        row.retailer_name.toLowerCase().includes(p.name.toLowerCase().split(' ')[0])
+      );
+      if (!partner) return { error: `Retailer "${row.retailer_name}" not found in trading partners` };
+
+      // Match store if provided
+      let storeId = null;
+      if (row.store_name) {
+        const stores = await getStores(partner.id);
+        const store = stores.find(s =>
+          s.name.toLowerCase() === row.store_name.toLowerCase() ||
+          s.name.toLowerCase().includes(row.store_name.toLowerCase())
+        );
+        if (store) storeId = store.id;
+      }
+
+      // Parse date
+      const shippedAt = row.shipped_date ? new Date(row.shipped_date).toISOString() : new Date().toISOString();
+
+      const { error } = await sb.from('shipments').insert({
+        manufacturer_id: _orgId,
+        retailer_id:     partner.id,
+        store_id:        storeId,
+        product_id:      product?.id || null,
+        product_name:    row.product_name,
+        lot_number:      row.lot_number,
+        quantity:        parseFloat(row.quantity) || 0,
+        unit:            row.unit || 'units',
+        shipped_at:      shippedAt,
+        reference_document: row.reference || null,
+      });
+      return { error: error?.message };
+    },
+    onComplete: 'renderShipments()',
+  });
+}
+
+// ── 2. Lot codes import ───────────────────────────────────────
+async function importLotCodes() {
+  const { data: products } = await sb.from('products').select('id,name').eq('manufacturer_id',_orgId);
+  const productList = products || [];
+
+  openCSVImport({
+    title: 'Import Lot Codes',
+    description: 'Bulk-register lot codes from your production records',
+    fields: [
+      { key:'product_name',    label:'Product Name',     required:true,  type:'text' },
+      { key:'lot_number',      label:'Lot Number',       required:true,  type:'mono' },
+      { key:'production_date', label:'Production Date',  required:false, type:'text' },
+      { key:'expiry_date',     label:'Expiry Date',      required:false, type:'text' },
+      { key:'notes',           label:'Notes',            required:false, type:'text' },
+    ],
+    templateExample: [
+      ['Organic Olive Oil 500ml','L2026-04-01A','2026-04-01','2027-04-01','Spring batch'],
+      ['Organic Olive Oil 500ml','L2026-04-01B','2026-04-01','2027-04-01',''],
+    ],
+    insertRow: async (row) => {
+      const product = productList.find(p =>
+        p.name.toLowerCase() === row.product_name.toLowerCase() ||
+        p.name.toLowerCase().includes(row.product_name.toLowerCase())
+      );
+      const { error } = await sb.from('product_lots').insert({
+        manufacturer_id: _orgId,
+        product_id:      product?.id || null,
+        lot_number:      row.lot_number,
+        production_date: row.production_date ? new Date(row.production_date).toISOString().split('T')[0] : null,
+        expiry_date:     row.expiry_date ? new Date(row.expiry_date).toISOString().split('T')[0] : null,
+        notes:           row.notes || null,
+      });
+      return { error: error?.message };
+    },
+    onComplete: 'renderLots()',
+  });
+}
+
+// ── 3. Products import ────────────────────────────────────────
+function importProducts() {
+  openCSVImport({
+    title: 'Import Products',
+    description: 'Bulk-register your product catalogue from an ERP or spreadsheet export',
+    fields: [
+      { key:'name',     label:'Product Name', required:true,  type:'text' },
+      { key:'barcode',  label:'Barcode / EAN', required:false, type:'mono' },
+      { key:'category', label:'Category',      required:false, type:'text' },
+      { key:'is_ftl',   label:'On FTL (yes/no)', required:false, type:'text' },
+    ],
+    templateExample: [
+      ['Organic Olive Oil 500ml','7038010013882','Oils & Condiments','no'],
+      ['Free Range Chicken 1kg','7036015620114','Meat & Poultry','yes'],
+    ],
+    insertRow: async (row) => {
+      const { error } = await sb.from('products').insert({
+        manufacturer_id: _orgId,
+        name:    row.name,
+        barcode: row.barcode || null,
+        category: row.category || null,
+        is_ftl:  row.is_ftl?.toLowerCase() === 'yes' || row.is_ftl === 'true',
+      });
+      return { error: error?.message };
+    },
+    onComplete: 'renderProducts()',
+  });
 }
 </script>
