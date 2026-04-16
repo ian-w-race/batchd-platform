@@ -1098,9 +1098,12 @@ async function renderRecalls() {
     }));
   }
   const activePushed = pushed.filter(p => !p.recall_events?.is_drill).length;
-  // Only count non-pushed recalls from the recalls table — pushed recalls are
-  // already represented in activePushed (via recall_events). Counting both = duplicates.
-  const active   = recalls.filter(r=>r.active && !r.is_pushed).length + activePushed;
+  // Only count manually-created recalls from the recalls table.
+  // FDA/RASFF records (source='fda','rasff') are scanning-app reference data —
+  // they are NOT operational items for the corporate dashboard.
+  const manualRecalls = recalls.filter(r => r.active && !r.is_pushed &&
+    !['fda','rasff','FDA','RASFF'].includes(r.source));
+  const active = manualRecalls.length + activePushed;
   const unacknowledged = acks.filter(a => a.status === 'notified').length;
   // Update nav badge safely
   const navBtn = document.getElementById('nav-recalls');
@@ -1119,7 +1122,7 @@ async function renderRecalls() {
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
       <div>
         <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">${active} active recall${active!==1?'s':''}</div>
-        <div style="font-size:11px;color:var(--muted);margin-top:2px;">${recalls.length + pushed.length} total · ${unacknowledged} store${unacknowledged!==1?'s':''} awaiting acknowledgement</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px;">${pushed.length + manualRecalls.length} total · ${unacknowledged} store${unacknowledged!==1?'s':''} awaiting acknowledgement</div>
       </div>
       ${unacknowledged > 0 ? `
       <div style="display:flex;align-items:center;gap:6px;background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.25);border-radius:8px;padding:8px 12px;">
@@ -1230,9 +1233,9 @@ async function renderRecalls() {
         <div><div class="panel-title">Internal recalls</div><div class="panel-sub">Manually logged by your team</div></div>
       </div>
       <div class="panel-body">
-        ${recalls.filter(r=>!r.is_pushed).length === 0
+        ${recalls.filter(r=>!r.is_pushed && !['fda','rasff','FDA','RASFF'].includes(r.source)).length === 0
           ? `<div class="empty">No internal recalls logged. Pushed recalls from manufacturers appear above.</div>`
-          : recalls.filter(r=>!r.is_pushed).map(r => `
+          : recalls.filter(r=>!r.is_pushed && !['fda','rasff','FDA','RASFF'].includes(r.source)).map(r => `
             <div class="recall-item">
               <div class="recall-severity ${r.active?'sev-i':'sev-iii'}"></div>
               <div class="recall-info">
