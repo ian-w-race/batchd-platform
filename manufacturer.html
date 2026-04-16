@@ -274,6 +274,10 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
         Compliance
       </button>
+      <button class="nav-item" onclick="showPanel('drills')" id="nav-drills">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+        Mock Drills
+      </button>
       <button class="nav-item" onclick="showPanel('mock_audit')" id="nav-mock-audit">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg>
         Mock Audit
@@ -324,6 +328,28 @@
 const SUPABASE_URL = 'https://lurxucdmrugikdlvvebc.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1cnh1Y2RtcnVnaWtkbHZ2ZWJjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTU5NTQsImV4cCI6MjA4OTgzMTk1NH0.ewNhBbF8nUzpF9Ve822D9t8VLwB_hjk27KuFFEXct0A';
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// ── Shared UI helpers ─────────────────────────────────────────
+function buildStepCircles(steps, currentIdx, size) {
+  size = size || 24;
+  var sm = size - 6;
+  return '<div style="display:flex;align-items:flex-start;gap:0;">' +
+    steps.map(function(s, i) {
+      var done = i < currentIdx;
+      var cur  = i === currentIdx;
+      var last = i === steps.length - 1;
+      var circle = done
+        ? '<div style="width:'+size+'px;height:'+size+'px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><svg width="'+sm+'" height="'+sm+'" viewBox="0 0 24 24" fill="none" stroke="#065f46" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></div>'
+        : cur
+          ? '<div style="width:'+size+'px;height:'+size+'px;border-radius:50%;background:rgba(245,166,35,0.15);border:2px solid var(--warn);display:flex;align-items:center;justify-content:center;font-size:'+(size-10)+'px;font-weight:700;color:var(--warn);flex-shrink:0;">'+(i+1)+'</div>'
+          : '<div style="width:'+size+'px;height:'+size+'px;border-radius:50%;border:1.5px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:'+(size-10)+'px;color:var(--muted);flex-shrink:0;">'+(i+1)+'</div>';
+      var lbl = '<div style="font-size:'+(size>20?10:9)+'px;margin-top:3px;color:'+(done?'var(--accent)':cur?'var(--warn)':'var(--muted)')+';font-weight:'+(cur?'600':'400')+';white-space:nowrap;text-align:center;">'+s+'</div>';
+      var line = last ? '' : '<div style="flex:1;height:1.5px;background:'+(done?'var(--accent)':'var(--border)')+';margin:0 3px;margin-bottom:'+(size-10)+'px;"></div>';
+      return '<div style="display:flex;flex-direction:column;align-items:center;">'+circle+lbl+'</div>'+line;
+    }).join('') +
+  '</div>';
+}
+
 
 let _session = null, _orgId = null, _orgName = '', _userRole = null;
 let _selectedSeverity = 'class_ii';
@@ -414,7 +440,7 @@ function showPanel(name) {
     el.classList.toggle('active', el.getAttribute('onclick')?.includes(`'${name}'`));
   });
   _pushStep = 1;
-  const fns = { overview: renderOverview, push: renderPush, history: renderHistory, acknowledgements: renderAcknowledgements, partners: renderPartners, products: renderProducts, lots: renderLots, shipments: renderShipments, suppliers: renderSupplierRisk, my_suppliers: renderMySuppliers, patterns: renderPatterns, triage: renderTriage, widget: renderWidgetSetup, investigations: renderInvestigations, settings: renderMfrSettings, compliance: renderMfrCompliance, mock_audit: renderMockAudit, timeline: renderIncidentTimeline };
+  const fns = { overview: renderOverview, push: renderPush, drills: renderDrills, history: renderHistory, acknowledgements: renderAcknowledgements, partners: renderPartners, products: renderProducts, lots: renderLots, shipments: renderShipments, suppliers: renderSupplierRisk, my_suppliers: renderMySuppliers, patterns: renderPatterns, triage: renderTriage, widget: renderWidgetSetup, investigations: renderInvestigations, settings: renderMfrSettings, compliance: renderMfrCompliance, mock_audit: renderMockAudit, timeline: renderIncidentTimeline };
   const panelFn = fns[name];
   if (panelFn) {
     const result = panelFn();
@@ -1037,7 +1063,7 @@ async function renderPartners() {
         <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">${confirmed.length} confirmed partner${confirmed.length!==1?'s':''}</div>
         <div style="font-size:11px;color:var(--muted);margin-top:2px;">Retail organisations connected to ${_orgName} — all confirmed partners receive recall notifications automatically</div>
       </div>
-      <button class="btn-primary" onclick="openPartnerRequest()">
+      <button class="btn-primary" onclick="openPartnerWizard()">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         Request connection
       </button>
@@ -1098,6 +1124,100 @@ async function renderPartners() {
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading partners: ${e.message}</div>`;
   }
+}
+
+
+function openPartnerWizard() {
+  document.getElementById('partner-wizard-modal')?.remove();
+  const modal = document.createElement('div');
+  modal.id = 'partner-wizard-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(4,12,14,0.9);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(4px);';
+  modal.innerHTML = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:18px;width:100%;max-width:500px;max-height:90vh;overflow-y:auto;">
+      <div style="padding:20px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
+        <div>
+          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:15px;">Connect a retail partner</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">Step 1 of 2 — find the retailer</div>
+        </div>
+        <button onclick="document.getElementById('partner-wizard-modal').remove()" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;">&#x2715;</button>
+      </div>
+      <div style="padding:20px 24px;">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:16px;line-height:1.6;">
+          Once connected, this retailer will automatically receive all your recall notifications. They can acknowledge recalls and run response chains in their corporate dashboard.
+        </div>
+        <div style="background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.2);border-radius:8px;padding:10px 14px;font-size:11px;color:var(--muted);margin-bottom:16px;line-height:1.5;">
+          <strong style="color:var(--accent);">What happens next:</strong> The retailer receives a connection request. Once they accept, you'll both appear in each other's partner network and recall alerts flow automatically.
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:12px;">
+          <input id="pw-search" type="text" placeholder="Search by organisation name…" oninput="pwSearch()" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;outline:none;">
+          <button onclick="pwSearch()" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 14px;color:var(--muted);cursor:pointer;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          </button>
+        </div>
+        <div id="pw-results"></div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  setTimeout(() => document.getElementById('pw-search')?.focus(), 100);
+}
+
+async function pwSearch() {
+  const q = document.getElementById('pw-search')?.value.trim();
+  const res = document.getElementById('pw-results');
+  if (!res) return;
+  if (q.length < 2) { res.innerHTML = ''; return; }
+  const { data } = await sb.from('organisations').select('id,name,contact_email,type').ilike('name','%'+q+'%').neq('id',_orgId).limit(6);
+  if (!(data||[]).length) { res.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:8px 0;">No organisations found.</div>'; return; }
+  res.innerHTML = (data||[]).map(org => `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:9px;margin-bottom:6px;">
+      <div>
+        <div style="font-size:13px;font-weight:600;color:var(--text);">${esc(org.name)}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:1px;">${esc(org.contact_email||'')}${org.type?' · '+org.type:''}</div>
+      </div>
+      <button onclick="pwConfirmConnect('${org.id}','${encodeURIComponent(org.name)}')" style="background:var(--accent);color:#065f46;border:none;border-radius:7px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;flex-shrink:0;">Select →</button>
+    </div>`).join('');
+}
+
+function pwConfirmConnect(orgId, orgNameEncoded) {
+  const orgName = decodeURIComponent(orgNameEncoded);
+  const modal = document.getElementById('partner-wizard-modal');
+  if (!modal) return;
+  const inner = modal.querySelector('div');
+  inner.innerHTML = `
+    <div style="padding:20px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
+      <div>
+        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:15px;">Connect a retail partner</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px;">Step 2 of 2 — confirm connection</div>
+      </div>
+      <button onclick="document.getElementById('partner-wizard-modal').remove()" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;">&#x2715;</button>
+    </div>
+    <div style="padding:20px 24px;">
+      <div style="background:rgba(52,211,153,0.07);border:1px solid rgba(52,211,153,0.25);border-radius:10px;padding:16px 18px;margin-bottom:18px;display:flex;align-items:center;gap:14px;">
+        <div style="width:40px;height:40px;border-radius:10px;background:rgba(52,211,153,0.12);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:16px;color:var(--accent);flex-shrink:0;">${orgName[0].toUpperCase()}</div>
+        <div>
+          <div style="font-size:14px;font-weight:700;color:var(--text);">${esc(orgName)}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">Will receive all recall notifications once confirmed</div>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--muted);background:var(--surface2);border-radius:8px;padding:12px 14px;margin-bottom:20px;line-height:1.6;">
+        Sending this request means ${esc(orgName)} will appear in your trading partner network with status <em>Pending</em> until they accept. No recall notifications are sent until they confirm.
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <button onclick="openPartnerWizard()" style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:9px 18px;font-size:13px;cursor:pointer;font-family:inherit;">← Back</button>
+        <button onclick="pwSendRequest('${orgId}','${encodeURIComponent(orgName)}')" id="pw-confirm-btn" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:9px 22px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">Send request →</button>
+      </div>
+    </div>`;
+}
+
+async function pwSendRequest(orgId, orgNameEncoded) {
+  const orgName = decodeURIComponent(orgNameEncoded);
+  const btn = document.getElementById('pw-confirm-btn');
+  if (btn) { btn.disabled=true; btn.textContent='Sending…'; }
+  const { error } = await sb.from('trading_partners').insert({ manufacturer_id:_orgId, retailer_id:orgId, status:'pending' });
+  if (error) { showToast('Error: '+error.message,'error',4000); if(btn){btn.disabled=false;btn.textContent='Send request →';} return; }
+  document.getElementById('partner-wizard-modal')?.remove();
+  showToast('Connection request sent to '+orgName,'ok',3000);
+  renderPartners();
 }
 
 function openPartnerRequest() {
@@ -2817,7 +2937,11 @@ async function renderInvestigationList(el) {
           const overdue = deadline && deadline < new Date() && inv.status !== 'closed';
           const statusColor = inv.status === 'closed' ? 'var(--muted)' : inv.status === 'escalated' ? 'var(--danger)' : overdue ? 'var(--danger)' : responses.length > 0 ? 'var(--warn)' : 'var(--info)';
           const statusLabel = inv.status === 'closed' ? 'Closed' : inv.status === 'escalated' ? 'Escalated' : overdue ? 'Overdue' : responses.length > 0 ? 'Responses in' : 'Awaiting responses';
+          // Lifecycle step
+          const invStepIdx = inv.status==='closed'||inv.status==='resolved'||inv.status==='escalated' ? 3 : responses.length > 0 ? 2 : 0;
+          const stepHtml = buildStepCircles(['Launched','Awaiting','Responses in','Resolved'], invStepIdx, 18);
           return `
+          
           <div onclick="_investView='detail';_investId='${inv.id}';renderInvestigations()" style="background:var(--surface);border:1px solid ${overdue?'rgba(255,92,92,0.35)':'var(--border)'};border-radius:12px;padding:16px;cursor:pointer;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='${overdue?'rgba(255,92,92,0.35)':'var(--border)'}'">
             <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
               <div style="flex:1;min-width:0;">
@@ -2834,6 +2958,7 @@ async function renderInvestigationList(el) {
                 ${found > 0 ? `<div style="font-size:10px;color:var(--danger);font-weight:600;margin-top:2px;">${found} found issue</div>` : ''}
               </div>
             </div>
+            \${stepHtml}
             ${deadline ? `<div style="font-size:11px;color:${overdue?'var(--danger)':'var(--muted)'};margin-top:8px;font-family:'DM Mono',monospace;">⏰ Deadline: ${deadline.toLocaleDateString('en-GB', {day:'numeric',month:'short'})} ${deadline.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}</div>` : ''}
           </div>`;
         }).join('')}
@@ -3071,6 +3196,28 @@ async function renderInvestigationDetail(el, id) {
             <button onclick="closeInvestigation('${id}')" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:7px 12px;font-size:12px;color:var(--muted);cursor:pointer;">Close</button>
             <button onclick="escalateInvestigationToRecall('${id}')" style="background:var(--danger);color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;">Escalate to Recall</button>
           </div>` : `<span style="font-size:12px;font-family:'DM Mono',monospace;color:var(--muted);padding:4px 10px;border:1px solid var(--border);border-radius:6px;">${inv.status.toUpperCase()}</span>`}
+      </div>
+
+      <!-- Investigation lifecycle -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 20px;margin-bottom:16px;">
+        <div style="display:flex;align-items:flex-start;gap:0;">
+          ${['Launched','Awaiting','Responses in','Reviewing','Resolved'].map((s,i) => {
+            const detStepIdx = inv.status==='closed'||inv.status==='resolved'||inv.status==='escalated' ? 4 : foundCount>0 ? 3 : totalResponded>0 ? 2 : inv.status==='in_progress' ? 1 : 0;
+            const done=i<detStepIdx,cur=i===detStepIdx,isLast=i===4;
+            const circle=done?`<div style="width:24px;height:24px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#065f46" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></div>`:cur?`<div style="width:24px;height:24px;border-radius:50%;background:rgba(245,166,35,0.15);border:2px solid var(--warn);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:var(--warn);flex-shrink:0;">${i+1}</div>`:`<div style="width:24px;height:24px;border-radius:50%;border:1.5px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--muted);flex-shrink:0;">${i+1}</div>`;
+            const lbl=`<div style="font-size:10px;margin-top:4px;color:${done?'var(--accent)':cur?'var(--warn)':'var(--muted)'};font-weight:${cur?'600':'400'};white-space:nowrap;text-align:center;">${s}</div>`;
+            const line=isLast?'':`<div style="flex:1;height:1.5px;background:${done?'var(--accent)':'var(--border)'};margin:0 3px;margin-bottom:12px;"></div>`;
+            return `<div style="display:flex;flex-direction:column;align-items:center;">${circle}${lbl}</div>${line}`;
+          }).join('')}
+        </div>
+        ${inv.status!=='closed'&&inv.status!=='resolved'&&inv.status!=='escalated' ? `
+        <div style="background:var(--surface2);border-radius:7px;padding:8px 12px;margin-top:12px;font-size:12px;color:var(--muted);">
+          <strong style="color:var(--text);">Next: </strong>${foundCount>0?'Review findings below — consider escalating to a recall':totalResponded>0?'Review responses from retailers — '+totalResponded+' responses received':'Waiting for retailers to inspect stock and submit responses'}
+        </div>` : `
+        <div style="background:rgba(52,211,153,0.06);border-radius:7px;padding:8px 12px;margin-top:12px;display:flex;align-items:center;gap:8px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+          <span style="font-size:12px;color:var(--accent);font-weight:600;">Investigation ${inv.status}</span>
+        </div>`}
       </div>
 
       <!-- Summary cards -->
@@ -4623,6 +4770,203 @@ const AUDIT_CHECKS = [
     }
   },
 ];
+
+
+// ── Mock Recall Drills ────────────────────────────────────────
+let _drillStep = 0; // 0=list, 1=step1, 2=step2, 3=step3
+let _drillDraft = { product:'', lot:'', reason:'Simulated contamination — drill exercise', description:'', targetHours:4 };
+
+async function renderDrills() {
+  const el = document.getElementById('main-content');
+  if (_drillStep > 0) { renderDrillWizard(el); return; }
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
+  try {
+    const { data: drills } = await sb.from('mock_recall_drills')
+      .select('id, created_at, recall_event_id')
+      .eq('initiating_org_id', _orgId)
+      .order('created_at', {ascending:false})
+      .limit(20);
+    const evIds = (drills||[]).map(d=>d.recall_event_id).filter(Boolean);
+    let evMap = {};
+    if (evIds.length) {
+      const {data:evs} = await sb.from('recall_events').select('id,product_name,lot_number,published_at').in('id',evIds);
+      (evs||[]).forEach(e=>{evMap[e.id]=e;});
+    }
+    const enriched = (drills||[]).map(d => ({...d, ...(evMap[d.recall_event_id]||{})}));
+
+    el.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px;">
+        <div>
+          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Mock Recall Drills</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">Formally documented recall readiness exercises — required annually by most food safety frameworks</div>
+        </div>
+        <button onclick="_drillStep=1;renderDrills()" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:9px 16px;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;font-family:inherit;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          Run new drill
+        </button>
+      </div>
+
+      ${!enriched.length ? `
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:52px 24px;text-align:center;">
+        <div style="font-size:32px;margin-bottom:14px;">🎯</div>
+        <div style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:8px;">No drills on record</div>
+        <div style="font-size:13px;color:var(--muted);max-width:360px;margin:0 auto 20px;line-height:1.7;">FDA and most food safety frameworks recommend at least one recall drill per year. A drill documents your team's ability to respond to a recall event.</div>
+        <button onclick="_drillStep=1;renderDrills()" style="background:var(--accent);color:#065f46;border:none;border-radius:10px;padding:11px 24px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">Run your first drill →</button>
+      </div>` : `
+
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        ${enriched.map(d => {
+          const date = new Date(d.created_at).toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short',year:'numeric'});
+          return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+            <div style="display:flex;align-items:center;gap:12px;">
+              <div style="width:36px;height:36px;border-radius:50%;background:rgba(52,211,153,0.12);border:1px solid rgba(52,211,153,0.25);display:flex;align-items:center;justify-content:center;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+              </div>
+              <div>
+                <div style="font-size:13px;font-weight:600;color:var(--text);">${d.product_name||'Mock drill'}</div>
+                <div style="font-size:11px;color:var(--muted);margin-top:2px;">${date}${d.lot_number?' · Lot '+d.lot_number:''}</div>
+              </div>
+            </div>
+            <span style="font-size:10px;padding:3px 10px;border-radius:10px;background:rgba(52,211,153,0.12);color:var(--accent);font-weight:600;">Completed</span>
+          </div>`;
+        }).join('')}
+      </div>`}`;
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error: ${e.message}</div>`;
+  }
+}
+
+function renderDrillWizard(el) {
+  const step = _drillStep;
+  const progressBar = `
+    <div style="display:flex;gap:5px;margin-bottom:6px;">
+      ${[1,2,3].map(i=>`<div style="flex:1;height:3px;border-radius:2px;background:${i<=step?'var(--accent)':'var(--border)'};transition:background 0.25s;"></div>`).join('')}
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:22px;">
+      ${['Define scenario','Review','Confirm & push'].map((l,i)=>`<div style="font-size:10px;color:${i+1<=step?'var(--accent)':'var(--muted)'};font-weight:${i+1===step?'600':'400'};flex:1;${i===1?'text-align:center':''}${i===2?';text-align:right':''}">${l}</div>`).join('')}
+    </div>`;
+
+  if (step === 1) {
+    el.innerHTML = `<div style="max-width:580px;">
+      <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;margin-bottom:4px;">New mock recall drill</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:20px;">Step 1 of 3 — define the drill scenario</div>
+      ${progressBar}
+      <div style="background:rgba(245,166,35,0.07);border:1px solid rgba(245,166,35,0.2);border-radius:10px;padding:14px 16px;margin-bottom:18px;font-size:12px;color:var(--muted);line-height:1.6;">
+        <strong style="color:var(--warn);">What is a mock recall drill?</strong><br>
+        You push a simulated recall to your retail partners — they respond through the normal 5-step chain. All records are clearly marked as a drill. When complete, you generate a compliance report showing response times per store.
+      </div>
+      <div class="panel"><div class="panel-body">
+        <div id="drill-msg" style="display:none;" class="msg"></div>
+        <div class="field"><label>Simulated product *</label>
+          <input id="d-product" type="text" placeholder="e.g. Tine Helmelk 1L" value="${_drillDraft.product}" oninput="_drillDraft.product=this.value">
+        </div>
+        <div class="field"><label>Simulated lot code</label>
+          <input id="d-lot" type="text" placeholder="e.g. DRILL-2026-04-01" value="${_drillDraft.lot}" oninput="_drillDraft.lot=this.value">
+        </div>
+        <div class="field"><label>Scenario description *</label>
+          <input id="d-reason" type="text" placeholder="e.g. Simulated undeclared allergen — milk" value="${_drillDraft.reason}" oninput="_drillDraft.reason=this.value">
+        </div>
+        <div class="field" style="margin-bottom:0;"><label>Target response time</label>
+          <select id="d-target" oninput="_drillDraft.targetHours=parseInt(this.value)">
+            <option value="2" ${_drillDraft.targetHours===2?'selected':''}>2 hours</option>
+            <option value="4" ${_drillDraft.targetHours===4?'selected':''}>4 hours</option>
+            <option value="8" ${_drillDraft.targetHours===8?'selected':''}>8 hours</option>
+            <option value="24" ${_drillDraft.targetHours===24?'selected':''}>24 hours</option>
+          </select>
+        </div>
+      </div></div>
+      <div style="display:flex;justify-content:space-between;margin-top:14px;">
+        <button onclick="_drillStep=0;renderDrills()" class="btn-ghost">← Back</button>
+        <button onclick="drillStep1Next()" class="btn-primary" style="padding:10px 24px;">Continue →</button>
+      </div>
+    </div>`;
+    return;
+  }
+
+  if (step === 2) {
+    el.innerHTML = `<div style="max-width:580px;">
+      <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;margin-bottom:4px;">Review drill scenario</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:20px;">Step 2 of 3</div>
+      ${progressBar}
+      <div class="panel" style="margin-bottom:14px;">
+        <div class="panel-header"><div class="panel-title">Drill summary</div></div>
+        <div class="panel-body" style="display:flex;flex-direction:column;gap:8px;font-size:13px;">
+          <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Product</span><strong style="color:var(--text);">${_drillDraft.product}</strong></div>
+          <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Lot code</span><strong style="color:var(--text);font-family:'DM Mono',monospace;">${_drillDraft.lot||'Not specified'}</strong></div>
+          <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Scenario</span><strong style="color:var(--text);">${_drillDraft.reason}</strong></div>
+          <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Target response</span><strong style="color:var(--text);">${_drillDraft.targetHours} hours</strong></div>
+        </div>
+      </div>
+      <div style="background:rgba(245,166,35,0.07);border:1px solid rgba(245,166,35,0.2);border-radius:10px;padding:14px 16px;margin-bottom:16px;font-size:12px;color:var(--muted);line-height:1.6;">
+        When you push this drill, all your connected retail partners will receive a notification clearly marked as a drill. Their store managers will work through the 5-step response chain. You can track per-store progress in the Acknowledgements panel.
+      </div>
+      <div style="display:flex;justify-content:space-between;">
+        <button onclick="_drillStep=1;renderDrills()" class="btn-ghost">← Edit scenario</button>
+        <button onclick="pushDrill()" class="btn-primary" style="padding:10px 24px;background:var(--warn);border-color:var(--warn);">
+          ⚠ Push drill to all partners →
+        </button>
+      </div>
+    </div>`;
+    return;
+  }
+}
+
+function drillStep1Next() {
+  const product = document.getElementById('d-product')?.value.trim();
+  const reason  = document.getElementById('d-reason')?.value.trim();
+  _drillDraft.product = product;
+  _drillDraft.lot     = document.getElementById('d-lot')?.value.trim();
+  _drillDraft.reason  = reason;
+  _drillDraft.targetHours = parseInt(document.getElementById('d-target')?.value||'4');
+  const msg = document.getElementById('drill-msg');
+  if (!product) { msg.style.display='block'; msg.className='msg error'; msg.textContent='Product name required.'; return; }
+  if (!reason)  { msg.style.display='block'; msg.className='msg error'; msg.textContent='Scenario description required.'; return; }
+  _drillStep = 2;
+  renderDrills();
+}
+
+async function pushDrill() {
+  const btn = event?.target;
+  if (btn) { btn.disabled=true; btn.textContent='Pushing drill…'; }
+  try {
+    const { data: result, error } = await sb.rpc('push_recall', {
+      p_product_name:  _drillDraft.product,
+      p_lot_number:    _drillDraft.lot    || null,
+      p_barcode:       null,
+      p_severity:      'class_ii',
+      p_reason:        _drillDraft.reason,
+      p_description:   `MOCK RECALL DRILL — Target response time: ${_drillDraft.targetHours} hours. This is a test exercise only.`,
+      p_authority_ref: null,
+      p_is_drill:      true,
+    });
+    if (error) throw error;
+
+    // Show completion
+    const el = document.getElementById('main-content');
+    el.innerHTML = `<div style="max-width:500px;">
+      <div style="background:rgba(245,166,35,0.08);border:1px solid rgba(245,166,35,0.3);border-radius:14px;padding:28px;text-align:center;">
+        <div style="font-size:36px;margin-bottom:14px;">⚠</div>
+        <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:20px;margin-bottom:8px;">Drill dispatched</div>
+        <div style="font-size:13px;color:var(--muted);line-height:1.7;margin-bottom:20px;">
+          <strong style="color:var(--text);">${result?.retailers_notified||0}</strong> retailer${(result?.retailers_notified||0)!==1?'s':''} notified<br>
+          <strong style="color:var(--text);">${result?.stores_notified||0}</strong> store${(result?.stores_notified||0)!==1?'s':''} have drill records created<br>
+          Target response time: <strong style="color:var(--text);">${_drillDraft.targetHours} hours</strong>
+        </div>
+        <div style="background:var(--surface2);border-radius:8px;padding:12px 14px;font-size:11px;color:var(--muted);line-height:1.7;margin-bottom:20px;text-align:left;">
+          Track per-store responses in <strong style="color:var(--text);">Acknowledgements</strong>. When all stores confirm, you can generate a drill compliance report from the corporate dashboard Compliance panel.
+        </div>
+        <div style="display:flex;gap:10px;justify-content:center;">
+          <button onclick="showPanel('acknowledgements')" class="btn-ghost">Track responses →</button>
+          <button onclick="_drillStep=0;_drillDraft={product:'',lot:'',reason:'Simulated contamination — drill exercise',description:'',targetHours:4};renderDrills()" class="btn-ghost">Run another drill</button>
+        </div>
+      </div>
+    </div>`;
+    _drillStep = 0;
+  } catch(e) {
+    showToast('Error: '+e.message, 'error', 4000);
+    if (btn) { btn.disabled=false; btn.textContent='⚠ Push drill to all partners →'; }
+  }
+}
 
 async function renderMockAudit() {
   const el = document.getElementById('main-content');
