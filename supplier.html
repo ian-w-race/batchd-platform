@@ -226,10 +226,10 @@ async function renderOverview() {
   el.innerHTML='<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading...</div>';
   try {
     const [ingR, lotR, shipR, linkR] = await Promise.all([
-      sb.from('supplier_ingredients').select('id').eq('supplier_org_id',_orgId),
-      sb.from('supplier_lot_codes').select('id').eq('supplier_org_id',_orgId),
-      sb.from('supplier_shipments').select('id,ingredient_name,lot_code,shipped_at').eq('supplier_org_id',_orgId).order('shipped_at',{ascending:false}).limit(5),
-      sb.from('supplier_manufacturer_links').select('status,organisations!supplier_manufacturer_links_manufacturer_org_id_fkey(name)').eq('supplier_org_id',_orgId),
+      sb.from('supplier_ingredients').select('id').eq('supplier_id',_orgId),
+      sb.from('supplier_lot_codes').select('id').eq('supplier_id',_orgId),
+      sb.from('ingredient_receipts').select('id,ingredient_name,lot_code,shipped_at').eq('supplier_id',_orgId).order('shipped_at',{ascending:false}).limit(5),
+      sb.from('supplier_connections').select('status,organisations!supplier_connections_manufacturer_id_fkey(name)').eq('supplier_id',_orgId),
     ]);
     const active = (linkR.data||[]).filter(l=>l.status==='active');
     el.innerHTML = `
@@ -250,7 +250,7 @@ async function renderOverview() {
         </div></div>
         <div class="panel"><div class="panel-header"><div><div class="panel-title">Recent shipments</div></div><button class="panel-action" onclick="showPanel('shipments')">All →</button></div><div class="panel-body" style="padding:${(shipR.data||[]).length?'0 18px':'18px'};">
           ${!(shipR.data||[]).length?'<div class="empty">No shipments yet. Log your first shipment to start building traceability.</div>':
-          (shipR.data||[]).map(s=>'<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(18,53,47,0.5);"><div style="width:6px;height:6px;border-radius:50%;background:var(--accent);flex-shrink:0;"></div><div style="flex:1;min-width:0;"><div style="font-size:12px;font-weight:500;color:var(--text);">'+esc(s.ingredient_name||'—')+'</div><div style="font-size:10px;color:var(--muted);margin-top:1px;">Lot: <span style="font-family:DM Mono,monospace;">'+esc(s.lot_code||'—')+'</span> · '+fmtDate(s.shipped_at)+'</div></div></div>').join('')}
+          (shipR.data||[]).map(s=>'<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(18,53,47,0.5);"><div style="width:6px;height:6px;border-radius:50%;background:var(--accent);flex-shrink:0;"></div><div style="flex:1;min-width:0;"><div style="font-size:12px;font-weight:500;color:var(--text);">'+esc(s.ingredient_name||'—')+'</div><div style="font-size:10px;color:var(--muted);margin-top:1px;">Lot: <span style="font-family:DM Mono,monospace;">'+esc(s.lot_number||'—')+'</span> · '+fmtDate(s.shipped_at)+'</div></div></div>').join('')}
         </div></div>
       </div>`;
   } catch(e) { el.innerHTML='<div style="color:var(--danger);font-size:12px;padding:20px;">Error: '+e.message+'</div>'; }
@@ -261,7 +261,7 @@ async function renderIngredients() {
   const el = document.getElementById('main-content');
   el.innerHTML='<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading...</div>';
   try {
-    const {data:items} = await sb.from('supplier_ingredients').select('*').eq('supplier_org_id',_orgId).order('name');
+    const {data:items} = await sb.from('supplier_ingredients').select('*').eq('supplier_id',_orgId).order('name');
     el.innerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px;"><div><div style="font-family:Figtree,sans-serif;font-weight:700;font-size:16px;">${(items||[]).length} ingredient${(items||[]).length!==1?'s':''}</div><div style="font-size:11px;color:var(--muted);margin-top:2px;">Ingredient products you supply</div></div><button class="btn-primary" onclick="toggleIngredientForm()"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add ingredient</button></div>
     <div id="ingredient-form" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px;">
       <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:12px;">Add ingredient</div>
@@ -294,7 +294,7 @@ function toggleIngredientForm() { const f=document.getElementById('ingredient-fo
 async function saveIngredient() {
   const name=document.getElementById('ingr-name')?.value.trim(), msg=document.getElementById('ingr-msg');
   if (!name) { msg.style.cssText='display:block;color:var(--danger);'; msg.textContent='Name required.'; return; }
-  const {error} = await sb.from('supplier_ingredients').insert({supplier_org_id:_orgId,name,barcode:document.getElementById('ingr-barcode')?.value.trim()||null,category:document.getElementById('ingr-category')?.value||null,unit:document.getElementById('ingr-unit')?.value.trim()||null,description:document.getElementById('ingr-desc')?.value.trim()||null});
+  const {error} = await sb.from('supplier_ingredients').insert({supplier_id:_orgId,name,barcode:document.getElementById('ingr-barcode')?.value.trim()||null,category:document.getElementById('ingr-category')?.value||null,unit:document.getElementById('ingr-unit')?.value.trim()||null,description:document.getElementById('ingr-desc')?.value.trim()||null});
   if (error) { msg.style.cssText='display:block;color:var(--danger);'; msg.textContent='Error: '+error.message; return; }
   showToast('Ingredient saved','ok',2500); renderIngredients();
 }
@@ -305,8 +305,8 @@ async function renderLots() {
   el.innerHTML='<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading...</div>';
   try {
     const [{data:ingredients},{data:lots}] = await Promise.all([
-      sb.from('supplier_ingredients').select('id,name').eq('supplier_org_id',_orgId).order('name'),
-      sb.from('supplier_lot_codes').select('*,supplier_ingredients(name)').eq('supplier_org_id',_orgId).order('created_at',{ascending:false}),
+      sb.from('supplier_ingredients').select('id,name').eq('supplier_id',_orgId).order('name'),
+      sb.from('supplier_lot_codes').select('*,supplier_ingredients(name)').eq('supplier_id',_orgId).order('created_at',{ascending:false}),
     ]);
     el.innerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px;"><div><div style="font-family:Figtree,sans-serif;font-weight:700;font-size:16px;">${(lots||[]).length} lot code${(lots||[]).length!==1?'s':''}</div><div style="font-size:11px;color:var(--muted);margin-top:2px;">Production batches logged by ${_orgName}</div></div>${(ingredients||[]).length?'<button class="btn-primary" onclick="toggleLotForm()"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Register lot</button>':''}</div>
     <div id="lot-form" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px;">
@@ -336,7 +336,7 @@ function toggleLotForm() { const f=document.getElementById('lot-form'); if(f) f.
 async function saveLot() {
   const ingId=document.getElementById('lot-ingredient')?.value, code=document.getElementById('lot-code')?.value.trim().toUpperCase(), msg=document.getElementById('lot-msg');
   if (!ingId||!code) { msg.style.cssText='display:block;color:var(--danger);'; msg.textContent='Ingredient and lot code are required.'; return; }
-  const {error} = await sb.from('supplier_lot_codes').insert({supplier_org_id:_orgId,ingredient_id:ingId,lot_code:code,production_date:document.getElementById('lot-prod')?.value||null,expiry_date:document.getElementById('lot-exp')?.value||null,quantity:document.getElementById('lot-qty')?.value?parseFloat(document.getElementById('lot-qty').value):null,notes:document.getElementById('lot-notes')?.value.trim()||null});
+  const {error} = await sb.from('supplier_lot_codes').insert({supplier_id:_orgId,ingredient_id:ingId,lot_code:code,production_date:document.getElementById('lot-prod')?.value||null,expiry_date:document.getElementById('lot-exp')?.value||null,quantity:document.getElementById('lot-qty')?.value?parseFloat(document.getElementById('lot-qty').value):null,notes:document.getElementById('lot-notes')?.value.trim()||null});
   if (error) { msg.style.cssText='display:block;color:var(--danger);'; msg.textContent='Error: '+error.message; return; }
   showToast('Lot code registered','ok',2500); renderLots();
 }
@@ -347,9 +347,9 @@ async function renderShipments() {
   el.innerHTML='<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading...</div>';
   try {
     const [{data:shipments},{data:ingredients},{data:partners}] = await Promise.all([
-      sb.from('supplier_shipments').select('*,organisations!supplier_shipments_manufacturer_org_id_fkey(name)').eq('supplier_org_id',_orgId).order('shipped_at',{ascending:false}).limit(100),
-      sb.from('supplier_ingredients').select('id,name').eq('supplier_org_id',_orgId).order('name'),
-      sb.from('supplier_manufacturer_links').select('manufacturer_org_id,organisations!supplier_manufacturer_links_manufacturer_org_id_fkey(id,name)').eq('supplier_org_id',_orgId).eq('status','active'),
+      sb.from('ingredient_receipts').select('*,organisations!ingredient_receipts_manufacturer_id_fkey(name)').eq('supplier_id',_orgId).order('shipped_at',{ascending:false}).limit(100),
+      sb.from('supplier_ingredients').select('id,name').eq('supplier_id',_orgId).order('name'),
+      sb.from('supplier_connections').select('manufacturer_id,organisations!supplier_connections_manufacturer_id_fkey(id,name)').eq('supplier_id',_orgId).eq('status','active'),
     ]);
     el.innerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px;"><div><div style="font-family:Figtree,sans-serif;font-weight:700;font-size:16px;">${(shipments||[]).length} shipment${(shipments||[]).length!==1?'s':''}</div><div style="font-size:11px;color:var(--muted);margin-top:2px;">Ingredient shipments logged to manufacturer partners</div></div>${(ingredients||[]).length&&(partners||[]).length?'<button class="btn-primary" onclick="toggleShipmentForm()"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Log shipment</button>':'<div style="font-size:11px;color:var(--warn);">'+(!(partners||[]).length?'Connect a manufacturer first':'Add ingredients first')+'</div>'}</div>
     <div id="shipment-form" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px;">
@@ -373,7 +373,7 @@ async function renderShipments() {
     <div class="panel"><div class="panel-body" style="padding:${!(shipments||[]).length?'18px':'0'};">
       ${!(shipments||[]).length?'<div class="empty">No shipments logged yet. Log ingredient shipments to give manufacturers upstream traceability for FSMA 204.</div>':
       '<table class="data-table"><thead><tr><th>Ingredient</th><th>Lot code</th><th>Shipped to</th><th>Date</th><th>Qty</th><th>Ref</th></tr></thead><tbody>'+
-      (shipments||[]).map(s=>'<tr><td style="font-weight:500;color:var(--text);">'+esc(s.ingredient_name||'—')+'</td><td style="font-family:DM Mono,monospace;font-size:11px;color:var(--accent);">'+esc(s.lot_code||'—')+'</td><td style="font-size:11px;color:var(--text);">'+esc(s.organisations?.name||'—')+'</td><td style="font-size:11px;color:var(--muted);">'+fmtDate(s.shipped_at)+'</td><td style="font-size:11px;color:var(--muted);">'+(s.quantity||'—')+' '+(s.unit||'')+'</td><td style="font-size:10px;color:var(--muted);font-family:DM Mono,monospace;">'+esc(s.reference||'—')+'</td></tr>').join('')+
+      (shipments||[]).map(s=>'<tr><td style="font-weight:500;color:var(--text);">'+esc(s.ingredient_name||'—')+'</td><td style="font-family:DM Mono,monospace;font-size:11px;color:var(--accent);">'+esc(s.lot_number||'—')+'</td><td style="font-size:11px;color:var(--text);">'+esc(s.organisations?.name||'—')+'</td><td style="font-size:11px;color:var(--muted);">'+fmtDate(s.shipped_at)+'</td><td style="font-size:11px;color:var(--muted);">'+(s.quantity||'—')+' '+(s.unit||'')+'</td><td style="font-size:10px;color:var(--muted);font-family:DM Mono,monospace;">'+esc(s.reference||'—')+'</td></tr>').join('')+
       '</tbody></table>'}
     </div></div>`;
   } catch(e) { el.innerHTML='<div style="color:var(--danger);font-size:12px;padding:20px;">Error: '+e.message+'</div>'; }
@@ -388,7 +388,7 @@ async function saveShipment() {
   // Also get the ingredient name for denormalized storage
   const ingEl = document.getElementById('ss-ingredient');
   const ingredientName = ingEl?.selectedOptions?.[0]?.textContent || '';
-  const {error} = await sb.from('supplier_shipments').insert({supplier_org_id:_orgId,ingredient_id:ingId,ingredient_name:ingredientName,manufacturer_org_id:mfrId,lot_code:lot,shipped_at:new Date(date).toISOString(),quantity:document.getElementById('ss-qty')?.value?parseFloat(document.getElementById('ss-qty').value):null,unit:document.getElementById('ss-unit')?.value||'kg',reference:document.getElementById('ss-ref')?.value.trim()||null});
+  const {error} = await sb.from('ingredient_receipts').insert({supplier_id:_orgId,manufacturer_id:mfrId,ingredient_name:ingredientName,lot_number:lot,quantity:document.getElementById('ss-qty')?.value?parseFloat(document.getElementById('ss-qty').value):null,unit:document.getElementById('ss-unit')?.value||'kg',shipped_at:new Date(date).toISOString(),received_at:new Date().toISOString(),reference_document:document.getElementById('ss-ref')?.value.trim()||null});
   if (error) { msg.style.cssText='display:block;color:var(--danger);'; msg.textContent='Error: '+error.message; return; }
   showToast('Shipment logged','ok',2500); renderShipments();
 }
@@ -398,7 +398,7 @@ async function renderManufacturers() {
   const el=document.getElementById('main-content');
   el.innerHTML='<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading...</div>';
   try {
-    const {data:links} = await sb.from('supplier_manufacturer_links').select('*,organisations!supplier_manufacturer_links_manufacturer_org_id_fkey(name,contact_email)').eq('supplier_org_id',_orgId).order('created_at',{ascending:false});
+    const {data:links} = await sb.from('supplier_connections').select('*,organisations!supplier_connections_manufacturer_id_fkey(name,contact_email)').eq('supplier_id',_orgId).order('created_at',{ascending:false});
     const header = '<div style="margin-bottom:20px;"><div style="font-family:Figtree,sans-serif;font-weight:700;font-size:16px;">'+(links||[]).length+' manufacturer connection'+((links||[]).length!==1?'s':'')+'</div><div style="font-size:11px;color:var(--muted);margin-top:2px;">Manufacturers invite you via email to join their supplier network</div></div>';
     const body = !(links||[]).length
       ? '<div class="panel"><div class="panel-body"><div class="empty"><div style="font-size:24px;margin-bottom:12px;">&#x1F91D;</div><div style="font-weight:600;color:var(--text);margin-bottom:6px;">No connections yet</div><div>Manufacturer partners will invite you by email. Once accepted, they appear here.</div></div></div></div>'
@@ -414,20 +414,20 @@ async function renderInvestigations() {
   const el = document.getElementById('main-content');
   el.innerHTML = '<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading...</div>';
   try {
-    const { data: links } = await sb.from('supplier_manufacturer_links')
-      .select('manufacturer_org_id').eq('supplier_org_id', _orgId).eq('status', 'active');
-    const mfrIds = (links || []).map(l => l.manufacturer_org_id);
+    const { data: links } = await sb.from('supplier_connections')
+      .select('manufacturer_id').eq('supplier_id', _orgId).eq('status', 'active');
+    const mfrIds = (links || []).map(l => l.manufacturer_id);
 
     let invs = [];
     if (mfrIds.length) {
       const { data } = await sb.from('investigation_requests')
-        .select('*, investigation_responses(id, supplier_org_id, submitted_at)')
+        .select('*, investigation_responses(id, supplier_id, submitted_at)')
         .in('manufacturer_id', mfrIds)
         .order('created_at', { ascending: false });
       invs = data || [];
     }
 
-    const responded   = new Set(invs.filter(inv => (inv.investigation_responses || []).some(r => r.supplier_org_id === _orgId)).map(inv => inv.id));
+    const responded   = new Set(invs.filter(inv => (inv.investigation_responses || []).some(r => r.supplier_id === _orgId)).map(inv => inv.id));
     const needsResp   = invs.filter(inv => !responded.has(inv.id) && (inv.status === 'open' || inv.status === 'in_progress'));
     const urgColors   = { 1: 'var(--danger)', 2: 'var(--warn)', 3: 'var(--muted)' };
 
@@ -538,7 +538,7 @@ async function submitInvResponse(invId) {
   if(!found){showMsg('Please indicate whether the issue was found.',false);return;}
   if(!desc){showMsg('Please describe your findings.',false);return;}
   btn.disabled=true; btn.textContent='Submitting...';
-  const {error} = await sb.from('investigation_responses').insert({investigation_id:invId,supplier_org_id:_orgId,issue_found:found==='yes',issue_description:desc,affected_lots:lots||null,status:'submitted'});
+  const {error} = await sb.from('investigation_responses').insert({investigation_id:invId,supplier_id:_orgId,issue_found:found==='yes',issue_description:desc,affected_lots:lots||null,status:'submitted'});
   if(error){showMsg('Error: '+error.message,false);btn.disabled=false;btn.textContent='Submit';return;}
   await sb.from('investigation_requests').update({status:'in_progress'}).eq('id',invId).eq('status','open');
   document.getElementById('sinv-modal').remove();
