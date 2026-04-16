@@ -2064,37 +2064,38 @@
 
   .btn-recall-toggle {
     width: 100%;
-    padding: 13px 18px;
-    background: var(--danger);
-    border: none;
+    padding: 11px 18px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
     border-radius: 10px;
-    color: #1a0a0a;
+    color: var(--muted);
     font-family: 'DM Mono', monospace;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 9px;
-    transition: background 0.15s, opacity 0.15s;
+    transition: all 0.15s;
     letter-spacing: 0.03em;
-    min-height: 48px;
+    min-height: 44px;
   }
 
   .btn-recall-toggle:hover {
-    background: #ff7a7a;
-    opacity: 1;
+    border-color: var(--danger);
+    color: var(--danger);
+    background: rgba(255,92,92,0.06);
   }
 
   .btn-recall-toggle.active {
-    background: rgba(255,92,92,0.15);
+    background: rgba(255,92,92,0.1);
     border: 1.5px solid var(--danger);
     color: var(--danger);
   }
 
   .btn-recall-toggle.active:hover {
-    background: rgba(255,92,92,0.25);
+    background: rgba(255,92,92,0.18);
   }
 
   @media (max-width: 600px) {
@@ -2991,7 +2992,10 @@
         <span data-i18n="hist.activeRecallMatch">Active Recall Match Detected</span>
       </div>
       <div id="auto-recall-text" style="font-size:13px;color:var(--text);"></div>
-      <button class="btn-recall-toggle" onclick="activateAutoRecall()" style="margin-top:4px;" data-i18n="hist.viewMatching">View matching records</button>
+      <button onclick="activateAutoRecall()" style="margin-top:4px;width:100%;padding:11px 18px;background:rgba(255,92,92,0.12);border:1.5px solid rgba(255,92,92,0.4);border-radius:10px;color:var(--danger);font-family:'DM Mono',monospace;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:all 0.15s;" data-i18n="hist.viewMatching">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        View matching records
+      </button>
     </div>
 
     <!-- Recall Check button -->
@@ -8166,7 +8170,11 @@ function renderRecords(records, recallQ) {
           ${r.is_ftl ? `<span class="meta-chip" style="color:#3b82f6;border-color:rgba(59,130,246,0.3);background:rgba(59,130,246,0.08);">🔵 FSMA 204 (USA)</span>` : ''}
           ${r.batch_number   ? `<span class="meta-chip">${t("card.batch")} <strong>${esc(r.batch_number)}</strong></span>` : ''}
         </div>
-        ${r.notes ? `<div style="font-size:12px;color:var(--muted);margin-top:4px;font-style:italic;">"${esc(r.notes)}"</div>` : ''}
+        ${r.notes ? `<div style="font-size:12px;color:var(--muted);margin-top:4px;${r.notes.includes('LOT_UNAVAILABLE')?'font-style:normal;':'font-style:italic;'}">
+          ${r.notes.includes('LOT_UNAVAILABLE')
+            ? `<span style="font-family:'DM Mono',monospace;font-size:10px;background:rgba(245,166,35,0.1);border:1px solid rgba(245,166,35,0.25);color:var(--warn);padding:2px 8px;border-radius:6px;">Lot unavailable</span>${r.notes.replace(/\s*\|?\s*LOT_UNAVAILABLE\s*/g,'').trim() ? ' · ' + esc(r.notes.replace(/\s*\|?\s*LOT_UNAVAILABLE\s*/g,'').trim()) : ''}`
+            : `"${esc(r.notes)}"` }
+        </div>` : ''}
         ${r.recall_resolved && r.recall_resolved_by ? `<div style="font-size:11px;color:var(--accent);margin-top:2px;">${t('card.resolvedBy')} ${esc(r.recall_resolved_by.split('@')[0])} · ${fmtRegionDate(r.recall_resolved_at, true)}</div>` : ''}
         ${exposureHtml}
         <div class="record-photos">
@@ -8283,15 +8291,31 @@ function levenshtein(a, b) {
 }
 
 function fuzzyProductMatch(recallProduct, scanProduct) {
-  if (!recallProduct || !scanProduct) return true; // no product to match against
+  if (!recallProduct) return false; // recall with no product name should not match anything
+  if (!scanProduct)   return false;
+
   const a = recallProduct.toLowerCase();
   const b = scanProduct.toLowerCase();
-  // Either contains the other, or share significant words
-  if (b.includes(a) || a.includes(b)) return true;
-  const aWords = a.split(/\s+/).filter(w => w.length > 3);
-  const bWords = b.split(/\s+/).filter(w => w.length > 3);
+
+  // 1. Exact substring match (both directions, stripped)
+  const aCore = a.replace(/\b(tilbakekaller?|recalls?|sa\b|as\b|aps\b|ltd\b|inc\b|og\b|av\b|med\b|fra\b|til\b|for\b|the\b|and\b|de\b|la\b|le\b|van\b)/g, '').replace(/\s+/g,' ').trim();
+  const bCore = b.replace(/\b(tilbakekaller?|recalls?|sa\b|as\b|aps\b|ltd\b|inc\b|og\b|av\b|med\b|fra\b|til\b|for\b|the\b|and\b|de\b|la\b|le\b|van\b)/g, '').replace(/\s+/g,' ').trim();
+  if (bCore.includes(aCore) || aCore.includes(bCore)) return true;
+
+  // 2. Shared meaningful words — require words 5+ chars, exclude known brand stopwords
+  // that appear on many products (single brand match = too many false positives)
+  const BRAND_STOPWORDS = new Set(['nortura','tine','gilde','coop','bama','rema','kiwi','meny','asko','orkla',
+    'lerøy','marine','farms','foods','brand','group','nordic','norge','norsk','fresh','daily','royal',
+    'premium','select','extra','super','light','store','little','great','best','good','fine']);
+  const aWords = a.split(/\s+/).filter(w => w.length >= 5 && !BRAND_STOPWORDS.has(w));
+  const bWords = b.split(/\s+/).filter(w => w.length >= 5 && !BRAND_STOPWORDS.has(w));
+
+  if (aWords.length === 0 || bWords.length === 0) return false;
+
   const shared = aWords.filter(w => bWords.some(bw => bw.includes(w) || w.includes(bw)));
-  return shared.length >= Math.min(1, aWords.length);
+  // Require at least 2 shared meaningful words, OR 1 if the recall product is very specific (short)
+  const required = aWords.length <= 2 ? 1 : 2;
+  return shared.length >= required;
 }
 
 // Core: compare a scan lot against a recall lot
@@ -8347,11 +8371,9 @@ function recallMatchLevel(scanRecord, recall) {
     if (level) return { level, recall };
   }
 
-  // Product name only match (no lot on recall) — exact product match = possible
+  // Product name only match (no lot on recall)
+  // Without lot confirmation, this can only ever be 'possible' — never 'exact'
   if (!recall.lot_number && recall.product_name && productMatch) {
-    const pLow = (scanRecord.product_name||'').toLowerCase();
-    const rLow = (recall.product_name||'').toLowerCase();
-    if (pLow.includes(rLow) || rLow.includes(pLow)) return { level: 'exact', recall };
     return { level: 'possible', recall };
   }
 
@@ -12811,7 +12833,9 @@ function renderMgrStatTiles() {
   const stores   = [...new Set(_mgrAllScans.map(r => r.store_name).filter(Boolean))];
   const staff    = [...new Set(_mgrAllScans.map(r => r.scanned_by).filter(Boolean))];
   const onShelf  = _mgrAllScans.filter(r => !r.removed_from_shelf_at).length;
-  const active   = _mgrAllRecalls.filter(r => r.active).length;
+  // Exclude FDA/RASFF bulk-imported records — those are scanning-app reference data
+  // not operational recalls for the manager dashboard
+  const active   = _mgrAllRecalls.filter(r => r.active && !['fda','rasff','FDA','RASFF'].includes(r.source)).length;
   const today    = new Date().toISOString().slice(0,10);
   const todayScans = _mgrAllScans.filter(r => r.created_at?.slice(0,10) === today).length;
   const unresolved = _mgrAllScans.filter(r => r.recall_resolved === false && !r.removed_from_shelf_at).length;
@@ -12856,7 +12880,8 @@ function renderMgrStores() {
     if (!stores[s].lastScan || r.created_at > stores[s].lastScan) stores[s].lastScan = r.created_at;
   }
   // Check recall matches per store
-  const activeRecalls = _mgrAllRecalls.filter(r => r.active);
+  // Exclude FDA/RASFF bulk data — only show operationally relevant recalls
+  const activeRecalls = _mgrAllRecalls.filter(r => r.active && !['fda','rasff','FDA','RASFF'].includes(r.source));
   for (const r of _mgrAllScans) {
     const s = r.store_name || t('store.noStore');
     const hit = activeRecalls.some(rec =>
@@ -13451,7 +13476,11 @@ async function loadMgrEscalated() {
             ${r.scanned_by ? `<span class="meta-chip"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> <strong>${esc(r.scanned_by.split('@')[0])}</strong></span>` : ''}
             <span class="meta-chip" style="color:var(--warn);">⚑ Flagged by <strong>${esc(escalatedBy)}</strong> · ${escalatedWhen}</span>
           </div>
-          ${r.notes ? `<div style="font-size:12px;color:var(--muted);margin-top:4px;font-style:italic;">"${esc(r.notes)}"</div>` : ''}
+          ${r.notes ? `<div style="font-size:12px;color:var(--muted);margin-top:4px;${r.notes.includes('LOT_UNAVAILABLE')?'font-style:normal;':'font-style:italic;'}">
+            ${r.notes.includes('LOT_UNAVAILABLE')
+              ? `<span style="font-family:'DM Mono',monospace;font-size:10px;background:rgba(245,166,35,0.1);border:1px solid rgba(245,166,35,0.25);color:var(--warn);padding:2px 8px;border-radius:6px;">Lot unavailable</span>${r.notes.replace(/\s*\|?\s*LOT_UNAVAILABLE\s*/g,'').trim() ? ' · ' + esc(r.notes.replace(/\s*\|?\s*LOT_UNAVAILABLE\s*/g,'').trim()) : ''}`
+              : `"${esc(r.notes)}"` }
+          </div>` : ''}
           ${exposureHtml}
           <div class="record-photos">
             ${r.product_photo_url ? `<img class="thumb-mini" src="${r.product_photo_url}" onclick="openLightbox('${r.product_photo_url}')" />` : ''}
