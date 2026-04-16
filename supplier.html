@@ -194,10 +194,11 @@ async function initApp(session) {
   }
   const orgType = member.organisations?.type;
   const role = member.role;
-  // corp_admin bypass for testing — same pattern as manufacturer portal
-  const isBypass = role === 'corp_admin';
-  if (!isBypass && orgType !== 'supplier' && !role?.includes('supplier')) {
-    document.getElementById('auth-msg').textContent='This portal is for supplier accounts only. Manufacturers use manufacturer.batchdapp.com.';
+  // Bypass: supplier orgs, OR corp_admin/mfr_admin dev accounts
+  const isSupplier = orgType === 'supplier' || role?.includes('supplier');
+  const isBypass   = ['corp_admin','mfr_admin','mfr_qa','store_manager','staff'].includes(role);
+  if (!isSupplier && !isBypass) {
+    document.getElementById('auth-msg').textContent='This portal is for supplier accounts only.';
     document.getElementById('auth-msg').style.cssText='display:block;background:rgba(255,92,92,0.1);color:var(--danger);border:1px solid rgba(255,92,92,0.3);font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;';
     await sb.auth.signOut(); document.getElementById('auth-btn').disabled=false; document.getElementById('auth-btn-text').textContent='Sign in'; return;
   }
