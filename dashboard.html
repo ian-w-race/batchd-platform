@@ -406,7 +406,7 @@
       </button>
       <div class="nav-section">Recalls</div>
       <button class="nav-item nav-item-cta" onclick="showPanel('recalls')" id="nav-recalls">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
         Active Recalls
       </button>
       <button class="nav-item" onclick="showPanel('investigations')" id="nav-investigations">
@@ -634,7 +634,7 @@ function showPanel(name) {
   document.querySelectorAll('.nav-item').forEach(el => {
     if (el.getAttribute('onclick')?.includes(`'${name}'`)) el.classList.add('active');
   });
-  const fns = { overview: renderOverview, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, shipments: renderShipments, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, partners: renderPartners, triage: renderDashboardTriage };
+  const fns = { overview: renderOverview, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, shipments: renderShipments, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, partners: renderPartners, triage: renderDashboardTriage, investigations: renderDashInvestigations };
   (fns[name] || renderComingSoon)(name);
 }
 
@@ -1097,13 +1097,19 @@ async function renderRecalls() {
       ...distData.find(d => d.recall_event_id === ev.id),
     }));
   }
-  const badge    = document.getElementById('nav-recall-badge');
   const activePushed = pushed.filter(p => !p.recall_events?.is_drill).length;
   // Only count non-pushed recalls from the recalls table — pushed recalls are
   // already represented in activePushed (via recall_events). Counting both = duplicates.
   const active   = recalls.filter(r=>r.active && !r.is_pushed).length + activePushed;
   const unacknowledged = acks.filter(a => a.status === 'notified').length;
-  if (active > 0) { badge.textContent = active; badge.style.display = 'inline'; }
+  // Update nav badge safely
+  const navBtn = document.getElementById('nav-recalls');
+  if (navBtn && active > 0) {
+    let badge = navBtn.querySelector('.recall-nav-badge');
+    if (!badge) { badge = document.createElement('span'); badge.className='recall-nav-badge'; badge.style.cssText='margin-left:auto;background:var(--danger);color:#fff;font-size:10px;padding:1px 6px;border-radius:10px;font-weight:700;font-family:DM Mono,monospace;'; navBtn.appendChild(badge); }
+    badge.textContent = active;
+    badge.style.display = 'inline';
+  }
 
   const stepOrder = ['notified','acknowledged','pulled','disposed','confirmed'];
   const stepLabels = { notified:'Notified', acknowledged:'Acknowledged', pulled:'Pulled from shelf', disposed:'Disposed', confirmed:'Confirmed ✓' };
@@ -3810,5 +3816,319 @@ function importStaff() {
     },
     onComplete: 'renderStaff()',
   });
+}
+</script>
+
+<script>
+// ── Investigations panel (retailer side) ──────────────────────
+async function renderDashInvestigations() {
+  const el = document.getElementById('main-content');
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading investigations…</div>`;
+  try {
+    // Load investigation requests from manufacturers we're connected to
+    const { data: partners } = await sb.from('trading_partners').select('manufacturer_id').eq('retailer_id', _orgId).eq('status','active');
+    const mfrIds = (partners||[]).map(p => p.manufacturer_id);
+
+    let invs = [];
+    if (mfrIds.length > 0) {
+      const { data } = await sb.from('investigation_requests')
+        .select('*, investigation_responses(id, retailer_org_id, issue_found, submitted_at)')
+        .in('manufacturer_id', mfrIds)
+        .order('created_at', { ascending: false });
+      invs = data || [];
+    }
+
+    // Also load our own responses
+    const { data: myResponses } = await sb.from('investigation_responses')
+      .select('investigation_id')
+      .eq('retailer_org_id', _orgId);
+    const myResponseIds = new Set((myResponses||[]).map(r => r.investigation_id));
+
+    // Org names for manufacturers
+    let orgNames = {};
+    if (mfrIds.length > 0) {
+      const { data: orgs } = await sb.from('organisations').select('id,name').in('id', mfrIds);
+      (orgs||[]).forEach(o => { orgNames[o.id] = o.name; });
+    }
+
+    const open     = invs.filter(i => i.status === 'open' || i.status === 'in_progress');
+    const closed   = invs.filter(i => i.status === 'closed' || i.status === 'escalated');
+    const needsResponse = open.filter(i => !myResponseIds.has(i.id));
+
+    // Badge update
+    const badge = document.getElementById('nav-investigations');
+    if (badge && needsResponse.length > 0) {
+      let b = badge.querySelector('.inv-badge');
+      if (!b) { b = document.createElement('span'); b.className='inv-badge'; b.style.cssText='margin-left:auto;background:var(--warn);color:#1a0f00;font-size:10px;padding:1px 6px;border-radius:10px;font-weight:700;'; badge.appendChild(b); }
+      b.textContent = needsResponse.length;
+    }
+
+    const urgColors = { 1:'var(--danger)', 2:'var(--warn)', 3:'var(--muted)' };
+    const urgLabels = { 1:'Class I · 24h', 2:'Class II · 72h', 3:'Routine · 7d' };
+    const issueLabels = { foreign_object:'Foreign object', mold:'Mold / spoilage', mislabeling:'Mislabeling', allergen:'Allergen concern', contamination:'Contamination', discoloration:'Discoloration', pest:'Pest', packaging:'Packaging defect', other:'Other' };
+
+    const fmtDate = d => d ? new Date(d).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : '—';
+    const fmtTime = d => {
+      if (!d) return '—';
+      const ms = Date.now() - new Date(d);
+      if (ms < 3600000) return Math.floor(ms/60000) + 'm ago';
+      if (ms < 86400000) return Math.floor(ms/3600000) + 'h ago';
+      return Math.floor(ms/86400000) + 'd ago';
+    };
+
+    el.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px;">
+        <div>
+          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">${invs.length} investigation${invs.length!==1?'s':''}</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:2px;">Field inspection requests from your manufacturer partners</div>
+        </div>
+        ${needsResponse.length > 0 ? `<div style="background:rgba(245,166,35,0.1);border:1px solid rgba(245,166,35,0.3);border-radius:8px;padding:8px 14px;font-size:12px;color:var(--warn);">⏱ ${needsResponse.length} awaiting your response</div>` : ''}
+      </div>
+
+      ${invs.length === 0 ? `
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:52px 24px;text-align:center;">
+          <div style="font-size:32px;margin-bottom:14px;">🔍</div>
+          <div style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:8px;">No investigations yet</div>
+          <div style="font-size:13px;color:var(--muted);max-width:380px;margin:0 auto;line-height:1.7;">When a manufacturer partner suspects a product issue and needs your stores to inspect stock, the investigation request will appear here.</div>
+        </div>` : `
+
+      <!-- Needs response first -->
+      ${needsResponse.length > 0 ? `
+      <div style="margin-bottom:22px;">
+        <div style="font-size:11px;font-weight:600;color:var(--warn);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px;">⏱ Awaiting your response</div>
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          ${needsResponse.map(inv => `
+          <div style="background:var(--surface);border:1px solid rgba(245,166,35,0.25);border-radius:12px;overflow:hidden;">
+            <div style="padding:16px 20px;display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap;">
+              <div style="flex:1;min-width:200px;">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;flex-wrap:wrap;">
+                  <div style="width:7px;height:7px;border-radius:50%;background:${urgColors[inv.urgency_class||2]};flex-shrink:0;"></div>
+                  <div style="font-size:14px;font-weight:700;color:var(--text);">${inv.product_name||'Product'}</div>
+                  <span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(245,166,35,0.1);color:var(--warn);">${urgLabels[inv.urgency_class||2]}</span>
+                </div>
+                <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">
+                  ${inv.issue_type ? `<span style="color:var(--text);">${issueLabels[inv.issue_type]||inv.issue_type}</span> · ` : ''}
+                  ${inv.lot_number ? `Lot: <span style="font-family:'DM Mono',monospace;color:var(--text);">${inv.lot_number}</span> · ` : ''}
+                  From: ${orgNames[inv.manufacturer_id]||'Unknown'} · ${fmtTime(inv.created_at)}
+                </div>
+                ${inv.issue_description ? `<div style="font-size:12px;color:var(--muted);background:var(--surface2);border-radius:6px;padding:8px 10px;line-height:1.5;">${inv.issue_description.slice(0,180)}${inv.issue_description.length>180?'…':''}</div>` : ''}
+                ${inv.instructions ? `<div style="font-size:11px;color:var(--info);margin-top:6px;">📋 ${inv.instructions.slice(0,120)}${inv.instructions.length>120?'…':''}</div>` : ''}
+              </div>
+              <div style="display:flex;flex-direction:column;gap:8px;flex-shrink:0;">
+                ${inv.deadline_at ? `<div style="font-size:11px;color:${new Date(inv.deadline_at)<new Date()?'var(--danger)':'var(--warn)'};">⏰ Due: ${fmtDate(inv.deadline_at)}</div>` : ''}
+                <button onclick="openDashInvestResponse('${inv.id}')" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:9px 16px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;">
+                  Submit response
+                </button>
+              </div>
+            </div>
+          </div>`).join('')}
+        </div>
+      </div>` : ''}
+
+      <!-- All investigations -->
+      <div>
+        <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px;">All investigations</div>
+        <div class="panel" style="overflow:hidden;">
+          <table style="width:100%;border-collapse:collapse;">
+            <thead><tr>
+              <th style="font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);text-align:left;padding:11px 18px;border-bottom:1px solid var(--border);">Product / Issue</th>
+              <th style="font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);text-align:left;padding:11px 8px;border-bottom:1px solid var(--border);">Manufacturer</th>
+              <th style="font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);text-align:left;padding:11px 8px;border-bottom:1px solid var(--border);">Urgency</th>
+              <th style="font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);text-align:left;padding:11px 8px;border-bottom:1px solid var(--border);">Status</th>
+              <th style="font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);text-align:left;padding:11px 8px;border-bottom:1px solid var(--border);">Responses</th>
+              <th style="font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);text-align:left;padding:11px 18px 11px 8px;border-bottom:1px solid var(--border);">Created</th>
+            </tr></thead>
+            <tbody>
+              ${invs.map((inv,i) => {
+                const myResp = myResponseIds.has(inv.id);
+                const responses = inv.investigation_responses || [];
+                const found = responses.filter(r => r.issue_found).length;
+                const statusColor = inv.status==='open' ? 'var(--warn)' : inv.status==='in_progress' ? 'var(--info)' : inv.status==='escalated' ? 'var(--danger)' : 'var(--accent)';
+                return `<tr style="background:${i%2?'transparent':'rgba(0,0,0,0.08)'};">
+                  <td style="padding:11px 18px;border-bottom:1px solid rgba(22,61,55,0.4);">
+                    <div style="font-size:12px;font-weight:600;color:var(--text);">${inv.product_name||'—'}</div>
+                    <div style="font-size:10px;color:var(--muted);margin-top:1px;">${issueLabels[inv.issue_type]||inv.issue_type||'—'}${inv.lot_number?` · Lot: <span style="font-family:'DM Mono',monospace;">${inv.lot_number}</span>`:''}</div>
+                  </td>
+                  <td style="padding:11px 8px;border-bottom:1px solid rgba(22,61,55,0.4);font-size:11px;color:var(--text);">${orgNames[inv.manufacturer_id]||'—'}</td>
+                  <td style="padding:11px 8px;border-bottom:1px solid rgba(22,61,55,0.4);">
+                    <span style="font-size:10px;color:${urgColors[inv.urgency_class||2]};">${urgLabels[inv.urgency_class||2]||'—'}</span>
+                  </td>
+                  <td style="padding:11px 8px;border-bottom:1px solid rgba(22,61,55,0.4);">
+                    <span style="font-size:10px;padding:2px 8px;border-radius:10px;background:${statusColor}18;color:${statusColor};text-transform:capitalize;">${inv.status||'open'}</span>
+                  </td>
+                  <td style="padding:11px 8px;border-bottom:1px solid rgba(22,61,55,0.4);font-size:11px;color:var(--muted);">
+                    ${responses.length} total · ${found} found issue
+                    ${myResp ? `<div style="font-size:10px;color:var(--accent);">✓ You responded</div>` : inv.status==='open'||inv.status==='in_progress' ? `<div><a href="#" onclick="event.preventDefault();openDashInvestResponse('${inv.id}')" style="font-size:10px;color:var(--warn);">Respond →</a></div>` : ''}
+                  </td>
+                  <td style="padding:11px 18px 11px 8px;border-bottom:1px solid rgba(22,61,55,0.4);font-size:10px;color:var(--muted);">${fmtDate(inv.created_at)}</td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>`}`;
+
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading investigations: ${e.message}</div>`;
+  }
+}
+
+// ── Investigation response form ───────────────────────────────
+let _dashInvestPhotos = [];
+
+async function openDashInvestResponse(invId) {
+  document.getElementById('dash-invest-resp-modal')?.remove();
+
+  const { data: inv } = await sb.from('investigation_requests').select('*').eq('id', invId).single();
+  if (!inv) { showToast('Investigation not found', 'error', 3000); return; }
+
+  const { data: stores } = await sb.from('stores').select('id,name').eq('organisation_id', _orgId).eq('active', true).order('name');
+  _dashInvestPhotos = [];
+
+  const modal = document.createElement('div');
+  modal.id = 'dash-invest-resp-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(4,12,14,0.92);z-index:9500;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(4px);';
+
+  const issueLabels = { foreign_object:'Foreign object', mold:'Mold / spoilage', mislabeling:'Mislabeling', allergen:'Allergen concern', contamination:'Contamination', discoloration:'Discoloration', pest:'Pest', packaging:'Packaging defect', other:'Other' };
+
+  modal.innerHTML = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:18px;width:100%;max-width:580px;max-height:90vh;overflow-y:auto;">
+      <div style="padding:22px 26px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:12px;">
+        <div>
+          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:15px;color:var(--text);">Submit investigation response</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:3px;">${inv.product_name} · ${issueLabels[inv.issue_type]||inv.issue_type}</div>
+          ${inv.issue_description ? `<div style="font-size:11px;color:var(--info);margin-top:6px;padding:8px 10px;background:rgba(56,189,248,0.06);border-radius:6px;line-height:1.5;">${inv.issue_description}</div>` : ''}
+          ${inv.instructions ? `<div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5;">📋 <strong>Instructions:</strong> ${inv.instructions}</div>` : ''}
+        </div>
+        <button onclick="document.getElementById('dash-invest-resp-modal').remove()" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;padding:4px;flex-shrink:0;">✕</button>
+      </div>
+
+      <div style="padding:22px 26px;display:flex;flex-direction:column;gap:14px;">
+        <div>
+          <label style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);display:block;margin-bottom:8px;">Did you find the issue? *</label>
+          <div style="display:flex;gap:10px;">
+            <button id="inv-r-yes" onclick="dashSetInvestFound(true)" style="flex:1;padding:11px;border:2px solid var(--border);border-radius:9px;background:transparent;color:var(--muted);font-size:13px;font-family:'Figtree',sans-serif;font-weight:600;cursor:pointer;transition:all 0.15s;">✓ Yes, found it</button>
+            <button id="inv-r-no"  onclick="dashSetInvestFound(false)" style="flex:1;padding:11px;border:2px solid var(--border);border-radius:9px;background:transparent;color:var(--muted);font-size:13px;font-family:'Figtree',sans-serif;font-weight:600;cursor:pointer;transition:all 0.15s;">✗ Not found</button>
+          </div>
+          <input type="hidden" id="inv-r-found" value="">
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:5px;">Store *</label>
+          <select id="inv-r-store" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 11px;color:var(--text);font-size:13px;">
+            <option value="">— Select store —</option>
+            ${(stores||[]).map(s=>`<option value="${s.id}" data-name="${s.name}">${s.name}</option>`).join('')}
+          </select></div>
+          <div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:5px;">Units inspected</label>
+          <input id="inv-r-units" type="number" min="0" placeholder="e.g. 24" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 11px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+        </div>
+
+        <div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:5px;">Units affected (if any found)</label>
+        <input id="inv-r-affected" type="number" min="0" value="0" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 11px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+
+        <div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:5px;">Findings description *</label>
+        <textarea id="inv-r-desc" rows="3" placeholder="Describe what you found, where, and current status…" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 11px;color:var(--text);font-size:13px;resize:vertical;box-sizing:border-box;font-family:inherit;line-height:1.5;"></textarea></div>
+
+        <div>
+          <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:5px;">Photos (optional — up to 4)</label>
+          <input type="file" id="inv-r-photo-input" accept="image/*" multiple style="display:none;" onchange="dashHandleInvestPhotos(this)">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;" id="inv-r-photo-previews"></div>
+          <button onclick="document.getElementById('inv-r-photo-input').click()" style="background:var(--surface2);border:1px dashed var(--border);border-radius:8px;padding:8px 14px;color:var(--muted);font-size:12px;cursor:pointer;">+ Add photo</button>
+        </div>
+
+        <div id="inv-r-msg" style="display:none;font-size:12px;padding:9px 12px;border-radius:8px;"></div>
+
+        <div style="display:flex;gap:8px;justify-content:flex-end;padding-top:4px;">
+          <button onclick="document.getElementById('dash-invest-resp-modal').remove()" style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:9px 18px;font-size:13px;cursor:pointer;font-family:inherit;">Cancel</button>
+          <button onclick="submitDashInvestResponse('${invId}')" id="inv-r-submit" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:9px 22px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">Submit response</button>
+        </div>
+      </div>
+    </div>`;
+
+  document.body.appendChild(modal);
+}
+
+function dashSetInvestFound(found) {
+  document.getElementById('inv-r-found').value = found ? 'yes' : 'no';
+  const yes = document.getElementById('inv-r-yes');
+  const no  = document.getElementById('inv-r-no');
+  if (found) {
+    yes.style.borderColor = 'var(--accent)'; yes.style.color = 'var(--accent)'; yes.style.background = 'rgba(52,211,153,0.08)';
+    no.style.borderColor  = 'var(--border)'; no.style.color  = 'var(--muted)';  no.style.background  = 'transparent';
+  } else {
+    no.style.borderColor  = 'var(--accent)'; no.style.color  = 'var(--accent)'; no.style.background  = 'rgba(52,211,153,0.08)';
+    yes.style.borderColor = 'var(--border)'; yes.style.color = 'var(--muted)';  yes.style.background = 'transparent';
+  }
+}
+
+function dashHandleInvestPhotos(input) {
+  const files = Array.from(input.files).slice(0, 4 - _dashInvestPhotos.length);
+  files.forEach(file => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      _dashInvestPhotos.push(e.target.result.split(',')[1]);
+      const prev = document.getElementById('inv-r-photo-previews');
+      if (prev) {
+        const idx = _dashInvestPhotos.length - 1;
+        const div = document.createElement('div');
+        div.style.cssText = 'position:relative;width:64px;height:64px;';
+        div.innerHTML = `<img src="${e.target.result}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--border);">
+          <button onclick="_dashInvestPhotos.splice(${idx},1);this.parentElement.remove()" style="position:absolute;top:-6px;right:-6px;background:var(--danger);border:none;color:#fff;border-radius:50%;width:18px;height:18px;font-size:11px;cursor:pointer;line-height:1;">✕</button>`;
+        prev.appendChild(div);
+      }
+    };
+    reader.readAsDataURL(file);
+  });
+  input.value = '';
+}
+
+async function submitDashInvestResponse(invId) {
+  const found    = document.getElementById('inv-r-found').value;
+  const storeEl  = document.getElementById('inv-r-store');
+  const storeId  = storeEl?.value;
+  const storeName = storeEl?.selectedOptions?.[0]?.dataset?.name || storeEl?.selectedOptions?.[0]?.textContent;
+  const units    = parseInt(document.getElementById('inv-r-units')?.value) || 0;
+  const affected = parseInt(document.getElementById('inv-r-affected')?.value) || 0;
+  const desc     = document.getElementById('inv-r-desc')?.value.trim();
+  const msg      = document.getElementById('inv-r-msg');
+  const btn      = document.getElementById('inv-r-submit');
+
+  const showMsg = (txt, ok) => {
+    msg.style.display='block'; msg.style.background=ok?'rgba(52,211,153,0.1)':'rgba(255,92,92,0.1)';
+    msg.style.color=ok?'var(--accent)':'var(--danger)'; msg.style.border=`1px solid ${ok?'rgba(52,211,153,0.3)':'rgba(255,92,92,0.3)'}`;
+    msg.textContent=txt;
+  };
+
+  if (!found)   { showMsg('Please indicate whether the issue was found.', false); return; }
+  if (!storeId) { showMsg('Please select a store.', false); return; }
+  if (!desc)    { showMsg('Please describe your findings.', false); return; }
+
+  btn.disabled = true; btn.textContent = 'Submitting…';
+
+  const { data: { user } } = await sb.auth.getUser();
+
+  const { error } = await sb.from('investigation_responses').insert({
+    investigation_id: invId,
+    retailer_org_id:  _orgId,
+    store_id:         storeId,
+    store_name:       storeName,
+    responder_user_id: user?.id,
+    responder_name:   user?.user_metadata?.first_name || user?.email?.split('@')[0] || 'Unknown',
+    units_inspected:  units,
+    units_affected:   affected,
+    issue_found:      found === 'yes',
+    issue_description: desc,
+    photos:           _dashInvestPhotos.length > 0 ? _dashInvestPhotos : [],
+    status: 'submitted',
+  });
+
+  if (error) { showMsg('Error: ' + error.message, false); btn.disabled=false; btn.textContent='Submit response'; return; }
+
+  // Mark investigation as in_progress if still open
+  await sb.from('investigation_requests').update({ status: 'in_progress' }).eq('id', invId).eq('status', 'open');
+
+  document.getElementById('dash-invest-resp-modal').remove();
+  showToast('Response submitted successfully', 'ok', 3000);
+  renderDashInvestigations();
 }
 </script>
