@@ -61,22 +61,24 @@
     .logo-text { font-family: 'Figtree', sans-serif; font-weight: 800; font-size: 17px; color: var(--accent); line-height: 1; }
     .logo-sub { font-size: 9px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; margin-top: 3px; line-height: 1; }
 
-    .sidebar-nav { flex: 1; padding: 12px 10px; display: flex; flex-direction: column; gap: 2px; }
-    .nav-section { font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); padding: 10px 8px 4px; }
-    .nav-item {
-      display: flex; align-items: center; gap: 10px;
-      padding: 9px 10px; border-radius: 8px; cursor: pointer;
-      font-size: 12px; color: var(--muted); transition: all 0.15s;
-      text-decoration: none; border: none; background: none; width: 100%; text-align: left;
-    }
-    .nav-item:hover { background: var(--surface2); color: var(--text); }
-    .nav-item.active { background: rgba(52,211,153,0.1); color: var(--accent); }
-    .nav-item svg { flex-shrink: 0; opacity: 0.7; }
-    .nav-item.active svg { opacity: 1; }
-    .nav-badge {
-      margin-left: auto; background: var(--danger); color: white;
-      font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 10px;
-    }
+    .sidebar-nav { flex:1; padding:8px 10px 10px; display:flex; flex-direction:column; gap:1px; overflow-y:auto; overflow-x:hidden; min-height:0; }
+    .nav-section { font-size:9.5px; font-weight:600; letter-spacing:0.09em; text-transform:uppercase;
+      color:rgba(106,175,158,0.45); padding:13px 8px 4px; display:flex; align-items:center; gap:6px; font-family:'DM Mono',monospace; }
+    .nav-section::before { content:''; width:3px; height:3px; border-radius:50%; background:rgba(52,211,153,0.3); flex-shrink:0; }
+    .nav-item { display:flex; align-items:center; gap:9px; padding:8px 10px; border-radius:8px; cursor:pointer;
+      font-size:13px; font-family:'Figtree',sans-serif; font-weight:500; color:var(--muted);
+      transition:all 0.15s ease; text-decoration:none; border:none; background:none; width:100%; text-align:left; }
+    .nav-item svg { flex-shrink:0; opacity:0.55; transition:opacity 0.15s; }
+    .nav-item:hover { background:rgba(52,211,153,0.06); color:var(--text); }
+    .nav-item:hover svg { opacity:0.9; }
+    .nav-item.active { background:rgba(52,211,153,0.1); color:var(--accent); box-shadow:inset 3px 0 0 var(--accent); padding-left:13px; }
+    .nav-item.active svg { opacity:1; color:var(--accent); }
+    .nav-item-cta { background:rgba(255,92,92,0.07) !important; color:#ff8a8a !important;
+      border:1px solid rgba(255,92,92,0.15) !important; margin:3px 0 !important; font-weight:600 !important; }
+    .nav-item-cta svg { opacity:1 !important; color:#ff8a8a !important; }
+    .nav-item-cta:hover { background:rgba(255,92,92,0.14) !important; border-color:rgba(255,92,92,0.3) !important; color:#ffaaaa !important; }
+    .nav-item-cta.active { box-shadow:inset 3px 0 0 var(--danger) !important; background:rgba(255,92,92,0.12) !important; color:var(--danger) !important; }
+    .nav-badge { margin-left:auto; background:var(--danger); color:white; font-size:9px; font-weight:700; padding:1px 5px; border-radius:10px; }
 
     .sidebar-footer {
       padding: 12px 10px;
@@ -145,9 +147,9 @@
       border-radius: var(--radius);
       padding: 16px 18px;
       position: relative; overflow: hidden;
-      transition: border-color 0.15s;
+      transition: all 0.15s;
     }
-    .kpi-card:hover { border-color: var(--muted); }
+    .kpi-card:hover { border-color: rgba(52,211,153,0.35); transform: translateY(-1px); box-shadow: 0 4px 20px rgba(0,0,0,0.15); }
     .kpi-card::before {
       content: '';
       position: absolute; top: 0; left: 0; right: 0; height: 2px;
@@ -188,6 +190,7 @@
     .panel-body { padding: 16px 18px; }
     .panel-action { font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 5px 12px; cursor: pointer; background: none; transition: all 0.15s; }
     .panel-action:hover { border-color: var(--accent); color: var(--accent); }
+    .panel[onclick]:hover { border-color: rgba(52,211,153,0.2); }
 
     /* ── Recall list ── */
     .recall-item {
@@ -402,7 +405,7 @@
         Dashboard
       </button>
       <div class="nav-section">Recalls</div>
-      <button class="nav-item" onclick="showPanel('recalls')" id="nav-recalls">
+      <button class="nav-item nav-item-cta" onclick="showPanel('recalls')" id="nav-recalls">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
         Active Recalls
       </button>
@@ -639,241 +642,417 @@ function showPanel(name) {
 async function renderOverview() {
   if (_userRole === 'store_manager') { return renderStoreManagerOverview(); }
   const el = document.getElementById('main-content');
-  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
-
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);padding:4px 0;"><div class="spinner"></div> Loading dashboard…</div>`;
   try {
-    const [scansRes, recallsRes, storesRes, shipmentsRes, partnersRes, acksRes] = await Promise.all([
-      sb.from('scans').select('id, created_at, store_name, recall_resolved, removed_from_shelf_at, manager_escalated').eq('organisation_id', _orgId),
-      sb.from('recalls').select('id, product_name, lot_number, active, source, created_at').eq('organisation_id', _orgId),
+
+    // ── Fetch all data in parallel ──────────────────────────────
+    const now = Date.now();
+    const days30 = new Date(now - 30 * 86400000).toISOString();
+    const days7  = new Date(now - 7  * 86400000).toISOString();
+
+    const [storesRes, scansRes, partnersRes, shipmentsRes, acksRes, distRes] = await Promise.all([
       sb.from('stores').select('id, name, active').eq('organisation_id', _orgId),
-      sb.from('shipments').select('id, lot_number, quantity, unit, shipped_at, stores(name), organisations!shipments_manufacturer_id_fkey(name), products(name)').eq('retailer_id', _orgId).order('shipped_at', { ascending: false }).limit(100),
-      sb.from('trading_partners').select('id, status').eq('retailer_id', _orgId),
-      sb.from('recall_acknowledgements').select('status').eq('organisation_id', _orgId),
+      sb.from('scans').select('id, created_at, store_name, store_id, product_name, lot_number, scanned_by, recall_resolved').eq('organisation_id', _orgId).gte('created_at', days30).order('created_at', {ascending:false}).limit(500),
+      sb.from('trading_partners').select('id, status, organisations!trading_partners_manufacturer_id_fkey(id,name)').eq('retailer_id', _orgId),
+      sb.from('shipments').select('id, lot_number, quantity, unit, shipped_at, stores(name), organisations!shipments_manufacturer_id_fkey(id,name), products(name)').eq('retailer_id', _orgId).order('shipped_at', {ascending:false}).limit(200),
+      sb.from('recall_acknowledgements').select('id, status, recall_event_id, store_id, updated_at, organisation_id').eq('organisation_id', _orgId),
+      sb.from('recall_distributions').select('recall_event_id, distributed_at').eq('retailer_org_id', _orgId),
     ]);
 
-    const scans    = scansRes.data    || [];
-    const rawRecalls = recallsRes.data || [];
-    // Deduplicate pushed recalls — manufacturer push can create multiple rows per
-    // recall_event_id (one per store/distribution). Collapse them to one per event.
-    const recalls = [
-      ...rawRecalls.filter(r => !r.is_pushed),
-      ...[...new Map(
-        rawRecalls.filter(r => r.is_pushed).map(r => [r.recall_event_id || r.id, r])
-      ).values()]
-    ];
-    const stores   = storesRes.data   || [];
-    const shipments = shipmentsRes.data || [];
+    const stores    = storesRes.data    || [];
+    const scans     = scansRes.data     || [];
     const partners  = partnersRes.data  || [];
+    const shipments = shipmentsRes.data || [];
     const acks      = acksRes.data      || [];
+    const dists     = distRes.data      || [];
 
-    const activeRecalls   = recalls.filter(r => r.active).length;
-    const totalScans      = scans.length;
-    const today           = new Date().toISOString().split('T')[0];
-    const scansToday      = scans.filter(s => s.created_at?.startsWith(today)).length;
-    const escalated       = scans.filter(s => s.manager_escalated && !s.recall_resolved).length;
-    const activeStores    = stores.filter(s => s.active).length;
-    const confirmedPartners = partners.filter(p => p.status === 'active').length;
+    // ── Fetch pushed recall events distributed to this retailer ──
+    let recallEvents = [];
+    if (dists.length > 0) {
+      const evIds = [...new Set(dists.map(d => d.recall_event_id))];
+      const { data: evs } = await sb.from('recall_events')
+        .select('id, product_name, lot_number, reason, severity, is_drill, published_at, created_at, is_recalled, source_org_id')
+        .in('id', evIds);
 
-    // Shelf exposure — unique lot/product combos currently shipped in
-    const activeLots = [...new Map(shipments.map(s => [`${s.lot_number}|${s.products?.name}`, s])).values()];
-    const recalledLotNumbers = new Set(recalls.filter(r => r.active && r.lot_number).map(r => r.lot_number));
-    const exposedLots = activeLots.filter(s => recalledLotNumbers.has(s.lot_number));
+      // Get manufacturer names
+      const mfrIds = [...new Set((evs||[]).map(e => e.source_org_id).filter(Boolean))];
+      let mfrNames = {};
+      if (mfrIds.length) {
+        const { data: mfrs } = await sb.from('organisations').select('id,name').in('id', mfrIds);
+        (mfrs||[]).forEach(m => { mfrNames[m.id] = m.name; });
+      }
+      recallEvents = (evs||[]).map(e => ({...e, mfrName: mfrNames[e.source_org_id] || 'Unknown'}));
+    }
 
-    // Scan activity last 7 days
-    const last7 = Array.from({length:7}, (_,i) => {
+    // ── Also fetch any self-managed recalls for this org ──
+    const { data: ownRecalls } = await sb.from('recalls')
+      .select('id, product_name, lot_number, active, source, created_at, reason')
+      .eq('organisation_id', _orgId)
+      .eq('active', true);
+
+    // ── Cross-reference: which recall events affect YOUR lots on shelf? ──
+    const myLotNumbers = new Set(shipments.map(s => s.lot_number).filter(Boolean));
+    const activeRecallEvents = recallEvents.filter(e => !e.is_drill);
+    // A recall is "relevant" if: (a) it's pushed to us, or (b) the lot matches something we have
+    const relevantRecalls = activeRecallEvents; // all pushed to us are relevant by definition
+    const exposedShipments = shipments.filter(s => s.lot_number && relevantRecalls.some(r => r.lot_number === s.lot_number));
+
+    // ── Acknowledgement analysis ──────────────────────────────
+    const totalAcks    = acks.length;
+    const actioned     = acks.filter(a => a.status !== 'notified').length;
+    const responseRate = totalAcks > 0 ? Math.round((actioned / totalAcks) * 100) : 100;
+    const overdueAcks  = acks.filter(a => a.status === 'notified' && (now - new Date(a.updated_at)) > 4*3600000);
+
+    // ── Store health analysis ─────────────────────────────────
+    const activeStores = stores.filter(s => s.active);
+    const storeHealth  = activeStores.map(store => {
+      const storeScans = scans.filter(s =>
+        s.store_id === store.id || s.store_name === store.name
+      );
+      const scans7d   = storeScans.filter(s => s.created_at >= days7).length;
+      const scans30d  = storeScans.length;
+      const lastScan  = storeScans[0]?.created_at || null;
+      const daysSince = lastScan ? Math.floor((now - new Date(lastScan)) / 86400000) : 999;
+      // Score: based on regularity. Active = scans in last 7d. Slow = scans in last 30d but not 7d. Dark = nothing in 30d.
+      const status = scans7d >= 3 ? 'active' : scans7d >= 1 ? 'slow' : scans30d >= 1 ? 'slow' : 'dark';
+      // Traceability score: 40 base + up to 40 for lot code coverage + 20 for frequency
+      const lotCoverage = storeScans.filter(s => s.lot_number).length / Math.max(storeScans.length, 1);
+      const score = Math.min(100, Math.round(40 + (lotCoverage * 40) + Math.min(20, scans7d * 4)));
+      return { ...store, scans7d, scans30d, lastScan, daysSince, status, score };
+    }).sort((a,b) => {
+      const order = {dark:0, slow:1, active:2};
+      return order[b.status] - order[a.status] || b.scans7d - a.scans7d;
+    });
+
+    // ── Scan activity sparkline (last 7 days) ─────────────────
+    const last7Days = Array.from({length:7}, (_,i) => {
       const d = new Date(); d.setDate(d.getDate() - (6-i));
       return d.toISOString().split('T')[0];
     });
-    const scansByDay = last7.map(d => scans.filter(s => s.created_at?.startsWith(d)).length);
-    const maxDay = Math.max(...scansByDay, 1);
+    const sparkData = last7Days.map(d => scans.filter(s => s.created_at?.startsWith(d)).length);
+    const sparkMax  = Math.max(...sparkData, 1);
 
-    // Compliance score
-    const resolvedRate = recalls.length > 0
-      ? Math.round((recalls.filter(r => !r.active).length / recalls.length) * 100) : 100;
-    const ackRate = acks.length > 0
-      ? Math.round((acks.filter(a => a.status !== 'notified').length / acks.length) * 100) : 100;
-    const partnerScore = confirmedPartners > 0 ? 100 : 0;
-    const shipmentScore = shipments.length > 0 ? 100 : 20;
-    const overallCompliance = Math.round((resolvedRate + ackRate + partnerScore + shipmentScore) / 4);
+    // ── Compliance / readiness score ─────────────────────────
+    const hasPartners  = partners.filter(p => p.status === 'active').length > 0;
+    const hasShipments = shipments.length > 0;
+    const hasScans     = scans.length > 0;
+    const ackScore     = responseRate;
+    const partnerScore = hasPartners  ? 100 : 0;
+    const shipScore    = hasShipments ? 100 : 0;
+    const scanScore    = hasScans     ? Math.min(100, scans.filter(s => s.lot_number).length / Math.max(scans.length,1) * 100) : 0;
+    const readiness    = Math.round((ackScore + partnerScore + shipScore + scanScore) / 4);
 
-    // Store compliance scores
-    const storeScores = stores.slice(0,6).map(store => {
-      const storeScans = scans.filter(s => s.store_name === store.name);
-      const recentScans = storeScans.filter(s => {
-        const d = new Date(s.created_at);
-        return (Date.now() - d) < 7 * 24 * 60 * 60 * 1000;
-      }).length;
-      const score = Math.min(100, 60 + recentScans * 4);
-      return { ...store, score, recentScans };
-    });
+    // ── Recent activity feed ──────────────────────────────────
+    const recentActivity = scans.slice(0, 8).map(s => ({
+      type: 'scan',
+      label: s.product_name || 'Unknown product',
+      sub: `${s.store_name || '—'} · ${s.scanned_by || 'Staff'}`,
+      lot: s.lot_number,
+      time: s.created_at,
+      color: 'var(--accent)',
+    }));
+
+    const confirmedPartners = partners.filter(p => p.status === 'active').length;
+    const activeCount  = relevantRecalls.length + (ownRecalls||[]).length;
+
+    // ── Build nav badge ──────────────────────────────────────
+    const navBadge = document.getElementById('nav-recalls');
+    if (navBadge && activeCount > 0) {
+      let badge = navBadge.querySelector('.recall-nav-badge');
+      if (!badge) { badge = document.createElement('span'); badge.className='recall-nav-badge'; badge.style.cssText='margin-left:auto;background:var(--danger);color:#fff;font-size:10px;padding:1px 6px;border-radius:10px;font-weight:700;'; navBadge.appendChild(badge); }
+      badge.textContent = activeCount;
+    }
+
+    // ── Render ────────────────────────────────────────────────
+    const fmtTime = d => {
+      if (!d) return '—';
+      const ms = now - new Date(d);
+      if (ms < 3600000) return Math.floor(ms/60000) + 'm ago';
+      if (ms < 86400000) return Math.floor(ms/3600000) + 'h ago';
+      return Math.floor(ms/86400000) + 'd ago';
+    };
+    const fmtDate = d => d ? new Date(d).toLocaleDateString('en-GB', {day:'numeric',month:'short'}) : '—';
 
     el.innerHTML = `
-      ${activeRecalls > 0 || exposedLots.length > 0 ? `
-      <div class="alert-banner" style="${exposedLots.length > 0 ? 'border-color:rgba(255,92,92,0.4);background:rgba(255,92,92,0.06);' : ''}">
-        <div class="alert-dot"></div>
-        <div class="alert-text">
-          ${exposedLots.length > 0
-            ? `<strong>${exposedLots.length} recalled lot${exposedLots.length>1?'s':''} detected on shelf</strong> — immediate removal required across your store network.`
-            : `<strong>${activeRecalls} active recall${activeRecalls>1?'s':''}</strong> require immediate attention across your store network.`}
-        </div>
-        <button class="alert-action" onclick="showPanel('recalls')">View recalls →</button>
-      </div>` : ''}
 
-      <div class="kpi-grid">
-        <div class="kpi-card ${activeRecalls>0?'red':'green'}">
-          <div class="kpi-label">Active recalls</div>
-          <div class="kpi-value ${activeRecalls>0?'danger':'accent'}">${activeRecalls}</div>
-          <div class="kpi-sub">${recalls.length} total on record</div>
-          ${activeRecalls>0 ? '<span class="kpi-trend down">⚠ Action needed</span>' : '<span class="kpi-trend up">✓ All clear</span>'}
-        </div>
-        <div class="kpi-card ${exposedLots.length>0?'red':'blue'}">
-          <div class="kpi-label">Lots on shelf</div>
-          <div class="kpi-value ${exposedLots.length>0?'danger':''}">${activeLots.length}</div>
-          <div class="kpi-sub">${exposedLots.length > 0 ? `<span style="color:var(--danger);">⚠ ${exposedLots.length} under active recall</span>` : `${shipments.length} shipments tracked`}</div>
-          ${exposedLots.length>0 ? '<span class="kpi-trend down">⚠ Exposure risk</span>' : '<span class="kpi-trend flat">→ All clear</span>'}
-        </div>
-        <div class="kpi-card amber">
-          <div class="kpi-label">Escalated items</div>
-          <div class="kpi-value ${escalated>0?'warn':''}">${escalated}</div>
-          <div class="kpi-sub">Awaiting manager resolution</div>
-          ${escalated>0 ? '<span class="kpi-trend down">Needs review</span>' : '<span class="kpi-trend flat">None pending</span>'}
-        </div>
-        <div class="kpi-card green">
-          <div class="kpi-label">Active stores</div>
-          <div class="kpi-value accent">${activeStores}</div>
-          <div class="kpi-sub">${confirmedPartners} manufacturer partner${confirmedPartners!==1?'s':''}</div>
-          <span class="kpi-trend flat">→ ${stores.length} total locations</span>
-        </div>
+    <!-- ── Recall alert banner (only when relevant recalls exist) ── -->
+    ${activeCount > 0 ? `
+    <div class="alert-banner" onclick="showPanel('recalls')" style="cursor:pointer;${exposedShipments.length > 0 ? 'border-color:rgba(255,92,92,0.5);background:rgba(255,92,92,0.08);animation:pulse-border 1.5s ease-in-out infinite;' : ''}">
+      <div class="alert-dot"></div>
+      <div class="alert-text">
+        ${exposedShipments.length > 0
+          ? `<strong>${exposedShipments.length} recalled lot${exposedShipments.length>1?'s':''} match products in your shipment records</strong> — verify these are off shelf immediately.`
+          : `<strong>${activeCount} active recall${activeCount>1?'s':''}</strong> pushed to your network — check response status.`}
+      </div>
+      <button class="alert-action">Review recalls →</button>
+    </div>` : ''}
+
+    <!-- ── KPI row ── -->
+    <div class="kpi-grid" style="margin-bottom:22px;">
+
+      <div class="kpi-card ${activeCount>0?'red':'green'}" onclick="showPanel('recalls')" style="cursor:pointer;">
+        <div class="kpi-label">Recalls for your network</div>
+        <div class="kpi-value ${activeCount>0?'danger':'accent'}">${activeCount}</div>
+        <div class="kpi-sub">${activeCount>0 ? `${exposedShipments.length} match your lot records` : 'No active recalls'}</div>
+        <span class="kpi-trend ${activeCount>0?'down':'up'}">${activeCount>0?'⚠ Needs action':'✓ All clear'}</span>
       </div>
 
-      <div class="three-col">
-        <div class="panel">
-          <div class="panel-header">
-            <div><div class="panel-title">Store compliance scores</div><div class="panel-sub">Based on scan activity over 7 days</div></div>
-            <button class="panel-action" onclick="showPanel('stores')">All stores →</button>
-          </div>
-          <div class="panel-body">
-            ${storeScores.length === 0 ? `<div class="empty">No stores configured yet.<br><a href="#" onclick="showPanel('stores')" style="color:var(--accent)">Add your first store →</a></div>` :
-            `<table class="store-table">
-              <thead><tr><th>Store</th><th>Compliance</th><th>7-day scans</th></tr></thead>
-              <tbody>${storeScores.map(s => `
-                <tr>
-                  <td><div class="store-name">${s.name}</div></td>
-                  <td>
-                    <div class="score-bar-wrap">
-                      <div class="score-bar"><div class="score-fill ${s.score>=80?'green':s.score>=60?'amber':'red'}" style="width:${s.score}%"></div></div>
-                      <div class="score-val">${s.score}%</div>
-                    </div>
-                  </td>
-                  <td style="color:var(--muted)">${s.recentScans}</td>
-                </tr>`).join('')}
-              </tbody>
-            </table>`}
-          </div>
-        </div>
-
-        <div style="display:flex;flex-direction:column;gap:14px;">
-          <div class="panel">
-            <div class="panel-header">
-              <div><div class="panel-title">${_orgRegion==='us'?'FSMA 204':'EU 178/2002'} readiness</div></div>
-            </div>
-            <div class="panel-body">
-              <div class="fsma-score">
-                <div class="fsma-ring" style="--pct:${overallCompliance}">
-                  <div class="fsma-ring-val">${overallCompliance}%</div>
-                </div>
-                <div class="fsma-label">${overallCompliance>=80?'Good standing':overallCompliance>=50?'Needs improvement':'Action required'}</div>
-              </div>
-            </div>
-          </div>
-
-          <div class="panel">
-            <div class="panel-header"><div class="panel-title">Scan activity</div><div style="font-size:10px;color:var(--muted)">Last 7 days</div></div>
-            <div class="panel-body">
-              <div style="display:flex;align-items:flex-end;gap:4px;height:48px;margin-bottom:6px;">
-                ${scansByDay.map((v,i) => `
-                  <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;">
-                    <div style="width:100%;border-radius:2px;background:var(--accent);opacity:${0.4+0.6*(v/maxDay)};height:${Math.max(4, Math.round(44*(v/maxDay)))}px;"></div>
-                  </div>`).join('')}
-              </div>
-              <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--muted);">
-                ${last7.map(d => `<div>${new Date(d).toLocaleDateString('en-GB',{weekday:'narrow'})}</div>`).join('')}
-              </div>
-            </div>
-          </div>
-        </div>
+      <div class="kpi-card ${responseRate<80?'amber':'green'}" onclick="showPanel('recalls')" style="cursor:pointer;">
+        <div class="kpi-label">Recall response rate</div>
+        <div class="kpi-value ${responseRate<80?'warn':'accent'}">${responseRate}%</div>
+        <div class="kpi-sub">${actioned} of ${totalAcks} acknowledgements actioned${overdueAcks.length>0?` · <span style="color:var(--danger);">${overdueAcks.length} overdue</span>`:''}</div>
+        <span class="kpi-trend ${responseRate>=80?'up':responseRate>=60?'flat':'down'}">${responseRate>=80?'✓ Good':'Needs attention'}</span>
       </div>
 
-      <!-- Shelf exposure + Active recalls row -->
-      <div class="two-col">
-        <div class="panel">
-          <div class="panel-header">
-            <div><div class="panel-title">Products on shelf</div><div class="panel-sub">Incoming shipments from manufacturer partners</div></div>
-            <button class="panel-action" onclick="showPanel('partners')">Partners →</button>
+      <div class="kpi-card blue" onclick="showPanel('stores')" style="cursor:pointer;">
+        <div class="kpi-label">Store network</div>
+        <div class="kpi-value">${storeHealth.filter(s=>s.status==='active').length}<span style="font-size:14px;font-weight:500;color:var(--muted);">/${activeStores.length}</span></div>
+        <div class="kpi-sub">stores active this week${storeHealth.filter(s=>s.status==='dark').length>0?` · <span style="color:var(--warn);">${storeHealth.filter(s=>s.status==='dark').length} dark</span>`:''}</div>
+        <span class="kpi-trend flat">→ ${stores.length} total locations</span>
+      </div>
+
+      <div class="kpi-card ${confirmedPartners>0?'green':'amber'}" onclick="showPanel('partners')" style="cursor:pointer;">
+        <div class="kpi-label">Supply chain coverage</div>
+        <div class="kpi-value ${confirmedPartners>0?'accent':'warn'}">${confirmedPartners}</div>
+        <div class="kpi-sub">${shipments.length} shipment${shipments.length!==1?'s':''} tracked · ${[...myLotNumbers].length} lot${[...myLotNumbers].length!==1?'s':''} on record</div>
+        <span class="kpi-trend ${confirmedPartners>0?'up':'down'}">${confirmedPartners>0?'✓ Connected':'⚠ No partners'}</span>
+      </div>
+
+    </div>
+
+    <!-- ── Main two-column grid ── -->
+    <div style="display:grid;grid-template-columns:1fr 380px;gap:16px;margin-bottom:16px;align-items:start;">
+
+      <!-- LEFT: Recall inbox + Store health -->
+      <div style="display:flex;flex-direction:column;gap:16px;">
+
+        <!-- Recall inbox -->
+        <div class="panel" style="cursor:default;">
+          <div class="panel-header" onclick="showPanel('recalls')" style="cursor:pointer;">
+            <div>
+              <div class="panel-title">Recall inbox
+                ${activeCount>0?`<span style="background:rgba(255,92,92,0.12);color:var(--danger);font-size:10px;padding:2px 8px;border-radius:10px;margin-left:8px;font-family:'DM Mono',monospace;">${activeCount} active</span>`:''}
+              </div>
+              <div class="panel-sub">Recalls pushed to your network by manufacturers + FDA/RASFF alerts</div>
+            </div>
+            <button class="panel-action">Manage all →</button>
           </div>
-          <div class="panel-body" style="padding:${activeLots.length===0?'18px':'0 18px'};">
-            ${activeLots.length === 0
-              ? `<div class="empty">No shipment data yet.<br>Connect a manufacturer partner to see what's on shelf.</div>`
-              : activeLots.slice(0,5).map(s => {
-                  const isRecalled = recalledLotNumbers.has(s.lot_number);
+          <div class="panel-body" style="padding:0;">
+            ${[...relevantRecalls, ...(ownRecalls||[])].length === 0
+              ? `<div class="empty" style="padding:28px;">
+                  <div style="font-size:24px;margin-bottom:8px;">✅</div>
+                  <div style="font-weight:600;color:var(--text);margin-bottom:4px;">No active recalls</div>
+                  <div style="font-size:11px;">Your network is clear. Recalls will appear here when manufacturers push them or FDA/RASFF alerts match your products.</div>
+                </div>`
+              : [...relevantRecalls.slice(0,5), ...(ownRecalls||[]).slice(0, Math.max(0, 5-relevantRecalls.length))].map(r => {
+                  const isPushed   = !!r.mfrName;
+                  const evAcks     = isPushed ? acks.filter(a => a.recall_event_id === r.id) : [];
+                  const confirmed  = evAcks.filter(a => a.status === 'confirmed').length;
+                  const pulled     = evAcks.filter(a => ['pulled','disposed','confirmed'].includes(a.status)).length;
+                  const notified   = evAcks.length;
+                  const isExposed  = r.lot_number && myLotNumbers.has(r.lot_number);
+                  const sevColor   = r.severity?.toLowerCase().includes('i') || r.severity?.toLowerCase().includes('critical') ? 'var(--danger)' : r.severity?.toLowerCase().includes('ii') ? 'var(--warn)' : 'var(--muted)';
                   return `
-                  <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(22,61,55,0.5);">
-                    <div style="width:6px;height:6px;border-radius:50%;flex-shrink:0;background:${isRecalled?'var(--danger)':'var(--accent)'};${isRecalled?'box-shadow:0 0 6px rgba(255,92,92,0.5);':''}"></div>
+                  <div onclick="showPanel('recalls')" style="display:flex;align-items:flex-start;gap:12px;padding:14px 18px;border-bottom:1px solid var(--border);cursor:pointer;transition:background 0.15s;" onmouseover="this.style.background='rgba(52,211,153,0.03)'" onmouseout="this.style.background=''">
+                    <div style="width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:5px;background:${sevColor};${r.severity?.toLowerCase().includes('i')||!r.severity?'box-shadow:0 0 7px rgba(255,92,92,0.5);':''}"></div>
                     <div style="flex:1;min-width:0;">
-                      <div style="font-size:12px;color:var(--text);font-weight:500;">${s.products?.name||'—'}</div>
-                      <div style="font-size:10px;color:var(--muted);margin-top:1px;">Lot: ${s.lot_number} · ${s.stores?.name||'—'} · ${s.organisations?.name||'—'}</div>
+                      <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${r.product_name || '—'}</div>
+                      <div style="font-size:11px;color:var(--muted);">
+                        ${r.lot_number ? `Lot: <span style="font-family:'DM Mono',monospace;color:var(--text);">${r.lot_number}</span> · ` : ''}${isPushed ? r.mfrName : (r.source||'Manual')} · ${fmtDate(r.published_at||r.created_at)}
+                      </div>
+                      ${isPushed && notified > 0 ? `
+                      <div style="display:flex;gap:8px;margin-top:6px;align-items:center;">
+                        <div style="font-size:10px;color:var(--muted);">${notified} stores:</div>
+                        <div style="flex:1;height:4px;background:var(--border);border-radius:2px;overflow:hidden;max-width:120px;">
+                          <div style="height:100%;background:${confirmed===notified?'var(--accent)':'var(--warn)'};width:${notified>0?Math.round((pulled/notified)*100):0}%;border-radius:2px;transition:width 0.5s;"></div>
+                        </div>
+                        <div style="font-size:10px;color:var(--muted);">${pulled}/${notified} pulled</div>
+                      </div>` : ''}
                     </div>
-                    ${isRecalled
-                      ? `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(255,92,92,0.12);color:var(--danger);white-space:nowrap;">⚠ Recalled</span>`
-                      : `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(52,211,153,0.1);color:var(--accent);white-space:nowrap;">On shelf</span>`}
+                    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;">
+                      ${isExposed ? `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(255,92,92,0.12);color:var(--danger);white-space:nowrap;font-weight:600;">⚠ In your records</span>` : ''}
+                      <span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(255,92,92,0.1);color:var(--danger);">Active</span>
+                    </div>
                   </div>`}).join('')}
-            ${activeLots.length > 5 ? `<div style="font-size:10px;color:var(--muted);padding-top:8px;">${activeLots.length - 5} more lots tracked</div>` : ''}
+            ${[...relevantRecalls, ...(ownRecalls||[])].length > 5 ? `
+            <div onclick="showPanel('recalls')" style="padding:12px 18px;font-size:12px;color:var(--muted);cursor:pointer;text-align:center;border-top:1px solid var(--border);" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--muted)'">
+              View all ${[...relevantRecalls, ...(ownRecalls||[])].length} recalls →
+            </div>` : ''}
           </div>
         </div>
 
-        <div style="display:flex;flex-direction:column;gap:14px;">
-          <div class="panel">
-            <div class="panel-header">
-              <div><div class="panel-title">Active recalls</div><div class="panel-sub">Requires immediate action</div></div>
-              <button class="panel-action" onclick="showPanel('recalls')">Manage →</button>
+        <!-- Store health -->
+        <div class="panel">
+          <div class="panel-header" onclick="showPanel('stores')" style="cursor:pointer;">
+            <div>
+              <div class="panel-title">Store traceability health</div>
+              <div class="panel-sub">Scored per store: lot code coverage × scan frequency. Click any row for full scan history.</div>
             </div>
-            <div class="panel-body">
-              ${recalls.filter(r=>r.active).length === 0
-                ? `<div class="empty"><svg width="24" height="24" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="512" height="512" rx="113" fill="#34D399"/><rect x="172" y="75" width="167" height="167" rx="24" fill="#055A46"/><rect x="75" y="270" width="167" height="167" rx="24" fill="#055A46"/><rect x="270" y="270" width="167" height="167" rx="24" fill="#055A46"/></svg><br>No active recalls — all clear</div>`
-                : recalls.filter(r=>r.active).slice(0,3).map(r => `
-                  <div class="recall-item">
-                    <div class="recall-severity sev-i"></div>
-                    <div class="recall-info">
-                      <div class="recall-name">${r.product_name}</div>
-                      <div class="recall-meta">Lot: ${r.lot_number||'—'} · ${r.source||'Manual'} · ${new Date(r.created_at||Date.now()).toLocaleDateString('en-GB')}</div>
-                    </div>
-                    <span class="recall-status status-active">Active</span>
-                  </div>`).join('')}
-            </div>
+            <button class="panel-action">All stores →</button>
           </div>
-
-          <div class="panel">
-            <div class="panel-header"><div class="panel-title">Compliance checklist</div><div class="panel-sub">Key requirements status</div></div>
-            <div class="panel-body">
-              <div class="compliance-grid">
-                ${[
-                  { label: 'Recall response rate',    val: resolvedRate,   color: resolvedRate>=80?'var(--accent)':'var(--warn)' },
-                  { label: 'Acknowledgement rate',    val: ackRate,        color: ackRate>=80?'var(--accent)':'var(--warn)' },
-                  { label: 'Manufacturer partners',   val: partnerScore,   color: partnerScore===100?'var(--accent)':'var(--warn)' },
-                  { label: 'Shipment data coverage',  val: shipmentScore,  color: shipmentScore===100?'var(--accent)':'var(--warn)' },
-                ].map(c => `
-                  <div class="comp-item">
-                    <div class="comp-label">${c.label}</div>
-                    <div class="comp-value" style="color:${c.color}">${c.val}%</div>
-                    <div class="comp-bar"><div class="comp-fill" style="width:${c.val}%;background:${c.color}"></div></div>
-                  </div>`).join('')}
+          <div class="panel-body" style="padding:0;">
+            ${storeHealth.length === 0
+              ? `<div class="empty" style="padding:28px;"><div style="font-size:20px;margin-bottom:8px;">🏪</div><div>No stores configured yet.</div><a href="#" onclick="event.preventDefault();showPanel('stores')" style="color:var(--accent);font-size:12px;">Add your first store →</a></div>`
+              : storeHealth.map(s => {
+                  const statusColor = s.status==='active' ? 'var(--accent)' : s.status==='slow' ? 'var(--warn)' : 'rgba(255,92,92,0.7)';
+                  const statusLabel = s.status==='active' ? 'Active' : s.status==='slow' ? 'Slow' : 'Dark';
+                  const scoreColor  = s.score>=80 ? 'var(--accent)' : s.score>=60 ? 'var(--warn)' : 'var(--danger)';
+                  return `
+                  <div onclick="showPanel('traceability')" style="display:grid;grid-template-columns:1fr auto auto;gap:12px;align-items:center;padding:12px 18px;border-bottom:1px solid var(--border);cursor:pointer;transition:background 0.15s;" onmouseover="this.style.background='rgba(52,211,153,0.03)'" onmouseout="this.style.background=''">
+                    <div>
+                      <div style="display:flex;align-items:center;gap:7px;">
+                        <div style="width:7px;height:7px;border-radius:50%;flex-shrink:0;background:${statusColor};${s.status==='active'?'box-shadow:0 0 6px rgba(52,211,153,0.4);':''}"></div>
+                        <div style="font-size:13px;font-weight:500;color:var(--text);">${s.name}</div>
+                      </div>
+                      <div style="font-size:10px;color:var(--muted);margin-top:3px;padding-left:14px;">${s.scans7d} scan${s.scans7d!==1?'s':''} this week · last active ${s.lastScan ? fmtTime(s.lastScan) : 'never'}</div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                      <div style="width:80px;height:4px;background:var(--border);border-radius:2px;overflow:hidden;">
+                        <div style="height:100%;width:${s.score}%;background:${scoreColor};border-radius:2px;transition:width 0.5s;"></div>
+                      </div>
+                      <div style="font-size:11px;color:${scoreColor};font-weight:600;min-width:30px;text-align:right;">${s.score}%</div>
+                    </div>
+                    <div style="font-size:10px;padding:2px 8px;border-radius:10px;border:1px solid ${statusColor};color:${statusColor};white-space:nowrap;">${statusLabel}</div>
+                  </div>`}).join('')}
+            <div style="padding:10px 18px;background:rgba(52,211,153,0.03);border-top:1px solid var(--border);">
+              <div style="font-size:10px;color:var(--muted);line-height:1.6;">
+                <span style="color:var(--accent);">■</span> <strong>Active</strong> = 3+ scans in 7 days &nbsp;·&nbsp;
+                <span style="color:var(--warn);">■</span> <strong>Slow</strong> = 1–2 scans in 7 days &nbsp;·&nbsp;
+                <span style="color:rgba(255,92,92,0.7);">■</span> <strong>Dark</strong> = no scans in 7 days &nbsp;·&nbsp;
+                Score based on lot code coverage + scan frequency
               </div>
             </div>
           </div>
         </div>
-      </div>`;
+
+      </div>
+
+      <!-- RIGHT: Status sidebar -->
+      <div style="display:flex;flex-direction:column;gap:14px;">
+
+        <!-- Readiness ring -->
+        <div class="panel" onclick="showPanel('compliance')" style="cursor:pointer;">
+          <div class="panel-header">
+            <div><div class="panel-title">${_orgRegion==='us'?'FSMA 204':'EU 178/2002'} readiness</div><div class="panel-sub">Traceability health score</div></div>
+          </div>
+          <div class="panel-body" style="padding:20px;">
+            <div style="display:flex;align-items:center;gap:18px;">
+              <div class="fsma-ring" style="--pct:${readiness};width:80px;height:80px;flex-shrink:0;">
+                <div class="fsma-ring-val" style="font-size:17px;">${readiness}%</div>
+              </div>
+              <div>
+                <div style="font-size:13px;font-weight:700;color:${readiness>=80?'var(--accent)':readiness>=60?'var(--warn)':'var(--danger)'};">${readiness>=80?'Good standing':readiness>=60?'Needs improvement':'Action required'}</div>
+                <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.6;">
+                  ${[
+                    {label:'Recall response',   val:ackScore,    ok:ackScore>=80},
+                    {label:'Partners connected',val:partnerScore,ok:partnerScore===100},
+                    {label:'Shipments logged',  val:shipScore,   ok:shipScore===100},
+                    {label:'Lot code coverage', val:Math.round(scanScore),ok:scanScore>=80},
+                  ].map(c=>`<div style="display:flex;justify-content:space-between;gap:12px;margin-bottom:2px;">
+                    <span>${c.ok?'✓':'·'} ${c.label}</span>
+                    <span style="color:${c.ok?'var(--accent)':'var(--warn)'};">${c.val}%</span>
+                  </div>`).join('')}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Scan activity sparkline -->
+        <div class="panel" onclick="showPanel('traceability')" style="cursor:pointer;">
+          <div class="panel-header">
+            <div class="panel-title">Scan activity</div>
+            <div style="font-size:10px;color:var(--muted);">Last 7 days</div>
+          </div>
+          <div class="panel-body" style="padding:14px 18px;">
+            <div style="display:flex;align-items:flex-end;gap:3px;height:40px;margin-bottom:6px;">
+              ${sparkData.map((v,i) => `
+                <div style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;">
+                  <div style="border-radius:2px 2px 0 0;background:${v>0?'var(--accent)':'var(--border)'};opacity:${v>0?0.4+0.6*(v/sparkMax):0.3};height:${Math.max(3,Math.round(37*(v/sparkMax)))}px;transition:height 0.3s;"></div>
+                </div>`).join('')}
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--muted);">
+              ${last7Days.map(d=>`<div>${new Date(d).toLocaleDateString('en-GB',{weekday:'narrow'})}</div>`).join('')}
+            </div>
+            <div style="margin-top:10px;font-size:12px;font-weight:600;color:var(--text);">${scans.length} scans <span style="font-size:10px;font-weight:400;color:var(--muted);">in last 30 days</span></div>
+          </div>
+        </div>
+
+        <!-- Pending actions -->
+        ${overdueAcks.length > 0 ? `
+        <div class="panel" onclick="showPanel('recalls')" style="cursor:pointer;border-color:rgba(245,166,35,0.3);">
+          <div class="panel-header" style="background:rgba(245,166,35,0.05);">
+            <div>
+              <div class="panel-title" style="color:var(--warn);">⏱ Overdue actions</div>
+              <div class="panel-sub">${overdueAcks.length} recall acknowledgement${overdueAcks.length!==1?'s':''} pending for 4+ hours</div>
+            </div>
+          </div>
+          <div class="panel-body" style="padding:12px 18px;">
+            ${overdueAcks.slice(0,3).map(a => {
+              const ev = recallEvents.find(e => e.id === a.recall_event_id);
+              const store = stores.find(s => s.id === a.store_id);
+              return `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:11px;">
+                <div>
+                  <div style="color:var(--text);font-weight:500;">${ev?.product_name || 'Recall'}</div>
+                  <div style="color:var(--muted);">${store?.name || 'Unknown store'}</div>
+                </div>
+                <div style="font-size:10px;color:var(--warn);">${fmtTime(a.updated_at)}</div>
+              </div>`;
+            }).join('')}
+            ${overdueAcks.length > 3 ? `<div style="font-size:11px;color:var(--warn);margin-top:6px;">+ ${overdueAcks.length-3} more</div>` : ''}
+          </div>
+        </div>` : ''}
+
+        <!-- Recent activity feed -->
+        <div class="panel" onclick="showPanel('traceability')" style="cursor:pointer;">
+          <div class="panel-header">
+            <div class="panel-title">Recent scans</div>
+            <button class="panel-action" onclick="event.stopPropagation();showPanel('traceability')">All scans →</button>
+          </div>
+          <div class="panel-body" style="padding:${recentActivity.length===0?'18px':'0 18px'};">
+            ${recentActivity.length === 0
+              ? `<div class="empty">No scans yet. Send your staff the <a href="https://batchd-app.netlify.app" target="_blank" style="color:var(--accent);">scanning app</a>.</div>`
+              : recentActivity.map(a => `
+              <div style="display:flex;align-items:flex-start;gap:10px;padding:9px 0;border-bottom:1px solid rgba(22,61,55,0.4);">
+                <div style="width:6px;height:6px;border-radius:50%;background:${a.color};flex-shrink:0;margin-top:4px;"></div>
+                <div style="flex:1;min-width:0;">
+                  <div style="font-size:12px;color:var(--text);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${a.label}</div>
+                  <div style="font-size:10px;color:var(--muted);margin-top:1px;">${a.sub}${a.lot?` · <span style="font-family:'DM Mono',monospace;">${a.lot}</span>`:''}</div>
+                </div>
+                <div style="font-size:10px;color:var(--muted);flex-shrink:0;">${fmtTime(a.time)}</div>
+              </div>`).join('')}
+          </div>
+        </div>
+
+        <!-- Shipments on shelf (exposed ones first) -->
+        <div class="panel" onclick="showPanel('shipments')" style="cursor:pointer;">
+          <div class="panel-header">
+            <div><div class="panel-title">Products on shelf</div><div class="panel-sub">${shipments.length} lot${shipments.length!==1?'s':''} from ${confirmedPartners} partner${confirmedPartners!==1?'s':''}</div></div>
+            <button class="panel-action" onclick="event.stopPropagation();showPanel('shipments')">View all →</button>
+          </div>
+          <div class="panel-body" style="padding:${shipments.length===0?'18px':'0 18px'};">
+            ${shipments.length === 0
+              ? `<div class="empty">No shipment data. <a href="#" onclick="event.preventDefault();showPanel('partners')" style="color:var(--accent);">Connect a manufacturer →</a></div>`
+              : [...exposedShipments, ...shipments.filter(s => !exposedShipments.includes(s))].slice(0,5).map(s => {
+                  const isExposed = exposedShipments.includes(s);
+                  return `<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid rgba(22,61,55,0.4);">
+                    <div style="width:6px;height:6px;border-radius:50%;flex-shrink:0;background:${isExposed?'var(--danger)':'var(--accent)'};${isExposed?'box-shadow:0 0 6px rgba(255,92,92,0.5);':''}"></div>
+                    <div style="flex:1;min-width:0;">
+                      <div style="font-size:12px;color:var(--text);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${s.products?.name||'—'}</div>
+                      <div style="font-size:10px;color:var(--muted);margin-top:1px;">Lot: <span style="font-family:'DM Mono',monospace;">${s.lot_number}</span> · ${s.stores?.name||'—'}</div>
+                    </div>
+                    ${isExposed?`<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(255,92,92,0.1);color:var(--danger);flex-shrink:0;">⚠ Recalled</span>`:`<span style="font-size:10px;color:var(--muted);flex-shrink:0;">${fmtDate(s.shipped_at)}</span>`}
+                  </div>`;}).join('')}
+            ${shipments.length > 5 ? `<div style="font-size:11px;color:var(--muted);padding:8px 0;">+ ${shipments.length-5} more</div>` : ''}
+          </div>
+        </div>
+
+      </div>
+    </div>`;
+
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading dashboard: ${e.message}</div>`;
+    console.error('Dashboard overview error:', e);
   }
 }
 
