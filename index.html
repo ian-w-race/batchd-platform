@@ -4451,12 +4451,18 @@ async function showApp(user) {
   try {
     // Load organisation_id for this user — used in all scan inserts
     const { data: member } = await sb.from('organisation_members')
-      .select('organisation_id, role')
+      .select('organisation_id, role, store_id')
       .eq('user_id', user.id)
       .maybeSingle();
     if (member) {
-      _currentOrgId = member.organisation_id;
+      _currentOrgId    = member.organisation_id;
       _currentUserRole = member.role || null;
+      // Store managers have a store_id assigned in organisation_members.
+      // Save it so manager dashboard filters to only this store.
+      if (member.store_id) {
+        window._managerStoreId   = member.store_id;
+        window._managerStoreName = null; // resolved after loadStoresFromDB
+      }
     }
 
     // Auto-populate user_settings on first login so recall prefs and region are set
@@ -4649,6 +4655,16 @@ async function signOut() {
 
 // ── STORES FROM DB ───────────────────────────────────────────
 async function loadStoresFromDB() {
+  // After stores load, resolve _managerStoreName from _managerStoreId if needed
+  if (window._managerStoreId && !window._managerStoreName) {
+    try {
+      const { data: storeRow } = await sb.from('stores')
+        .select('name')
+        .eq('id', window._managerStoreId)
+        .single();
+      if (storeRow?.name) window._managerStoreName = storeRow.name;
+    } catch(e) {}
+  }
   try {
     // Filter by organisation_id so staff only see their own org's stores
     let query = sb.from('stores').select('id, name').eq('active', true).order('name');
@@ -12571,11 +12587,36 @@ async function refreshManagerDashboard() {
 
 async function loadMgrData() {
   try {
-    const [scansRes, recallsRes] = await Promise.all([
-      sb.from('scans').select('*').order('created_at', { ascending: false }),
-      sb.from('recalls').select('*').order('created_at', { ascending: false })
-    ]);
-    _mgrAllScans   = scansRes.data   || [];
+    // Always filter by org. If the user is a store_manager with a store_id assigned,
+    // also filter by store_id (UUID) with store_name as a fallback for legacy scans.
+    const mgrStoreId   = window._managerStoreId   || null;
+    const mgrStoreName = window._managerStoreName  || null;
+
+    let scansQuery = sb.from('scans').select('*').order('created_at', { ascending: false });
+    if (_currentOrgId) scansQuery = scansQuery.eq('organisation_id', _currentOrgId);
+
+    // Corp admins see all stores. Store managers see only their store.
+    if (mgrStoreId && _currentUserRole === 'store_manager') {
+      // Primary: match by UUID. Also fetch legacy name-matched scans via OR.
+      // Supabase JS doesn't support OR across columns natively, so we filter client-side
+      // after fetching the org's scans — still org-filtered so RLS is satisfied.
+    }
+
+    let recallsQuery = sb.from('recalls').select('*').order('created_at', { ascending: false });
+    if (_currentOrgId) recallsQuery = recallsQuery.eq('organisation_id', _currentOrgId);
+
+    const [scansRes, recallsRes] = await Promise.all([scansQuery, recallsQuery]);
+    let allScans = scansRes.data || [];
+
+    // Client-side store filter for store_managers — matches both UUID and legacy name
+    if (mgrStoreId && _currentUserRole === 'store_manager') {
+      allScans = allScans.filter(s =>
+        s.store_id === mgrStoreId ||
+        (mgrStoreName && s.store_name === mgrStoreName)
+      );
+    }
+
+    _mgrAllScans   = allScans;
     _mgrAllRecalls = recallsRes.data || [];
   } catch(e) {
     console.error('loadMgrData error:', e.message);

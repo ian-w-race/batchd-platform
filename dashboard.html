@@ -2294,19 +2294,27 @@ async function fetchReportData(key) {
     case 'stores': {
       const [storesRes, scansRes] = await Promise.all([
         sb.from('stores').select('id, name, store_code, active').eq('organisation_id', _orgId).order('name'),
-        sb.from('scans').select('store_name, created_at, recall_resolved, removed_from_shelf_at, manager_escalated').eq('organisation_id', _orgId),
+        sb.from('scans').select('store_name, store_id, lot_number, created_at, recall_resolved, removed_from_shelf_at, manager_escalated').eq('organisation_id', _orgId),
       ]);
       const stores = storesRes.data || [];
       const scans  = scansRes.data  || [];
       const now = Date.now();
+      const days7  = now - 7  * 86400000;
+      const days30 = now - 30 * 86400000;
       return stores.map(store => {
-        const ss = scans.filter(s => s.store_name === store.name);
-        const recent7  = ss.filter(s => (now - new Date(s.created_at)) < 7  * 86400000).length;
-        const recent30 = ss.filter(s => (now - new Date(s.created_at)) < 30 * 86400000).length;
-        const resolved = ss.filter(s => s.recall_resolved).length;
-        const escalated = ss.filter(s => s.manager_escalated).length;
-        const score = Math.min(100, 60 + recent7 * 4);
-        return { ...store, totalScans: ss.length, recent7, recent30, resolved, escalated, score };
+        // Match by store_id UUID first, fall back to store_name for legacy scans
+        const ss = scans.filter(s => s.store_id === store.id || s.store_name === store.name);
+        const recent7    = ss.filter(s => new Date(s.created_at) > days7).length;
+        const recent30   = ss.filter(s => new Date(s.created_at) > days30).length;
+        const resolved   = ss.filter(s => s.recall_resolved).length;
+        const escalated  = ss.filter(s => s.manager_escalated).length;
+        // Score: lot code coverage (0-40) + scan frequency (0-40) + base (20)
+        // Matches the same formula used in the dashboard overview
+        const lotCoverage = ss.length > 0 ? ss.filter(s => s.lot_number).length / ss.length : 0;
+        const freqScore   = Math.min(40, recent7 * 6);  // max at ~7 scans/week
+        const score       = ss.length === 0 ? 0 : Math.min(100, Math.round(20 + (lotCoverage * 40) + freqScore));
+        const status      = recent7 >= 3 ? 'active' : recent7 >= 1 ? 'slow' : recent30 >= 1 ? 'slow' : 'dark';
+        return { ...store, totalScans: ss.length, recent7, recent30, resolved, escalated, score, status };
       });
     }
     case 'exposure': {
@@ -2477,7 +2485,15 @@ async function runReport(key) {
                 <tr>
                   <td style="padding:9px 18px;font-size:12px;font-weight:500;color:var(--text);">${s.name}</td>
                   <td style="padding:9px 18px;font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">${s.store_code||'—'}</td>
-                  <td style="padding:9px 18px;"><span class="recall-status ${s.active?'status-resolved':'status-pending'}">${s.active?'Active':'Inactive'}</span></td>
+                  <td style="padding:9px 18px;">
+                    ${s.status==='active'
+                      ? `<span class="recall-status status-resolved">Active</span>`
+                      : s.status==='slow'
+                        ? `<span class="recall-status status-pending">Slow</span>`
+                        : s.status==='dark'
+                          ? `<span class="recall-status" style="background:rgba(255,92,92,0.1);color:var(--danger);">Dark</span>`
+                          : `<span class="recall-status" style="background:rgba(106,175,158,0.1);color:var(--muted);">${s.active?'Active':'Inactive'}</span>`}
+                  </td>
                   <td style="padding:9px 18px;">
                     <div style="display:flex;align-items:center;gap:8px;">
                       <div style="width:60px;height:4px;border-radius:2px;background:var(--border);overflow:hidden;">
