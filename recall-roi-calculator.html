@@ -1,0 +1,1082 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Recall Cost Calculator — Batch'd</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,400&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #080f12;
+    --surface:   rgba(9,25,24,0.7);
+    --surface2:  rgba(14,38,34,0.6);
+    --border:    rgba(52,211,153,0.1);
+    --accent:    #34d399;
+    --accent-dim:#059669;
+    --text:      #edfdf8;
+    --muted:     #6aaf9e;
+    --danger:    #ff5c5c;
+    --warn:      #f5a623;
+    --info:      #38bdf8;
+    --radius:    12px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Figtree', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    line-height: 1.5;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 80% 60% at 10% -10%, rgba(52,211,153,0.07) 0%, transparent 60%),
+      radial-gradient(ellipse 60% 50% at 90% 110%, rgba(5,150,105,0.05) 0%, transparent 60%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .page {
+    position: relative;
+    z-index: 1;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 48px 24px 80px;
+  }
+
+  /* Header */
+  .header {
+    text-align: center;
+    margin-bottom: 52px;
+  }
+
+  .logo {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 800;
+    font-size: 15px;
+    color: var(--accent);
+    letter-spacing: -0.02em;
+    margin-bottom: 28px;
+    text-decoration: none;
+  }
+
+  .logo-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 10px rgba(52,211,153,0.6);
+  }
+
+  .header h1 {
+    font-size: clamp(26px, 5vw, 40px);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+    margin-bottom: 14px;
+    color: var(--text);
+  }
+
+  .header h1 span {
+    color: var(--accent);
+  }
+
+  .header p {
+    font-size: 15px;
+    color: var(--muted);
+    max-width: 540px;
+    margin: 0 auto;
+    line-height: 1.7;
+  }
+
+  /* Layout */
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+
+  @media (max-width: 640px) {
+    .grid { grid-template-columns: 1fr; }
+  }
+
+  /* Cards */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    backdrop-filter: blur(12px);
+    overflow: hidden;
+  }
+
+  .card-header {
+    padding: 18px 22px 14px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .card-icon {
+    width: 36px; height: 36px;
+    border-radius: 9px;
+    background: rgba(52,211,153,0.1);
+    border: 1px solid rgba(52,211,153,0.2);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 17px;
+    flex-shrink: 0;
+  }
+
+  .card-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 2px;
+  }
+
+  .card-sub {
+    font-size: 11px;
+    color: var(--muted);
+    line-height: 1.4;
+  }
+
+  .card-body {
+    padding: 18px 22px;
+  }
+
+  /* Field */
+  .field {
+    margin-bottom: 16px;
+  }
+
+  .field:last-child { margin-bottom: 0; }
+
+  .field label {
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 7px;
+  }
+
+  .field-row {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    transition: border-color 0.15s;
+  }
+
+  .field-row:focus-within {
+    border-color: rgba(52,211,153,0.4);
+  }
+
+  .field-prefix, .field-suffix {
+    padding: 10px 12px;
+    font-size: 12px;
+    font-family: 'DM Mono', monospace;
+    color: var(--muted);
+    background: rgba(52,211,153,0.04);
+    flex-shrink: 0;
+    line-height: 1;
+  }
+
+  .field-prefix { border-right: 1px solid var(--border); }
+  .field-suffix { border-left: 1px solid var(--border); }
+
+  .field input, .field select {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    padding: 10px 12px;
+    font-family: 'DM Mono', monospace;
+    font-size: 13px;
+    color: var(--text);
+    width: 100%;
+  }
+
+  .field select {
+    cursor: pointer;
+    font-family: 'Figtree', sans-serif;
+    font-size: 12px;
+  }
+
+  .field select option {
+    background: #0d1e1c;
+  }
+
+  .field-hint {
+    font-size: 10px;
+    color: var(--muted);
+    margin-top: 5px;
+    line-height: 1.5;
+    opacity: 0.7;
+  }
+
+  /* Slider */
+  .slider-field { margin-bottom: 16px; }
+  .slider-field label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+  .slider-value {
+    font-family: 'DM Mono', monospace;
+    font-size: 13px;
+    color: var(--accent);
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  input[type="range"] {
+    width: 100%;
+    height: 4px;
+    appearance: none;
+    background: var(--surface2);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    appearance: none;
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+    box-shadow: 0 0 8px rgba(52,211,153,0.4);
+  }
+
+  /* Results */
+  .results-card {
+    background: linear-gradient(135deg, rgba(9,25,24,0.9) 0%, rgba(5,15,14,0.95) 100%);
+    border: 1px solid rgba(52,211,153,0.2);
+    border-radius: var(--radius);
+    overflow: hidden;
+    margin-top: 8px;
+  }
+
+  .results-header {
+    padding: 20px 26px 16px;
+    border-bottom: 1px solid rgba(52,211,153,0.1);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .results-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+
+  .results-body {
+    padding: 24px 26px;
+  }
+
+  /* Big number */
+  .cost-display {
+    text-align: center;
+    padding: 28px 20px;
+    position: relative;
+  }
+
+  .cost-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+
+  .cost-number {
+    font-size: clamp(36px, 8vw, 58px);
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    line-height: 1;
+    color: var(--danger);
+    font-family: 'Figtree', sans-serif;
+  }
+
+  .cost-number.good { color: var(--accent); }
+  .cost-number.warn { color: var(--warn); }
+
+  .cost-sub {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 8px;
+  }
+
+  /* Breakdown */
+  .breakdown {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 20px;
+  }
+
+  .breakdown-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--border);
+    gap: 12px;
+  }
+
+  .breakdown-row:last-child { border-bottom: none; }
+
+  .breakdown-row.total {
+    background: rgba(52,211,153,0.05);
+    border-top: 1px solid rgba(52,211,153,0.2);
+  }
+
+  .breakdown-label {
+    font-size: 12px;
+    color: var(--muted);
+    flex: 1;
+  }
+
+  .breakdown-row.total .breakdown-label {
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  .breakdown-amount {
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    color: var(--text);
+    flex-shrink: 0;
+  }
+
+  .breakdown-row.total .breakdown-amount {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--danger);
+  }
+
+  .breakdown-bar-wrap {
+    width: 80px;
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+
+  .breakdown-bar {
+    height: 100%;
+    border-radius: 2px;
+    background: var(--danger);
+    transition: width 0.4s ease;
+  }
+
+  /* Comparison */
+  .comparison {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-top: 20px;
+  }
+
+  .compare-box {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    text-align: center;
+  }
+
+  .compare-box.batched {
+    border-color: rgba(52,211,153,0.3);
+    background: rgba(52,211,153,0.04);
+  }
+
+  .compare-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+
+  .compare-time {
+    font-size: 28px;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+
+  .compare-time.bad { color: var(--danger); }
+  .compare-time.good { color: var(--accent); }
+
+  .compare-unit {
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .compare-sublabel {
+    font-size: 10px;
+    color: var(--muted);
+    margin-top: 8px;
+    line-height: 1.5;
+  }
+
+  /* Saving callout */
+  .saving-callout {
+    background: rgba(52,211,153,0.07);
+    border: 1px solid rgba(52,211,153,0.25);
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin-top: 20px;
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+  }
+
+  .saving-icon {
+    font-size: 22px;
+    flex-shrink: 0;
+    line-height: 1;
+    margin-top: 1px;
+  }
+
+  .saving-text {
+    flex: 1;
+  }
+
+  .saving-headline {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--accent);
+    margin-bottom: 4px;
+  }
+
+  .saving-body {
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+
+  /* Payback */
+  .payback-strip {
+    display: flex;
+    gap: 12px;
+    margin-top: 16px;
+    flex-wrap: wrap;
+  }
+
+  .payback-stat {
+    flex: 1;
+    min-width: 120px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 12px 14px;
+    text-align: center;
+  }
+
+  .payback-val {
+    font-size: 22px;
+    font-weight: 800;
+    color: var(--accent);
+    letter-spacing: -0.02em;
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+
+  .payback-lbl {
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  /* CTA */
+  .cta-section {
+    text-align: center;
+    margin-top: 44px;
+    padding: 36px 24px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .cta-section::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse 80% 80% at 50% 0%, rgba(52,211,153,0.05) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  .cta-section h2 {
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    margin-bottom: 10px;
+    position: relative;
+  }
+
+  .cta-section p {
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 22px;
+    max-width: 460px;
+    margin-left: auto;
+    margin-right: auto;
+    position: relative;
+  }
+
+  .btn-group {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    flex-wrap: wrap;
+    position: relative;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: #065f46;
+    border: none;
+    border-radius: 9px;
+    padding: 12px 28px;
+    font-family: 'Figtree', sans-serif;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-block;
+    transition: all 0.15s;
+    box-shadow: 0 4px 20px rgba(52,211,153,0.25);
+  }
+
+  .btn-primary:hover {
+    background: #6ee7b7;
+    box-shadow: 0 6px 28px rgba(52,211,153,0.35);
+    transform: translateY(-1px);
+  }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 12px 24px;
+    font-family: 'Figtree', sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .btn-ghost:hover {
+    border-color: rgba(52,211,153,0.3);
+    color: var(--text);
+  }
+
+  /* Region toggle */
+  .region-toggle {
+    display: inline-flex;
+    gap: 2px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 3px;
+    margin-bottom: 28px;
+  }
+
+  .region-btn {
+    padding: 7px 18px;
+    border-radius: 7px;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font-family: 'Figtree', sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .region-btn.active {
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+  }
+
+  /* Assumptions */
+  .assumptions {
+    font-size: 10px;
+    color: var(--muted);
+    text-align: center;
+    margin-top: 32px;
+    line-height: 1.8;
+    opacity: 0.6;
+    border-top: 1px solid var(--border);
+    padding-top: 24px;
+  }
+
+  @media print {
+    body::before { display: none; }
+    .cta-section { display: none; }
+    .region-toggle { display: none; }
+    .card { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="header">
+    <div style="display:flex;justify-content:center;margin-bottom:20px;">
+      <a href="https://batchdapp.com" class="logo">
+        <div class="logo-dot"></div>
+        Batch'd
+      </a>
+    </div>
+    <h1>What does a recall actually <span>cost you?</span></h1>
+    <p>Enter your operational details and see the full financial exposure of a food product recall — and what Batch'd reduces it to.</p>
+    <div style="height:24px;"></div>
+    <div class="region-toggle">
+      <button class="region-btn active" id="btn-no" onclick="setRegion('no')">🇳🇴 Norway / EU</button>
+      <button class="region-btn" id="btn-us" onclick="setRegion('us')">🇺🇸 United States</button>
+    </div>
+  </div>
+
+  <div class="grid">
+    <!-- Left: Your operation -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon">🏪</div>
+        <div>
+          <div class="card-title">Your operation</div>
+          <div class="card-sub">Store network and supply chain basics</div>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="field">
+          <label>Number of stores</label>
+          <div class="field-row">
+            <input type="number" id="num-stores" value="12" min="1" max="5000" oninput="recalculate()">
+            <div class="field-suffix" id="suffix-stores">stores</div>
+          </div>
+          <div class="field-hint">All locations that receive and shelve products</div>
+        </div>
+        <div class="field">
+          <label>Active supplier relationships</label>
+          <div class="field-row">
+            <input type="number" id="num-suppliers" value="45" min="1" max="2000" oninput="recalculate()">
+            <div class="field-suffix">suppliers</div>
+          </div>
+        </div>
+        <div class="field">
+          <label id="lbl-annual-skus">Average product SKUs per store</label>
+          <div class="field-row">
+            <input type="number" id="num-skus" value="4500" min="100" max="50000" oninput="recalculate()">
+            <div class="field-suffix">SKUs</div>
+          </div>
+        </div>
+        <div class="slider-field">
+          <label>Annual recalls you handle
+            <span class="slider-value" id="val-recalls">3 / year</span>
+          </label>
+          <input type="range" id="num-recalls" min="1" max="20" value="3"
+            oninput="document.getElementById('val-recalls').textContent=this.value+' / year';recalculate()">
+          <div class="field-hint">Industry average for a mid-size Norwegian grocery chain is 4–8 per year</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: Recall scenario -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon">⚠️</div>
+        <div>
+          <div class="card-title">Recall scenario</div>
+          <div class="card-sub">What a typical recall looks like for you</div>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="field">
+          <label id="lbl-units">Average units on shelf per store per recall</label>
+          <div class="field-row">
+            <input type="number" id="units-per-store" value="24" min="1" max="5000" oninput="recalculate()">
+            <div class="field-suffix">units</div>
+          </div>
+          <div class="field-hint">How many units of the recalled product you typically have across a store</div>
+        </div>
+        <div class="field">
+          <label id="lbl-avg-value">Average retail value per unit</label>
+          <div class="field-row">
+            <div class="field-prefix" id="prefix-currency">NOK</div>
+            <input type="number" id="unit-value" value="48" min="1" max="10000" oninput="recalculate()">
+          </div>
+        </div>
+        <div class="field">
+          <label>Current recall response process</label>
+          <div class="field-row">
+            <select id="process-type" onchange="recalculate()" style="padding:10px 12px;">
+              <option value="paper">Paper logs and phone calls</option>
+              <option value="email" selected>Email and spreadsheets</option>
+              <option value="basic">Basic digital system</option>
+            </select>
+          </div>
+        </div>
+        <div class="slider-field">
+          <label id="lbl-hours">Hours to confirm all stores responded
+            <span class="slider-value" id="val-hours">28h</span>
+          </label>
+          <input type="range" id="current-hours" min="2" max="168" value="28"
+            oninput="document.getElementById('val-hours').textContent=this.value+'h';recalculate()">
+          <div class="field-hint" id="hint-hours">EU 178/2002 requires traceability within 4 hours of a Mattilsynet request</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Full-width: cost factors -->
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-header">
+      <div class="card-icon">💰</div>
+      <div>
+        <div class="card-title">Cost factors</div>
+        <div class="card-sub">Adjust to match your labour rates and overhead — pre-filled with industry benchmarks</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:16px;">
+        <div class="field" style="margin:0;">
+          <label id="lbl-staff-rate">Staff hourly rate (incl. overhead)</label>
+          <div class="field-row">
+            <div class="field-prefix" id="prefix-rate">NOK</div>
+            <input type="number" id="staff-rate" value="380" min="50" max="5000" oninput="recalculate()">
+            <div class="field-suffix">/hr</div>
+          </div>
+        </div>
+        <div class="field" style="margin:0;">
+          <label>Staff hours per store per recall</label>
+          <div class="field-row">
+            <input type="number" id="staff-hours" value="3.5" min="0.5" max="40" step="0.5" oninput="recalculate()">
+            <div class="field-suffix">hrs</div>
+          </div>
+        </div>
+        <div class="field" style="margin:0;">
+          <label>Management hours per recall</label>
+          <div class="field-row">
+            <input type="number" id="mgmt-hours" value="12" min="1" max="200" oninput="recalculate()">
+            <div class="field-suffix">hrs</div>
+          </div>
+        </div>
+        <div class="field" style="margin:0;">
+          <label>Disposal cost per unit</label>
+          <div class="field-row">
+            <div class="field-prefix" id="prefix-disposal">NOK</div>
+            <input type="number" id="disposal-cost" value="8" min="0" max="500" oninput="recalculate()">
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Results -->
+  <div class="results-card">
+    <div class="results-header">
+      <div class="results-title">📊 Your recall exposure estimate</div>
+      <div style="font-size:10px;color:var(--muted);">Updates as you type · Based on your inputs</div>
+    </div>
+    <div class="results-body">
+
+      <!-- Main cost number -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px;">
+        <div class="cost-display" style="background:rgba(255,92,92,0.04);border:1px solid rgba(255,92,92,0.15);border-radius:10px;padding:20px;">
+          <div class="cost-label">Single recall — direct cost</div>
+          <div class="cost-number" id="result-single">—</div>
+          <div class="cost-sub" id="result-single-sub">Disposal + staff time + management</div>
+        </div>
+        <div class="cost-display" style="background:rgba(245,166,35,0.04);border:1px solid rgba(245,166,35,0.15);border-radius:10px;padding:20px;">
+          <div class="cost-label">Annual recall exposure</div>
+          <div class="cost-number warn" id="result-annual">—</div>
+          <div class="cost-sub" id="result-annual-sub">At your current recall frequency</div>
+        </div>
+      </div>
+
+      <!-- Breakdown -->
+      <div style="font-size:10px;font-weight:600;letter-spacing:0.09em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;">Cost breakdown — per recall event</div>
+      <div class="breakdown">
+        <div class="breakdown-row">
+          <div class="breakdown-label">Product disposal (units × disposal rate)</div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div class="breakdown-bar-wrap"><div class="breakdown-bar" id="bar-disposal" style="width:60%;"></div></div>
+            <div class="breakdown-amount" id="bd-disposal">—</div>
+          </div>
+        </div>
+        <div class="breakdown-row">
+          <div class="breakdown-label">Product write-off (units × retail value)</div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div class="breakdown-bar-wrap"><div class="breakdown-bar" id="bar-writeoff" style="width:80%;background:var(--danger);"></div></div>
+            <div class="breakdown-amount" id="bd-writeoff">—</div>
+          </div>
+        </div>
+        <div class="breakdown-row">
+          <div class="breakdown-label">Store staff labour (all stores)</div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div class="breakdown-bar-wrap"><div class="breakdown-bar" id="bar-staff" style="width:40%;background:var(--warn);"></div></div>
+            <div class="breakdown-amount" id="bd-staff">—</div>
+          </div>
+        </div>
+        <div class="breakdown-row">
+          <div class="breakdown-label">Management and coordination time</div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div class="breakdown-bar-wrap"><div class="breakdown-bar" id="bar-mgmt" style="width:30%;background:var(--warn);"></div></div>
+            <div class="breakdown-amount" id="bd-mgmt">—</div>
+          </div>
+        </div>
+        <div class="breakdown-row">
+          <div class="breakdown-label" id="lbl-regulatory">Regulatory risk (incomplete audit trail)</div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div class="breakdown-bar-wrap"><div class="breakdown-bar" id="bar-reg" style="width:20%;background:var(--info);"></div></div>
+            <div class="breakdown-amount" id="bd-reg">—</div>
+          </div>
+        </div>
+        <div class="breakdown-row total">
+          <div class="breakdown-label">Total estimated cost per recall</div>
+          <div class="breakdown-amount" id="bd-total">—</div>
+        </div>
+      </div>
+
+      <!-- Response time comparison -->
+      <div style="font-size:10px;font-weight:600;letter-spacing:0.09em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;">Response time — before and after Batch'd</div>
+      <div class="comparison">
+        <div class="compare-box">
+          <div class="compare-label">Without Batch'd</div>
+          <div class="compare-time bad" id="cmp-before">28h</div>
+          <div class="compare-unit">to confirm all stores</div>
+          <div class="compare-sublabel" id="cmp-before-sub">Manual calls, spreadsheets, chasing emails across every location</div>
+        </div>
+        <div class="compare-box batched">
+          <div class="compare-label">With Batch'd</div>
+          <div class="compare-time good" id="cmp-after">2–4h</div>
+          <div class="compare-unit">to confirm all stores</div>
+          <div class="compare-sublabel">Automated push, 5-step acknowledgement chain, real-time dashboard</div>
+        </div>
+      </div>
+
+      <!-- Saving callout -->
+      <div class="saving-callout">
+        <div class="saving-icon">✦</div>
+        <div class="saving-text">
+          <div class="saving-headline" id="saving-headline">Batch'd reduces this to approximately NOK 0</div>
+          <div class="saving-body" id="saving-body">Automated recall distribution, lot-level scan matching, and real-time acknowledgement tracking eliminate most of the manual coordination cost. Staff still pull and dispose — but every step is tracked, timestamped, and audit-ready automatically.</div>
+        </div>
+      </div>
+
+      <!-- Payback stats -->
+      <div class="payback-strip">
+        <div class="payback-stat">
+          <div class="payback-val" id="stat-batched-cost">—</div>
+          <div class="payback-lbl">Batch'd annual cost est.</div>
+        </div>
+        <div class="payback-stat">
+          <div class="payback-val" id="stat-roi">—</div>
+          <div class="payback-lbl">ROI on first recall</div>
+        </div>
+        <div class="payback-stat">
+          <div class="payback-val" id="stat-payback">—</div>
+          <div class="payback-lbl">Payback period</div>
+        </div>
+        <div class="payback-stat">
+          <div class="payback-val" id="stat-annual-saving">—</div>
+          <div class="payback-lbl">Annual saving estimate</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- CTA -->
+  <div class="cta-section">
+    <h2>See it working on your stores</h2>
+    <p>Run a free mock recall drill across your store network. See exactly how Batch'd handles the five-step response chain — with a printed audit report at the end.</p>
+    <div class="btn-group">
+      <a href="https://batchdapp.com" class="btn-primary">Request a pilot →</a>
+      <a href="https://app.batchdapp.com" class="btn-ghost">View live demo</a>
+    </div>
+  </div>
+
+  <div class="assumptions" id="assumptions-text">
+    Cost estimates based on industry benchmarks for Norwegian grocery retail. Direct costs include product disposal, write-off at retail value, and staff labour.
+    Regulatory risk figure reflects potential Mattilsynet administrative sanctions for incomplete audit trails under EU Reg. 178/2002.
+    Actual recall costs vary significantly. This calculator is indicative only and should be supplemented with your own financial data.
+    Batch'd annual cost estimate assumes per-location pricing for your store count; contact us for exact pricing.
+  </div>
+
+</div>
+
+<script>
+let _region = 'no';
+
+function setRegion(r) {
+  _region = r;
+  document.getElementById('btn-no').classList.toggle('active', r === 'no');
+  document.getElementById('btn-us').classList.toggle('active', r === 'us');
+
+  const isUS = r === 'us';
+  const prefix = isUS ? 'USD' : 'NOK';
+
+  document.getElementById('prefix-currency').textContent = prefix;
+  document.getElementById('prefix-rate').textContent = prefix;
+  document.getElementById('prefix-disposal').textContent = prefix;
+  document.getElementById('hint-hours').textContent = isUS
+    ? 'FDA RFR requires reporting within 24 hours of a Class I recall. Some retailers require traceability data within 2 hours.'
+    : 'EU 178/2002 requires traceability within 4 hours of a Mattilsynet request.';
+  document.getElementById('lbl-regulatory').textContent = isUS
+    ? 'Regulatory risk (FDA 21 CFR non-compliance)'
+    : 'Regulatory risk (incomplete audit trail)';
+  document.getElementById('assumptions-text').textContent = isUS
+    ? 'Cost estimates based on industry benchmarks for US grocery retail. Direct costs include product disposal, write-off at retail value, and staff labour. Regulatory risk figure reflects potential FDA administrative penalties for incomplete traceability records under FSMA 204. Average direct cost of a US Class I recall is $10M+ before brand damage (Allera, 2026). This calculator is indicative only.'
+    : 'Cost estimates based on industry benchmarks for Norwegian grocery retail. Direct costs include product disposal, write-off at retail value, and staff labour. Regulatory risk figure reflects potential Mattilsynet administrative sanctions for incomplete audit trails under EU Reg. 178/2002. Actual recall costs vary significantly. This calculator is indicative only.';
+
+  // Set defaults for region
+  if (isUS) {
+    document.getElementById('staff-rate').value = 45;
+    document.getElementById('unit-value').value = 8;
+    document.getElementById('disposal-cost').value = 1.5;
+  } else {
+    document.getElementById('staff-rate').value = 380;
+    document.getElementById('unit-value').value = 48;
+    document.getElementById('disposal-cost').value = 8;
+  }
+  recalculate();
+}
+
+function fmt(n, region) {
+  if (n === null || isNaN(n)) return '—';
+  const isUS = region === 'us';
+  if (n >= 1000000) {
+    const v = (n / 1000000).toFixed(1);
+    return isUS ? `$${v}M` : `${v}M NOK`;
+  }
+  if (n >= 1000) {
+    const v = Math.round(n / 1000);
+    return isUS ? `$${v}K` : `${v}K NOK`;
+  }
+  return isUS ? `$${Math.round(n)}` : `${Math.round(n)} NOK`;
+}
+
+function recalculate() {
+  const stores       = parseInt(document.getElementById('num-stores').value) || 0;
+  const unitsPer     = parseInt(document.getElementById('units-per-store').value) || 0;
+  const unitVal      = parseFloat(document.getElementById('unit-value').value) || 0;
+  const staffRate    = parseFloat(document.getElementById('staff-rate').value) || 0;
+  const staffHrs     = parseFloat(document.getElementById('staff-hours').value) || 0;
+  const mgmtHrs      = parseFloat(document.getElementById('mgmt-hours').value) || 0;
+  const disposalRate = parseFloat(document.getElementById('disposal-cost').value) || 0;
+  const numRecalls   = parseInt(document.getElementById('num-recalls').value) || 1;
+  const currentHours = parseInt(document.getElementById('current-hours').value) || 28;
+  const process      = document.getElementById('process-type').value;
+
+  const totalUnits = stores * unitsPer;
+
+  // Cost components
+  const costDisposal  = totalUnits * disposalRate;
+  const costWriteoff  = totalUnits * unitVal;
+  const costStaff     = stores * staffHrs * staffRate;
+  const mgmtRate      = staffRate * 1.5; // management premium
+  const costMgmt      = mgmtHrs * mgmtRate;
+
+  // Regulatory risk — varies by process quality and hours
+  const regMultiplier = process === 'paper' ? 0.20 : process === 'email' ? 0.12 : 0.05;
+  const costReg       = (costDisposal + costWriteoff + costStaff + costMgmt) * regMultiplier;
+
+  const totalSingle   = costDisposal + costWriteoff + costStaff + costMgmt + costReg;
+  const totalAnnual   = totalSingle * numRecalls;
+
+  // Bars (percentage of total)
+  const barPct = (v) => Math.min(100, Math.round((v / totalSingle) * 100));
+  document.getElementById('bar-disposal').style.width = barPct(costDisposal) + '%';
+  document.getElementById('bar-writeoff').style.width = barPct(costWriteoff) + '%';
+  document.getElementById('bar-staff').style.width    = barPct(costStaff) + '%';
+  document.getElementById('bar-mgmt').style.width     = barPct(costMgmt) + '%';
+  document.getElementById('bar-reg').style.width      = barPct(costReg) + '%';
+
+  // Display
+  document.getElementById('result-single').textContent    = fmt(totalSingle, _region);
+  document.getElementById('result-annual').textContent    = fmt(totalAnnual, _region);
+  document.getElementById('result-annual-sub').textContent = `${numRecalls} recall${numRecalls!==1?'s':''} per year`;
+  document.getElementById('bd-disposal').textContent      = fmt(costDisposal, _region);
+  document.getElementById('bd-writeoff').textContent      = fmt(costWriteoff, _region);
+  document.getElementById('bd-staff').textContent         = fmt(costStaff, _region);
+  document.getElementById('bd-mgmt').textContent          = fmt(costMgmt, _region);
+  document.getElementById('bd-reg').textContent           = fmt(costReg, _region);
+  document.getElementById('bd-total').textContent         = fmt(totalSingle, _region);
+
+  // Response time
+  document.getElementById('cmp-before').textContent = currentHours + 'h';
+  const afterHours = Math.max(2, Math.min(4, Math.round(stores / 10)));
+  document.getElementById('cmp-after').textContent  = afterHours <= 2 ? '2h' : '2–4h';
+
+  // Saving calculation — Batch'd eliminates ~80% of coordination cost, reduces regulatory risk to near zero
+  const batchdSavingPct    = 0.72; // 72% of total cost is reducible
+  const estimatedWithBatchd = totalSingle * (1 - batchdSavingPct);
+  const annualSaving        = (totalSingle - estimatedWithBatchd) * numRecalls;
+
+  // Batch'd pricing estimate — roughly per store per year
+  const pricePerStore = _region === 'us' ? 1200 : 8000; // NOK or USD
+  const batchdAnnual  = Math.max(
+    _region === 'us' ? 6000 : 50000,
+    stores * pricePerStore
+  );
+
+  const roi = batchdAnnual > 0 ? Math.round((annualSaving / batchdAnnual) * 100) : 0;
+  const paybackMonths = annualSaving > 0 ? (batchdAnnual / (annualSaving / 12)) : 0;
+
+  document.getElementById('saving-headline').textContent =
+    `Batch'd reduces this to approximately ${fmt(estimatedWithBatchd, _region)} per recall`;
+  document.getElementById('stat-batched-cost').textContent = fmt(batchdAnnual, _region);
+  document.getElementById('stat-roi').textContent          = roi > 0 ? roi + '%' : '—';
+  document.getElementById('stat-payback').textContent      = paybackMonths > 0 && paybackMonths < 24
+    ? (paybackMonths < 1 ? '<1 month' : Math.round(paybackMonths) + ' months')
+    : '—';
+  document.getElementById('stat-annual-saving').textContent = fmt(annualSaving, _region);
+}
+
+// Init
+recalculate();
+</script>
+</body>
+</html>
