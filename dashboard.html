@@ -6704,16 +6704,27 @@ async function renderConsumerNotification() {
     // Limit to last 90 days to avoid showing stale/imported data
     const ninetyDaysAgo = new Date(Date.now() - 90 * 86400000).toISOString();
     const { data: manualRecalls } = await sb.from('recalls')
-      .select('id, product_name, lot_number, active, created_at, source')
+      .select('id, product_name, lot_number, active, created_at, source, is_pushed, recall_event_id')
       .eq('organisation_id', _orgId)
       .eq('active', true)
       .not('source', 'in', '("fda","rasff","FDA","RASFF")')
       .gte('created_at', ninetyDaysAgo)
       .order('created_at', { ascending: false });
 
+    // Deduplicate: exclude manual recalls that are already represented by a pushed recall_event
+    const pushedKeys = new Set(recallEvents.map(e =>
+      (e.product_name||'').toLowerCase() + '|' + (e.lot_number||'').toLowerCase()
+    ));
+    const dedupedManual = (manualRecalls||[]).filter(r => {
+      if (r.is_pushed || r.recall_event_id) return false; // auto-created from push
+      if (r.source === 'fda' || r.source === 'rasff') return false;
+      const key = (r.product_name||'').toLowerCase() + '|' + (r.lot_number||'').toLowerCase();
+      return !pushedKeys.has(key);
+    });
+
     const allRecalls = [
       ...recallEvents.map(e => ({ ...e, _type: 'pushed' })),
-      ...(manualRecalls||[]).filter(r => r.source !== 'fda' && r.source !== 'rasff').map(r => ({ ...r, _type: 'manual', published_at: r.created_at })),
+      ...dedupedManual.map(r => ({ ...r, _type: 'manual', published_at: r.created_at })),
     ];
 
     const cnStep = _consumerNotifRecallId && _consumerNotifCustomers.length > 0 ? 3
