@@ -421,9 +421,39 @@
       .two-col, .three-col { grid-template-columns: 1fr; }
     }
     @media (max-width: 768px) {
-      .sidebar { transform: translateX(-100%); }
-      .main { margin-left: 0; }
-      .kpi-grid { grid-template-columns: 1fr 1fr; }
+      /* Sidebar — hidden by default, toggled by hamburger */
+      .sidebar { transform: translateX(-100%); transition: transform 0.25s ease; z-index: 200; }
+      .sidebar.mobile-open { transform: translateX(0); }
+      .main { margin-left: 0; padding: 14px; }
+      .kpi-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+      .compliance-grid { grid-template-columns: 1fr; }
+      /* Topbar */
+      .topbar { padding: 0 14px; }
+      #topbar-title { font-size: 14px; }
+      /* Tables — horizontal scroll */
+      .panel-body { overflow-x: auto; }
+      .store-table { min-width: 500px; }
+      /* Modals */
+      .modal-box { width: 95vw !important; max-height: 90vh; overflow-y: auto; }
+      /* Recall process cards */
+      .recall-step-row { flex-direction: column; align-items: flex-start !important; }
+      /* Full overview two-col grid — stack on mobile */
+      [style*="grid-template-columns:1fr 380px"] { display: flex !important; flex-direction: column !important; }
+    }
+    /* Hamburger menu button — mobile only */
+    .mobile-menu-btn {
+      display: none;
+      background: none; border: none; cursor: pointer;
+      color: var(--muted); padding: 6px; border-radius: 6px;
+      align-items: center; justify-content: center;
+    }
+    .mobile-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.5); z-index: 190;
+    }
+    @media (max-width: 768px) {
+      .mobile-menu-btn { display: flex; }
+      .mobile-overlay.active { display: block; }
     }
 
     /* ── Theme toggle button ── */
@@ -549,6 +579,12 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 5v3h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
         Incoming Shipments
       </button>
+      <div class="nav-section">Setup</div>
+      <button class="nav-item" id="nav-onboarding" onclick="showPanel('onboarding')" style="display:none;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
+        Getting started
+        <span id="onboarding-badge" style="margin-left:auto;background:var(--accent);color:#065f46;font-size:9px;padding:1px 6px;border-radius:10px;font-weight:700;display:none;"></span>
+      </button>
       <div class="nav-section">Account</div>
       <button class="nav-item" onclick="showPanel('settings')">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -568,13 +604,21 @@
       </div>
     </div>
   </aside>
+  <div class="mobile-overlay" id="mobile-overlay" onclick="toggleMobileSidebar()"></div>
 
   <!-- Main -->
   <main class="main">
     <div class="topbar">
-      <div>
-        <div class="topbar-title" id="topbar-title">Overview</div>
-        <div class="topbar-sub" id="topbar-sub">Loading your organisation…</div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <button class="mobile-menu-btn" onclick="toggleMobileSidebar()" title="Menu">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+          </svg>
+        </button>
+        <div>
+          <div class="topbar-title" id="topbar-title">Overview</div>
+          <div class="topbar-sub" id="topbar-sub">Loading your organisation…</div>
+        </div>
       </div>
       <div class="topbar-actions">
         <button class="theme-toggle" id="theme-toggle-btn" onclick="toggleTheme()" title="Toggle light/dark mode">
@@ -832,6 +876,15 @@ let _userRole = 'corp_admin', _storeId = null, _storeName = '';
 let _activePanel = 'overview';
 
 // ── Clock ──────────────────────────────────────────────────────
+
+function toggleMobileSidebar() {
+  const sidebar  = document.querySelector('.sidebar');
+  const overlay  = document.getElementById('mobile-overlay');
+  const isOpen   = sidebar?.classList.contains('mobile-open');
+  sidebar?.classList.toggle('mobile-open', !isOpen);
+  overlay?.classList.toggle('active', !isOpen);
+}
+
 function updateClock() {
   const now = new Date();
   document.getElementById('topbar-time').textContent =
@@ -982,18 +1035,24 @@ async function initDashboard(user) {
 
   showPanel('overview');
   loadDashboardTriageBadge();
+  setTimeout(checkOnboardingStatus, 1500);
 }
 
 // ── Panel router ──────────────────────────────────────────────
 function showPanel(name) {
   _activePanel = name;
+  // Close mobile sidebar on navigation
+  if (window.innerWidth <= 768) {
+    document.querySelector('.sidebar')?.classList.remove('mobile-open');
+    document.getElementById('mobile-overlay')?.classList.remove('active');
+  }
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-  const panels = { overview:'Dashboard', recalls:'Recalls', stores:'Stores', traceability:'Traceability', shipments:'Incoming Shipments', staff:'Staff', compliance:'Compliance', reports:'Reports', settings:'Settings', partners:'Manufacturer Partners', triage:'Complaint Triage', 'consumer-notify':'Consumer Notifications', investigations:'Investigations' };
+  const panels = { overview:'Dashboard', onboarding:'Getting started', recalls:'Recalls', stores:'Stores', traceability:'Traceability', shipments:'Incoming Shipments', staff:'Staff', compliance:'Compliance', reports:'Reports', settings:'Settings', partners:'Manufacturer Partners', triage:'Complaint Triage', 'consumer-notify':'Consumer Notifications', investigations:'Investigations' };
   document.getElementById('topbar-title').textContent = panels[name] || name;
   document.querySelectorAll('.nav-item').forEach(el => {
     if (el.getAttribute('onclick')?.includes(`'${name}'`)) el.classList.add('active');
   });
-  const fns = { overview: renderOverview, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, shipments: renderShipments, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, partners: renderPartners, triage: renderDashboardTriage, investigations: renderDashInvestigations, 'consumer-notify': renderConsumerNotification };
+  const fns = { overview: renderOverview, onboarding: renderOnboarding, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, shipments: renderShipments, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, partners: renderPartners, triage: renderDashboardTriage, investigations: renderDashInvestigations, 'consumer-notify': renderConsumerNotification };
   (fns[name] || renderComingSoon)(name);
 }
 
@@ -1288,6 +1347,193 @@ async function loadWeeklyDigest(containerEl) {
   }
 }
 
+
+// ═══════════════════════════════════════════════════════════════
+// ── Onboarding wizard ──────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+
+async function checkOnboardingStatus() {
+  // Run lightweight checks and show/hide the nav item
+  try {
+    const [storesRes, partnersRes, scansRes, drillsRes, settingsRes] = await Promise.all([
+      sb.from('stores').select('id').eq('organisation_id', _orgId).limit(1),
+      sb.from('trading_partners').select('id').eq('retailer_id', _orgId).eq('status', 'active').limit(1),
+      sb.from('scans').select('id').eq('organisation_id', _orgId).limit(1),
+      sb.from('mock_recall_drills').select('id').eq('retailer_org_id', _orgId).limit(1),
+      sb.from('user_settings').select('recall_coordinator_name').eq('user_id', (await sb.auth.getUser()).data?.user?.id).single(),
+    ]);
+    const steps = [
+      !!(storesRes.data?.length),
+      !!(partnersRes.data?.length),
+      !!(scansRes.data?.length),
+      !!(drillsRes.data?.length),
+      !!(settingsRes.data?.recall_coordinator_name),
+    ];
+    const done = steps.filter(Boolean).length;
+    const total = steps.length;
+    const allDone = done === total;
+
+    // Show nav item until everything is complete
+    const navBtn = document.getElementById('nav-onboarding');
+    const badge  = document.getElementById('onboarding-badge');
+    if (navBtn) navBtn.style.display = allDone ? 'none' : 'flex';
+    if (badge && !allDone) {
+      badge.textContent = `${done}/${total}`;
+      badge.style.display = 'inline';
+    }
+    return steps;
+  } catch(e) {
+    return [false, false, false, false, false];
+  }
+}
+
+async function renderOnboarding() {
+  const el = document.getElementById('main-content');
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading setup status…</div>`;
+
+  try {
+    const [storesRes, partnersRes, scansRes, drillsRes, settingsRes, orgRes] = await Promise.all([
+      sb.from('stores').select('id, name').eq('organisation_id', _orgId).limit(5),
+      sb.from('trading_partners').select('id, organisations!trading_partners_manufacturer_id_fkey(name)').eq('retailer_id', _orgId).eq('status', 'active').limit(3),
+      sb.from('scans').select('id').eq('organisation_id', _orgId).limit(1),
+      sb.from('mock_recall_drills').select('id, created_at').eq('retailer_org_id', _orgId).order('created_at', {ascending:false}).limit(1),
+      sb.from('user_settings').select('recall_coordinator_name, recall_coordinator_contact').eq('user_id', (await sb.auth.getUser()).data?.user?.id).single(),
+      sb.from('organisations').select('name, contact_email, region').eq('id', _orgId).single(),
+    ]);
+
+    const hasStores      = !!(storesRes.data?.length);
+    const hasPartners    = !!(partnersRes.data?.length);
+    const hasScans       = !!(scansRes.data?.length);
+    const hasDrill       = !!(drillsRes.data?.length);
+    const hasCoordinator = !!(settingsRes.data?.recall_coordinator_name);
+    const isUS           = orgRes.data?.region === 'us';
+
+    const steps = [
+      {
+        n: 1, done: hasStores,
+        title: 'Add your store network',
+        desc: "Register the physical store locations that Batch'd will track. Each store gets its own scan history and compliance score.",
+        detail: hasStores
+          ? `${storesRes.data.length} store${storesRes.data.length!==1?'s':''} registered: ${storesRes.data.slice(0,3).map(s=>s.name).join(', ')}${storesRes.data.length>3?' +more':''}`
+          : 'No stores registered yet.',
+        cta: 'Add stores →', action: `showPanel('stores')`,
+        reg: 'Required for all regulatory frameworks',
+      },
+      {
+        n: 2, done: hasPartners,
+        title: 'Connect a manufacturer partner',
+        desc: "Link to your suppliers on the Batch'd network. Once connected, they can push recall alerts directly to your stores.",
+        detail: hasPartners
+          ? `${partnersRes.data.length} partner${partnersRes.data.length!==1?'s':''}: ${partnersRes.data.slice(0,2).map(p=>p.organisations?.name||'?').join(', ')}`
+          : 'No manufacturer partners connected.',
+        cta: 'Connect manufacturers →', action: `showPanel('partners')`,
+        reg: isUS ? 'FSMA 204 traceability chain' : 'EU 178/2002 one-step-back',
+      },
+      {
+        n: 3, done: hasScans,
+        title: 'Complete your first scan',
+        desc: "Open the scanning app on any phone and scan a product onto a shelf. This creates your first traceability record and lot code capture.",
+        detail: hasScans ? 'Scanning activity recorded ✓' : 'No scans recorded yet — open the scanning app to start.',
+        cta: 'Open scanning app ↗', action: `window.open('https://batchd-app.netlify.app','_blank')`,
+        reg: 'Core traceability requirement',
+      },
+      {
+        n: 4, done: hasDrill,
+        title: 'Run your first mock recall drill',
+        desc: `Simulate a recall to test your team's response procedures. ${isUS ? 'FDA recommends annual drills.' : 'Required annually by Mattilsynet best practice.'} Generates a compliance report you can share with auditors.`,
+        detail: hasDrill
+          ? `Last drill: ${new Date(drillsRes.data[0].created_at).toLocaleDateString('en-GB', {day:'numeric',month:'long',year:'numeric'})}`
+          : 'No drills conducted yet.',
+        cta: 'Run a drill →', action: `showPanel('recalls')`,
+        reg: isUS ? 'FDA annual drill recommendation' : 'Mattilsynet best practice',
+      },
+      {
+        n: 5, done: hasCoordinator,
+        title: 'Designate a recall coordinator',
+        desc: 'Assign a named person with 24/7 contact details as your recall coordinator. Required by FDA and Mattilsynet as a named responsible party.',
+        detail: hasCoordinator
+          ? `Coordinator: ${settingsRes.data.recall_coordinator_name}`
+          : 'No recall coordinator assigned.',
+        cta: 'Set coordinator →', action: `showPanel('settings')`,
+        reg: isUS ? 'FDA 21 CFR 7.49 — named coordinator required' : 'Mattilsynet §16 — named responsible party',
+      },
+    ];
+
+    const done  = steps.filter(s => s.done).length;
+    const total = steps.length;
+    const pct   = Math.round(done / total * 100);
+    const pctMsg = pct === 100 ? '\u2713 Setup complete — audit-ready' : done + ' of ' + total + ' steps complete · ' + (total - done) + ' remaining';
+
+    el.innerHTML = `
+      <div style="max-width:680px;">
+        <!-- Header -->
+        <div style="margin-bottom:24px;">
+          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;margin-bottom:4px;">Getting started with Batch'd</div>
+          <div style="font-size:11px;color:var(--muted);">${_orgName} · Complete all steps to be audit-ready</div>
+        </div>
+
+        <!-- Progress -->
+        <div style="background:var(--surface);border:1px solid var(--glass-border);border-radius:12px;padding:18px 20px;margin-bottom:20px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+            <div style="font-size:13px;font-weight:600;color:var(--text);">Setup progress</div>
+            <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:18px;color:${pct===100?'var(--accent)':'var(--warn)'};">${done}/${total}</div>
+          </div>
+          <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden;margin-bottom:8px;">
+            <div style="height:100%;width:${pct}%;background:${pct===100?'var(--accent)':'linear-gradient(90deg,var(--warn),var(--accent))'};border-radius:3px;transition:width 0.5s;"></div>
+          </div>
+          <div style="font-size:11px;color:var(--muted);">${pctMsg}</div>
+        </div>
+
+        <!-- Steps -->
+        <div style="position:relative;padding-left:0;">
+          ${steps.map((step, i) => {
+            const isLast = i === steps.length - 1;
+            return `
+            <div style="display:flex;gap:16px;margin-bottom:${isLast?'0':'12px'};position:relative;">
+              ${!isLast ? `<div style="position:absolute;left:19px;top:42px;bottom:-12px;width:1.5px;background:${step.done?'var(--accent)':'var(--border)'};" ></div>` : ''}
+              <!-- Step indicator -->
+              <div style="flex-shrink:0;width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;
+                ${step.done
+                  ? 'background:var(--accent);'
+                  : 'background:var(--surface2);border:1.5px solid var(--glass-border);'}">
+                ${step.done
+                  ? `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#065f46" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>`
+                  : `<span style="font-size:14px;font-weight:700;color:var(--muted);">${step.n}</span>`}
+              </div>
+              <!-- Content -->
+              <div style="flex:1;background:var(--surface);border:1px solid ${step.done?'rgba(52,211,153,0.15)':'var(--glass-border)'};border-radius:10px;padding:14px 16px;">
+                <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:4px;">
+                  <div style="font-size:13px;font-weight:700;color:${step.done?'var(--accent)':'var(--text)'};">${step.title}</div>
+                  ${step.done
+                    ? `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(52,211,153,0.12);color:var(--accent);font-weight:600;flex-shrink:0;">✓ Complete</span>`
+                    : `<button onclick="${step.action}" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid var(--glass-border);background:var(--surface2);color:var(--text);cursor:pointer;font-family:inherit;flex-shrink:0;white-space:nowrap;">${step.cta}</button>`}
+                </div>
+                <div style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:6px;">${step.desc}</div>
+                <div style="font-size:11px;color:${step.done?'var(--accent)':'var(--muted)'};font-style:italic;">${step.detail}</div>
+                <div style="font-size:9px;color:rgba(52,211,153,0.4);font-family:'DM Mono',monospace;margin-top:4px;">${step.reg}</div>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+
+        ${pct === 100 ? `
+        <div style="margin-top:20px;background:rgba(52,211,153,0.07);border:1px solid rgba(52,211,153,0.2);border-radius:12px;padding:18px 20px;text-align:center;">
+          <div style="font-size:20px;margin-bottom:8px;">🎉</div>
+          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;color:var(--accent);margin-bottom:6px;">Setup complete</div>
+          <div style="font-size:13px;color:var(--muted);">Your organisation is fully configured and audit-ready. Run the compliance assessment to generate your readiness report.</div>
+          <button onclick="showPanel('compliance')" style="margin-top:14px;background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:10px 22px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">Run compliance assessment →</button>
+        </div>` : ''}
+      </div>`;
+
+    // Update nav badge
+    const badge = document.getElementById('onboarding-badge');
+    if (badge) { badge.textContent = done+'/'+total; badge.style.display = done < total ? 'inline' : 'none'; }
+
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error: ${e.message}</div>`;
+  }
+}
+
 async function renderOverview() {
   if (_userRole === 'store_manager') { return renderStoreManagerOverview(); }
   const el = document.getElementById('main-content');
@@ -1334,10 +1580,18 @@ async function renderOverview() {
     }
 
     // ── Also fetch any self-managed recalls for this org ──
-    const { data: ownRecalls } = await sb.from('recalls')
-      .select('id, product_name, lot_number, active, source, created_at, reason')
+    // Exclude pushed recalls (already in relevantRecalls) to avoid duplicates
+    const { data: ownRecallsRaw } = await sb.from('recalls')
+      .select('id, product_name, lot_number, active, source, created_at, reason, is_pushed, recall_event_id')
       .eq('organisation_id', _orgId)
       .eq('active', true);
+    // Deduplicate: remove any recall that is already represented by a recall_event
+    const pushedLotKeys = new Set(recallEvents.map(e => (e.product_name||'').toLowerCase() + '|' + (e.lot_number||'').toLowerCase()));
+    const ownRecalls = (ownRecallsRaw || []).filter(r => {
+      if (r.is_pushed || r.recall_event_id) return false; // exact duplicate marker
+      const key = (r.product_name||'').toLowerCase() + '|' + (r.lot_number||'').toLowerCase();
+      return !pushedLotKeys.has(key); // fuzzy dedup by product+lot
+    });
 
     // ── Cross-reference: which recall events affect YOUR lots on shelf? ──
     const myLotNumbers = new Set(shipments.map(s => s.lot_number).filter(Boolean));
@@ -1417,6 +1671,35 @@ async function renderOverview() {
     const days14 = new Date(Date.now() - 14 * 86400000).toISOString();
     const darkStores     = storeHealth.filter(s => s.status === 'dark');
     const slowStores     = storeHealth.filter(s => s.status === 'slow');
+
+    // ── Predictive dark store: baseline deviation per store ───────────────
+    // Compute 90-day baseline for each store and flag significant drops
+    const days90 = new Date(Date.now() - 90 * 86400000).toISOString();
+    const { data: scans90 } = await sb.from('scans')
+      .select('store_name, store_id, created_at')
+      .eq('organisation_id', _orgId)
+      .gte('created_at', days90);
+    const baselineByStore = {};
+    (scans90 || []).forEach(s => {
+      const key = s.store_id || s.store_name;
+      if (!baselineByStore[key]) baselineByStore[key] = [];
+      baselineByStore[key].push(s.created_at);
+    });
+    const predictiveSignals = storeHealth.filter(store => {
+      const key = store.id || store.name;
+      const historicScans = baselineByStore[key] || [];
+      if (historicScans.length < 10) return false; // not enough data for baseline
+      const avgPerDay = historicScans.length / 90;
+      const expected7d = avgPerDay * 7;
+      const actual7d = store.scans7d;
+      // Flag if 7d count is < 40% of the expected based on 90d baseline
+      return expected7d > 2 && actual7d < expected7d * 0.4 && actual7d < expected7d - 3;
+    }).map(store => {
+      const key = store.id || store.name;
+      const historicScans = baselineByStore[key] || [];
+      const avgPerDay = historicScans.length / 90;
+      return { store, avgPerDay: Math.round(avgPerDay * 10) / 10, expected7d: Math.round(avgPerDay * 7) };
+    });
     const overdueAcksAll = acks.filter(a => a.status === 'notified' && (Date.now() - new Date(a.updated_at)) > 4*3600000);
 
     // Check for drill overdue - fetch from drills table
@@ -1450,7 +1733,13 @@ async function renderOverview() {
       .limit(5);
 
     const riskSignals = [
-      ...darkStores.map(s => ({
+      ...predictiveSignals.map(({store, avgPerDay, expected7d}) => ({
+        level: 'warn', icon: '📉',
+        title: `${store.name} — below baseline`,
+        detail: `Only ${store.scans7d} scan${store.scans7d!==1?'s':''} this week vs expected ~${expected7d} (90-day avg: ${avgPerDay}/day)`,
+        action: `showPanel('stores')`, cta: 'View store',
+      })),
+      ...darkStores.filter(s => !predictiveSignals.some(p => p.store.id === s.id)).map(s => ({
         level: 'high', icon: '🔴',
         title: `${s.name} — dark store`,
         detail: `No scans in ${s.daysSince} day${s.daysSince!==1?'s':''} · last active ${s.lastScan ? new Date(s.lastScan).toLocaleDateString('en-GB',{day:'numeric',month:'short'}) : 'never'}`,
@@ -1805,10 +2094,13 @@ async function renderRecalls() {
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading recalls…</div>`;
   try {
 
-  const [recallsRes, acksRes] = await Promise.all([
+  const userId = (await sb.auth.getUser()).data?.user?.id;
+  const [recallsRes, acksRes, coordRes] = await Promise.all([
     sb.from('recalls').select('*').eq('organisation_id', _orgId).order('created_at', {ascending:false}),
     sb.from('recall_acknowledgements').select('*, stores(name)').eq('organisation_id', _orgId).order('created_at', {ascending:false}),
+    sb.from('user_settings').select('recall_coordinator_name, recall_coordinator_contact, recall_coordinator_backup').eq('user_id', userId).single(),
   ]);
+  const coord = coordRes.data || {};
   const recalls = recallsRes.data || [];
   const acks    = acksRes.data   || [];
 
@@ -1832,7 +2124,15 @@ async function renderRecalls() {
   }
 
   const activePushed = pushed.filter(p => !p.recall_events?.is_drill).length;
-  const manualRecalls = recalls.filter(r => r.active && !r.is_pushed && !['fda','rasff','FDA','RASFF'].includes(r.source));
+  // Exclude recalls that are exact duplicates of pushed recall_events
+  const pushedKeys = new Set(pushed.map(p => (p.recall_events?.product_name||'').toLowerCase() + '|' + (p.recall_events?.lot_number||'').toLowerCase()));
+  const manualRecalls = recalls.filter(r => {
+    if (!r.active) return false;
+    if (r.is_pushed || r.recall_event_id) return false; // auto-created from push — skip
+    if (['fda','rasff','FDA','RASFF'].includes(r.source)) return false;
+    const key = (r.product_name||'').toLowerCase() + '|' + (r.lot_number||'').toLowerCase();
+    return !pushedKeys.has(key); // skip if already shown as a manufacturer push
+  });
   const active = manualRecalls.length + activePushed;
   const unacknowledged = acks.filter(a => a.status === 'notified').length;
 
@@ -1923,6 +2223,7 @@ async function renderRecalls() {
             ${STEP_LABELS[nextStep]} →
           </button>` : ''}
           <button onclick="showStoreTimeline('${a.id}')" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;font-family:inherit;">Timeline</button>
+          ${idx === 0 ? `<button onclick="sendRecallReminder('${p.recall_event_id}','${(ev?.product_name||'').replace(/'/g,"\'")}')" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid rgba(245,166,35,0.3);background:none;color:var(--warn);cursor:pointer;font-family:inherit;">📧 Remind</button>` : ''}
         </div>
       </div>
     </div>`;
@@ -1940,6 +2241,26 @@ async function renderRecalls() {
         <span style="font-size:11px;color:var(--danger);">${unacknowledged} store${unacknowledged!==1?'s':''} require action</span>
       </div>` : ''}
     </div>
+
+    <!-- Recall coordinator strip -->
+    ${coord.recall_coordinator_name ? `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--surface);border:1px solid var(--glass-border);border-radius:10px;padding:12px 16px;margin-bottom:16px;flex-wrap:wrap;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div style="width:32px;height:32px;border-radius:50%;background:rgba(52,211,153,0.1);border:1px solid rgba(52,211,153,0.2);display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;">👤</div>
+        <div>
+          <div style="font-size:11px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;color:var(--muted);margin-bottom:2px;">Recall coordinator</div>
+          <div style="font-size:13px;font-weight:700;color:var(--text);">${coord.recall_coordinator_name}</div>
+          ${coord.recall_coordinator_contact ? `<div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">${coord.recall_coordinator_contact}</div>` : ''}
+          ${coord.recall_coordinator_backup ? `<div style="font-size:10px;color:var(--muted);margin-top:1px;">Backup: ${coord.recall_coordinator_backup}</div>` : ''}
+        </div>
+      </div>
+      <button onclick="showPanel('settings')" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid var(--glass-border);background:none;color:var(--muted);cursor:pointer;font-family:inherit;flex-shrink:0;">Edit →</button>
+    </div>` : `
+    <div style="display:flex;align-items:center;gap:10px;background:rgba(245,166,35,0.06);border:1px solid rgba(245,166,35,0.25);border-radius:10px;padding:12px 16px;margin-bottom:16px;">
+      <span style="font-size:16px;">⚠</span>
+      <div style="flex:1;font-size:12px;color:var(--warn);">No recall coordinator assigned — required by ${_orgRegion==='us'?'FDA 21 CFR 7.49':'Mattilsynet §16'}. Your audit reports will be incomplete.</div>
+      <button onclick="showPanel('settings')" style="font-size:11px;padding:6px 12px;border-radius:6px;border:1px solid rgba(245,166,35,0.3);background:none;color:var(--warn);cursor:pointer;font-family:inherit;flex-shrink:0;white-space:nowrap;">Assign coordinator →</button>
+    </div>`}
 
     ${pushed.length === 0 && manualRecalls.length === 0 ? `
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:48px 24px;text-align:center;">
@@ -2025,6 +2346,29 @@ async function renderRecalls() {
 
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading recalls: ${e.message}</div>`;
+  }
+}
+
+
+async function sendRecallReminder(recallEventId, productName) {
+  const btn = event?.target;
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  try {
+    const res = await fetch('/.netlify/functions/recall-reminder', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recallEventId, productName, orgId: _orgId }),
+    });
+    const data = await res.json();
+    if (data.sent > 0) {
+      showToast(`Reminder sent — ${data.pendingStores} store${data.pendingStores!==1?'s':''} notified`, 'ok', 3500);
+    } else {
+      showToast('No stores pending — all have acknowledged', 'ok', 3000);
+    }
+  } catch(e) {
+    showToast('Could not send reminder: ' + e.message, 'error', 4000);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '📧 Remind'; }
   }
 }
 
@@ -2119,10 +2463,14 @@ async function generateStoreAuditReport(ackId, storeName) {
   const btn = event?.target;
   if (btn) { btn.textContent='Generating…'; btn.disabled=true; }
   try {
-    const { data: ack } = await sb.from('recall_acknowledgements')
-      .select('*, stores(name,address), recall_events(product_name,lot_number,severity,reason,published_at,source_org_id)')
-      .eq('id', ackId).single();
-    const { data: org } = await sb.from('organisations').select('name,contact_email').eq('id', _orgId).single();
+    const [ackRes, orgRes, coordRes2] = await Promise.all([
+      sb.from('recall_acknowledgements').select('*, stores(name,address), recall_events(product_name,lot_number,severity,reason,published_at,source_org_id)').eq('id', ackId).single(),
+      sb.from('organisations').select('name,contact_email').eq('id', _orgId).single(),
+      sb.from('user_settings').select('recall_coordinator_name, recall_coordinator_contact, recall_coordinator_backup').eq('organisation_id', _orgId).limit(1),
+    ]);
+    const ack   = ackRes.data;
+    const org   = orgRes.data;
+    const coord2 = coordRes2.data?.[0] || {};
     if (!ack) return;
 
     const STEPS = ['notified','acknowledged','pulled','disposed','confirmed'];
@@ -2153,7 +2501,8 @@ async function generateStoreAuditReport(ackId, storeName) {
         Organisation: ${org?.name||_orgName}<br>
         Contact: ${org?.contact_email||'—'}<br>
         Store address: ${ack.stores?.address||'—'}<br>
-        Record ID: ${ackId.slice(0,8)}…
+        Record ID: ${ackId.slice(0,8)}…<br>
+        ${coord2.recall_coordinator_name?'Recall coordinator: '+coord2.recall_coordinator_name+(coord2.recall_coordinator_contact?' · '+coord2.recall_coordinator_contact:''):'Coordinator: Not assigned'}
       </div>
     </div>
     <h2>Recall details</h2>
@@ -2164,6 +2513,8 @@ async function generateStoreAuditReport(ackId, storeName) {
       <tr><td style="padding:5px 0;color:#666;">Reason</td><td style="padding:5px 0;">${ack.recall_events?.reason||'—'}</td></tr>
       <tr><td style="padding:5px 0;color:#666;">Recall pushed</td><td style="padding:5px 0;">${ack.recall_events?.published_at?new Date(ack.recall_events.published_at).toLocaleString('en-GB'):' —'}</td></tr>
       ${ack.units_pulled?`<tr><td style="padding:5px 0;color:#666;">Units removed</td><td style="padding:5px 0;font-weight:600;">${ack.units_pulled}</td></tr>`:''}
+      <tr><td style="padding:5px 0;color:#666;">Recall coordinator</td><td style="padding:5px 0;font-weight:600;">${coord2.recall_coordinator_name||'Not assigned'}${coord2.recall_coordinator_contact?' · '+coord2.recall_coordinator_contact:''}</td></tr>
+      ${coord2.recall_coordinator_backup?`<tr><td style="padding:5px 0;color:#666;">Backup coordinator</td><td style="padding:5px 0;">${coord2.recall_coordinator_backup}</td></tr>`:''}
     </table>
     <h2>Response timeline</h2>
     <div class="timeline">
@@ -2198,10 +2549,16 @@ async function generateRecallAuditReport(recallEventId, productName) {
   const btn = event?.target;
   if (btn) { btn.textContent='Generating…'; btn.disabled=true; }
   try {
-    const { data: acks } = await sb.from('recall_acknowledgements')
-      .select('*, stores(name,address)').eq('recall_event_id', recallEventId).eq('organisation_id', _orgId);
-    const { data: ev }  = await sb.from('recall_events').select('*').eq('id', recallEventId).single();
-    const { data: org } = await sb.from('organisations').select('name,contact_email').eq('id', _orgId).single();
+    const [acksRes2, evRes, orgRes2, coordRes3] = await Promise.all([
+      sb.from('recall_acknowledgements').select('*, stores(name,address)').eq('recall_event_id', recallEventId).eq('organisation_id', _orgId),
+      sb.from('recall_events').select('*').eq('id', recallEventId).single(),
+      sb.from('organisations').select('name,contact_email').eq('id', _orgId).single(),
+      sb.from('user_settings').select('recall_coordinator_name, recall_coordinator_contact, recall_coordinator_backup').eq('organisation_id', _orgId).limit(1),
+    ]);
+    const acks  = acksRes2.data;
+    const ev    = evRes.data;
+    const org   = orgRes2.data;
+    const coord3 = coordRes3.data?.[0] || {};
 
     const today = new Date().toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'});
     const confirmed = (acks||[]).filter(a=>a.status==='confirmed').length;
@@ -2226,7 +2583,7 @@ async function generateRecallAuditReport(recallEventId, productName) {
     </div>
     <div class="header">
       <div><div class="logo">Batch'd</div><h1>Recall Response Audit Report</h1><div style="font-size:12px;color:#555;margin-top:4px;">${org?.name||_orgName} · Generated ${today}</div></div>
-      <div style="font-size:10px;color:#666;text-align:right;line-height:1.8;">Product: <strong>${productName}</strong><br>Lot: ${ev?.lot_number||'—'}<br>Severity: ${ev?.severity||'—'}<br>Pushed: ${ev?.published_at?new Date(ev.published_at).toLocaleDateString('en-GB'):'—'}</div>
+      <div style="font-size:10px;color:#666;text-align:right;line-height:1.8;">Product: <strong>${productName}</strong><br>Lot: ${ev?.lot_number||'—'}<br>Severity: ${ev?.severity||'—'}<br>Pushed: ${ev?.published_at?new Date(ev.published_at).toLocaleDateString('en-GB'):'—'}<br>Coordinator: <strong>${coord3.recall_coordinator_name||'Not assigned'}</strong>${coord3.recall_coordinator_contact?'<br>'+coord3.recall_coordinator_contact:''}</div>
     </div>
     <h2>Summary</h2>
     <div class="kpis">
@@ -2249,6 +2606,7 @@ async function generateRecallAuditReport(recallEventId, productName) {
         ? `All ${(acks||[]).length} stores completed the full 5-step response chain. Recall response is complete and documented.`
         : `${(acks||[]).length - confirmed} of ${(acks||[]).length} stores have not yet completed the full response chain. Follow up with outstanding locations.`}
     </div>
+    ${coord3.recall_coordinator_name ? `<div style="margin-top:12px;padding:10px 14px;background:#f9f9f9;border:1px solid #eee;border-radius:6px;font-size:11px;color:#555;line-height:1.7;"><strong>Recall coordinator (responsible party):</strong> ${coord3.recall_coordinator_name}${coord3.recall_coordinator_contact?' · '+coord3.recall_coordinator_contact:''}${coord3.recall_coordinator_backup?'<br>Backup: '+coord3.recall_coordinator_backup:''}</div>` : ''}
     <div class="footer"><span>Batch'd · batchd.no · ${org?.name||_orgName} · Confidential</span><span>Generated ${today}</span></div>
     </body></html>`;
 
@@ -3814,7 +4172,12 @@ async function fetchReportData(key) {
         const { data: events } = await sb.from('recall_events').select('*').in('id', ids).order('published_at', {ascending:false});
         pushed = (events || []).map(ev => ({ ...ev, _type:'pushed', _dist: distData.find(d => d.recall_event_id === ev.id) }));
       }
-      const internal = (recallsRes.data || []).filter(r => !r.is_pushed).map(r => ({ ...r, _type:'internal' }));
+      const pushedKeys2 = new Set(pushed.map(ev => (ev.product_name||'').toLowerCase()+'|'+(ev.lot_number||'').toLowerCase()));
+      const internal = (recallsRes.data || []).filter(r => {
+        if (r.is_pushed || r.recall_event_id) return false;
+        const key = (r.product_name||'').toLowerCase()+'|'+(r.lot_number||'').toLowerCase();
+        return !pushedKeys2.has(key);
+      }).map(r => ({ ...r, _type:'internal' }));
       return [...pushed, ...internal];
     }
     case 'staff': {
@@ -4046,19 +4409,39 @@ async function runReport(key) {
             Copy text
           </button>
         </div>
+      </div>
+
+      <!-- Consumer notification matching -->
+      <div class="panel" style="margin-top:16px;">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">📍 Match customers to this recall</div>
+            <div class="panel-sub">Upload a CSV of recent purchases — we'll identify customers who bought this product from affected stores</div>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6;">
+            CSV format: <span style="font-family:'DM Mono',monospace;color:var(--text);">customer_name, email, store_name, purchase_date</span><br>
+            Matches customers whose purchase store matches the recall and whose purchase date falls within the exposure window.
+          </div>
+          <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+            <input type="file" id="customer-csv-input" accept=".csv" onchange="matchCustomersToRecall()"
+              style="font-size:11px;color:var(--muted);background:var(--input-bg);border:1px solid var(--glass-border);border-radius:7px;padding:8px 10px;cursor:pointer;flex:1;min-width:200px;" />
+          </div>
+          <div id="customer-match-results"></div>
+        </div>
       </div>`;
   }
 
   else if (key === 'fsma') {
+    const fsmaSubtitle = isUS ? 'Key Data Elements · ' + data.length + ' records' : 'One-step-back/forward · ' + data.length + ' scans';
     el.innerHTML = reportHeader(
       isUS ? 'FSMA 204 KDE export' : 'EU traceability export',
-      isUS ? `Key Data Elements · ${data.length} records` : `One-step-back/forward · ${data.length} scans`,
+      fsmaSubtitle,
       'fsma'
     ) + `
       <div style="margin-bottom:14px;padding:12px 16px;background:rgba(56,189,248,0.05);border:1px solid rgba(56,189,248,0.15);border-radius:8px;font-size:11px;color:var(--muted);line-height:1.6;">
-        ${isUS
-          ? '📋 These records satisfy FSMA 204 Key Data Element (KDE) requirements for Critical Tracking Events (CTEs). Download CSV for audit submission.'
-          : '📋 These records satisfy EU Regulation 178/2002 one-step-back / one-step-forward traceability requirements. Download CSV for Mattilsynet audit.'}
+        ${isUS ? "📋 These records satisfy FSMA 204 KDE requirements for CTEs. Download CSV for audit submission." : "📋 These records satisfy EU Reg. 178/2002 one-step-back/forward traceability requirements. Download CSV for Mattilsynet audit."}
       </div>
       <div class="panel">
         <div class="panel-body" style="padding:0;">
@@ -4090,6 +4473,96 @@ async function runReport(key) {
           </table>
         </div>
       </div>`;
+  }
+}
+
+
+async function matchCustomersToRecall() {
+  const file = document.getElementById('customer-csv-input')?.files?.[0];
+  const el   = document.getElementById('customer-match-results');
+  if (!file || !el) return;
+  el.innerHTML = '<div style="font-size:12px;color:var(--muted);">Parsing CSV…</div>';
+
+  try {
+    const text = await file.text();
+    const lines = text.trim().split('\n').filter(l => l.trim());
+    if (lines.length < 2) { el.innerHTML = '<div style="color:var(--danger);font-size:12px;">CSV must have a header row and at least one data row.</div>'; return; }
+
+    // Parse header
+    const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/[^a-z_]/g,''));
+    const nameIdx    = headers.findIndex(h => h.includes('name') || h === 'customer');
+    const emailIdx   = headers.findIndex(h => h.includes('email'));
+    const storeIdx   = headers.findIndex(h => h.includes('store'));
+    const dateIdx    = headers.findIndex(h => h.includes('date') || h.includes('purchase'));
+
+    if (emailIdx === -1 || storeIdx === -1 || dateIdx === -1) {
+      el.innerHTML = '<div style="color:var(--danger);font-size:12px;">CSV must have columns for email, store_name, and purchase_date.</div>';
+      return;
+    }
+
+    // Fetch affected store acknowledgements for the current recall
+    const { data: acks } = await sb.from('recall_acknowledgements')
+      .select('stores(name), created_at')
+      .eq('organisation_id', _orgId)
+      .order('created_at', {ascending:true})
+      .limit(50);
+    const affectedStores = new Set((acks||[]).map(a => (a.stores?.name||'').toLowerCase().trim()));
+    const recallDate = acks?.[0]?.created_at ? new Date(acks[0].created_at) : new Date(Date.now() - 30*86400000);
+
+    // Parse and match customers
+    const customers = lines.slice(1).map(line => {
+      const cols = line.split(',').map(c => c.trim().replace(/^"|"$/g,''));
+      return {
+        name:  nameIdx  >= 0 ? cols[nameIdx]  : 'Unknown',
+        email: emailIdx >= 0 ? cols[emailIdx] : '',
+        store: storeIdx >= 0 ? cols[storeIdx] : '',
+        date:  dateIdx  >= 0 ? cols[dateIdx]  : '',
+      };
+    }).filter(c => c.email);
+
+    const matched = customers.filter(c => {
+      const storeMatch = affectedStores.size === 0 || affectedStores.has(c.store.toLowerCase().trim());
+      const purchaseDate = new Date(c.date);
+      const withinWindow = !isNaN(purchaseDate) ? purchaseDate >= new Date(recallDate.getTime() - 30*86400000) : true;
+      return storeMatch && withinWindow;
+    });
+
+    if (matched.length === 0) {
+      el.innerHTML = `<div style="background:rgba(52,211,153,0.07);border:1px solid rgba(52,211,153,0.2);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--accent);">No customers matched — either the stores don't overlap or purchase dates are outside the recall window.</div>`;
+      return;
+    }
+
+    // Build CSV for download
+    const csvRows = [['Customer name','Email','Store','Purchase date']];
+    matched.forEach(c => csvRows.push([c.name, c.email, c.store, c.date]));
+    const csvContent = csvRows.map(r => r.map(v => '"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n');
+    const blob   = new Blob(['\uFEFF' + csvContent], {type:'text/csv;charset=utf-8;'});
+    const csvUrl = URL.createObjectURL(blob);
+
+    const fmtDate = d => d ? new Date(d).toLocaleDateString('en-GB',{day:'numeric',month:'short'}) : '—';
+
+    el.innerHTML = `
+      <div style="background:rgba(255,92,92,0.06);border:1px solid rgba(255,92,92,0.2);border-radius:8px;padding:12px 14px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+        <div style="font-size:12px;color:var(--danger);font-weight:600;">⚠ ${matched.length} customer${matched.length!==1?'s':''} matched · ${customers.length - matched.length} not affected</div>
+        <a href="${csvUrl}" download="recall-affected-customers-${new Date().toISOString().split('T')[0]}.csv"
+          style="font-size:11px;padding:6px 12px;border-radius:6px;border:1px solid rgba(255,92,92,0.3);background:none;color:var(--danger);cursor:pointer;text-decoration:none;font-family:'DM Mono',monospace;font-weight:600;">
+          ↓ Download matched list
+        </a>
+      </div>
+      <div class="panel" style="margin:0;">
+        <div class="panel-body" style="padding:0;">
+          <table class="store-table" style="width:100%;">
+            <thead><tr><th>Customer</th><th>Email</th><th>Store</th><th>Purchase date</th></tr></thead>
+            <tbody>
+              ${matched.slice(0,20).map(c => '<tr><td style="font-size:12px;font-weight:500;color:var(--text);">' + (c.name||'—') + '</td><td style="font-size:11px;color:var(--muted);font-family:DM Mono,monospace;">' + c.email + '</td><td style="font-size:11px;color:var(--muted);">' + c.store + '</td><td style="font-size:11px;color:var(--muted);">' + c.date + '</td></tr>').join('')}
+              ${matched.length > 20 ? '<tr><td colspan="4" style="text-align:center;font-size:11px;color:var(--muted);padding:10px;">+' + (matched.length - 20) + ' more in downloaded CSV</td></tr>' : ''}
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+
+  } catch(e) {
+    el.innerHTML = '<div style="color:var(--danger);font-size:12px;">Error parsing CSV: ' + e.message + '</div>';
   }
 }
 
@@ -4190,6 +4663,10 @@ async function renderSettings() {
   try {
   const { data: org } = await sb.from('organisations').select('*').eq('id', _orgId).single();
 
+  const userId = (await sb.auth.getUser()).data?.user?.id;
+  const { data: userSett } = await sb.from('user_settings').select('recall_coordinator_name, recall_coordinator_contact, recall_coordinator_backup').eq('user_id', userId).single();
+  const coord = userSett || {};
+
   el.innerHTML = `
     <div style="margin-bottom:16px;">
       <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Organisation settings</div>
@@ -4239,11 +4716,63 @@ async function renderSettings() {
             <a href="https://batchdapp.com" style="font-size:11px;color:var(--accent);text-decoration:none;">batchdapp.com →</a>
           </div>
         </div>
-      </div>
+      
+      <!-- Recall coordinator — spans both columns -->
+      <div class="panel" style="grid-column:1/-1;">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Recall coordinator</div>
+            <div class="panel-sub">${_orgRegion==='us'?'FDA 21 CFR 7.49 — named coordinator required':'Mattilsynet — named responsible party per Matloven §16'}</div>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div id="coord-msg" style="display:none;"></div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:12px;">
+            <div class="field">
+              <label>Primary coordinator name</label>
+              <input id="coord-name" type="text" value="${coord.recall_coordinator_name||''}" placeholder="Full name" />
+            </div>
+            <div class="field">
+              <label>24/7 contact (phone or email)</label>
+              <input id="coord-contact" type="text" value="${coord.recall_coordinator_contact||''}" placeholder="+47 xxx or name@co.com" />
+            </div>
+            <div class="field">
+              <label>Backup coordinator</label>
+              <input id="coord-backup" type="text" value="${coord.recall_coordinator_backup||''}" placeholder="Name + contact" />
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;">
+            <button class="btn-primary" onclick="saveCoordinatorSettings()" id="btn-save-coord">Save coordinator</button>
+            <div style="font-size:11px;color:var(--muted);">Named on all recall audit reports and regulatory submissions.</div>
+          </div>
+        </div>
+      </div></div>
     </div>`;
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading settings: ${e.message}</div>`;
   }
+}
+
+
+async function saveCoordinatorSettings() {
+  const name    = document.getElementById('coord-name')?.value?.trim();
+  const contact = document.getElementById('coord-contact')?.value?.trim();
+  const backup  = document.getElementById('coord-backup')?.value?.trim();
+  const btn     = document.getElementById('btn-save-coord');
+  const msgEl   = document.getElementById('coord-msg');
+  const setMsg  = (txt, ok) => { if (msgEl) { msgEl.textContent=txt; msgEl.style.cssText='display:block;font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;background:'+( ok?'rgba(52,211,153,0.1)':'rgba(255,92,92,0.1)')+';border:1px solid '+(ok?'rgba(52,211,153,0.3)':'rgba(255,92,92,0.3)')+';color:'+(ok?'var(--accent)':'var(--danger)'); } };
+  if (!name) { setMsg('Coordinator name is required.', false); return; }
+  if (btn) { btn.disabled=true; btn.textContent='Saving…'; }
+  const userId = (await sb.auth.getUser()).data?.user?.id;
+  const { error } = await sb.from('user_settings').upsert({
+    user_id: userId, organisation_id: _orgId,
+    recall_coordinator_name: name,
+    recall_coordinator_contact: contact||null,
+    recall_coordinator_backup:  backup||null,
+  }, { onConflict: 'user_id' });
+  if (error) { setMsg(error.message, false); }
+  else { setMsg('✓ Coordinator saved — named on all audit reports.', true); checkOnboardingStatus(); }
+  if (btn) { btn.disabled=false; btn.textContent='Save coordinator'; }
 }
 
 async function saveOrgSettings() {

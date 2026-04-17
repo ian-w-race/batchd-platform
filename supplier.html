@@ -117,6 +117,11 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;bac
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
         Manufacturer Links
       </button>
+      <button class="nav-item" id="nav-intelligence" onclick="showPanel('intelligence')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        Intelligence
+        <span id="intel-badge" style="display:none;margin-left:auto;background:var(--danger);color:#fff;font-size:9px;padding:1px 6px;border-radius:10px;font-weight:700;"></span>
+      </button>
       <button class="nav-item" onclick="showPanel('investigations')">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         Investigations
@@ -258,6 +263,139 @@ function showPanel(name) {
   document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.getAttribute('onclick')?.includes("'"+name+"'")));
   ({overview:renderOverview,ingredients:renderIngredients,lots:renderLots,shipments:renderShipments,manufacturers:renderManufacturers,investigations:renderInvestigations}[name]||renderComingSoon)();
 }
+
+// ── Intelligence panel ─────────────────────────────────────────
+async function renderIntelligence() {
+  const el = document.getElementById('main-content');
+  el.innerHTML = '<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Scanning your lots against recalls…</div>';
+  try {
+    const since90 = new Date(Date.now() - 90 * 86400000).toISOString();
+
+    const [connectionsR, lotsR, shipmentsR] = await Promise.all([
+      sb.from('supplier_connections').select('manufacturer_id,status,organisations!supplier_connections_manufacturer_id_fkey(id,name)').eq('supplier_id',_orgId),
+      sb.from('supplier_lot_codes').select('id,lot_code,production_date,expiry_date,quantity,supplier_ingredients(name)').eq('supplier_id',_orgId).order('created_at',{ascending:false}).limit(100),
+      sb.from('ingredient_receipts').select('lot_code,ingredient_name,shipped_at,quantity,unit,organisations!ingredient_receipts_manufacturer_id_fkey(id,name)').eq('supplier_id',_orgId).order('shipped_at',{ascending:false}).limit(200),
+    ]);
+
+    const connections = connectionsR.data || [];
+    const activeMfrIds = connections.filter(c => c.status === 'active').map(c => c.manufacturer_id).filter(Boolean);
+    const lots      = lotsR.data || [];
+    const shipments = shipmentsR.data || [];
+
+    // Fetch recalls from connected manufacturers
+    let recalls = [];
+    if (activeMfrIds.length > 0) {
+      const {data} = await sb.from('recall_events').select('id,product_name,lot_number,severity,reason,published_at,is_drill,source_org_id').in('source_org_id', activeMfrIds).eq('is_drill', false).order('published_at',{ascending:false});
+      recalls = data || [];
+    }
+
+    // Cross-reference: match shipped lot codes against recall lot numbers
+    const matchLots = (a, b) => {
+      if (!a || !b) return false;
+      const ca = a.trim().toUpperCase(), cb = b.trim().toUpperCase();
+      return ca === cb || ca.startsWith(cb) || cb.startsWith(ca);
+    };
+
+    const implicated = recalls.filter(r => r.lot_number && shipments.some(s => matchLots(s.lot_code, r.lot_number)));
+
+    // For each implicated recall, find which manufacturers received the lot
+    const implications = implicated.map(r => {
+      const affectedShipments = shipments.filter(s => matchLots(s.lot_code, r.lot_number));
+      const mfrsAffected = [...new Set(affectedShipments.map(s => s.organisations?.name).filter(Boolean))];
+      const totalUnits   = affectedShipments.reduce((sum, s) => sum + (s.quantity || 0), 0);
+      const unit         = affectedShipments[0]?.unit || '';
+      return { recall: r, affectedShipments, mfrsAffected, totalUnits, unit };
+    });
+
+    const fmtDate = d => d ? new Date(d).toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'}) : '—';
+    const sevColor = s => s?.toLowerCase().includes('class_i') || s?.toLowerCase().includes(' i') ? 'var(--danger)' : s ? 'var(--warn)' : 'var(--muted)';
+
+    el.innerHTML = `
+      <div style="margin-bottom:20px;">
+        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Supply chain intelligence</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px;">${_orgName} · Cross-referencing your shipped lots against manufacturer recall events</div>
+      </div>
+
+      <!-- Summary KPIs -->
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;">
+        ${[
+          { val: lots.length,       lbl: 'Lot codes registered',  col: 'var(--accent)' },
+          { val: shipments.length,  lbl: 'Shipments logged',      col: 'var(--text)'   },
+          { val: recalls.length,    lbl: 'Recalls from partners', col: recalls.length > 0 ? 'var(--warn)' : 'var(--muted)' },
+          { val: implicated.length, lbl: 'Your lots implicated',  col: implicated.length > 0 ? 'var(--danger)' : 'var(--accent)' },
+        ].map(k => '<div style="background:var(--surface);border:1px solid var(--glass-border);border-radius:var(--radius);padding:14px 16px;"><div style="font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);margin-bottom:6px;">'+k.lbl+'</div><div style="font-family:Figtree,sans-serif;font-weight:800;font-size:26px;color:'+k.col+';line-height:1;">'+k.val+'</div></div>').join('')}
+      </div>
+
+      ${implicated.length === 0 ? `
+      <div style="background:rgba(52,211,153,0.07);border:1px solid rgba(52,211,153,0.2);border-radius:12px;padding:32px;text-align:center;margin-bottom:20px;">
+        <div style="font-size:28px;margin-bottom:10px;">✅</div>
+        <div style="font-size:14px;font-weight:600;color:var(--accent);margin-bottom:6px;">No lot exposure detected</div>
+        <div style="font-size:12px;color:var(--muted);">None of your logged lot codes match active recall events from your manufacturer partners.</div>
+      </div>` : `
+
+      <!-- Implicated lots -->
+      <div style="margin-bottom:20px;">
+        <div style="font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--danger);margin-bottom:12px;">⚠ ${implicated.length} lot${implicated.length!==1?'s':''} under recall</div>
+        ${implications.map(imp => `
+          <div style="background:rgba(255,92,92,0.05);border:1px solid rgba(255,92,92,0.25);border-radius:12px;padding:16px 18px;margin-bottom:12px;">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
+              <div>
+                <div style="font-size:14px;font-weight:700;color:var(--text);">${imp.recall.product_name || '—'}</div>
+                <div style="font-size:12px;color:var(--muted);margin-top:3px;">
+                  Lot <span style="font-family:'DM Mono',monospace;color:var(--danger);">${imp.recall.lot_number}</span>
+                  · ${imp.recall.reason || '—'} · ${fmtDate(imp.recall.published_at)}
+                </div>
+              </div>
+              <span style="font-size:11px;padding:3px 10px;border-radius:10px;background:rgba(255,92,92,0.12);color:var(--danger);font-weight:700;flex-shrink:0;">${imp.recall.severity || 'RECALL'}</span>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;margin-bottom:12px;">
+              <div style="background:var(--surface2);border-radius:7px;padding:9px 11px;">
+                <div style="font-size:10px;color:var(--muted);margin-bottom:3px;">Manufacturers affected</div>
+                <div style="font-size:12px;font-weight:600;color:var(--text);">${imp.mfrsAffected.join(', ') || '—'}</div>
+              </div>
+              <div style="background:var(--surface2);border-radius:7px;padding:9px 11px;">
+                <div style="font-size:10px;color:var(--muted);margin-bottom:3px;">Units shipped</div>
+                <div style="font-size:12px;font-weight:600;color:var(--text);">${imp.totalUnits || '—'} ${imp.unit}</div>
+              </div>
+              <div style="background:var(--surface2);border-radius:7px;padding:9px 11px;">
+                <div style="font-size:10px;color:var(--muted);margin-bottom:3px;">Shipments</div>
+                <div style="font-size:12px;font-weight:600;color:var(--text);">${imp.affectedShipments.length}</div>
+              </div>
+            </div>
+            <div style="font-size:11px;color:var(--muted);">
+              <strong style="color:var(--text);">Shipment trail:</strong>
+              ${imp.affectedShipments.slice(0,4).map(s => s.organisations?.name + ' (' + fmtDate(s.shipped_at) + ')').join(' · ')}
+            </div>
+          </div>`).join('')}
+      </div>`}
+
+      <!-- All lots with status -->
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">All registered lots</div><div class="panel-sub">${lots.length} total · flagged if matching a recall</div></div>
+        <div class="panel-body" style="padding:0;">
+          ${lots.length === 0
+            ? '<div class="empty" style="padding:20px;">No lot codes registered yet.</div>'
+            : '<table class="data-table"><thead><tr><th>Ingredient</th><th>Lot code</th><th>Produced</th><th>Expiry</th><th>Status</th></tr></thead><tbody>' +
+              lots.map(l => {
+                const isImplicated = implicated.some(r => matchLots(l.lot_code, r.lot_number));
+                return '<tr><td style="font-weight:500;color:var(--text);">' + esc(l.supplier_ingredients?.name || '—') + '</td>'
+                  + '<td style="font-family:DM Mono,monospace;font-size:11px;color:' + (isImplicated ? 'var(--danger)' : 'var(--accent)') + ';">'
+                  + (isImplicated ? '🚨 ' : '') + esc(l.lot_code || '—') + '</td>'
+                  + '<td style="font-size:11px;color:var(--muted);">' + fmtDate(l.production_date) + '</td>'
+                  + '<td style="font-size:11px;color:var(--muted);">' + fmtDate(l.expiry_date) + '</td>'
+                  + '<td>' + (isImplicated
+                    ? '<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(255,92,92,0.1);color:var(--danger);font-weight:600;">Under recall</span>'
+                    : '<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(52,211,153,0.1);color:var(--accent);">Clear</span>') + '</td>'
+                  + '</tr>';
+              }).join('') + '</tbody></table>'}
+        </div>
+      </div>`;
+
+  } catch(e) {
+    el.innerHTML = '<div style="color:var(--danger);font-size:12px;padding:20px;">Error: ' + e.message + '</div>';
+  }
+}
+
 function renderComingSoon() { document.getElementById('main-content').innerHTML='<div style="padding:60px 0;text-align:center;color:var(--muted);font-size:14px;">Coming soon</div>'; }
 
 // Overview
@@ -265,12 +403,32 @@ async function renderOverview() {
   const el = document.getElementById('main-content');
   el.innerHTML='<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading...</div>';
   try {
-    const [ingR, lotR, shipR, linkR] = await Promise.all([
+    const [ingR, lotR, shipR, linkR, allShipR] = await Promise.all([
       sb.from('supplier_ingredients').select('id').eq('supplier_id',_orgId),
       sb.from('supplier_lot_codes').select('id').eq('supplier_id',_orgId),
       sb.from('ingredient_receipts').select('id,ingredient_name,lot_code,shipped_at').eq('supplier_id',_orgId).order('shipped_at',{ascending:false}).limit(5),
-      sb.from('supplier_connections').select('status,organisations!supplier_connections_manufacturer_id_fkey(name)').eq('supplier_id',_orgId),
+      sb.from('supplier_connections').select('status,manufacturer_id,organisations!supplier_connections_manufacturer_id_fkey(name)').eq('supplier_id',_orgId),
+      sb.from('ingredient_receipts').select('lot_code,ingredient_name,shipped_at,organisations!ingredient_receipts_manufacturer_id_fkey(id,name)').eq('supplier_id',_orgId).order('shipped_at',{ascending:false}).limit(200),
     ]);
+    // Fetch recalls from connected manufacturers
+    const mfrIds = (linkR.data||[]).filter(l=>l.status==='active').map(l=>l.manufacturer_id).filter(Boolean);
+    let recallSignals = [];
+    if (mfrIds.length > 0) {
+      const {data: mfrRecalls} = await sb.from('recall_events').select('id,product_name,lot_number,severity,reason,published_at,is_drill').in('source_org_id', mfrIds).eq('is_drill', false).order('published_at',{ascending:false}).limit(50);
+      // Cross-reference: does any recalled lot match a lot we shipped?
+      const myLots = new Set((allShipR.data||[]).map(s => (s.lot_code||'').toUpperCase().trim()));
+      recallSignals = (mfrRecalls||[]).filter(r => {
+        if (!r.lot_number) return false;
+        const recallLot = r.lot_number.toUpperCase().trim();
+        // Check exact or prefix match
+        return [...myLots].some(ml => ml === recallLot || ml.startsWith(recallLot) || recallLot.startsWith(ml));
+      });
+    }
+    // Update nav badge
+    if (recallSignals.length > 0) {
+      const badge = document.getElementById('intel-badge');
+      if (badge) { badge.textContent = recallSignals.length; badge.style.display = 'inline'; }
+    }
     const active = (linkR.data||[]).filter(l=>l.status==='active');
     el.innerHTML = `
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px;">
@@ -281,6 +439,26 @@ async function renderOverview() {
           {l:'Manufacturer links',val:active.length,p:'manufacturers'},
         ].map(k=>'<div data-panel="'+k.p+'" class="kpi-nav-card" style="background:var(--surface);border:1px solid var(--glass-border);border-radius:var(--radius);padding:16px 18px;cursor:pointer;transition:all 0.15s;"><div style="font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;">'+k.l+'</div><div style="font-family:Figtree,sans-serif;font-weight:800;font-size:28px;color:var(--accent);line-height:1;">'+k.val+'</div></div>').join('')}
       </div>
+      ${recallSignals.length > 0 ? `
+      <div style="margin-bottom:18px;">
+        <div style="font-size:10px;font-weight:600;letter-spacing:0.09em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;display:flex;align-items:center;gap:6px;">
+          <div style="width:6px;height:6px;border-radius:50%;background:var(--danger);animation:blink 1.2s ease-in-out infinite;"></div>
+          ${recallSignals.length} lot${recallSignals.length!==1?'s':''} you shipped match active recalls
+        </div>
+        ${recallSignals.slice(0,3).map(r => `
+          <div style="display:flex;align-items:flex-start;gap:12px;background:rgba(255,92,92,0.06);border:1px solid rgba(255,92,92,0.2);border-radius:10px;padding:12px 14px;margin-bottom:8px;">
+            <div style="width:8px;height:8px;border-radius:50%;background:var(--danger);box-shadow:0 0 7px rgba(255,92,92,0.5);flex-shrink:0;margin-top:4px;"></div>
+            <div style="flex:1;">
+              <div style="font-size:12px;font-weight:600;color:var(--text);">${r.product_name||'Unknown product'}</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:2px;">
+                Lot <span style="font-family:'DM Mono',monospace;color:var(--danger);">${r.lot_number}</span>
+                · ${r.severity||'Recall'} · ${r.reason||'—'}
+              </div>
+            </div>
+            <button onclick="showPanel('intelligence')" style="font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid rgba(255,92,92,0.3);background:none;color:var(--danger);cursor:pointer;font-family:inherit;white-space:nowrap;flex-shrink:0;">View details →</button>
+          </div>`).join('')}
+        ${recallSignals.length > 3 ? `<div onclick="showPanel('intelligence')" style="font-size:11px;color:var(--muted);cursor:pointer;text-align:center;padding:4px;">+${recallSignals.length-3} more — view Intelligence panel →</div>` : ''}
+      </div>` : ''}
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
         <div class="panel"><div class="panel-header"><div class="panel-title">How it works</div></div><div class="panel-body" style="padding:0;">
           ${[['1','Register your ingredients','Add the ingredient products you supply — names, barcodes, categories.'],
