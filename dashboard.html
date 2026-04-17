@@ -11,47 +11,89 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* ── Theme: dark (default) ── */
     :root {
-      --bg:       #040c0e;
-      --surface:  #091918;
-      --surface2: #0e2622;
-      --border:   #12352f;
-      --accent:   #34d399;
-      --accent-dim:#059669;
-      --text:     #edfdf8;
-      --muted:    #6aaf9e;
-      --danger:   #ff5c5c;
-      --warn:     #f5a623;
-      --info:     #38bdf8;
-      --radius:   12px;
+      --bg:          #040c0e;
+      --surface:     rgba(9,25,24,0.55);
+      --surface2:    rgba(14,38,34,0.5);
+      --border:      rgba(52,211,153,0.1);
+      --border-hard: #163d37;
+      --accent:      #34d399;
+      --accent-dim:  #059669;
+      --text:        #edfdf8;
+      --muted:       #6aaf9e;
+      --danger:      #ff5c5c;
+      --warn:        #f5a623;
+      --info:        #38bdf8;
+      --radius:      12px;
+      --blur-sm:     blur(8px);
+      --blur-md:     blur(14px);
+      --blur-lg:     blur(22px);
+      --sidebar-bg:  rgba(4,12,14,0.7);
+      --topbar-bg:   rgba(4,12,14,0.55);
+      --glass-border:rgba(52,211,153,0.1);
+      --glow-a:      rgba(52,211,153,0.12);
+      --glow-b:      rgba(5,150,105,0.09);
+      --input-bg:    rgba(14,38,34,0.6);
+      --auth-bg:     rgba(9,25,24,0.75);
     }
-    html, body { min-height: 100vh; background: var(--bg); color: var(--text); font-family: 'DM Mono', monospace; overflow-x: hidden; }
+
+    /* ── Theme: light ── */
+    [data-theme="light"] {
+      --bg:          #f0fdf8;
+      --surface:     rgba(255,255,255,0.75);
+      --surface2:    rgba(236,253,245,0.85);
+      --border:      rgba(5,150,105,0.15);
+      --border-hard: rgba(5,150,105,0.2);
+      --accent:      #059669;
+      --accent-dim:  #047857;
+      --text:        #064e3b;
+      --muted:       #0f766e;
+      --danger:      #dc2626;
+      --warn:        #d97706;
+      --info:        #0284c7;
+      --sidebar-bg:  rgba(255,255,255,0.8);
+      --topbar-bg:   rgba(255,255,255,0.7);
+      --glass-border:rgba(5,150,105,0.15);
+      --glow-a:      rgba(52,211,153,0.1);
+      --glow-b:      rgba(5,150,105,0.06);
+      --input-bg:    rgba(236,253,245,0.9);
+      --auth-bg:     rgba(255,255,255,0.85);
+    }
+
+    /* ── Base ── */
+    html, body { min-height: 100vh; background: var(--bg); color: var(--text); font-family: 'DM Mono', monospace; overflow-x: hidden; transition: background 0.3s, color 0.3s; }
 
     body::before {
       content: '';
       position: fixed; inset: 0; pointer-events: none; z-index: 0;
       background:
-        radial-gradient(ellipse 70% 40% at 15% 0%, rgba(52,211,153,0.08) 0%, transparent 60%),
-        radial-gradient(ellipse 50% 30% at 85% 100%, rgba(5,150,105,0.07) 0%, transparent 55%);
+        radial-gradient(ellipse 70% 40% at 15% 0%, var(--glow-a) 0%, transparent 60%),
+        radial-gradient(ellipse 50% 30% at 85% 100%, var(--glow-b) 0%, transparent 55%);
+      transition: background 0.4s;
     }
 
     /* ── Layout ── */
     .app { display: flex; min-height: 100vh; position: relative; z-index: 1; }
 
-    /* ── Sidebar ── */
+    /* ── Sidebar — frosted glass ── */
     .sidebar {
       width: 220px; flex-shrink: 0;
-      background: var(--surface);
-      border-right: 1px solid var(--border);
+      background: var(--sidebar-bg);
+      backdrop-filter: var(--blur-lg);
+      -webkit-backdrop-filter: var(--blur-lg);
+      border-right: 1px solid var(--glass-border);
       display: flex; flex-direction: column;
       position: fixed; top: 0; left: 0; bottom: 0;
       z-index: 100;
+      transition: background 0.3s, border-color 0.3s;
     }
     .sidebar-logo {
       height: 54px; box-sizing: border-box;
       padding: 0 18px;
       display: flex; align-items: center; gap: 10px;
-      border-bottom: 1px solid var(--border); flex-shrink: 0;
+      border-bottom: 1px solid var(--glass-border); flex-shrink: 0;
     }
     .logo-icon {
       width: 32px; height: 32px; background: var(--accent); border-radius: 8px;
@@ -82,12 +124,13 @@
 
     .sidebar-footer {
       padding: 12px 10px;
-      border-top: 1px solid var(--border);
+      border-top: 1px solid var(--glass-border);
     }
     .user-chip {
       display: flex; align-items: center; gap: 8px;
       padding: 8px 10px; border-radius: 8px;
-      background: var(--surface2);
+      background: var(--input-bg);
+      border: 1px solid var(--glass-border);
     }
     .user-avatar {
       width: 28px; height: 28px; border-radius: 50%;
@@ -106,10 +149,13 @@
     .topbar {
       height: 54px; box-sizing: border-box;
       padding: 0 24px;
-      border-bottom: 1px solid var(--border);
+      border-bottom: 1px solid var(--glass-border);
       display: flex; align-items: center; justify-content: space-between;
-      background: var(--bg); backdrop-filter: blur(8px);
+      background: var(--topbar-bg);
+      backdrop-filter: var(--blur-lg);
+      -webkit-backdrop-filter: var(--blur-lg);
       position: sticky; top: 0; z-index: 99;
+      transition: background 0.3s, border-color 0.3s;
     }
     .topbar-title { font-family: 'Figtree', sans-serif; font-weight: 700; font-size: 16px; color: var(--text); }
     .topbar-sub { font-size: 11px; color: var(--muted); margin-top: 1px; }
@@ -143,13 +189,15 @@
     .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 20px; }
     .kpi-card {
       background: var(--surface);
-      border: 1px solid var(--border);
+      backdrop-filter: var(--blur-md);
+      -webkit-backdrop-filter: var(--blur-md);
+      border: 1px solid var(--glass-border);
       border-radius: var(--radius);
       padding: 16px 18px;
       position: relative; overflow: hidden;
-      transition: all 0.15s;
+      transition: all 0.2s;
     }
-    .kpi-card:hover { border-color: rgba(52,211,153,0.35); transform: translateY(-1px); box-shadow: 0 4px 20px rgba(0,0,0,0.15); }
+    .kpi-card:hover { border-color: rgba(52,211,153,0.35); transform: translateY(-1px); box-shadow: 0 8px 32px rgba(0,0,0,0.12); }
     .kpi-card::before {
       content: '';
       position: absolute; top: 0; left: 0; right: 0; height: 2px;
@@ -176,9 +224,12 @@
     /* ── Panel ── */
     .panel {
       background: var(--surface);
-      border: 1px solid var(--border);
+      backdrop-filter: var(--blur-sm);
+      -webkit-backdrop-filter: var(--blur-sm);
+      border: 1px solid var(--glass-border);
       border-radius: var(--radius);
       overflow: hidden;
+      transition: background 0.3s, border-color 0.3s;
     }
     .panel-header {
       padding: 14px 18px;
@@ -221,7 +272,7 @@
 
     /* Select elements — match input styling */
     .field select {
-      width: 100%; background: var(--surface2); border: 1px solid var(--border);
+      width: 100%; background: var(--input-bg); border: 1px solid var(--glass-border);
       border-radius: 8px; padding: 10px 12px; font-family: 'DM Mono', monospace;
       font-size: 13px; color: var(--text); outline: none; transition: border-color 0.15s;
       cursor: pointer; appearance: none;
@@ -256,7 +307,7 @@
     .compliance-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .comp-item {
       background: var(--surface2);
-      border: 1px solid var(--border);
+      border: 1px solid var(--glass-border);
       border-radius: 8px;
       padding: 12px 14px;
     }
@@ -330,8 +381,13 @@
       display: flex; align-items: center; justify-content: center;
     }
     .auth-card {
-      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      background: var(--auth-bg);
+      backdrop-filter: var(--blur-lg);
+      -webkit-backdrop-filter: var(--blur-lg);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius);
       padding: 36px; width: 100%; max-width: 380px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.25);
     }
     .auth-logo { display: flex; align-items: center; gap: 10px; margin-bottom: 24px; }
     .auth-title { font-family: 'Figtree', sans-serif; font-weight: 800; font-size: 22px; margin-bottom: 4px; }
@@ -339,7 +395,7 @@
     .field { margin-bottom: 14px; }
     .field label { display: block; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 5px; }
     .field input {
-      width: 100%; background: var(--surface2); border: 1px solid var(--border);
+      width: 100%; background: var(--input-bg); border: 1px solid var(--glass-border);
       border-radius: 8px; padding: 10px 12px; font-family: 'DM Mono', monospace;
       font-size: 13px; color: var(--text); outline: none; transition: border-color 0.15s;
     }
@@ -365,7 +421,44 @@
       .main { margin-left: 0; }
       .kpi-grid { grid-template-columns: 1fr 1fr; }
     }
+
+    /* ── Theme toggle button ── */
+    .theme-toggle {
+      width: 32px; height: 32px; border-radius: 8px;
+      border: 1px solid var(--glass-border);
+      background: var(--surface2);
+      color: var(--muted);
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      transition: all 0.2s; flex-shrink: 0;
+    }
+    .theme-toggle:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* ── Light mode panel-header border ── */
+    .panel-header { border-bottom: 1px solid var(--glass-border); }
+    .panel-body   { }
+
+    /* ── Smooth transitions for theme switch ── */
+    .sidebar, .topbar, .panel, .kpi-card, .auth-card,
+    .field input, .field select, .user-chip, .comp-item {
+      transition: background 0.25s, border-color 0.25s, color 0.2s;
+    }
+
+    /* ── Light mode text on surfaces ── */
+    [data-theme="light"] .topbar-title { color: var(--text); }
+    [data-theme="light"] .panel-title  { color: var(--text); }
+    [data-theme="light"] .nav-section  { color: rgba(6,78,59,0.4); }
+    [data-theme="light"] .nav-item     { color: var(--muted); }
+    [data-theme="light"] .nav-item:hover { background: rgba(5,150,105,0.06); color: var(--text); }
+    [data-theme="light"] .nav-item.active { background: rgba(5,150,105,0.1); color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+    [data-theme="light"] .nav-item-cta { background: rgba(220,38,38,0.06) !important; color: #dc2626 !important; border-color: rgba(220,38,38,0.2) !important; }
+    [data-theme="light"] .kpi-card:hover { box-shadow: 0 8px 32px rgba(6,78,59,0.08); }
   </style>
+<script>
+  (function(){
+    var t = localStorage.getItem('batchd-theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', t);
+  })();
+</script>
 </head>
 <body>
 
@@ -482,6 +575,10 @@
         <div class="topbar-sub" id="topbar-sub">Loading your organisation…</div>
       </div>
       <div class="topbar-actions">
+        <button class="theme-toggle" id="theme-toggle-btn" onclick="toggleTheme()" title="Toggle light/dark mode">
+          <svg id="theme-icon-moon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          <svg id="theme-icon-sun" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+        </button>
         <div class="topbar-time" id="topbar-time"></div>
         <a href="https://batchd-app.netlify.app" target="_blank">
           <button class="btn-ghost">Open scanning app ↗</button>
@@ -516,6 +613,36 @@ function updateClock() {
 setInterval(updateClock, 1000); updateClock();
 
 // ── Auth ───────────────────────────────────────────────────────
+
+// ── Theme toggle ──────────────────────────────────────────────
+function toggleTheme() {
+  const html = document.documentElement;
+  const current = html.getAttribute('data-theme') || 'dark';
+  const next = current === 'dark' ? 'light' : 'dark';
+  html.setAttribute('data-theme', next);
+  localStorage.setItem('batchd-theme', next);
+  updateThemeIcon(next);
+}
+
+function updateThemeIcon(theme) {
+  const moon = document.getElementById('theme-icon-moon');
+  const sun  = document.getElementById('theme-icon-sun');
+  if (!moon || !sun) return;
+  if (theme === 'light') {
+    moon.style.display = 'none';
+    sun.style.display  = 'block';
+  } else {
+    moon.style.display = 'block';
+    sun.style.display  = 'none';
+  }
+}
+
+// Apply correct icon on page load
+document.addEventListener('DOMContentLoaded', function() {
+  const theme = localStorage.getItem('batchd-theme') || 'dark';
+  updateThemeIcon(theme);
+});
+
 async function doAuth() {
   const email = document.getElementById('auth-email').value.trim();
   const pw    = document.getElementById('auth-pw').value;
@@ -2207,242 +2334,540 @@ function showInvMsg(txt, type) {
 }
 
 // ── Compliance panel ──────────────────────────────────────────
+// Compliance assessment state
+let _complianceStep = 0;  // 0=start, 1-4=categories, 5=results
+let _complianceData = null;
+
 async function renderCompliance() {
   const el = document.getElementById('main-content');
+  if (_complianceStep === 0) { renderComplianceStart(el); return; }
+  if (_complianceStep >= 1 && _complianceStep <= 4) {
+    if (!_complianceData) { await loadComplianceData(el); }
+    renderComplianceCategory(el, _complianceStep);
+    return;
+  }
+  if (_complianceStep === 5) {
+    if (!_complianceData) { await loadComplianceData(el); }
+    renderComplianceResults(el);
+  }
+}
+
+function renderComplianceStart(el) {
   const isUS = _orgRegion === 'us';
-  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading compliance data…</div>`;
+  el.innerHTML = `
+    <div style="max-width:640px;">
+      <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;margin-bottom:4px;">Compliance assessment</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:24px;">${isUS ? 'FSMA 204 · FDA Food Traceability Rule · USDA' : 'EU Regulation 178/2002 · Mattilsynet · RASFF'}</div>
 
-  try {
-    const now = Date.now();
-    const days30 = new Date(now - 30 * 86400000).toISOString();
-    const days365 = new Date(now - 365 * 86400000).toISOString();
-
-    const [scansRes, storesRes, acksRes, drillsRes, partnersRes, membersRes] = await Promise.all([
-      sb.from('scans').select('lot_number, supplier_name, is_ftl, created_at, store_name, recall_resolved').eq('organisation_id', _orgId),
-      sb.from('stores').select('id, name, active').eq('organisation_id', _orgId),
-      sb.from('recall_acknowledgements').select('status, acknowledged_at, created_at').eq('organisation_id', _orgId),
-      sb.from('mock_recall_drills')
-        .select('id, created_at, recall_event_id, initiating_org_id')
-        .eq('retailer_org_id', _orgId)
-        .gte('created_at', days365)
-        .order('created_at', { ascending: false }),
-      sb.from('trading_partners').select('status').eq('retailer_id', _orgId),
-      sb.from('organisation_members').select('user_id, role').eq('organisation_id', _orgId),
-    ]);
-
-    const scans   = scansRes.data   || [];
-    const stores  = storesRes.data  || [];
-    const acks    = acksRes.data    || [];
-    const rawDrills = drillsRes.data || [];
-    // Enrich drills with recall_event product data
-    let drills = rawDrills;
-    const drillEventIds = rawDrills.map(d => d.recall_event_id).filter(Boolean);
-    if (drillEventIds.length > 0) {
-      const { data: drillEvents } = await sb.from('recall_events')
-        .select('id, product_name, lot_number, reason, severity')
-        .in('id', drillEventIds);
-      const evMap = {};
-      (drillEvents||[]).forEach(e => { evMap[e.id] = e; });
-      drills = rawDrills.map(d => ({ ...d, ...(evMap[d.recall_event_id] || {}) }));
-    }
-    const partners = partnersRes.data || [];
-    const members  = membersRes.data  || [];
-
-    const activeStores      = stores.filter(s => s.active);
-    const confirmedPartners = partners.filter(p => p.status === 'active').length;
-    const acksProgressed    = acks.filter(a => a.status !== 'notified').length;
-    const drillInYear       = drills.length > 0;
-    const recentScans       = scans.filter(s => s.created_at >= days30);
-
-    // ── Score calculations ─────────────────────────────────────
-    // Documentation: % of scans with lot_number
-    const docScore = scans.length === 0 ? 0
-      : Math.round((scans.filter(s => s.lot_number).length / scans.length) * 100);
-
-    // Traceability: % of scans with supplier_name (one-step-back)
-    const traceScore = scans.length === 0 ? 0
-      : Math.round((scans.filter(s => s.supplier_name).length / scans.length) * 100);
-
-    // Recall readiness: composite
-    let recallScore = 20; // baseline for being on Batch'd
-    if (confirmedPartners > 0)  recallScore += 25; // connected to manufacturers
-    if (acks.length > 0)        recallScore += 20; // has received recall alerts
-    if (acksProgressed > 0)     recallScore += 20; // has actually responded to recalls
-    if (drillInYear)            recallScore += 15; // conducted a drill
-    recallScore = Math.min(100, recallScore);
-
-    // Store coverage: % of active stores with a scan in last 30 days
-    const storeNames30 = new Set(recentScans.map(s => s.store_name).filter(Boolean));
-    const coverageScore = activeStores.length === 0 ? 0
-      : Math.round((activeStores.filter(s => storeNames30.has(s.name)).length / activeStores.length) * 100);
-
-    const scoreColor = v => v >= 80 ? 'var(--accent)' : v >= 50 ? 'var(--warn)' : 'var(--danger)';
-
-    // ── Checklist requirements ─────────────────────────────────
-    const ftlScans = scans.filter(s => s.is_ftl).length;
-    const lotScans = scans.filter(s => s.lot_number).length;
-    const supplierScans = scans.filter(s => s.supplier_name).length;
-
-    const requirements = isUS ? [
-      {
-        label: 'Critical Tracking Events (CTEs) documented',
-        pass: scans.length > 0,
-        detail: scans.length > 0 ? `${scans.length} scan records on file` : 'No scan records yet — start scanning products',
-      },
-      {
-        label: 'Key Data Elements (KDEs) per product',
-        pass: lotScans > 0,
-        detail: lotScans > 0 ? `${lotScans} of ${scans.length} scans have lot codes (${Math.round(lotScans/Math.max(scans.length,1)*100)}%)` : 'No lot codes recorded yet',
-      },
-      {
-        label: 'Food Traceability List (FTL) products identified',
-        pass: ftlScans > 0,
-        detail: ftlScans > 0 ? `${ftlScans} FTL product scans on record` : 'No FTL products marked — check scanning app settings',
-      },
-      {
-        label: 'Records retrievable within 24 hours',
-        pass: true,
-        detail: 'All records stored in Batch\'d and instantly queryable',
-      },
-      {
-        label: 'Recall drill conducted within 12 months',
-        pass: drillInYear,
-        detail: drillInYear ? `${drills.length} drill${drills.length!==1?'s':''} completed — last: ${new Date(drills[0].created_at).toLocaleDateString('en-GB')}` : 'No drills on record — run one from the scanning app',
-      },
-    ] : [
-      {
-        label: 'One step back, one step forward traceability',
-        pass: scans.length > 0 && supplierScans > 0,
-        detail: supplierScans > 0 ? `${supplierScans} scans with supplier data (one step back)` : scans.length > 0 ? 'Scans exist but supplier names not recorded — add in scanning app' : 'No scan records yet',
-      },
-      {
-        label: 'Lot code documentation at receiving',
-        pass: lotScans > 0,
-        detail: lotScans > 0 ? `${lotScans} of ${scans.length} scans have lot codes (${Math.round(lotScans/Math.max(scans.length,1)*100)}%)` : 'No lot codes recorded yet',
-      },
-      {
-        label: 'Recall response chain active',
-        pass: acksProgressed > 0,
-        detail: acksProgressed > 0 ? `${acksProgressed} recall acknowledgement${acksProgressed!==1?'s':''} progressed beyond notified` : acks.length > 0 ? `${acks.length} recall${acks.length!==1?'s':''} received — none acknowledged yet` : 'No recall events received yet',
-      },
-      {
-        label: 'Supplier documentation maintained',
-        pass: supplierScans > 0,
-        detail: supplierScans > 0 ? `${supplierScans} scans include supplier name` : 'No supplier names recorded — add in scanning app',
-      },
-      {
-        label: 'Manufacturer recall network connected',
-        pass: confirmedPartners > 0,
-        detail: confirmedPartners > 0 ? `${confirmedPartners} confirmed manufacturer partner${confirmedPartners!==1?'s':''}` : 'No manufacturer partners connected — accept requests in Manufacturers panel',
-      },
-    ];
-
-    const overallScore = Math.round((docScore + traceScore + recallScore + coverageScore) / 4);
-
-    el.innerHTML = `
-      <div style="margin-bottom:20px;display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;">
-        <div>
-          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Compliance centre</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:2px;">${isUS ? 'FSMA 204 · FDA · USDA' : 'EU Regulation 178/2002 · Mattilsynet · RASFF'}</div>
-        </div>
-        <div style="display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 18px;">
-          <div>
-            <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:2px;">Overall readiness</div>
-            <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:28px;color:${scoreColor(overallScore)};line-height:1;">${overallScore}%</div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-bottom:20px;">
+        <div style="padding:24px 24px 20px;">
+          <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:8px;">Run your compliance assessment</div>
+          <div style="font-size:13px;color:var(--muted);line-height:1.7;margin-bottom:20px;">
+            This assessment reviews your traceability records, recall readiness, store coverage, and documentation against ${isUS ? 'FSMA 204 and FDA requirements' : 'EU Regulation 178/2002 and Mattilsynet requirements'}. It takes about 2 minutes. At the end you get a scored report you can download and share with auditors or insurers.
           </div>
-          <div style="width:52px;height:52px;border-radius:50%;background:conic-gradient(${scoreColor(overallScore)} 0deg,${scoreColor(overallScore)} ${overallScore*3.6}deg,var(--border) ${overallScore*3.6}deg);display:flex;align-items:center;justify-content:center;position:relative;">
-            <div style="width:38px;height:38px;border-radius:50%;background:var(--surface);"></div>
-          </div>
-        </div>
-      </div>
-
-      <div class="two-col" style="margin-bottom:20px;">
-        <!-- Audit readiness scores -->
-        <div class="panel">
-          <div class="panel-header">
-            <div class="panel-title">Audit readiness</div>
-            <div class="panel-sub">Calculated from live data</div>
-          </div>
-          <div class="panel-body">
-            <div class="compliance-grid">
-              ${[
-                { label: 'Documentation',    val: docScore,      detail: `${lotScans}/${scans.length} scans have lot codes` },
-                { label: 'Store coverage',   val: coverageScore, detail: `${storeNames30.size}/${activeStores.length} stores active (30d)` },
-                { label: 'Recall readiness', val: recallScore,   detail: `${confirmedPartners} partner${confirmedPartners!==1?'s':''} · ${acksProgressed} acks progressed` },
-                { label: 'Traceability',     val: traceScore,    detail: `${supplierScans}/${scans.length} scans have supplier` },
-              ].map(c => `
-                <div class="comp-item">
-                  <div class="comp-label">${c.label}</div>
-                  <div class="comp-value" style="color:${scoreColor(c.val)}">${c.val}%</div>
-                  <div class="comp-bar" style="margin-bottom:4px;"><div class="comp-fill" style="width:${c.val}%;background:${scoreColor(c.val)}"></div></div>
-                  <div style="font-size:9px;color:var(--muted);line-height:1.4;">${c.detail}</div>
-                </div>`).join('')}
-            </div>
-          </div>
-        </div>
-
-        <!-- Requirements checklist -->
-        <div class="panel">
-          <div class="panel-header">
-            <div class="panel-title">${isUS ? 'FSMA 204 requirements' : 'EU 178/2002 requirements'}</div>
-            <div class="panel-sub">${requirements.filter(r=>r.pass).length} of ${requirements.length} met</div>
-          </div>
-          <div class="panel-body" style="padding:0 18px;">
-            ${requirements.map(r => `
-              <div style="display:flex;align-items:flex-start;gap:10px;padding:11px 0;border-bottom:1px solid rgba(22,61,55,0.5);">
-                <div style="width:18px;height:18px;border-radius:50%;flex-shrink:0;margin-top:1px;
-                  background:${r.pass ? 'rgba(52,211,153,0.15)' : 'rgba(255,92,92,0.12)'};
-                  border:1px solid ${r.pass ? 'rgba(52,211,153,0.3)' : 'rgba(255,92,92,0.3)'};
-                  display:flex;align-items:center;justify-content:center;font-size:9px;
-                  color:${r.pass ? 'var(--accent)' : 'var(--danger)'};">
-                  ${r.pass ? '✓' : '✗'}
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px;">
+            ${[
+              {n:'1', label:'Record keeping', desc:'Lot codes, scan volume, documentation completeness', reg: isUS?'FSMA 204 §1.1330':'EU 178/2002 Art. 18'},
+              {n:'2', label:'Traceability chain', desc:'Supplier connections, one step back, manufacturer links', reg: isUS?'FSMA 204 KDEs':'EU 178/2002 Art. 18'},
+              {n:'3', label:'Recall readiness', desc:'Drills conducted, response chain, acknowledgement speed', reg: isUS?'FDA 24h notification':'Mattilsynet §16'},
+              {n:'4', label:'Operational coverage', desc:'Active stores, recent scanning, dark store detection', reg: isUS?'FSMA 204 CTEs':'EU 178/2002 Art. 3'},
+            ].map(c => `
+              <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                  <div style="width:22px;height:22px;border-radius:50%;background:rgba(52,211,153,0.12);border:1px solid rgba(52,211,153,0.25);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--accent);">${c.n}</div>
+                  <div style="font-size:12px;font-weight:600;color:var(--text);">${c.label}</div>
                 </div>
-                <div>
-                  <div style="font-size:11px;color:${r.pass ? 'var(--text)' : 'var(--muted)'};">${r.label}</div>
-                  <div style="font-size:10px;color:${r.pass ? 'var(--muted)' : 'var(--warn)'};margin-top:2px;line-height:1.4;">${r.detail}</div>
-                </div>
+                <div style="font-size:11px;color:var(--muted);margin-bottom:4px;line-height:1.5;">${c.desc}</div>
+                <div style="font-size:10px;color:rgba(52,211,153,0.5);font-family:'DM Mono',monospace;">${c.reg}</div>
               </div>`).join('')}
           </div>
+          <button onclick="startComplianceAssessment()" style="width:100%;background:var(--accent);color:#065f46;border:none;border-radius:10px;padding:14px;font-family:'DM Mono',monospace;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+            Start assessment →
+          </button>
         </div>
       </div>
 
-      <!-- Drill history -->
-      <div class="panel">
-        <div class="panel-header">
-          <div><div class="panel-title">Mock recall drill history</div><div class="panel-sub">Last 12 months · ${isUS ? 'FDA recommends annual drills' : 'Best practice: at least one drill per year'}</div></div>
-          <div style="display:flex;gap:8px;">
-            ${drills.length > 0 ? `<button class="panel-action" onclick="generateDrillReport()" style="color:var(--accent);border-color:rgba(52,211,153,0.3);">↓ Compliance report</button>` : ''}
-            <a href="https://batchd-app.netlify.app" target="_blank"><button class="panel-action">Run a drill ↗</button></a>
-          </div>
-        </div>
-        <div class="panel-body" style="padding:${drills.length===0?'18px':'0 18px'};">
-          ${drills.length === 0
-            ? `<div class="empty">No mock recall drills on record.<br>Open the scanning app → Manager Dashboard → Mock Recall Drill to run your first drill.</div>`
-            : `<table class="store-table" style="width:100%;">
-                <thead><tr>
-                  <th>Date</th><th>Product</th><th>Stores notified</th><th>Completion</th><th>Report</th>
-                </tr></thead>
-                <tbody>
-                  ${drills.map(d => {
-                    const drillAcks = acks.filter(a => a.recall_event_id === d.recall_event_id);
-                    const confirmed = drillAcks.filter(a => a.status === 'confirmed').length;
-                    const total     = drillAcks.length;
-                    const pct       = total > 0 ? Math.round((confirmed/total)*100) : 0;
-                    return '<tr>' +
-                      '<td style="font-size:11px;color:var(--muted);white-space:nowrap;">' + new Date(d.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) + '</td>' +
-                      '<td style="font-size:11px;color:var(--text);">' + (d.product_name || '—') + '</td>' +
-                      '<td style="font-size:11px;color:var(--text);">' + total + ' store' + (total!==1?'s':'') + '</td>' +
-                      '<td><div style="display:flex;align-items:center;gap:8px;"><div style="width:60px;height:4px;background:var(--border);border-radius:2px;overflow:hidden;"><div style="height:100%;width:' + pct + '%;background:' + (pct===100?'var(--accent)':'var(--warn)') + ';border-radius:2px;"></div></div><span style="font-size:11px;color:' + (pct===100?'var(--accent)':'var(--muted)') + ';">' + pct + '%</span></div></td>' +
-                      '<td><button onclick="generateDrillReport(\'' + d.id + '\')" style="font-size:10px;padding:3px 10px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;">↓ PDF</button></td>' +
-                    '</tr>';
-                  }).join('')}
-                </tbody>
-              </table>`}
-        </div>
-      </div>`;
+      <div style="font-size:11px;color:var(--muted);text-align:center;">Your records are analysed automatically — no manual input required</div>
+    </div>`;
+}
 
+async function startComplianceAssessment() {
+  const el = document.getElementById('main-content');
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);padding:40px 0;"><div class="spinner"></div> Analysing your records…</div>`;
+  await loadComplianceData(el);
+  _complianceStep = 1;
+  renderComplianceCategory(el, 1);
+}
+
+async function loadComplianceData(el) {
+  const now = Date.now();
+  const days30  = new Date(now - 30 * 86400000).toISOString();
+  const days365 = new Date(now - 365 * 86400000).toISOString();
+  const isUS = _orgRegion === 'us';
+
+  const [scansRes, storesRes, acksRes, drillsRes, partnersRes] = await Promise.all([
+    sb.from('scans').select('lot_number, supplier_name, is_ftl, created_at, store_id, store_name').eq('organisation_id', _orgId),
+    sb.from('stores').select('id, name, active').eq('organisation_id', _orgId),
+    sb.from('recall_acknowledgements').select('status, acknowledged_at, created_at, recall_event_id').eq('organisation_id', _orgId),
+    sb.from('mock_recall_drills').select('id, created_at, recall_event_id').eq('retailer_org_id', _orgId).gte('created_at', days365).order('created_at', {ascending:false}),
+    sb.from('trading_partners').select('status').eq('retailer_id', _orgId),
+  ]);
+
+  const scans   = scansRes.data   || [];
+  const stores  = storesRes.data  || [];
+  const acks    = acksRes.data    || [];
+  const drills  = drillsRes.data  || [];
+  const partners= partnersRes.data|| [];
+
+  // Enrich drills
+  if (drills.length > 0) {
+    const evIds = drills.map(d=>d.recall_event_id).filter(Boolean);
+    if (evIds.length) {
+      const { data: evs } = await sb.from('recall_events').select('id,product_name').in('id', evIds);
+      const evMap = {}; (evs||[]).forEach(e=>{evMap[e.id]=e;});
+      drills.forEach(d => { if (evMap[d.recall_event_id]) d.product_name = evMap[d.recall_event_id].product_name; });
+    }
+  }
+
+  const activeStores      = stores.filter(s => s.active);
+  const confirmedPartners = partners.filter(p => p.status === 'active').length;
+  const recentScans       = scans.filter(s => s.created_at >= days30);
+  const lotScans          = scans.filter(s => s.lot_number).length;
+  const supplierScans     = scans.filter(s => s.supplier_name).length;
+  const ftlScans          = scans.filter(s => s.is_ftl).length;
+  const acksProgressed    = acks.filter(a => a.status !== 'notified').length;
+  const acksConfirmed     = acks.filter(a => a.status === 'confirmed').length;
+  const drillInYear       = drills.length > 0;
+  const storeIdsRecent    = new Set(recentScans.map(s => s.store_id || s.store_name).filter(Boolean));
+  const storesActiveRecent= activeStores.filter(s => storeIdsRecent.has(s.id) || storeIdsRecent.has(s.name)).length;
+
+  // Scores
+  const docScore      = scans.length === 0 ? 0 : Math.round((lotScans / scans.length) * 100);
+  const traceScore    = scans.length === 0 ? 0 : Math.round((supplierScans / scans.length) * 100);
+  let recallScore     = 20;
+  if (confirmedPartners > 0)  recallScore += 25;
+  if (acks.length > 0)        recallScore += 20;
+  if (acksProgressed > 0)     recallScore += 20;
+  if (drillInYear)            recallScore += 15;
+  recallScore = Math.min(100, recallScore);
+  const coverageScore = activeStores.length === 0 ? 0 : Math.round((storesActiveRecent / activeStores.length) * 100);
+  const overallScore  = Math.round((docScore + traceScore + recallScore + coverageScore) / 4);
+
+  _complianceData = {
+    scans, stores, acks, drills, partners, activeStores, confirmedPartners,
+    recentScans, lotScans, supplierScans, ftlScans, acksProgressed, acksConfirmed,
+    drillInYear, storesActiveRecent, isUS,
+    scores: { docScore, traceScore, recallScore, coverageScore, overallScore },
+    assessedAt: new Date().toISOString(),
+  };
+}
+
+function complianceProgressBar(step) {
+  const labels = ['Record keeping','Traceability','Recall readiness','Coverage'];
+  return `
+    <div style="display:flex;gap:5px;margin-bottom:6px;">
+      ${[1,2,3,4].map(i=>`<div style="flex:1;height:3px;border-radius:2px;background:${i<step?'var(--accent)':i===step?'rgba(52,211,153,0.4)':'var(--border)'};transition:background 0.25s;"></div>`).join('')}
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:22px;">
+      ${labels.map((l,i)=>`<div style="font-size:10px;color:${i+1===step?'var(--accent)':i+1<step?'var(--muted)':'var(--border)'};font-weight:${i+1===step?'600':'400'};flex:1;${i>0?'text-align:center':''}${i===3?';text-align:right':''}">${l}</div>`).join('')}
+    </div>`;
+}
+
+function complianceCheck(pass, label, detail, action) {
+  return `
+    <div style="display:flex;align-items:flex-start;gap:12px;padding:14px 0;border-bottom:1px solid rgba(22,61,55,0.5);">
+      <div style="width:22px;height:22px;border-radius:50%;flex-shrink:0;margin-top:1px;
+        background:${pass?'rgba(52,211,153,0.12)':'rgba(255,92,92,0.08)'};
+        border:1.5px solid ${pass?'rgba(52,211,153,0.3)':'rgba(255,92,92,0.3)'};
+        display:flex;align-items:center;justify-content:center;">
+        ${pass
+          ? `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>`
+          : `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`}
+      </div>
+      <div style="flex:1;">
+        <div style="font-size:12px;font-weight:600;color:${pass?'var(--text)':'var(--muted)'};">${label}</div>
+        <div style="font-size:11px;color:${pass?'var(--muted)':'var(--warn)'};margin-top:3px;line-height:1.5;">${detail}</div>
+        ${!pass && action ? `<div style="margin-top:6px;font-size:11px;color:var(--info);font-style:italic;">→ ${action}</div>` : ''}
+      </div>
+    </div>`;
+}
+
+function renderComplianceCategory(el, step) {
+  const d  = _complianceData;
+  const isUS = d.isUS;
+  const sc = d.scores;
+  const scoreColor = v => v >= 80 ? 'var(--accent)' : v >= 50 ? 'var(--warn)' : 'var(--danger)';
+
+  const categories = [
+    {
+      n: 1, label: 'Record keeping',
+      reg: isUS ? 'FSMA 204 §1.1330 — Key Data Elements at Critical Tracking Events' : 'EU Reg. 178/2002 Art. 17 — Operators must ensure food safety and maintain records',
+      score: sc.docScore,
+      checks: [
+        {
+          pass: d.scans.length > 0,
+          label: 'Scan records on file',
+          detail: d.scans.length > 0 ? `${d.scans.length} product records documented` : 'No scan records found',
+          action: 'Open the scanning app and start scanning products as they arrive',
+        },
+        {
+          pass: d.lotScans > 0,
+          label: 'Lot codes captured',
+          detail: d.lotScans > 0 ? `${d.lotScans} of ${d.scans.length} records have lot codes (${Math.round(d.lotScans/Math.max(d.scans.length,1)*100)}%)` : 'No lot codes on record',
+          action: 'Ensure staff are photographing lot codes during the scan flow — use AI OCR if codes are hard to read',
+        },
+        {
+          pass: isUS ? d.ftlScans > 0 : d.lotScans / Math.max(d.scans.length,1) > 0.7,
+          label: isUS ? 'Food Traceability List (FTL) products identified' : 'Documentation coverage above 70%',
+          detail: isUS ? (d.ftlScans > 0 ? `${d.ftlScans} FTL product records on file` : 'No FTL products marked') : `${Math.round(d.lotScans/Math.max(d.scans.length,1)*100)}% of records have lot codes`,
+          action: isUS ? 'Enable FTL mode in the scanning app settings for products on the FDA Food Traceability List' : 'Increase lot code capture rate — target 100%',
+        },
+        {
+          pass: true,
+          label: 'Records retrievable within 24 hours',
+          detail: 'All Batch\'d records are stored digitally and instantly queryable — this requirement is met by design',
+        },
+      ],
+    },
+    {
+      n: 2, label: 'Traceability chain',
+      reg: isUS ? 'FSMA 204 — Traceability Lot Code source, one step forward / one step back' : 'EU Reg. 178/2002 Art. 18 — One step back, one step forward traceability at all stages',
+      score: sc.traceScore,
+      checks: [
+        {
+          pass: d.confirmedPartners > 0,
+          label: 'Manufacturer partners connected',
+          detail: d.confirmedPartners > 0 ? `${d.confirmedPartners} confirmed manufacturer partner${d.confirmedPartners!==1?'s':''}` : 'No manufacturer partners connected',
+          action: 'Go to Manufacturer Partners → accept pending requests or invite manufacturers',
+        },
+        {
+          pass: d.supplierScans > 0,
+          label: 'Supplier name documented (one step back)',
+          detail: d.supplierScans > 0 ? `${d.supplierScans} of ${d.scans.length} records include supplier name (${Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)}%)` : 'No supplier names on record',
+          action: 'Ensure staff enter supplier / delivery company name during the scan flow',
+        },
+        {
+          pass: d.supplierScans / Math.max(d.scans.length, 1) > 0.5,
+          label: 'Traceability chain coverage above 50%',
+          detail: `${Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)}% of records have supplier data`,
+          action: 'Increase supplier name capture — target 100% for all received goods',
+        },
+        {
+          pass: d.confirmedPartners > 0 && d.supplierScans > 0,
+          label: 'Full one-step-back chain established',
+          detail: d.confirmedPartners > 0 && d.supplierScans > 0 ? 'Both manufacturer connections and supplier records are present' : 'Requires both manufacturer connections and supplier records on scans',
+          action: 'Connect manufacturers in the Manufacturers panel and ensure supplier names are recorded on all scans',
+        },
+      ],
+    },
+    {
+      n: 3, label: 'Recall readiness',
+      reg: isUS ? 'FDA 21 CFR — Class I recalls require RFR notification within 24 hours. Annual drill recommended.' : 'Mattilsynet §16 — Recall obligation and notification procedures. Annual drill best practice.',
+      score: sc.recallScore,
+      checks: [
+        {
+          pass: d.drillInYear,
+          label: 'Mock recall drill conducted in last 12 months',
+          detail: d.drillInYear ? `${d.drills.length} drill${d.drills.length!==1?'s':''} on record — last: ${new Date(d.drills[0].created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}` : 'No drills conducted in the last 12 months',
+          action: 'Run a mock recall drill from the scanning app → Manager Dashboard → Mock Recall Drill',
+        },
+        {
+          pass: d.acks.length > 0,
+          label: 'Recall network active — alerts received',
+          detail: d.acks.length > 0 ? `${d.acks.length} recall acknowledgement record${d.acks.length!==1?'s':''}` : 'No recall alerts received yet',
+          action: 'Connect manufacturer partners so you receive recall pushes when they occur',
+        },
+        {
+          pass: d.acksProgressed > 0,
+          label: 'Recall responses documented',
+          detail: d.acksProgressed > 0 ? `${d.acksProgressed} recall${d.acksProgressed!==1?'s':''} progressed through the response chain` : d.acks.length > 0 ? 'Recalls received but none acknowledged yet' : 'No recalls to respond to yet',
+          action: 'When recalls arrive, use the Recalls panel to document each step of your response',
+        },
+        {
+          pass: d.acksConfirmed > 0 || d.acks.length === 0,
+          label: 'Full recall response chain completed',
+          detail: d.acksConfirmed > 0 ? `${d.acksConfirmed} full response chain${d.acksConfirmed!==1?'s':''} completed (all 5 steps)` : d.acks.length > 0 ? 'No recalls fully confirmed yet' : 'No recalls received — chain not yet exercised',
+          action: 'Complete all 5 steps (notified → acknowledged → pulled → disposed → confirmed) for each recall',
+        },
+      ],
+    },
+    {
+      n: 4, label: 'Operational coverage',
+      reg: isUS ? 'FSMA 204 — Records required for each Critical Tracking Event at each receiving location' : 'EU Reg. 178/2002 Art. 3 — Traceability applies at all stages of production, processing and distribution',
+      score: sc.coverageScore,
+      checks: [
+        {
+          pass: d.activeStores.length > 0,
+          label: 'Store network registered',
+          detail: d.activeStores.length > 0 ? `${d.activeStores.length} active store${d.activeStores.length!==1?'s':''} in your network` : 'No active stores registered',
+          action: 'Add stores in the Stores panel',
+        },
+        {
+          pass: d.recentScans.length > 0,
+          label: 'Scanning activity in last 30 days',
+          detail: d.recentScans.length > 0 ? `${d.recentScans.length} scans in the last 30 days` : 'No scanning activity in the last 30 days',
+          action: 'Ensure store staff are using the scanning app to record products',
+        },
+        {
+          pass: d.activeStores.length > 0 && d.storesActiveRecent / Math.max(d.activeStores.length,1) >= 0.8,
+          label: 'At least 80% of stores scanned recently',
+          detail: d.activeStores.length > 0 ? `${d.storesActiveRecent} of ${d.activeStores.length} stores scanned in the last 30 days (${Math.round(d.storesActiveRecent/Math.max(d.activeStores.length,1)*100)}%)` : 'No stores registered',
+          action: 'Check for dark stores — locations that have stopped scanning. Investigate why.',
+        },
+        {
+          pass: d.activeStores.length > 0 && d.storesActiveRecent === d.activeStores.length,
+          label: 'No dark stores detected',
+          detail: d.activeStores.length - d.storesActiveRecent > 0 ? `${d.activeStores.length - d.storesActiveRecent} store${d.activeStores.length-d.storesActiveRecent!==1?'s':''} with no recent scanning` : 'All active stores have scanned in the last 30 days',
+          action: 'Identify and follow up with stores that have not scanned recently',
+        },
+      ],
+    },
+  ];
+
+  const cat   = categories[step - 1];
+  const score = cat.score;
+  const passing = cat.checks.filter(c => c.pass).length;
+  const failing = cat.checks.filter(c => !c.pass).length;
+
+  el.innerHTML = `
+    <div style="max-width:640px;">
+      <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;margin-bottom:4px;">${cat.label}</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:20px;">Category ${step} of 4</div>
+      ${complianceProgressBar(step)}
+
+      <!-- Category score card -->
+      <div style="background:var(--surface);border:1px solid ${score>=80?'rgba(52,211,153,0.25)':score>=50?'rgba(245,166,35,0.25)':'rgba(255,92,92,0.25)'};border-radius:12px;padding:16px 20px;margin-bottom:16px;display:flex;align-items:center;gap:16px;">
+        <div style="width:56px;height:56px;border-radius:50%;background:conic-gradient(${scoreColor(score)} 0deg,${scoreColor(score)} ${score*3.6}deg,var(--border) ${score*3.6}deg);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+          <div style="width:42px;height:42px;border-radius:50%;background:var(--surface);display:flex;align-items:center;justify-content:center;font-family:'Figtree',sans-serif;font-weight:800;font-size:15px;color:${scoreColor(score)};">${score}%</div>
+        </div>
+        <div>
+          <div style="font-size:14px;font-weight:700;color:${scoreColor(score)};margin-bottom:2px;">${score >= 80 ? 'Good standing' : score >= 50 ? 'Needs attention' : 'Action required'}</div>
+          <div style="font-size:11px;color:var(--muted);">${passing} of ${cat.checks.length} checks passing · ${failing} gap${failing!==1?'s':''} identified</div>
+          <div style="font-size:10px;color:rgba(52,211,153,0.4);margin-top:3px;font-family:'DM Mono',monospace;">${cat.reg}</div>
+        </div>
+      </div>
+
+      <!-- Checks -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:16px;">
+        <div style="padding:13px 18px;border-bottom:1px solid var(--border);font-size:10px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);">Compliance checks</div>
+        <div style="padding:0 18px;">
+          ${cat.checks.map(c => complianceCheck(c.pass, c.label, c.detail, c.action)).join('')}
+        </div>
+      </div>
+
+      ${failing > 0 ? `
+      <div style="background:rgba(245,166,35,0.06);border:1px solid rgba(245,166,35,0.2);border-radius:10px;padding:14px 16px;margin-bottom:16px;">
+        <div style="font-size:12px;font-weight:700;color:var(--warn);margin-bottom:8px;">${failing} gap${failing!==1?'s':''} to address</div>
+        ${cat.checks.filter(c=>!c.pass&&c.action).map(c=>`
+          <div style="display:flex;gap:8px;margin-bottom:6px;font-size:11px;color:var(--muted);line-height:1.5;">
+            <span style="color:var(--warn);flex-shrink:0;">→</span>
+            <span>${c.action}</span>
+          </div>`).join('')}
+      </div>` : `
+      <div style="background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.2);border-radius:10px;padding:14px 16px;margin-bottom:16px;display:flex;align-items:center;gap:10px;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+        <div style="font-size:12px;color:var(--accent);font-weight:600;">All checks passing for this category</div>
+      </div>`}
+
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <button onclick="${step > 1 ? '_complianceStep='+(step-1)+';renderCompliance()' : '_complianceStep=0;_complianceData=null;renderCompliance()'}" style="font-size:12px;padding:9px 18px;border-radius:8px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;font-family:inherit;">← Back</button>
+        <button onclick="_complianceStep=${step < 4 ? step+1 : 5};renderCompliance()" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:10px 22px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">
+          ${step < 4 ? 'Next: '+['','Traceability chain','Recall readiness','Operational coverage','See results'][step+1]+' →' : 'See results →'}
+        </button>
+      </div>
+    </div>`;
+}
+
+function renderComplianceResults(el) {
+  const d  = _complianceData;
+  const sc = d.scores;
+  const isUS = d.isUS;
+  const scoreColor = v => v >= 80 ? 'var(--accent)' : v >= 50 ? 'var(--warn)' : 'var(--danger)';
+  const overall = sc.overallScore;
+  const assessedDate = new Date(d.assessedAt).toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+
+  const catScores = [
+    { label:'Record keeping',    score:sc.docScore,      icon:'📄' },
+    { label:'Traceability chain',score:sc.traceScore,    icon:'🔗' },
+    { label:'Recall readiness',  score:sc.recallScore,   icon:'🚨' },
+    { label:'Operational coverage',score:sc.coverageScore, icon:'🏪' },
+  ];
+
+  // Priority actions — worst category first
+  const sortedCats = [...catScores].sort((a,b) => a.score - b.score);
+  const totalGaps = d.scans.length === 0 ? 4 : [
+    d.lotScans/Math.max(d.scans.length,1) < 0.7,
+    d.supplierScans === 0,
+    !d.drillInYear,
+    d.activeStores.length > 0 && d.storesActiveRecent/d.activeStores.length < 0.8,
+  ].filter(Boolean).length;
+
+  el.innerHTML = `
+    <div style="max-width:640px;">
+      <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;margin-bottom:4px;">Assessment complete</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:20px;">${assessedDate}</div>
+
+      <!-- Overall result -->
+      <div style="background:${overall>=80?'rgba(52,211,153,0.07)':overall>=50?'rgba(245,166,35,0.07)':'rgba(255,92,92,0.07)'};border:1px solid ${overall>=80?'rgba(52,211,153,0.25)':overall>=50?'rgba(245,166,35,0.25)':'rgba(255,92,92,0.25)'};border-radius:14px;padding:24px;margin-bottom:20px;text-align:center;">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:var(--muted);margin-bottom:10px;">${isUS?'FSMA 204 / FDA':'EU 178/2002 / Mattilsynet'} readiness</div>
+        <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:56px;line-height:1;color:${scoreColor(overall)};margin-bottom:8px;">${overall}%</div>
+        <div style="font-size:14px;font-weight:600;color:${scoreColor(overall)};margin-bottom:16px;">${overall>=80?'Good standing — audit ready':overall>=50?'Developing — gaps need attention':'Early stage — significant gaps identified'}</div>
+        <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
+          <button onclick="generateComplianceReport()" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:10px 20px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:6px;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download compliance report
+          </button>
+          <button onclick="_complianceStep=0;_complianceData=null;renderCompliance()" style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:10px 18px;font-size:12px;cursor:pointer;font-family:inherit;">Run again</button>
+        </div>
+      </div>
+
+      <!-- Category breakdown -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px;">
+        ${catScores.map((c,i) => `
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;cursor:pointer;" onclick="_complianceStep=${i+1};renderCompliance()">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+              <div style="font-size:12px;font-weight:600;color:var(--text);">${c.label}</div>
+              <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:15px;color:${scoreColor(c.score)};">${c.score}%</div>
+            </div>
+            <div style="height:4px;background:var(--border);border-radius:2px;overflow:hidden;">
+              <div style="height:100%;width:${c.score}%;background:${scoreColor(c.score)};border-radius:2px;"></div>
+            </div>
+            <div style="font-size:10px;color:var(--muted);margin-top:6px;">${c.score>=80?'Passing':'Click to review gaps'}</div>
+          </div>`).join('')}
+      </div>
+
+      <!-- Priority actions -->
+      ${totalGaps > 0 ? `
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:20px;">
+        <div style="padding:13px 18px;border-bottom:1px solid var(--border);">
+          <div style="font-size:12px;font-weight:700;color:var(--text);">Priority actions</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:1px;">Ordered by regulatory impact</div>
+        </div>
+        <div style="padding:0 18px;">
+          ${[
+            !d.drillInYear       && { step:3, label:'Run a mock recall drill', detail:'Required annually for recall readiness certification', urgency:'high' },
+            d.confirmedPartners===0 && { step:2, label:'Connect manufacturer partners', detail:'Required for manufacturer push recall notifications', urgency:'high' },
+            d.supplierScans===0  && { step:2, label:'Start recording supplier names on scans', detail:'Required for one step back traceability under EU 178/2002 and FSMA 204', urgency:'med' },
+            d.lotScans===0       && { step:1, label:'Capture lot codes on all scans', detail:'Key Data Element required for FSMA 204 compliance', urgency:'med' },
+            d.activeStores.length>0 && d.storesActiveRecent<d.activeStores.length && { step:4, label:'Investigate dark stores', detail:`${d.activeStores.length-d.storesActiveRecent} store${d.activeStores.length-d.storesActiveRecent!==1?'s':''} with no recent scanning activity`, urgency:'low' },
+          ].filter(Boolean).map(a => `
+            <div style="display:flex;align-items:flex-start;gap:12px;padding:13px 0;border-bottom:1px solid rgba(22,61,55,0.5);">
+              <div style="width:7px;height:7px;border-radius:50%;background:${a.urgency==='high'?'var(--danger)':a.urgency==='med'?'var(--warn)':'var(--muted)'};flex-shrink:0;margin-top:5px;"></div>
+              <div style="flex:1;">
+                <div style="font-size:12px;font-weight:600;color:var(--text);">${a.label}</div>
+                <div style="font-size:11px;color:var(--muted);margin-top:2px;line-height:1.5;">${a.detail}</div>
+              </div>
+              <button onclick="_complianceStep=${a.step};renderCompliance()" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;white-space:nowrap;flex-shrink:0;">Review →</button>
+            </div>`).join('')}
+        </div>
+      </div>` : `
+      <div style="background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.2);border-radius:10px;padding:16px 18px;margin-bottom:20px;display:flex;align-items:center;gap:12px;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+        <div style="font-size:13px;color:var(--accent);font-weight:600;">No priority actions — all key requirements met</div>
+      </div>`}
+
+      <!-- Drill history summary -->
+      ${d.drills.length > 0 ? `
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;">
+        <div style="padding:13px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
+          <div style="font-size:12px;font-weight:700;color:var(--text);">Drill history</div>
+          <button onclick="generateDrillReport()" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid rgba(52,211,153,0.3);background:none;color:var(--accent);cursor:pointer;">↓ Drill report</button>
+        </div>
+        <div style="padding:0 18px;">
+          ${d.drills.map(dr => `
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-bottom:1px solid rgba(22,61,55,0.5);">
+              <div>
+                <div style="font-size:12px;font-weight:500;color:var(--text);">${dr.product_name||'Mock drill'}</div>
+                <div style="font-size:10px;color:var(--muted);margin-top:2px;">${new Date(dr.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}</div>
+              </div>
+              <button onclick="generateDrillReport('${dr.id}')" style="font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;">↓ PDF</button>
+            </div>`).join('')}
+        </div>
+      </div>` : ''}
+    </div>`;
+}
+
+async function generateComplianceReport() {
+  const btn = event?.target;
+  if (btn) { btn.textContent = 'Generating…'; btn.disabled = true; }
+  try {
+    const d  = _complianceData;
+    if (!d) return;
+    const sc = d.scores;
+    const isUS = d.isUS;
+    const { data: org } = await sb.from('organisations').select('name, contact_email').eq('id', _orgId).single();
+    const scoreColor = v => v >= 80 ? '#34d399' : v >= 50 ? '#f5a623' : '#ff5c5c';
+    const today = new Date().toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'});
+    const catScores = [
+      { label:'Record keeping',    score:sc.docScore,      detail:`${d.lotScans}/${d.scans.length} scans with lot codes` },
+      { label:'Traceability chain',score:sc.traceScore,    detail:`${d.supplierScans}/${d.scans.length} scans with supplier data` },
+      { label:'Recall readiness',  score:sc.recallScore,   detail:`${d.drills.length} drill${d.drills.length!==1?'s':''} · ${d.acksConfirmed} confirmed responses` },
+      { label:'Operational coverage',score:sc.coverageScore, detail:`${d.storesActiveRecent}/${d.activeStores.length} stores active (30 days)` },
+    ];
+
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Compliance Report — ${org?.name||_orgName}</title>
+    <style>
+    body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#111;margin:0;padding:32px 48px;max-width:820px}
+    @media print{body{padding:20px}.no-print{display:none}@page{margin:20mm}}
+    h1{font-size:22px;margin:0 0 4px}h2{font-size:14px;color:#333;margin:22px 0 10px;border-bottom:2px solid #34d399;padding-bottom:6px}
+    .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:22px;padding-bottom:16px;border-bottom:2px solid #111}
+    .logo{font-weight:800;font-size:18px;color:#34d399}
+    .score-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+    .score-card{background:#f9f9f9;border:1px solid #eee;border-radius:8px;padding:12px;text-align:center}
+    .score-card .val{font-size:24px;font-weight:800}.score-card .lbl{font-size:10px;color:#666;margin-top:2px;text-transform:uppercase;letter-spacing:0.05em}
+    .check{display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid #f0f0f0}
+    .check-icon{width:16px;height:16px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:9px;margin-top:1px}
+    .pass{background:#d1fae5;color:#065f46;border:1px solid #34d399}
+    .fail{background:#fee2e2;color:#991b1b;border:1px solid #ff5c5c}
+    .footer{margin-top:24px;padding-top:14px;border-top:1px solid #ddd;font-size:10px;color:#999;display:flex;justify-content:space-between}
+    </style></head><body>
+    <div class="no-print" style="background:#34d399;color:#065f46;padding:10px 16px;border-radius:8px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;">
+      <span style="font-weight:700;">Compliance report — ready to print or save as PDF</span>
+      <button onclick="window.print()" style="background:#065f46;color:#fff;border:none;border-radius:6px;padding:7px 16px;font-weight:700;cursor:pointer;">Print / Save PDF</button>
+    </div>
+    <div class="header">
+      <div><div class="logo">Batch'd</div><h1>Compliance Assessment Report</h1>
+      <div style="font-size:12px;color:#555;margin-top:4px;">${org?.name||_orgName} · ${today}</div></div>
+      <div style="text-align:right;font-size:11px;color:#666;line-height:1.8;">
+        Regulatory framework: ${isUS?'FSMA 204 / FDA':'EU Reg. 178/2002 / Mattilsynet'}<br>
+        Contact: ${org?.contact_email||'—'}<br>
+        <strong style="font-size:18px;color:${scoreColor(sc.overallScore)};">${sc.overallScore}% overall</strong>
+      </div>
+    </div>
+    <h2>Category scores</h2>
+    <div class="score-grid">
+      ${catScores.map(c=>`<div class="score-card"><div class="val" style="color:${scoreColor(c.score)};">${c.score}%</div><div class="lbl">${c.label}</div><div style="font-size:10px;color:#888;margin-top:4px;">${c.detail}</div></div>`).join('')}
+    </div>
+    <h2>Compliance assessment summary</h2>
+    <p style="line-height:1.7;color:#333;margin-bottom:16px;">
+      ${org?.name||_orgName} achieved an overall readiness score of <strong>${sc.overallScore}%</strong> under ${isUS?'FSMA 204 and FDA requirements':'EU Regulation 178/2002 and Mattilsynet requirements'}. This assessment was conducted automatically from live traceability records maintained in the Batch'd platform on ${today}.
+    </p>
+    <h2>Record keeping</h2>
+    <div class="check"><div class="check-icon ${d.scans.length>0?'pass':'fail'}">${d.scans.length>0?'✓':'✗'}</div><div><strong>Scan records on file</strong><br><span style="color:#666;">${d.scans.length} product records</span></div></div>
+    <div class="check"><div class="check-icon ${d.lotScans>0?'pass':'fail'}">${d.lotScans>0?'✓':'✗'}</div><div><strong>Lot codes captured</strong><br><span style="color:#666;">${d.lotScans} of ${d.scans.length} scans (${Math.round(d.lotScans/Math.max(d.scans.length,1)*100)}%)</span></div></div>
+    <h2>Traceability chain</h2>
+    <div class="check"><div class="check-icon ${d.confirmedPartners>0?'pass':'fail'}">${d.confirmedPartners>0?'✓':'✗'}</div><div><strong>Manufacturer partners connected</strong><br><span style="color:#666;">${d.confirmedPartners} confirmed partners</span></div></div>
+    <div class="check"><div class="check-icon ${d.supplierScans>0?'pass':'fail'}">${d.supplierScans>0?'✓':'✗'}</div><div><strong>Supplier names documented</strong><br><span style="color:#666;">${d.supplierScans} of ${d.scans.length} records</span></div></div>
+    <h2>Recall readiness</h2>
+    <div class="check"><div class="check-icon ${d.drillInYear?'pass':'fail'}">${d.drillInYear?'✓':'✗'}</div><div><strong>Mock recall drill (12 months)</strong><br><span style="color:#666;">${d.drills.length} drill${d.drills.length!==1?'s':''} on record</span></div></div>
+    <div class="check"><div class="check-icon ${d.acksProgressed>0?'pass':'fail'}">${d.acksProgressed>0?'✓':'✗'}</div><div><strong>Recall response documented</strong><br><span style="color:#666;">${d.acksProgressed} responses progressed</span></div></div>
+    <h2>Operational coverage</h2>
+    <div class="check"><div class="check-icon ${d.activeStores.length>0?'pass':'fail'}">${d.activeStores.length>0?'✓':'✗'}</div><div><strong>Store network registered</strong><br><span style="color:#666;">${d.activeStores.length} active stores</span></div></div>
+    <div class="check"><div class="check-icon ${d.storesActiveRecent===d.activeStores.length&&d.activeStores.length>0?'pass':'fail'}">${d.storesActiveRecent===d.activeStores.length&&d.activeStores.length>0?'✓':'✗'}</div><div><strong>No dark stores</strong><br><span style="color:#666;">${d.storesActiveRecent} of ${d.activeStores.length} stores scanning in last 30 days</span></div></div>
+    <div style="margin-top:20px;padding:12px 14px;background:#f0fdf4;border-left:3px solid #34d399;font-size:11px;color:#065f46;line-height:1.6;">
+      <strong>Note:</strong> This report is generated from traceability records maintained in the Batch'd platform. It is intended as an internal readiness indicator and supporting documentation for audits. Legal compliance responsibilities remain with ${org?.name||_orgName}. This document should be reviewed by qualified food safety counsel before submission to regulatory bodies.
+    </div>
+    <div class="footer"><span>Batch'd · batchd.no · ${org?.name||_orgName} · Confidential</span><span>Generated ${today}</span></div>
+    </body></html>`;
+
+    const win = window.open('','_blank');
+    win.document.write(html);
+    win.document.close();
   } catch(e) {
-    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading compliance data: ${e.message}</div>`;
+    showToast('Error generating report: '+e.message,'error',4000);
+  } finally {
+    if (btn) { btn.disabled=false; btn.innerHTML='<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Download compliance report'; }
   }
 }
 
@@ -3601,77 +4026,147 @@ function showDashTriageMsg(txt, type) {
 }
 
 async function renderDashTriageDetail(el) {
-  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading complaint...</div>`;
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
   try {
     const [compRes, msgsRes, logRes] = await Promise.all([
       sb.from('complaints').select('*').eq('id', _dashTriageComplaint).single(),
-      sb.from('complaint_messages').select('*').eq('complaint_id', _dashTriageComplaint).order('created_at', { ascending: true }),
-      sb.from('complaint_audit_log').select('*').eq('complaint_id', _dashTriageComplaint).order('created_at', { ascending: true })
+      sb.from('complaint_messages').select('*').eq('complaint_id', _dashTriageComplaint).order('created_at', {ascending:true}),
+      sb.from('complaint_audit_log').select('*').eq('complaint_id', _dashTriageComplaint).order('created_at', {ascending:true}),
     ]);
-    const c = compRes.data;
+    const c    = compRes.data;
     if (!c) throw new Error('Complaint not found');
     const msgs = msgsRes.data || [];
-    const log = logRes.data || [];
-    const s = dashTriageLevelStyle(c.triage_level);
+    const log  = logRes.data  || [];
+    const s    = dashTriageLevelStyle(c.triage_level);
+
+    // Map status to lifecycle step
+    const LIFECYCLE = [
+      { key: 'received',      label: 'Received',      desc: 'Complaint logged and queued for triage' },
+      { key: 'triaged',       label: 'Triaged',        desc: 'AI severity assessment complete' },
+      { key: 'investigating', label: 'Investigating',  desc: 'Under investigation by your team' },
+      { key: 'action_taken',  label: 'Action taken',   desc: 'Response or corrective action documented' },
+      { key: 'resolved',      label: 'Resolved',       desc: 'Complaint fully resolved and closed' },
+    ];
+    const statusToStep = { 'new':1,'pending':1,'open':2,'triaged':2,'investigating':3,'action_taken':4,'resolved':5,'closed':5 };
+    const currentStep = statusToStep[c.status] || 2;
+    const isComplete  = currentStep === 5;
+
+    const NEXT_ACTIONS = {
+      1: { label:'Run AI triage', desc:'Assess complaint severity and categorise automatically', btn:'Triage now →', fn:`triageComplaintNow('${c.id}')` },
+      2: { label:'Begin investigation', desc:'Mark this complaint as under active investigation', btn:'Start investigating →', fn:`updateDashTriageStatus('${c.id}','investigating')` },
+      3: { label:'Document action taken', desc:'Record the corrective action, response sent, or decision made', btn:'Log action taken →', fn:`updateDashTriageStatus('${c.id}','action_taken')` },
+      4: { label:'Resolve complaint', desc:'Confirm the complaint is fully handled and close the record', btn:'Mark as resolved →', fn:`updateDashTriageStatus('${c.id}','resolved')` },
+      5: null,
+    };
+    const nextAction = NEXT_ACTIONS[currentStep];
+
     el.innerHTML = `
-      <div style="max-width:760px;">
-        <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px;flex-wrap:wrap;">
-          <button onclick="_dashTriageView='list';renderDashboardTriage()" style="background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer;">← Back</button>
+      <div style="max-width:720px;">
+
+        <!-- Header -->
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px;flex-wrap:wrap;">
+          <button onclick="_dashTriageView='list';renderDashboardTriage()" style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:7px;padding:6px 12px;font-size:12px;cursor:pointer;">← All complaints</button>
           <span style="background:${s.bg};color:${s.color};font-size:10px;font-weight:700;font-family:'DM Mono',monospace;padding:3px 10px;border-radius:4px;letter-spacing:0.05em;">${s.label}</span>
-          <span style="font-size:12px;font-family:'DM Mono',monospace;color:var(--muted);">${c.complaint_number}</span>
-          <span style="font-size:11px;color:var(--muted);background:var(--surface2);padding:2px 8px;border-radius:4px;">${dashTriageStatusLabel(c.status)}</span>
+          <span style="font-size:11px;font-family:'DM Mono',monospace;color:var(--muted);">${c.complaint_number||c.id.slice(0,8)}</span>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
-          <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;">
-            <div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:0.08em;margin-bottom:14px;">COMPLAINT DETAILS</div>
-            <div style="display:flex;flex-direction:column;gap:9px;font-size:12px;">
-              ${c.product_name ? `<div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Product</span><span style="color:var(--text);font-weight:500;">${c.product_name}</span></div>` : ''}
-              ${c.lot_number ? `<div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Lot</span><span style="color:var(--text);font-family:'DM Mono',monospace;">${c.lot_number}</span></div>` : ''}
-              ${c.country ? `<div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Country</span><span style="color:var(--text);">${c.country}</span></div>` : ''}
-              ${(c.purchase_store||c.store_name) ? `<div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Store</span><span style="color:var(--text);">${c.purchase_store||c.store_name}</span></div>` : ''}
-              ${c.purchase_city ? `<div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">City</span><span style="color:var(--text);">${c.purchase_city}${c.purchase_state ? ', ' + c.purchase_state : ''}</span></div>` : ''}
-              ${c.best_before_date ? `<div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Best before</span><span style="color:var(--text);font-family:'DM Mono',monospace;">${c.best_before_date}</span></div>` : ''}
-              ${c.people_affected ? `<div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Affected</span><span style="color:var(--text);">${c.people_affected}</span></div>` : ''}
-              ${c.medical_attention ? `<div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Medical</span><span style="color:${c.medical_attention.includes('emergency')||c.medical_attention.includes('hospital')?'var(--danger)':'var(--text)'};">${c.medical_attention}</span></div>` : ''}
-              ${c.storage_method ? `<div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Storage</span><span style="color:var(--text);">${c.storage_method}</span></div>` : ''}
-              ${c.incident_date ? `<div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Incident</span><span style="color:var(--text);">${c.incident_date}</span></div>` : ''}
-              <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Received</span><span style="color:var(--text);">${new Date(c.created_at).toLocaleString('en-GB')}</span></div>
+
+        <!-- Lifecycle progress -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:14px;">
+          <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:14px;">${c.product_name||'Product complaint'}</div>
+          <div style="display:flex;align-items:flex-start;gap:0;margin-bottom:${nextAction?'14px':'0'};">
+            ${LIFECYCLE.map((step, i) => {
+              const done    = i+1 < currentStep;
+              const current = i+1 === currentStep;
+              const pending = i+1 > currentStep;
+              const isLast  = i === LIFECYCLE.length - 1;
+              const circle  = done
+                ? `<div style="width:26px;height:26px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#065f46" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></div>`
+                : current && isComplete
+                  ? `<div style="width:26px;height:26px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#065f46" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></div>`
+                  : current
+                    ? `<div style="width:26px;height:26px;border-radius:50%;background:rgba(245,166,35,0.15);border:2px solid var(--warn);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:10px;font-weight:700;color:var(--warn);">${i+1}</div>`
+                    : `<div style="width:26px;height:26px;border-radius:50%;border:1.5px solid var(--border);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:10px;color:var(--muted);">${i+1}</div>`;
+              const label = `<div style="font-size:10px;margin-top:4px;color:${done||isComplete?'var(--accent)':current?'var(--warn)':'var(--muted)'};font-weight:${current?'600':'400'};white-space:nowrap;text-align:center;">${step.label}</div>`;
+              const line  = isLast ? '' : `<div style="flex:1;height:1.5px;background:${done?'var(--accent)':'var(--border)'};margin:0 3px;margin-bottom:14px;"></div>`;
+              return `<div style="display:flex;flex-direction:column;align-items:center;">${circle}${label}</div>${line}`;
+            }).join('')}
+          </div>
+          ${nextAction && !isComplete ? `
+          <div style="background:var(--surface2);border-radius:8px;padding:11px 14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+            <div>
+              <div style="font-size:12px;font-weight:600;color:var(--text);">Next: ${nextAction.label}</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:2px;">${nextAction.desc}</div>
+            </div>
+            <button onclick="${nextAction.fn}" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:8px 16px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;">${nextAction.btn}</button>
+          </div>` : isComplete ? `
+          <div style="background:rgba(52,211,153,0.06);border-radius:8px;padding:11px 14px;display:flex;align-items:center;gap:10px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+            <div style="font-size:12px;color:var(--accent);font-weight:600;">Resolved — complaint closed</div>
+          </div>` : ''}
+        </div>
+
+        <!-- Detail grid -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;">
+            <div style="font-size:10px;font-weight:700;color:var(--muted);letter-spacing:0.08em;margin-bottom:12px;">COMPLAINT DETAILS</div>
+            <div style="display:flex;flex-direction:column;gap:8px;font-size:12px;">
+              ${c.product_name ? `<div style="display:flex;justify-content:space-between;gap:8px;"><span style="color:var(--muted);flex-shrink:0;">Product</span><span style="color:var(--text);font-weight:500;text-align:right;">${c.product_name}</span></div>` : ''}
+              ${c.lot_number ? `<div style="display:flex;justify-content:space-between;gap:8px;"><span style="color:var(--muted);flex-shrink:0;">Lot</span><span style="color:var(--text);font-family:'DM Mono',monospace;text-align:right;">${c.lot_number}</span></div>` : ''}
+              ${c.purchase_store||c.store_name ? `<div style="display:flex;justify-content:space-between;gap:8px;"><span style="color:var(--muted);flex-shrink:0;">Store</span><span style="color:var(--text);text-align:right;">${c.purchase_store||c.store_name}</span></div>` : ''}
+              ${c.people_affected ? `<div style="display:flex;justify-content:space-between;gap:8px;"><span style="color:var(--muted);flex-shrink:0;">Affected</span><span style="color:var(--text);">${c.people_affected}</span></div>` : ''}
+              ${c.medical_attention ? `<div style="display:flex;justify-content:space-between;gap:8px;"><span style="color:var(--muted);flex-shrink:0;">Medical</span><span style="color:${c.medical_attention.includes('emergency')||c.medical_attention.includes('hospital')?'var(--danger)':'var(--text)'};">${c.medical_attention}</span></div>` : ''}
+              <div style="display:flex;justify-content:space-between;gap:8px;"><span style="color:var(--muted);flex-shrink:0;">Received</span><span style="color:var(--text);text-align:right;">${new Date(c.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}</span></div>
             </div>
           </div>
-          <div style="background:var(--surface);border:1px solid ${c.triage_level==='critical'?'rgba(255,92,92,0.3)':'var(--border)'};border-radius:12px;padding:20px;">
-            <div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:0.08em;margin-bottom:14px;">TRIAGE ASSESSMENT</div>
-            <div style="display:flex;flex-direction:column;gap:9px;font-size:12px;">
-              <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Severity</span><span style="background:${s.bg};color:${s.color};padding:2px 8px;border-radius:4px;font-weight:700;font-size:10px;font-family:'DM Mono',monospace;">${s.label}</span></div>
-              <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Category</span><span style="color:var(--text);">${c.triage_category || 'Pending'}</span></div>
+          <div style="background:var(--surface);border:1px solid ${c.triage_level==='critical'?'rgba(255,92,92,0.3)':'var(--border)'};border-radius:12px;padding:16px;">
+            <div style="font-size:10px;font-weight:700;color:var(--muted);letter-spacing:0.08em;margin-bottom:12px;">TRIAGE ASSESSMENT</div>
+            <div style="display:flex;flex-direction:column;gap:8px;font-size:12px;">
+              <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Severity</span><span style="background:${s.bg};color:${s.color};padding:2px 8px;border-radius:4px;font-weight:700;font-size:10px;">${s.label}</span></div>
+              <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Category</span><span style="color:var(--text);">${c.triage_category||'Pending'}</span></div>
             </div>
-            ${c.triage_summary ? `<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);font-size:12px;color:var(--muted);line-height:1.6;font-style:italic;">"${c.triage_summary}"</div>` : ''}
+            ${c.triage_summary ? `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-size:11px;color:var(--muted);line-height:1.6;font-style:italic;">"${c.triage_summary}"</div>` : ''}
           </div>
         </div>
-        ${(msgs.length > 0) ? `
-        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px;">
-          <div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:0.08em;margin-bottom:14px;">MESSAGES</div>
-          <div style="display:flex;flex-direction:column;gap:10px;">${msgs.map(m=>`
+
+        <!-- Messages -->
+        ${msgs.length > 0 ? `
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:14px;">
+          <div style="font-size:10px;font-weight:700;color:var(--muted);letter-spacing:0.08em;margin-bottom:12px;">MESSAGES</div>
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            ${msgs.map(m=>`
             <div style="display:flex;gap:10px;align-items:flex-start;">
               <div style="width:8px;height:8px;border-radius:50%;background:${m.direction==='inbound'?'var(--warn)':'var(--accent)'};margin-top:5px;flex-shrink:0;"></div>
               <div style="flex:1;">
-                <div style="font-size:11px;color:var(--muted);margin-bottom:3px;">${m.direction==='inbound'?'Inbound':'Outbound'} · ${m.channel} · ${new Date(m.created_at).toLocaleString('en-GB')}</div>
+                <div style="font-size:10px;color:var(--muted);margin-bottom:3px;">${m.direction==='inbound'?'Inbound':'Outbound'} · ${m.channel} · ${new Date(m.created_at).toLocaleString('en-GB')}</div>
                 <div style="font-size:12px;color:var(--text);line-height:1.5;background:var(--surface2);padding:10px 12px;border-radius:8px;">${m.content}</div>
               </div>
-            </div>`).join('')}</div>
+            </div>`).join('')}
+          </div>
         </div>` : ''}
-        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px;">
-          <div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:0.08em;margin-bottom:14px;">AUDIT TRAIL</div>
-          <div style="display:flex;flex-direction:column;gap:0;">${log.map((entry,i)=>`
-            <div style="display:flex;gap:12px;align-items:flex-start;padding:8px 0;${i<log.length-1?'border-bottom:1px solid var(--border);':''}">
-              <div style="font-size:11px;font-family:'DM Mono',monospace;color:var(--muted);white-space:nowrap;min-width:130px;">${new Date(entry.created_at).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
-              <div><div style="font-size:12px;color:var(--text);">${entry.action.replace(/_/g,' ')}</div><div style="font-size:11px;color:var(--muted);">${entry.actor_label||''}</div></div>
-            </div>`).join('')}</div>
+
+        <!-- Timeline audit trail -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:14px;">
+          <div style="font-size:10px;font-weight:700;color:var(--muted);letter-spacing:0.08em;margin-bottom:14px;">AUDIT TIMELINE</div>
+          ${log.length === 0 ? `<div style="font-size:11px;color:var(--muted);">No audit events yet.</div>` : `
+          <div style="position:relative;padding-left:22px;">
+            <div style="position:absolute;left:8px;top:0;bottom:0;width:1.5px;background:var(--border);"></div>
+            ${log.map((entry, i) => `
+            <div style="position:relative;padding-bottom:${i<log.length-1?'16px':'0'};">
+              <div style="position:absolute;left:-14px;top:3px;width:9px;height:9px;border-radius:50%;background:var(--accent);border:2px solid var(--bg);"></div>
+              <div style="font-size:12px;font-weight:600;color:var(--text);">${entry.action.replace(/_/g,' ')}</div>
+              <div style="font-size:10px;color:var(--muted);margin-top:2px;">${entry.actor_label||'System'} · ${new Date(entry.created_at).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
+            </div>`).join('')}
+          </div>`}
         </div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;">
-          <button onclick="updateDashTriageStatus('${c.id}','investigating')" style="background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:9px 16px;font-size:13px;cursor:pointer;">Mark: Investigating</button>
-          <button onclick="updateDashTriageStatus('${c.id}','resolved')" style="background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:9px 16px;font-size:13px;cursor:pointer;">Mark: Resolved</button>
-          <button onclick="updateDashTriageStatus('${c.id}','closed')" style="background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:9px 16px;font-size:13px;cursor:pointer;">Close</button>
-        </div>
+
+        <!-- Actions row -->
+        ${!isComplete ? `
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          ${currentStep < 3 ? `<button onclick="updateDashTriageStatus('${c.id}','investigating')" style="background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 14px;font-size:12px;cursor:pointer;font-family:inherit;">Mark: Investigating</button>` : ''}
+          ${currentStep < 4 ? `<button onclick="updateDashTriageStatus('${c.id}','action_taken')" style="background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 14px;font-size:12px;cursor:pointer;font-family:inherit;">Log action taken</button>` : ''}
+          <button onclick="updateDashTriageStatus('${c.id}','resolved')" style="background:var(--surface);border:1px solid rgba(52,211,153,0.3);color:var(--accent);border-radius:8px;padding:8px 14px;font-size:12px;cursor:pointer;font-family:inherit;">Mark resolved</button>
+          <button onclick="updateDashTriageStatus('${c.id}','closed')" style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:8px 14px;font-size:12px;cursor:pointer;font-family:inherit;">Close</button>
+        </div>` : ''}
       </div>`;
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);padding:20px;">Error: ${e.message}</div>`;
@@ -4211,7 +4706,6 @@ async function renderDashInvestigations() {
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading investigations…</div>`;
   try {
-    // Load investigation requests from manufacturers we're connected to
     const { data: partners } = await sb.from('trading_partners').select('manufacturer_id').eq('retailer_id', _orgId).eq('status','active');
     const mfrIds = (partners||[]).map(p => p.manufacturer_id);
 
@@ -4219,48 +4713,104 @@ async function renderDashInvestigations() {
     if (mfrIds.length > 0) {
       const { data } = await sb.from('investigation_requests')
         .select('*, investigation_responses(id, retailer_org_id, issue_found, submitted_at)')
-        .in('manufacturer_id', mfrIds)
-        .order('created_at', { ascending: false });
+        .in('manufacturer_id', mfrIds).order('created_at', {ascending:false});
       invs = data || [];
     }
 
-    // Also load our own responses
-    const { data: myResponses } = await sb.from('investigation_responses')
-      .select('investigation_id')
-      .eq('retailer_org_id', _orgId);
+    const { data: myResponses } = await sb.from('investigation_responses').select('investigation_id').eq('retailer_org_id', _orgId);
     const myResponseIds = new Set((myResponses||[]).map(r => r.investigation_id));
 
-    // Org names for manufacturers
     let orgNames = {};
     if (mfrIds.length > 0) {
       const { data: orgs } = await sb.from('organisations').select('id,name').in('id', mfrIds);
       (orgs||[]).forEach(o => { orgNames[o.id] = o.name; });
     }
 
-    const open     = invs.filter(i => i.status === 'open' || i.status === 'in_progress');
-    const closed   = invs.filter(i => i.status === 'closed' || i.status === 'escalated');
-    const needsResponse = open.filter(i => !myResponseIds.has(i.id));
-
-    // Badge update
-    const badge = document.getElementById('nav-investigations');
-    if (badge && needsResponse.length > 0) {
-      let b = badge.querySelector('.inv-badge');
-      if (!b) { b = document.createElement('span'); b.className='inv-badge'; b.style.cssText='margin-left:auto;background:var(--warn);color:#1a0f00;font-size:10px;padding:1px 6px;border-radius:10px;font-weight:700;'; badge.appendChild(b); }
-      b.textContent = needsResponse.length;
-    }
+    const needsResponse = invs.filter(i => !myResponseIds.has(i.id) && (i.status==='open'||i.status==='in_progress'));
+    const responded     = invs.filter(i => myResponseIds.has(i.id));
+    const closed        = invs.filter(i => i.status==='closed'||i.status==='resolved');
 
     const urgColors = { 1:'var(--danger)', 2:'var(--warn)', 3:'var(--muted)' };
     const urgLabels = { 1:'Class I · 24h', 2:'Class II · 72h', 3:'Routine · 7d' };
     const issueLabels = { foreign_object:'Foreign object', mold:'Mold / spoilage', mislabeling:'Mislabeling', allergen:'Allergen concern', contamination:'Contamination', discoloration:'Discoloration', pest:'Pest', packaging:'Packaging defect', other:'Other' };
-
     const fmtDate = d => d ? new Date(d).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : '—';
-    const fmtTime = d => {
-      if (!d) return '—';
-      const ms = Date.now() - new Date(d);
-      if (ms < 3600000) return Math.floor(ms/60000) + 'm ago';
-      if (ms < 86400000) return Math.floor(ms/3600000) + 'h ago';
-      return Math.floor(ms/86400000) + 'd ago';
-    };
+    const fmtElapsed = d => { if (!d) return '—'; const ms = Date.now()-new Date(d); if (ms<3600000) return Math.floor(ms/60000)+'m'; if (ms<86400000) return Math.floor(ms/3600000)+'h'; return Math.floor(ms/86400000)+'d'; };
+
+    // Nav badge
+    const navBtn = document.getElementById('nav-investigations');
+    if (navBtn && needsResponse.length > 0) {
+      let b = navBtn.querySelector('.inv-badge');
+      if (!b) { b = document.createElement('span'); b.className='inv-badge'; b.style.cssText='margin-left:auto;background:var(--warn);color:#1a0f00;font-size:10px;padding:1px 6px;border-radius:10px;font-weight:700;'; navBtn.appendChild(b); }
+      b.textContent = needsResponse.length;
+    }
+
+    function invProcessCard(inv) {
+      const myResp    = myResponseIds.has(inv.id);
+      const isClosed  = inv.status==='closed'||inv.status==='resolved';
+      const responses = inv.investigation_responses || [];
+      const mfrName   = orgNames[inv.manufacturer_id]||'Manufacturer';
+
+      // Steps: Received → Inspecting → Responded → Resolved
+      const stepIdx = myResp ? (isClosed ? 3 : 2) : isClosed ? 3 : 0;
+      const STEPS   = ['Received','Inspecting','Responded','Resolved'];
+
+      if (isClosed && myResp) {
+        return `
+        <div style="border:1px solid rgba(52,211,153,0.25);border-radius:12px;padding:16px 18px;background:rgba(52,211,153,0.03);margin-bottom:10px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+          <div style="width:26px;height:26px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#065f46" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+          </div>
+          <div style="flex:1;">
+            <div style="font-size:13px;font-weight:700;color:var(--text);">${inv.product_name||'Product investigation'}</div>
+            <div style="font-size:11px;color:var(--accent);margin-top:2px;">Closed · You responded · From ${mfrName} · ${fmtDate(inv.created_at)}</div>
+          </div>
+        </div>`;
+      }
+
+      return `
+      <div style="border:1px solid ${myResp?'var(--border)':inv.urgency_class===1?'rgba(255,92,92,0.3)':'rgba(245,166,35,0.25)'};border-radius:12px;padding:16px 18px;background:${myResp?'var(--surface)':inv.urgency_class===1?'rgba(255,92,92,0.03)':'rgba(245,166,35,0.03)'};margin-bottom:10px;">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+          <div style="flex:1;min-width:220px;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap;">
+              <div style="width:7px;height:7px;border-radius:50%;background:${urgColors[inv.urgency_class||2]};flex-shrink:0;"></div>
+              <div style="font-size:13px;font-weight:700;color:var(--text);">${inv.product_name||'Product investigation'}</div>
+              <span style="font-size:10px;padding:2px 8px;border-radius:10px;background:${urgColors[inv.urgency_class||2]}18;color:${urgColors[inv.urgency_class||2]};">${urgLabels[inv.urgency_class||2]}</span>
+            </div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">
+              ${inv.issue_type?issueLabels[inv.issue_type]||inv.issue_type:'Issue investigation'} · ${inv.lot_number?`Lot <span style="font-family:'DM Mono',monospace;color:var(--text);">${inv.lot_number}</span> · `:''}From ${mfrName} · ${fmtElapsed(inv.created_at)} ago
+            </div>
+
+            <!-- Step circles -->
+            <div style="display:flex;align-items:flex-start;gap:0;margin-bottom:10px;">
+              ${STEPS.map((s,i) => {
+                const done    = i < stepIdx;
+                const current = i === stepIdx;
+                const isLast  = i === STEPS.length-1;
+                const circle  = done
+                  ? `<div style="width:22px;height:22px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#065f46" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></div>`
+                  : current && !myResp
+                    ? `<div style="width:22px;height:22px;border-radius:50%;background:rgba(245,166,35,0.15);border:2px solid var(--warn);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:var(--warn);flex-shrink:0;">${i+1}</div>`
+                    : `<div style="width:22px;height:22px;border-radius:50%;border:1.5px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--muted);flex-shrink:0;">${i+1}</div>`;
+                const lbl  = `<div style="font-size:9px;margin-top:3px;color:${done?'var(--accent)':current?'var(--warn)':'var(--muted)'};font-weight:${current?'600':'400'};white-space:nowrap;text-align:center;">${s}</div>`;
+                const line = isLast ? '' : `<div style="flex:1;height:1.5px;background:${done?'var(--accent)':'var(--border)'};margin:0 2px;margin-bottom:12px;"></div>`;
+                return `<div style="display:flex;flex-direction:column;align-items:center;">${circle}${lbl}</div>${line}`;
+              }).join('')}
+            </div>
+
+            ${!myResp && inv.issue_description ? `<div style="font-size:11px;color:var(--muted);background:var(--surface2);border-radius:6px;padding:8px 10px;line-height:1.5;">${inv.issue_description.slice(0,160)}${inv.issue_description.length>160?'…':''}</div>` : ''}
+            ${myResp ? `<div style="font-size:11px;color:var(--accent);">✓ You have submitted a response</div>` : `
+            <div style="background:var(--surface2);border-radius:7px;padding:8px 12px;font-size:11px;color:var(--muted);margin-top:8px;">
+              <strong style="color:var(--text);">Next:</strong> Inspect stock in your stores and submit your findings to ${mfrName}
+            </div>`}
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;flex-shrink:0;">
+            ${inv.deadline_at ? `<div style="font-size:10px;color:${new Date(inv.deadline_at)<new Date()?'var(--danger)':'var(--warn)'};">Due ${fmtDate(inv.deadline_at)}</div>` : ''}
+            ${!myResp ? `<button onclick="openDashInvestResponse('${inv.id}')" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:9px 16px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">Submit response →</button>` : ''}
+            <div style="font-size:10px;color:var(--muted);">${responses.length} response${responses.length!==1?'s':''}</div>
+          </div>
+        </div>
+      </div>`;
+    }
 
     el.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px;">
@@ -4268,94 +4818,37 @@ async function renderDashInvestigations() {
           <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">${invs.length} investigation${invs.length!==1?'s':''}</div>
           <div style="font-size:12px;color:var(--muted);margin-top:2px;">Field inspection requests from your manufacturer partners</div>
         </div>
-        ${needsResponse.length > 0 ? `<div style="background:rgba(245,166,35,0.1);border:1px solid rgba(245,166,35,0.3);border-radius:8px;padding:8px 14px;font-size:12px;color:var(--warn);">⏱ ${needsResponse.length} awaiting your response</div>` : ''}
+        ${needsResponse.length>0 ? `<div style="background:rgba(245,166,35,0.1);border:1px solid rgba(245,166,35,0.3);border-radius:8px;padding:8px 14px;font-size:12px;color:var(--warn);">⏱ ${needsResponse.length} awaiting your response</div>` : ''}
       </div>
 
       ${invs.length === 0 ? `
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:52px 24px;text-align:center;">
           <div style="font-size:32px;margin-bottom:14px;">🔍</div>
           <div style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:8px;">No investigations yet</div>
-          <div style="font-size:13px;color:var(--muted);max-width:380px;margin:0 auto;line-height:1.7;">When a manufacturer partner suspects a product issue and needs your stores to inspect stock, the investigation request will appear here.</div>
+          <div style="font-size:13px;color:var(--muted);max-width:380px;margin:0 auto;line-height:1.7;">When a manufacturer suspects a product issue and needs your stores to inspect stock, the request appears here.</div>
         </div>` : `
 
-      <!-- Needs response first -->
       ${needsResponse.length > 0 ? `
       <div style="margin-bottom:22px;">
-        <div style="font-size:11px;font-weight:600;color:var(--warn);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px;">⏱ Awaiting your response</div>
-        <div style="display:flex;flex-direction:column;gap:10px;">
-          ${needsResponse.map(inv => `
-          <div style="background:var(--surface);border:1px solid rgba(245,166,35,0.25);border-radius:12px;overflow:hidden;">
-            <div style="padding:16px 20px;display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap;">
-              <div style="flex:1;min-width:200px;">
-                <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;flex-wrap:wrap;">
-                  <div style="width:7px;height:7px;border-radius:50%;background:${urgColors[inv.urgency_class||2]};flex-shrink:0;"></div>
-                  <div style="font-size:14px;font-weight:700;color:var(--text);">${inv.product_name||'Product'}</div>
-                  <span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(245,166,35,0.1);color:var(--warn);">${urgLabels[inv.urgency_class||2]}</span>
-                </div>
-                <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">
-                  ${inv.issue_type ? `<span style="color:var(--text);">${issueLabels[inv.issue_type]||inv.issue_type}</span> · ` : ''}
-                  ${inv.lot_number ? `Lot: <span style="font-family:'DM Mono',monospace;color:var(--text);">${inv.lot_number}</span> · ` : ''}
-                  From: ${orgNames[inv.manufacturer_id]||'Unknown'} · ${fmtTime(inv.created_at)}
-                </div>
-                ${inv.issue_description ? `<div style="font-size:12px;color:var(--muted);background:var(--surface2);border-radius:6px;padding:8px 10px;line-height:1.5;">${inv.issue_description.slice(0,180)}${inv.issue_description.length>180?'…':''}</div>` : ''}
-                ${inv.instructions ? `<div style="font-size:11px;color:var(--info);margin-top:6px;">📋 ${inv.instructions.slice(0,120)}${inv.instructions.length>120?'…':''}</div>` : ''}
-              </div>
-              <div style="display:flex;flex-direction:column;gap:8px;flex-shrink:0;">
-                ${inv.deadline_at ? `<div style="font-size:11px;color:${new Date(inv.deadline_at)<new Date()?'var(--danger)':'var(--warn)'};">⏰ Due: ${fmtDate(inv.deadline_at)}</div>` : ''}
-                <button onclick="openDashInvestResponse('${inv.id}')" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:9px 16px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;">
-                  Submit response
-                </button>
-              </div>
-            </div>
-          </div>`).join('')}
-        </div>
+        <div style="font-size:10px;font-weight:600;color:var(--warn);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px;">Awaiting your response</div>
+        ${needsResponse.map(inv => invProcessCard(inv)).join('')}
       </div>` : ''}
 
-      <!-- All investigations -->
+      ${responded.filter(i=>!closed.includes(i)).length > 0 ? `
+      <div style="margin-bottom:22px;">
+        <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px;">Responded — awaiting manufacturer review</div>
+        ${responded.filter(i=>!closed.includes(i)).map(inv => invProcessCard(inv)).join('')}
+      </div>` : ''}
+
+      ${closed.length > 0 ? `
       <div>
-        <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px;">All investigations</div>
-        <div class="panel" style="overflow:hidden;">
-          <table style="width:100%;border-collapse:collapse;">
-            <thead><tr>
-              <th style="font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);text-align:left;padding:11px 18px;border-bottom:1px solid var(--border);">Product / Issue</th>
-              <th style="font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);text-align:left;padding:11px 8px;border-bottom:1px solid var(--border);">Manufacturer</th>
-              <th style="font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);text-align:left;padding:11px 8px;border-bottom:1px solid var(--border);">Urgency</th>
-              <th style="font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);text-align:left;padding:11px 8px;border-bottom:1px solid var(--border);">Status</th>
-              <th style="font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);text-align:left;padding:11px 8px;border-bottom:1px solid var(--border);">Responses</th>
-              <th style="font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);text-align:left;padding:11px 18px 11px 8px;border-bottom:1px solid var(--border);">Created</th>
-            </tr></thead>
-            <tbody>
-              ${invs.map((inv,i) => {
-                const myResp = myResponseIds.has(inv.id);
-                const responses = inv.investigation_responses || [];
-                const found = responses.filter(r => r.issue_found).length;
-                const statusColor = inv.status==='open' ? 'var(--warn)' : inv.status==='in_progress' ? 'var(--info)' : inv.status==='escalated' ? 'var(--danger)' : 'var(--accent)';
-                return `<tr style="background:${i%2?'transparent':'rgba(0,0,0,0.08)'};">
-                  <td style="padding:11px 18px;border-bottom:1px solid rgba(22,61,55,0.4);">
-                    <div style="font-size:12px;font-weight:600;color:var(--text);">${inv.product_name||'—'}</div>
-                    <div style="font-size:10px;color:var(--muted);margin-top:1px;">${issueLabels[inv.issue_type]||inv.issue_type||'—'}${inv.lot_number?` · Lot: <span style="font-family:'DM Mono',monospace;">${inv.lot_number}</span>`:''}</div>
-                  </td>
-                  <td style="padding:11px 8px;border-bottom:1px solid rgba(22,61,55,0.4);font-size:11px;color:var(--text);">${orgNames[inv.manufacturer_id]||'—'}</td>
-                  <td style="padding:11px 8px;border-bottom:1px solid rgba(22,61,55,0.4);">
-                    <span style="font-size:10px;color:${urgColors[inv.urgency_class||2]};">${urgLabels[inv.urgency_class||2]||'—'}</span>
-                  </td>
-                  <td style="padding:11px 8px;border-bottom:1px solid rgba(22,61,55,0.4);">
-                    <span style="font-size:10px;padding:2px 8px;border-radius:10px;background:${statusColor}18;color:${statusColor};text-transform:capitalize;">${inv.status||'open'}</span>
-                  </td>
-                  <td style="padding:11px 8px;border-bottom:1px solid rgba(22,61,55,0.4);font-size:11px;color:var(--muted);">
-                    ${responses.length} total · ${found} found issue
-                    ${myResp ? `<div style="font-size:10px;color:var(--accent);">✓ You responded</div>` : inv.status==='open'||inv.status==='in_progress' ? `<div><a href="#" onclick="event.preventDefault();openDashInvestResponse('${inv.id}')" style="font-size:10px;color:var(--warn);">Respond →</a></div>` : ''}
-                  </td>
-                  <td style="padding:11px 18px 11px 8px;border-bottom:1px solid rgba(22,61,55,0.4);font-size:10px;color:var(--muted);">${fmtDate(inv.created_at)}</td>
-                </tr>`;
-              }).join('')}
-            </tbody>
-          </table>
-        </div>
-      </div>`}`;
+        <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px;">Closed</div>
+        ${closed.map(inv => invProcessCard(inv)).join('')}
+      </div>` : ''}
+      `}`;
 
   } catch(e) {
-    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading investigations: ${e.message}</div>`;
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error: ${e.message}</div>`;
   }
 }
 
@@ -4875,11 +5368,21 @@ async function renderConsumerNotification() {
       ...(manualRecalls||[]).map(r => ({ ...r, _type: 'manual', published_at: r.created_at })),
     ];
 
-    el.innerHTML = `
-      <div style="margin-bottom:20px;">
-        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Consumer recall notifications</div>
-        <div style="font-size:12px;color:var(--muted);margin-top:2px;">Notify customers who may have purchased recalled products — matched by purchase history or broadcast to your customer list</div>
+    const cnStep = _consumerNotifRecallId && _consumerNotifCustomers.length > 0 ? 3
+      : _consumerNotifRecallId ? 2 : 1;
+    const cnProgressBar = `
+      <div style="display:flex;gap:5px;margin-bottom:6px;">
+        ${[1,2,3].map(i=>`<div style="flex:1;height:3px;border-radius:2px;background:${i<=cnStep?'var(--accent)':'var(--border)'}"></div>`).join('')}
       </div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:20px;">
+        ${['Select recall','Upload customers','Review & send'].map((l,i)=>`<div style="font-size:10px;color:${i+1<=cnStep?'var(--accent)':'var(--muted)'};font-weight:${i+1===cnStep?'600':'400'};flex:1;${i===1?'text-align:center':''};${i===2?'text-align:right':''}">${l}</div>`).join('')}
+      </div>`;
+    el.innerHTML = `
+      <div style="margin-bottom:4px;">
+        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Consumer recall notifications</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px;">Notify customers who may have purchased recalled products</div>
+      </div>
+      ${allRecalls.length > 0 ? cnProgressBar : ''}
 
       ${allRecalls.length === 0 ? `
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:48px 24px;text-align:center;">
