@@ -602,6 +602,232 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 let _session = null, _orgId = null, _orgName = '', _orgRegion = 'no';
+
+// ═══════════════════════════════════════════════════════════════
+// ── Batch'd Intelligence Layer ──────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+
+// Fuzzy lot code matching — handles prefix ranges, trailing variants, case
+function lotsMatch(a, b) {
+  if (!a || !b) return false;
+  const clean = s => s.trim().toUpperCase().replace(/[_\s]/g, '-');
+  const ca = clean(a), cb = clean(b);
+  if (ca === cb) return true;
+  // Prefix match — recall says "L2024-03", scan has "L2024-03-15A"
+  if (ca.startsWith(cb) || cb.startsWith(ca)) return true;
+  // Strip trailing date/time variants: L2024-03-15A → L2024-03
+  const stem = s => s.replace(/[-]?\d{2}[:]\d{2}$/, '').replace(/[-]\d{2,4}[A-Z]?$/, '');
+  if (stem(ca) === stem(cb)) return true;
+  if (stem(ca).startsWith(stem(cb)) || stem(cb).startsWith(stem(ca))) return true;
+  return false;
+}
+
+// Normalise product name for matching — strips pack sizes, punctuation
+function productNameMatch(a, b) {
+  if (!a || !b) return false;
+  const clean = s => s.toLowerCase().replace(/[^a-z0-9æøåäöü\s]/g, '').trim();
+  const ca = clean(a), cb = clean(b);
+  if (ca === cb) return true;
+  // One contains the other (handles "Tine Helmelk 1L" vs "Tine Helmelk")
+  const words = s => s.split(/\s+/).filter(w => w.length > 2);
+  const wa = words(ca), wb = words(cb);
+  const shared = wa.filter(w => wb.includes(w));
+  return shared.length >= Math.min(2, Math.min(wa.length, wb.length));
+}
+
+// ── Cross-entity intelligence panel ─────────────────────────────
+// Surfaces everything Batch'd knows about a product+lot from all tables.
+// Call with a container element ID and optional product/lot context.
+async function renderIntelligencePanel(containerId, productName, lotCode, opts = {}) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);padding:10px 0;"><div class="spinner"></div> Scanning records…</div>`;
+
+  try {
+    const since90 = new Date(Date.now() - 90 * 86400000).toISOString();
+
+    // Run all queries in parallel
+    const queries = [];
+
+    // 1. Scan records matching this product or lot
+    if (productName || lotCode) {
+      let q = sb.from('scans').select('id, product_name, lot_number, store_name, created_at, scanned_by').eq('organisation_id', _orgId).gte('created_at', since90).limit(200);
+      queries.push(q);
+    } else {
+      queries.push(Promise.resolve({ data: [] }));
+    }
+
+    // 2. Complaints about this product
+    if (productName) {
+      queries.push(
+        sb.from('complaints').select('id, complaint_number, product_name, lot_number, triage_level, status, created_at, triage_summary')
+          .eq('receiving_org_id', _orgId).ilike('product_name', `%${productName.split(' ')[0]}%`).gte('created_at', since90).limit(20)
+      );
+    } else {
+      queries.push(Promise.resolve({ data: [] }));
+    }
+
+    // 3. Shipments for this lot
+    if (lotCode) {
+      queries.push(
+        sb.from('shipments').select('id, lot_number, quantity, unit, shipped_at, stores(name), organisations!shipments_manufacturer_id_fkey(name)')
+          .eq('retailer_id', _orgId).limit(50)
+      );
+    } else {
+      queries.push(Promise.resolve({ data: [] }));
+    }
+
+    // 4. Active recalls matching this product or lot
+    queries.push(
+      sb.from('recall_events').select('id, product_name, lot_number, severity, reason, is_drill, published_at, source_org_id')
+        .eq('is_drill', false).order('published_at', { ascending: false }).limit(100)
+    );
+
+    // 5. Related investigations
+    if (productName) {
+      queries.push(
+        sb.from('investigation_requests').select('id, product_name, lot_number, status, urgency_class, created_at, issue_type')
+          .ilike('product_name', `%${productName.split(' ')[0]}%`).limit(10)
+      );
+    } else {
+      queries.push(Promise.resolve({ data: [] }));
+    }
+
+    const [scansRes, complaintsRes, shipmentsRes, recallsRes, invsRes] = await Promise.all(queries);
+
+    const allScans      = scansRes.data      || [];
+    const allComplaints = complaintsRes.data  || [];
+    const allShipments  = shipmentsRes.data   || [];
+    const allRecalls    = recallsRes.data     || [];
+    const allInvs       = invsRes.data        || [];
+
+    // Filter to matching records
+    const matchedScans = allScans.filter(s =>
+      (productName && productNameMatch(s.product_name, productName)) ||
+      (lotCode && lotsMatch(s.lot_number, lotCode))
+    );
+
+    const matchedShipments = allShipments.filter(s =>
+      lotCode && lotsMatch(s.lot_number, lotCode)
+    );
+
+    const matchedRecalls = allRecalls.filter(r =>
+      (productName && productNameMatch(r.product_name, productName)) ||
+      (lotCode && lotsMatch(r.lot_number, lotCode))
+    );
+
+    // Check if this entity is the source of a recall already
+    const isRecalled = matchedRecalls.length > 0;
+
+    const total = matchedScans.length + allComplaints.length + matchedShipments.length + matchedRecalls.length + allInvs.length;
+
+    if (total === 0 && !opts.alwaysShow) {
+      el.innerHTML = `<div style="font-size:11px;color:var(--muted);padding:10px 0;font-style:italic;">No related records found in the last 90 days.</div>`;
+      return;
+    }
+
+    const fmtDate = d => d ? new Date(d).toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'}) : '—';
+    const sevColor = s => s?.toLowerCase().includes('i') ? 'var(--danger)' : 'var(--warn)';
+
+    // Unique stores that scanned this product
+    const storesSeen = [...new Set(matchedScans.map(s => s.store_name).filter(Boolean))];
+    // Scan frequency last 14d vs 14-90d
+    const recent14 = matchedScans.filter(s => new Date(s.created_at) > new Date(Date.now() - 14*86400000));
+
+    el.innerHTML = `
+      <div style="border:1px solid var(--glass-border);border-radius:12px;overflow:hidden;margin-top:16px;">
+        <div style="padding:12px 16px;background:var(--surface2);border-bottom:1px solid var(--glass-border);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <span style="font-size:11px;font-weight:700;color:var(--text);letter-spacing:0.04em;">INTELLIGENCE — ${productName||lotCode||'Record'}</span>
+          </div>
+          <div style="font-size:10px;color:var(--muted);">Last 90 days · ${total} connected record${total!==1?'s':''}</div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:0;border-bottom:1px solid var(--glass-border);">
+          ${[
+            { label:'Scan records', val: matchedScans.length, color: matchedScans.length>0?'var(--accent)':'var(--muted)', icon:'📦', action: matchedScans.length>0?`showPanel('traceability')`:null },
+            { label:'Complaints', val: allComplaints.length, color: allComplaints.length>0?'var(--warn)':'var(--muted)', icon:'💬', action: allComplaints.length>0?`showPanel('triage')`:null },
+            { label:'Shipments', val: matchedShipments.length, color: matchedShipments.length>0?'var(--info)':'var(--muted)', icon:'🚚', action: null },
+            { label:'Active recalls', val: matchedRecalls.length, color: matchedRecalls.length>0?'var(--danger)':'var(--muted)', icon:'🚨', action: matchedRecalls.length>0?`showPanel('recalls')`:null },
+          ].map((m,i) => `
+            <div ${m.action?`onclick="${m.action}" style="cursor:pointer;"`:''} style="padding:12px 14px;border-right:1px solid var(--glass-border);${m.action?'transition:background 0.15s;':''}${i===3?'border-right:none;':''}">
+              <div style="font-size:18px;font-weight:700;color:${m.color};line-height:1;margin-bottom:3px;">${m.val}</div>
+              <div style="font-size:10px;color:var(--muted);">${m.label}</div>
+            </div>`).join('')}
+        </div>
+
+        ${isRecalled ? `
+        <div style="padding:10px 14px;background:rgba(255,92,92,0.06);border-bottom:1px solid rgba(255,92,92,0.15);display:flex;align-items:center;gap:8px;">
+          <div style="width:7px;height:7px;border-radius:50%;background:var(--danger);box-shadow:0 0 7px rgba(255,92,92,0.5);flex-shrink:0;"></div>
+          <div style="font-size:11px;color:var(--danger);font-weight:600;">ACTIVE RECALL — ${matchedRecalls[0].product_name}${matchedRecalls[0].lot_number?' · Lot '+matchedRecalls[0].lot_number:''} · ${matchedRecalls[0].reason||'See recall panel'}</div>
+        </div>` : ''}
+
+        <div style="padding:12px 16px;display:flex;flex-direction:column;gap:8px;">
+
+          ${storesSeen.length > 0 ? `
+          <div style="font-size:11px;color:var(--muted);">
+            <strong style="color:var(--text);">Scanned at:</strong> ${storesSeen.slice(0,5).join(', ')}${storesSeen.length>5?` +${storesSeen.length-5} more`:''}
+            <span style="color:var(--muted);"> · ${recent14.length} in last 14 days</span>
+          </div>` : ''}
+
+          ${matchedShipments.length > 0 ? `
+          <div style="font-size:11px;color:var(--muted);">
+            <strong style="color:var(--text);">Shipment trail:</strong>
+            ${matchedShipments.slice(0,3).map(s => `${s.organisations?.name||'?'} → ${s.stores?.name||'?'} (${s.quantity} ${s.unit||''} · ${fmtDate(s.shipped_at)})`).join(' · ')}
+          </div>` : ''}
+
+          ${allComplaints.length > 0 ? `
+          <div style="font-size:11px;color:var(--muted);">
+            <strong style="color:var(--text);">Related complaints:</strong>
+            ${allComplaints.slice(0,3).map(c => `<span onclick="_dashTriageView='detail';_dashTriageComplaint='${c.id}';renderDashboardTriage()" style="color:var(--warn);cursor:pointer;text-decoration:underline;">${c.complaint_number||c.id.slice(0,8)}</span> (${c.triage_level})`).join(', ')}
+          </div>` : ''}
+
+          ${allInvs.length > 0 ? `
+          <div style="font-size:11px;color:var(--muted);">
+            <strong style="color:var(--text);">Investigations:</strong>
+            ${allInvs.slice(0,2).map(i => `${i.product_name} · ${i.status}`).join(' · ')}
+          </div>` : ''}
+
+        </div>
+      </div>`;
+
+  } catch(e) {
+    el.innerHTML = `<div style="font-size:11px;color:var(--muted);padding:10px 0;">Intelligence unavailable: ${e.message}</div>`;
+  }
+}
+
+// ── Create investigation from complaint pattern ──────────────────
+async function createInvestigationFromPattern(productName, lots, complaintCount, title, complaintIds) {
+  const btn = event?.target;
+  if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
+  try {
+    // Find connected manufacturers via trading partners
+    const { data: partners } = await sb.from('trading_partners')
+      .select('manufacturer_id, organisations!trading_partners_manufacturer_id_fkey(name)')
+      .eq('retailer_id', _orgId).eq('status', 'active');
+
+    if (!partners?.length) {
+      showToast('No manufacturer partners connected — connect a manufacturer first', 'warn', 4000);
+      if (btn) { btn.disabled = false; btn.textContent = 'Create investigation'; }
+      return;
+    }
+
+    // Store as a pending draft in sessionStorage so investigation panel can pick it up
+    sessionStorage.setItem('batchd_inv_draft', JSON.stringify({
+      productName, lots, complaintCount, title, complaintIds,
+      partners: partners.map(p => ({ id: p.manufacturer_id, name: p.organisations?.name || '—' })),
+    }));
+
+    showToast(`Investigation draft created — opening Investigations panel`, 'ok', 3000);
+    showPanel('investigations');
+  } catch(e) {
+    showToast('Error: ' + e.message, 'error', 4000);
+    if (btn) { btn.disabled = false; btn.textContent = 'Create investigation'; }
+  }
+}
+
+
 let _userRole = 'corp_admin', _storeId = null, _storeName = '';
 let _activePanel = 'overview';
 
@@ -772,6 +998,296 @@ function showPanel(name) {
 }
 
 // ── Overview dashboard ────────────────────────────────────────
+
+// ═══════════════════════════════════════════════════════════════
+// ── Tier 2: AI-powered intelligence functions ───────────────────
+// ═══════════════════════════════════════════════════════════════
+
+async function traceLot() {
+  const lotCode = document.getElementById('trace-lot-input')?.value?.trim();
+  const el = document.getElementById('trace-result');
+  if (!el) return;
+  if (!lotCode) { el.innerHTML = '<div style="font-size:12px;color:var(--muted);">Enter a lot code to trace.</div>'; return; }
+
+  el.innerHTML = '<div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);padding:12px 0;"><div class="spinner"></div> Tracing lot across supply chain…</div>';
+
+  try {
+    const [shipmentsRes, scansRes, recallsRes, acksRes] = await Promise.all([
+      sb.from('shipments').select('id,lot_number,quantity,unit,shipped_at,reference_document,stores(name,address),organisations!shipments_manufacturer_id_fkey(name),products(name)').eq('retailer_id', _orgId).limit(200),
+      sb.from('scans').select('id,product_name,lot_number,store_name,scanned_by,created_at,tlc_source').eq('organisation_id', _orgId).order('created_at',{ascending:false}).limit(500),
+      sb.from('recall_events').select('id,product_name,lot_number,severity,reason,is_drill,published_at').order('published_at',{ascending:false}).limit(100),
+      sb.from('recall_acknowledgements').select('id,status,recall_event_id,updated_at,units_pulled,stores(name)').eq('organisation_id', _orgId),
+    ]);
+
+    const shipments = (shipmentsRes.data||[]).filter(s => lotsMatch(s.lot_number, lotCode));
+    const scans     = (scansRes.data||[]).filter(s => lotsMatch(s.lot_number, lotCode));
+    const recalls   = (recallsRes.data||[]).filter(r => lotsMatch(r.lot_number, lotCode) && !r.is_drill);
+    const matchedRecallIds = recalls.map(r => r.id);
+    const acks      = (acksRes.data||[]).filter(a => matchedRecallIds.includes(a.recall_event_id));
+
+    const storesSeen   = [...new Set(scans.map(s => s.store_name).filter(Boolean))];
+    const storesShipped = [...new Set(shipments.map(s => s.stores?.name).filter(Boolean))];
+    const productName  = shipments[0]?.products?.name || scans[0]?.product_name || 'Unknown product';
+    const mfrName      = shipments[0]?.organisations?.name || 'Unknown manufacturer';
+    const totalQty     = shipments.reduce((s,h) => s+(h.quantity||0), 0);
+    const unit         = shipments[0]?.unit || 'units';
+    const isRecalled   = recalls.length > 0;
+    const fmtDate      = d => d ? new Date(d).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : '—';
+    const fmtDT        = d => d ? new Date(d).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '—';
+
+    // Chain node builder
+    const chainNode = (step, label, detail, status, sublabel) => {
+      const colors = { ok:'var(--accent)', warn:'var(--warn)', danger:'var(--danger)', muted:'var(--muted)', info:'var(--info)' };
+      const bg = { ok:'rgba(52,211,153,0.1)', warn:'rgba(245,166,35,0.08)', danger:'rgba(255,92,92,0.08)', muted:'rgba(106,175,158,0.07)', info:'rgba(56,189,248,0.08)' };
+      return `<div style="display:flex;gap:14px;padding-bottom:${step<4?'0':'0'};position:relative;">
+        ${step < 4 ? '<div style="position:absolute;left:14px;top:30px;bottom:-12px;width:1.5px;background:var(--glass-border);"></div>' : ''}
+        <div style="width:30px;height:30px;border-radius:50%;background:${bg[status]};border:1.5px solid ${colors[status]};display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:12px;font-weight:700;color:${colors[status]};">${step}</div>
+        <div style="flex:1;padding-bottom:20px;">
+          <div style="font-size:13px;font-weight:600;color:var(--text);">${label}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;line-height:1.5;">${detail}</div>
+          ${sublabel ? '<div style="font-size:10px;color:'+colors[status]+';margin-top:4px;">'+sublabel+'</div>' : ''}
+        </div>
+      </div>`;
+    };
+
+    if (shipments.length === 0 && scans.length === 0) {
+      el.innerHTML = `<div style="background:var(--surface);border:1px solid var(--glass-border);border-radius:12px;padding:28px;text-align:center;">
+        <div style="font-size:28px;margin-bottom:12px;">🔍</div>
+        <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:6px;">No records found for lot "${lotCode}"</div>
+        <div style="font-size:12px;color:var(--muted);">Try a shorter prefix — fuzzy matching will find variants automatically.</div>
+      </div>`;
+      return;
+    }
+
+    el.innerHTML = `
+      <!-- Recall alert if applicable -->
+      ${isRecalled ? `<div style="background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.3);border-radius:10px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:10px;">
+        <div style="width:8px;height:8px;border-radius:50%;background:var(--danger);box-shadow:0 0 8px rgba(255,92,92,0.5);flex-shrink:0;"></div>
+        <div style="flex:1;font-size:12px;color:var(--danger);">
+          <strong>ACTIVE RECALL</strong> — ${recalls[0].product_name||'Product'} · ${recalls[0].reason||'—'} · ${recalls[0].severity||'—'}
+        </div>
+        <button onclick="showPanel('recalls')" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid rgba(255,92,92,0.3);background:none;color:var(--danger);cursor:pointer;font-family:inherit;">View recall →</button>
+      </div>` : ''}
+
+      <!-- Summary header -->
+      <div style="background:var(--surface);border:1px solid var(--glass-border);border-radius:12px;padding:16px 18px;margin-bottom:16px;">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
+          <div>
+            <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;color:var(--text);">${productName}</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px;font-family:'DM Mono',monospace;">${lotCode}</div>
+          </div>
+          ${isRecalled ? '<span style="font-size:10px;padding:3px 10px;border-radius:10px;background:rgba(255,92,92,0.12);color:var(--danger);font-weight:700;">⚠ RECALLED</span>' : '<span style="font-size:10px;padding:3px 10px;border-radius:10px;background:rgba(52,211,153,0.12);color:var(--accent);font-weight:600;">✓ No active recall</span>'}
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;">
+          ${[
+            {l:'Manufacturer', v:mfrName},
+            {l:'Units shipped', v:totalQty?`${totalQty} ${unit}`:'Unknown'},
+            {l:'Stores shipped to', v:storesShipped.length||'—'},
+            {l:'Scan records', v:scans.length},
+            {l:'Stores scanned at', v:storesSeen.length||'—'},
+          ].map(k=>`<div style="background:var(--surface2);border-radius:8px;padding:10px 12px;"><div style="font-size:10px;color:var(--muted);margin-bottom:3px;">${k.l}</div><div style="font-size:13px;font-weight:600;color:var(--text);">${k.v}</div></div>`).join('')}
+        </div>
+      </div>
+
+      <!-- Supply chain timeline -->
+      <div style="background:var(--surface);border:1px solid var(--glass-border);border-radius:12px;padding:18px 20px;margin-bottom:16px;">
+        <div style="font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);margin-bottom:16px;">Supply chain trace</div>
+        <div style="position:relative;">
+          ${chainNode(1, mfrName + ' — Manufacturer', shipments.length > 0 ? `${shipments.length} shipment${shipments.length!==1?'s':''} logged · ${totalQty} ${unit} total · First shipped ${fmtDate(shipments[shipments.length-1]?.shipped_at)}` : 'No shipment records on file — connect this manufacturer as a partner to receive shipment data', shipments.length?'ok':'muted', shipments.length?`Lot code: ${lotCode}`:null)}
+          ${chainNode(2, storesShipped.length > 0 ? storesShipped.join(', ') : 'Receiving stores', storesShipped.length > 0 ? shipments.map(s=>`${s.stores?.name||'?'} — ${s.quantity} ${s.unit||''} received ${fmtDate(s.shipped_at)}`).slice(0,4).join(' · ') : 'No store receipt records', storesShipped.length?'ok':'muted', storesShipped.length?`${storesShipped.length} store${storesShipped.length!==1?'s':''} received this lot`:null)}
+          ${chainNode(3, scans.length > 0 ? 'Scanned onto shelves' : 'Shelf placement', scans.length > 0 ? `${scans.length} scan${scans.length!==1?'s':''} by staff · ${storesSeen.join(', ')}` : 'No scan records for this lot — staff may not have scanned it, or lot code may differ slightly', scans.length?'ok':'warn', scans.length?`Latest scan: ${fmtDT(scans[0]?.created_at)}`:null)}
+          ${chainNode(4, isRecalled ? 'Recall response' : 'Recall status', isRecalled ? (acks.length > 0 ? `${acks.filter(a=>a.status==='confirmed').length}/${acks.length} stores confirmed removal · ${acks.reduce((s,a)=>s+(a.units_pulled||0),0)} units pulled` : 'Recall pushed — awaiting store acknowledgements') : 'No recall issued for this lot', isRecalled?(acks.every(a=>a.status==='confirmed')?'ok':'danger'):'ok', isRecalled?recalls[0].severity:null)}
+        </div>
+      </div>
+
+      <!-- Scan detail table -->
+      ${scans.length > 0 ? `
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">Scan records (${scans.length})</div></div>
+        <div class="panel-body" style="padding:0;">
+          <table class="store-table" style="width:100%;">
+            <thead><tr><th>Store</th><th>Scanned by</th><th>Date & time</th><th>Source</th></tr></thead>
+            <tbody>
+              ${scans.slice(0,20).map(s=>`<tr>
+                <td>${s.store_name||'—'}</td>
+                <td style="color:var(--muted);">${s.scanned_by||'—'}</td>
+                <td style="font-family:'DM Mono',monospace;font-size:10px;">${fmtDT(s.created_at)}</td>
+                <td style="font-size:10px;color:var(--muted);">${s.tlc_source||'Manual'}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>` : ''}`;
+
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:12px;">Error tracing lot: ${e.message}</div>`;
+  }
+}
+
+async function runNLQuery() {
+  const question = document.getElementById('nl-query-input')?.value?.trim();
+  const el       = document.getElementById('nl-result');
+  if (!el || !question) return;
+
+  el.innerHTML = '<div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);padding:12px 0;"><div class="spinner"></div> Interpreting your question…</div>';
+
+  try {
+    const schema = `
+scans(id, product_name, lot_number, store_name, store_id, scanned_by, created_at, organisation_id)
+complaints(id, complaint_number, product_name, lot_number, triage_level, status, created_at, receiving_org_id)
+shipments(id, lot_number, quantity, unit, shipped_at, retailer_id, manufacturer_id, store_id)
+recalls(id, product_name, lot_number, active, source, created_at, organisation_id)
+recall_acknowledgements(id, status, recall_event_id, store_id, updated_at, organisation_id)
+stores(id, name, active, organisation_id)
+organisation_id for this user = "${_orgId}"`;
+
+    const res = await fetch('/.netlify/functions/ai-analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task: 'nl_query', data: { question, schema } }),
+    });
+    const json = await res.json();
+    const text = json.result || '';
+
+    let parsed;
+    try { parsed = JSON.parse(text.replace(/```json|```/g, '').trim()); }
+    catch(e) { parsed = { error: 'Could not parse AI response' }; }
+
+    if (parsed.error) {
+      el.innerHTML = `<div style="background:var(--surface);border:1px solid var(--glass-border);border-radius:10px;padding:14px 16px;font-size:12px;color:var(--muted);">${parsed.error}</div>`;
+      return;
+    }
+
+    // Execute the interpreted query
+    el.innerHTML = `<div style="background:var(--surface);border:1px solid var(--glass-border);border-radius:10px;padding:14px 16px;margin-bottom:12px;">
+      <div style="font-size:11px;font-weight:600;color:var(--accent);margin-bottom:4px;">✦ Interpreted as:</div>
+      <div style="font-size:13px;color:var(--text);">${parsed.understood||''}</div>
+      ${parsed.summary ? '<div style="font-size:11px;color:var(--muted);margin-top:4px;">'+parsed.summary+'</div>' : ''}
+    </div>
+    <div id="nl-query-results"><div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);"><div class="spinner"></div> Running query…</div></div>`;
+
+    // Run the actual query
+    try {
+      let q = sb.from(parsed.table).select(parsed.select || '*');
+      if (parsed.filters) {
+        Object.entries(parsed.filters).forEach(([col, val]) => {
+          if (col === 'organisation_id' || col.endsWith('_org_id') || col === 'retailer_id') {
+            q = q.eq(col, _orgId);
+          } else if (val && typeof val === 'string' && val.includes('%')) {
+            q = q.ilike(col, val);
+          } else if (val !== undefined && val !== null) {
+            q = q.eq(col, val);
+          }
+        });
+      }
+      if (!parsed.filters?.organisation_id) q = q.eq('organisation_id', _orgId);
+      if (parsed.orderBy) q = q.order(parsed.orderBy.column || 'created_at', { ascending: parsed.orderBy.ascending ?? false });
+      q = q.limit(parsed.limit || 50);
+
+      const { data, error } = await q;
+      const resultsEl = document.getElementById('nl-query-results');
+      if (!resultsEl) return;
+
+      if (error) {
+        resultsEl.innerHTML = `<div style="font-size:12px;color:var(--danger);">Query error: ${error.message}</div>`;
+        return;
+      }
+
+      const rows = data || [];
+      if (rows.length === 0) {
+        resultsEl.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:12px;">No results found.</div>';
+        return;
+      }
+
+      const cols = Object.keys(rows[0]).filter(k => !['id','organisation_id','retailer_id','retailer_org_id','manufacturer_id','store_id','recall_event_id','user_id'].includes(k));
+      const fmtVal = v => v === null || v === undefined ? '—' : typeof v === 'boolean' ? (v?'Yes':'No') : typeof v === 'string' && v.match(/^\d{4}-\d{2}-\d{2}/) ? new Date(v).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : String(v).slice(0,60);
+
+      resultsEl.innerHTML = `<div class="panel"><div class="panel-header"><div class="panel-title">${rows.length} result${rows.length!==1?'s':''}</div></div>
+        <div class="panel-body" style="padding:0;">
+          <table class="store-table" style="width:100%;">
+            <thead><tr>${cols.map(c=>'<th>'+c.replace(/_/g,' ')+'</th>').join('')}</tr></thead>
+            <tbody>${rows.slice(0,30).map(r=>'<tr>'+cols.map(c=>'<td>'+fmtVal(r[c])+'</td>').join('')+'</tr>').join('')}</tbody>
+          </table>
+        </div></div>`;
+    } catch(qe) {
+      const resultsEl = document.getElementById('nl-query-results');
+      if (resultsEl) resultsEl.innerHTML = `<div style="font-size:12px;color:var(--danger);">Query error: ${qe.message}</div>`;
+    }
+
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:12px;">Error: ${e.message}</div>`;
+  }
+}
+
+// ── Weekly AI digest ─────────────────────────────────────────────
+async function loadWeeklyDigest(containerEl) {
+  if (!containerEl) return;
+  const cached = sessionStorage.getItem('batchd_weekly_digest');
+  if (cached) { containerEl.innerHTML = cached; return; }
+
+  containerEl.innerHTML = '<div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);"><div class="spinner"></div> Generating weekly digest…</div>';
+
+  try {
+    const days7  = new Date(Date.now() - 7  * 86400000).toISOString();
+    const days30 = new Date(Date.now() - 30 * 86400000).toISOString();
+    const days365 = new Date(Date.now() - 365 * 86400000).toISOString();
+
+    const [scansRes, acksRes, complaintsRes, drillsRes, storesRes] = await Promise.all([
+      sb.from('scans').select('id,store_name,lot_number,created_at').eq('organisation_id', _orgId).gte('created_at', days7),
+      sb.from('recall_acknowledgements').select('id,status,updated_at').eq('organisation_id', _orgId),
+      sb.from('complaints').select('id,product_name').eq('receiving_org_id', _orgId).gte('created_at', days7),
+      sb.from('mock_recall_drills').select('id').eq('retailer_org_id', _orgId).gte('created_at', days365).limit(1),
+      sb.from('stores').select('id,name,active').eq('organisation_id', _orgId).eq('active', true),
+    ]);
+
+    const newScans     = (scansRes.data||[]).length;
+    const acks         = acksRes.data || [];
+    const actioned     = acks.filter(a => a.status !== 'notified').length;
+    const responseRate = acks.length > 0 ? Math.round((actioned/acks.length)*100) : 100;
+    const complaints   = complaintsRes.data || [];
+    const stores       = storesRes.data || [];
+    const recentScans7 = scansRes.data || [];
+    const activeStoreIds = new Set(recentScans7.map(s=>s.store_name).filter(Boolean));
+    const darkStores   = stores.filter(s => !activeStoreIds.has(s.name)).map(s=>s.name);
+    const lotCaptureRate = newScans > 0 ? Math.round((recentScans7.filter(s=>s.lot_number).length/newScans)*100) : 0;
+    const clusters     = Object.values(complaints.reduce((g,c)=>{ const k=(c.product_name||'').toLowerCase().split(' ')[0]; if(k) g[k]=(g[k]||0)+1; return g; },{})).filter(v=>v>=2).length;
+
+    const res = await fetch('/.netlify/functions/ai-analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        task: 'weekly_digest',
+        data: {
+          orgName: _orgName,
+          region:  _orgRegion,
+          weekData: {
+            newScans, activeRecalls: acks.length > 0 ? 1 : 0,
+            responseRate, darkStores,
+            newComplaints: complaints.length, clusters,
+            openInvestigations: 0,
+            drillCompliant: !!(drillsRes.data?.length),
+            lotCaptureRate,
+          },
+        },
+      }),
+    });
+    const json = await res.json();
+    const digest = (json.result || '').trim();
+
+    const today = new Date();
+    const html = `
+      <div style="padding:2px 0 8px;">
+        <div style="font-size:10px;color:var(--muted);margin-bottom:8px;font-family:'DM Mono',monospace;">${today.toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long'})}</div>
+        <div style="font-size:12px;color:var(--text);line-height:1.7;">${digest}</div>
+        <button onclick="sessionStorage.removeItem('batchd_weekly_digest');loadWeeklyDigest(this.closest('[id]')||document.getElementById('weekly-digest-panel'))" style="font-size:10px;color:var(--muted);background:none;border:none;cursor:pointer;padding:8px 0 0;text-decoration:underline;">Regenerate</button>
+      </div>`;
+    sessionStorage.setItem('batchd_weekly_digest', html);
+    containerEl.innerHTML = html;
+  } catch(e) {
+    containerEl.innerHTML = `<div style="font-size:11px;color:var(--muted);">Digest unavailable — ${e.message}</div>`;
+  }
+}
+
 async function renderOverview() {
   if (_userRole === 'store_manager') { return renderStoreManagerOverview(); }
   const el = document.getElementById('main-content');
@@ -828,7 +1344,7 @@ async function renderOverview() {
     const activeRecallEvents = recallEvents.filter(e => !e.is_drill);
     // A recall is "relevant" if: (a) it's pushed to us, or (b) the lot matches something we have
     const relevantRecalls = activeRecallEvents; // all pushed to us are relevant by definition
-    const exposedShipments = shipments.filter(s => s.lot_number && relevantRecalls.some(r => r.lot_number === s.lot_number));
+    const exposedShipments = shipments.filter(s => s.lot_number && relevantRecalls.some(r => lotsMatch(r.lot_number, s.lot_number)));
 
     // ── Acknowledgement analysis ──────────────────────────────
     const totalAcks    = acks.length;
@@ -897,7 +1413,76 @@ async function renderOverview() {
     }
 
     // ── Render ────────────────────────────────────────────────
-    const fmtTime = d => {
+    // ── Risk signals ─────────────────────────────────────────
+    const days14 = new Date(Date.now() - 14 * 86400000).toISOString();
+    const darkStores     = storeHealth.filter(s => s.status === 'dark');
+    const slowStores     = storeHealth.filter(s => s.status === 'slow');
+    const overdueAcksAll = acks.filter(a => a.status === 'notified' && (Date.now() - new Date(a.updated_at)) > 4*3600000);
+
+    // Check for drill overdue - fetch from drills table
+    const { data: recentDrills } = await sb.from('mock_recall_drills')
+      .select('id, created_at')
+      .eq('retailer_org_id', _orgId)
+      .gte('created_at', new Date(Date.now() - 365 * 86400000).toISOString())
+      .limit(1);
+    const drillOverdue = !recentDrills?.length;
+
+    // Fetch complaint clusters
+    const { data: recentComplaints } = await sb.from('complaints')
+      .select('id, product_name, triage_level, created_at')
+      .eq('receiving_org_id', _orgId)
+      .gte('created_at', new Date(Date.now() - 7 * 86400000).toISOString())
+      .not('status', 'in', '("closed","resolved")');
+    const complaintGroups = {};
+    (recentComplaints||[]).forEach(c => {
+      const k = (c.product_name||'Unknown').toLowerCase().split(' ')[0];
+      if (!complaintGroups[k]) complaintGroups[k] = { name: c.product_name, count: 0 };
+      complaintGroups[k].count++;
+    });
+    const complaintClusters = Object.values(complaintGroups).filter(g => g.count >= 2);
+
+    // Investigations awaiting response past deadline
+    const { data: overdueInvs } = await sb.from('investigation_requests')
+      .select('id, product_name, deadline_at')
+      .in('manufacturer_id', partners.filter(p=>p.status==='active').map(p=>p.organisations?.id).filter(Boolean))
+      .lt('deadline_at', new Date().toISOString())
+      .eq('status', 'open')
+      .limit(5);
+
+    const riskSignals = [
+      ...darkStores.map(s => ({
+        level: 'high', icon: '🔴',
+        title: `${s.name} — dark store`,
+        detail: `No scans in ${s.daysSince} day${s.daysSince!==1?'s':''} · last active ${s.lastScan ? new Date(s.lastScan).toLocaleDateString('en-GB',{day:'numeric',month:'short'}) : 'never'}`,
+        action: `showPanel('stores')`, cta: 'View stores',
+      })),
+      ...overdueAcksAll.slice(0,3).map(a => ({
+        level: 'high', icon: '⏱',
+        title: `Recall response overdue`,
+        detail: `Store acknowledgement stuck at "notified" for ${Math.round((Date.now()-new Date(a.updated_at))/3600000)}h`,
+        action: `showPanel('recalls')`, cta: 'View recalls',
+      })),
+      ...complaintClusters.map(g => ({
+        level: 'warn', icon: '⚠',
+        title: `${g.count} complaints — ${g.name}`,
+        detail: `${g.count} complaints about "${g.name}" in the last 7 days — potential pattern`,
+        action: `showPanel('triage')`, cta: 'Review complaints',
+      })),
+      ...(drillOverdue ? [{
+        level: 'warn', icon: '🎯',
+        title: 'Mock recall drill overdue',
+        detail: 'No drill conducted in the last 12 months — required by most frameworks',
+        action: null, cta: null,
+      }] : []),
+      ...((overdueInvs||[]).map(i => ({
+        level: 'warn', icon: '🔍',
+        title: `Investigation deadline passed`,
+        detail: `${i.product_name} — deadline was ${new Date(i.deadline_at).toLocaleDateString('en-GB',{day:'numeric',month:'short'})}`,
+        action: `showPanel('investigations')`, cta: 'View investigations',
+      }))),
+    ];
+
+        const fmtTime = d => {
       if (!d) return '—';
       const ms = now - new Date(d);
       if (ms < 3600000) return Math.floor(ms/60000) + 'm ago';
@@ -952,6 +1537,18 @@ async function renderOverview() {
       </div>
 
     </div>
+
+    <!-- ── Risk signals ── -->
+    ${riskSignals.length > 0 ? `
+    <div style="margin-bottom:16px;">
+      <div style="font-size:10px;font-weight:600;letter-spacing:0.09em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;display:flex;align-items:center;gap:6px;">
+        <div style="width:6px;height:6px;border-radius:50%;background:var(--danger);animation:blink 1.2s ease-in-out infinite;"></div>
+        Live risk signals — ${riskSignals.length} item${riskSignals.length!==1?'s':''} requiring attention
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;">
+        ${riskSignals.map(s => '<div style="background:var(--surface);border:1px solid '+(s.level==='high'?'rgba(255,92,92,0.25)':'rgba(245,166,35,0.2)')+';border-radius:10px;padding:12px 14px;display:flex;align-items:flex-start;gap:10px;"><div style="font-size:16px;flex-shrink:0;margin-top:1px;">'+s.icon+'</div><div style="flex:1;min-width:0;"><div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:2px;">'+s.title+'</div><div style="font-size:11px;color:var(--muted);line-height:1.4;">'+s.detail+'</div></div>'+(s.action?'<button onclick="'+s.action+'" style="font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid var(--glass-border);background:none;color:var(--muted);cursor:pointer;white-space:nowrap;flex-shrink:0;">'+s.cta+'</button>':'')+'</div>').join('')}
+      </div>
+    </div>` : ''}
 
     <!-- ── Main two-column grid ── -->
     <div style="display:grid;grid-template-columns:1fr 380px;gap:16px;margin-bottom:16px;align-items:start;">
@@ -1062,6 +1659,16 @@ async function renderOverview() {
 
       <!-- RIGHT: Status sidebar -->
       <div style="display:flex;flex-direction:column;gap:14px;">
+
+        <!-- Weekly digest -->
+        <div class="panel" id="weekly-digest-panel">
+          <div class="panel-header">
+            <div><div class="panel-title">✦ Weekly digest</div><div class="panel-sub">AI-generated briefing</div></div>
+          </div>
+          <div class="panel-body" id="weekly-digest-content">
+            <div style="font-size:11px;color:var(--muted);">Loading…</div>
+          </div>
+        </div>
 
         <!-- Readiness ring -->
         <div class="panel" onclick="showPanel('compliance')" style="cursor:pointer;">
@@ -1182,6 +1789,9 @@ async function renderOverview() {
 
       </div>
     </div>`;
+
+    // Load weekly digest (cached in sessionStorage for the session)
+    setTimeout(() => loadWeeklyDigest(document.getElementById('weekly-digest-content')), 300);
 
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading dashboard: ${e.message}</div>`;
@@ -1844,7 +2454,7 @@ async function renderTraceability(tab) {
         </div>
       </div>`;
 
-  } else {
+  } else if (activeTab === 'patterns') {
     // Pattern library tab
     const { data: patterns } = await sb.from('code_patterns')
       .select('*')
@@ -1911,7 +2521,51 @@ async function renderTraceability(tab) {
           </table>
         </div>
       </div>`;
-  } // end if/else activeTab
+  } else if (activeTab === 'trace') {
+    el.innerHTML = traceabilityHeader(activeTab) + `
+      <div style="max-width:640px;">
+        <div style="font-size:13px;color:var(--muted);margin-bottom:20px;line-height:1.6;">
+          Enter any lot code to trace the full supply chain — from manufacturer shipment through store receipt, staff scanning, shelf placement, and recall status.
+        </div>
+        <div class="panel" style="margin-bottom:16px;">
+          <div class="panel-body">
+            <div style="display:flex;gap:8px;margin-bottom:10px;">
+              <input id="trace-lot-input" type="text" placeholder="Enter lot code — e.g. L12345, L2024-03-15A, 4F6A1…"
+                style="flex:1;background:var(--input-bg);border:1px solid var(--glass-border);border-radius:8px;padding:10px 14px;font-family:'DM Mono',monospace;font-size:13px;color:var(--text);outline:none;"
+                onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--glass-border)'"
+                onkeydown="if(event.key==='Enter')traceLot()" />
+              <button onclick="traceLot()" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:10px 20px;font-family:'DM Mono',monospace;font-size:12px;font-weight:700;cursor:pointer;">Trace →</button>
+            </div>
+            <div style="font-size:10px;color:var(--muted);">Fuzzy matching — partial codes like "L2024-03" match all variants (L2024-03-15A, L2024-03B, etc.)</div>
+          </div>
+        </div>
+        <div id="trace-result"></div>
+      </div>`;
+
+  } else if (activeTab === 'ask') {
+    const suggestions = ['Which stores scanned this week?','Show lot codes with complaints in last 30 days','Which products have the most scans?','Recalls with incomplete store responses'];
+    el.innerHTML = traceabilityHeader(activeTab) + `
+      <div style="max-width:640px;">
+        <div style="font-size:13px;color:var(--muted);margin-bottom:20px;line-height:1.6;">
+          Ask a question in plain English — Batch'd interprets it, queries your data, and shows the results.
+        </div>
+        <div class="panel" style="margin-bottom:16px;">
+          <div class="panel-body">
+            <div style="display:flex;gap:8px;margin-bottom:10px;">
+              <input id="nl-query-input" type="text" placeholder="e.g. Which stores haven't scanned anything in 2 weeks?"
+                style="flex:1;background:var(--input-bg);border:1px solid var(--glass-border);border-radius:8px;padding:10px 14px;font-family:'Figtree',sans-serif;font-size:13px;color:var(--text);outline:none;"
+                onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--glass-border)'"
+                onkeydown="if(event.key==='Enter')runNLQuery()" />
+              <button onclick="runNLQuery()" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:10px 20px;font-family:'DM Mono',monospace;font-size:12px;font-weight:700;cursor:pointer;">Ask →</button>
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;">
+              ${suggestions.map(q => '<button onclick="document.getElementById(\'nl-query-input\').value=\''+q+'\';runNLQuery()" style="font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid var(--glass-border);background:var(--surface2);color:var(--muted);cursor:pointer;font-family:inherit;">'+q+'</button>').join('')}
+            </div>
+          </div>
+        </div>
+        <div id="nl-result"></div>
+      </div>`;
+  } // end ask tab
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading traceability data: ${e.message}</div>`;
   }
@@ -1977,6 +2631,18 @@ function traceabilityHeader(activeTab) {
             background:${activeTab==='patterns'?'var(--surface)':'none'};
             color:${activeTab==='patterns'?'var(--text)':'var(--muted)'};">
           OCR pattern library
+        </button>
+        <button onclick="renderTraceability('trace')"
+          style="font-family:'DM Mono',monospace;font-size:11px;padding:6px 14px;border-radius:6px;border:none;cursor:pointer;transition:all 0.15s;
+            background:${activeTab==='trace'?'var(--surface)':'none'};
+            color:${activeTab==='trace'?'var(--accent)':'var(--muted)'};">
+          🔍 Trace lot
+        </button>
+        <button onclick="renderTraceability('ask')"
+          style="font-family:'DM Mono',monospace;font-size:11px;padding:6px 14px;border-radius:6px;border:none;cursor:pointer;transition:all 0.15s;
+            background:${activeTab==='ask'?'var(--surface)':'none'};
+            color:${activeTab==='ask'?'var(--accent)':'var(--muted)'};">
+          ✦ Ask
         </button>
       </div>
     </div>`;
@@ -3700,6 +4366,10 @@ function dashPatternAlertHTML(pattern, idx) {
           ${storeStr}
         </div>
         <div style="display:flex;gap:8px;align-items:flex-start;flex-shrink:0;flex-wrap:wrap;">
+          <button onclick="createInvestigationFromPattern(${JSON.stringify(pattern.productName||'')},${JSON.stringify(pattern.lots||'')},${pattern.total},${JSON.stringify(pattern.title)},${JSON.stringify((pattern.complaints||[]).map(c=>c.id))})"
+            style="background:${pattern.colour==='var(--danger)'?'rgba(255,92,92,0.1)':'rgba(245,166,35,0.1)'};border:1px solid ${borderColour};color:${pattern.colour};border-radius:7px;padding:6px 12px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap;">
+            Create investigation →
+          </button>
           <button onclick="notifyManufacturerOfPattern(${JSON.stringify(pattern.productName||'')},${JSON.stringify(pattern.lots||'')},${pattern.total},${JSON.stringify(pattern.title)})"
             style="background:transparent;border:1px solid ${borderColour};color:${pattern.colour};border-radius:7px;padding:6px 12px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap;">
             Notify manufacturer
@@ -4169,7 +4839,16 @@ async function renderDashTriageDetail(el) {
           <button onclick="updateDashTriageStatus('${c.id}','resolved')" style="background:var(--surface);border:1px solid rgba(52,211,153,0.3);color:var(--accent);border-radius:8px;padding:8px 14px;font-size:12px;cursor:pointer;font-family:inherit;">Mark resolved</button>
           <button onclick="updateDashTriageStatus('${c.id}','closed')" style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:8px 14px;font-size:12px;cursor:pointer;font-family:inherit;">Close</button>
         </div>` : ''}
+
+        <!-- Intelligence panel — auto-loads related data -->
+        <div id="triage-intel-panel"></div>
+
       </div>`;
+    // Load intelligence panel async after main render
+    if (c.product_name || c.lot_number) {
+      renderIntelligencePanel('triage-intel-panel', c.product_name, c.lot_number);
+    }
+
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);padding:20px;">Error: ${e.message}</div>`;
   }
@@ -4918,6 +5597,7 @@ async function openDashInvestResponse(invId) {
         </div>
 
         <div id="inv-r-msg" style="display:none;font-size:12px;padding:9px 12px;border-radius:8px;"></div>
+        <div id="inv-intel-container"></div>
 
         <div style="display:flex;gap:8px;justify-content:flex-end;padding-top:4px;">
           <button onclick="document.getElementById('dash-invest-resp-modal').remove()" style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:9px 18px;font-size:13px;cursor:pointer;font-family:inherit;">Cancel</button>
@@ -4927,6 +5607,10 @@ async function openDashInvestResponse(invId) {
     </div>`;
 
   document.body.appendChild(modal);
+  // Load intelligence panel for this investigation's product
+  if (inv.product_name || inv.lot_number) {
+    setTimeout(() => renderIntelligencePanel('inv-intel-container', inv.product_name, inv.lot_number), 150);
+  }
 }
 
 function dashSetInvestFound(found) {

@@ -415,6 +415,110 @@ function buildStepCircles(steps, currentIdx, size) {
 
 
 let _session = null, _orgId = null, _orgName = '', _userRole = null;
+
+// ── Manufacturer intelligence helpers ───────────────────────────
+function lotsMatch(a, b) {
+  if (!a || !b) return false;
+  const clean = s => s.trim().toUpperCase().replace(/[_\s]/g, '-');
+  const ca = clean(a), cb = clean(b);
+  if (ca === cb) return true;
+  if (ca.startsWith(cb) || cb.startsWith(ca)) return true;
+  const stem = s => s.replace(/[-]?\d{2}[:]\d{2}$/, '').replace(/[-]\d{2,4}[A-Z]?$/, '');
+  if (stem(ca) === stem(cb)) return true;
+  if (stem(ca).startsWith(stem(cb)) || stem(cb).startsWith(stem(ca))) return true;
+  return false;
+}
+
+function productNameMatch(a, b) {
+  if (!a || !b) return false;
+  const clean = s => s.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
+  const ca = clean(a), cb = clean(b);
+  if (ca === cb) return true;
+  const words = s => s.split(/\s+/).filter(w => w.length > 2);
+  const wa = words(ca), wb = words(cb);
+  const shared = wa.filter(w => wb.includes(w));
+  return shared.length >= Math.min(2, Math.min(wa.length, wb.length));
+}
+
+async function renderMfrIntelligencePanel(containerId, productName, lotCode) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);padding:10px 0;"><div class="spinner"></div> Scanning records…</div>`;
+  try {
+    const since90 = new Date(Date.now() - 90 * 86400000).toISOString();
+    const queries = [];
+
+    // Shipments this manufacturer sent for this lot
+    if (lotCode) {
+      queries.push(sb.from('shipments').select('id,lot_number,quantity,unit,shipped_at,stores(name),organisations!shipments_retailer_id_fkey(name)').eq('manufacturer_id', _orgId).limit(100));
+    } else {
+      queries.push(Promise.resolve({data:[]}));
+    }
+
+    // Recall events pushed by this manufacturer for this product
+    queries.push(
+      sb.from('recall_events').select('id,product_name,lot_number,severity,reason,is_drill,published_at').eq('source_org_id', _orgId).order('published_at',{ascending:false}).limit(20)
+    );
+
+    // Product lot codes matching
+    if (lotCode || productName) {
+      queries.push(sb.from('product_lots').select('id,lot_number,production_date,expiry_date').eq('manufacturer_id', _orgId).limit(50));
+    } else {
+      queries.push(Promise.resolve({data:[]}));
+    }
+
+    const [shipmentsRes, recallsRes, lotsRes] = await Promise.all(queries);
+
+    const allShipments = shipmentsRes.data || [];
+    const allRecalls   = recallsRes.data   || [];
+    const allLots      = lotsRes.data      || [];
+
+    const matchedShipments = allShipments.filter(s => lotCode && lotsMatch(s.lot_number, lotCode));
+    const matchedRecalls   = allRecalls.filter(r =>
+      (productName && productNameMatch(r.product_name, productName)) ||
+      (lotCode && lotsMatch(r.lot_number, lotCode))
+    );
+    const matchedLots = allLots.filter(l => lotCode && lotsMatch(l.lot_number, lotCode));
+
+    const storesSent = [...new Set(matchedShipments.map(s => s.stores?.name).filter(Boolean))];
+    const totalUnits = matchedShipments.reduce((sum, s) => sum + (s.quantity||0), 0);
+    const fmtDate = d => d ? new Date(d).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : '—';
+
+    el.innerHTML = `
+      <div style="border:1px solid var(--glass-border);border-radius:12px;overflow:hidden;margin-top:16px;">
+        <div style="padding:12px 16px;background:var(--surface2);border-bottom:1px solid var(--glass-border);display:flex;align-items:center;justify-content:space-between;gap:12px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <span style="font-size:11px;font-weight:700;color:var(--text);">INTELLIGENCE — ${productName||lotCode||'Record'}</span>
+          </div>
+          <div style="font-size:10px;color:var(--muted);">${matchedShipments.length} shipments · ${matchedRecalls.length} recall events · ${matchedLots.length} lot records</div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);border-bottom:1px solid var(--glass-border);">
+          <div style="padding:12px 14px;border-right:1px solid var(--glass-border);">
+            <div style="font-size:18px;font-weight:700;color:${matchedShipments.length?'var(--info)':'var(--muted)'};line-height:1;margin-bottom:3px;">${matchedShipments.length}</div>
+            <div style="font-size:10px;color:var(--muted);">Shipments</div>
+          </div>
+          <div style="padding:12px 14px;border-right:1px solid var(--glass-border);">
+            <div style="font-size:18px;font-weight:700;color:${totalUnits?'var(--accent)':'var(--muted)'};line-height:1;margin-bottom:3px;">${totalUnits||'—'}</div>
+            <div style="font-size:10px;color:var(--muted);">Units shipped</div>
+          </div>
+          <div style="padding:12px 14px;">
+            <div style="font-size:18px;font-weight:700;color:${matchedRecalls.length?'var(--danger)':'var(--muted)'};line-height:1;margin-bottom:3px;">${matchedRecalls.length}</div>
+            <div style="font-size:10px;color:var(--muted);">Recall events</div>
+          </div>
+        </div>
+        <div style="padding:12px 16px;display:flex;flex-direction:column;gap:7px;font-size:11px;">
+          ${storesSent.length > 0 ? `<div><strong style="color:var(--text);">Shipped to:</strong> <span style="color:var(--muted);">${storesSent.slice(0,4).join(', ')}${storesSent.length>4?` +${storesSent.length-4} more`:''}</span></div>` : ''}
+          ${matchedLots.length > 0 ? `<div><strong style="color:var(--text);">Lot record:</strong> <span style="color:var(--muted);font-family:'DM Mono',monospace;">${matchedLots[0].lot_number}</span>${matchedLots[0].expiry_date?` · expires ${fmtDate(matchedLots[0].expiry_date)}`:''}</div>` : ''}
+          ${matchedRecalls.length > 0 ? `<div style="color:var(--danger);"><strong>Previously recalled:</strong> ${matchedRecalls[0].product_name} · ${matchedRecalls[0].reason||'—'} · ${fmtDate(matchedRecalls[0].published_at)}</div>` : ''}
+        </div>
+      </div>`;
+  } catch(e) {
+    el.innerHTML = `<div style="font-size:11px;color:var(--muted);padding:10px 0;">Intelligence unavailable: ${e.message}</div>`;
+  }
+}
+
+
 let _selectedSeverity = 'class_ii';
 let _isDrill = false;
 
@@ -3249,6 +3353,11 @@ async function renderInvestigationDetail(el, id) {
   const foundCount = responses.filter(r => r.issue_found).length;
   const totalResponded = responses.length;
 
+  // Auto-trigger AI synthesis when 3+ responses arrive and no summary exists
+  if (totalResponded >= 3 && !inv.findings_summary) {
+    autoSynthesizeInvestigation(id, inv, responses);
+  }
+
   el.innerHTML = `
     <div style="max-width:780px;">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap;">
@@ -3321,6 +3430,7 @@ async function renderInvestigationDetail(el, id) {
         </button>` : ''}
 
       <!-- Responses -->
+      <div id="mfr-inv-intel"></div>
       <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px;">Retailer Responses (${responses.length})</div>
       ${responses.length === 0 ? `
         <div style="background:var(--surface);border:1px solid var(--glass-border);border-radius:10px;padding:24px;text-align:center;font-size:13px;color:var(--muted);">
@@ -3353,6 +3463,35 @@ async function renderInvestigationDetail(el, id) {
         </div>
       `}
     </div>`;
+
+  // Load intelligence panel after render (inside scope where inv is defined)
+  if (inv.product_name || inv.lot_number) {
+    setTimeout(() => renderMfrIntelligencePanel('mfr-inv-intel', inv.product_name, inv.lot_number), 100);
+  }
+}
+
+// Auto-triggers when 3+ responses arrive — no button needed
+async function autoSynthesizeInvestigation(id, inv, responses) {
+  try {
+    const res = await fetch('/.netlify/functions/ai-analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        task: 'synthesize_investigation',
+        data: { investigation: inv, responses },
+      }),
+    });
+    const json = await res.json();
+    const summary = (json.result || '').trim();
+    if (summary) {
+      await sb.from('investigation_requests').update({ findings_summary: summary }).eq('id', id);
+      // Refresh the detail view if still visible
+      const el = document.getElementById('main-content');
+      if (el && _investId === id) renderInvestigationDetail(el, id);
+    }
+  } catch(e) {
+    console.error('Auto-synthesis failed:', e);
+  }
 }
 
 async function generateInvestigationSummary(id) {
