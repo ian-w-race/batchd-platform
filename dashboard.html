@@ -2292,7 +2292,9 @@ async function renderRecalls() {
             <div style="font-size:13px;font-weight:700;color:var(--accent);">Recall response complete</div>
             <div style="font-size:11px;color:var(--muted);margin-top:1px;">All ${evAcks.length} store${evAcks.length!==1?'s':''} confirmed · ${ev.product_name} · Audit trail locked</div>
           </div>
-          <button onclick="generateRecallAuditReport('${p.recall_event_id}','${(ev.product_name||'').replace(/'/g,"\\'")}')" style="font-size:11px;padding:7px 14px;border-radius:7px;border:1px solid rgba(52,211,153,0.35);background:none;color:var(--accent);cursor:pointer;font-family:inherit;font-weight:600;">↓ Full audit report</button>
+          ${isDrill
+            ? `<button onclick="generateDrillCertificate('${p.recall_event_id}')" style="font-size:11px;padding:7px 14px;border-radius:7px;border:1px solid rgba(52,211,153,0.35);background:rgba(52,211,153,0.07);color:var(--accent);cursor:pointer;font-family:inherit;font-weight:600;">🏅 Download certificate</button>`
+            : `<button onclick="generateRecallAuditReport('${p.recall_event_id}','${(ev.product_name||'').replace(/'/g,"\'")}')" style="font-size:11px;padding:7px 14px;border-radius:7px;border:1px solid rgba(52,211,153,0.35);background:none;color:var(--accent);cursor:pointer;font-family:inherit;font-weight:600;">↓ Full audit report</button>`}
         </div>` : ''}
 
         <!-- Recall header -->
@@ -6565,6 +6567,594 @@ async function generateDrillReport(drillId) {
   }
 }
 
+
+
+// ── Mock recall drill certificate ──────────────────────────────
+// Generates a printable certificate of completion for a drill event
+async function generateDrillCertificate(recallEventId) {
+  const btn = event?.target;
+  if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+
+  try {
+    const [evRes, acksRes, orgRes, coordRes] = await Promise.all([
+      sb.from('recall_events').select('*').eq('id', recallEventId).single(),
+      sb.from('recall_acknowledgements')
+        .select('id, status, acknowledged_at, updated_at, stores(name)')
+        .eq('recall_event_id', recallEventId)
+        .eq('organisation_id', _orgId),
+      sb.from('organisations').select('name, contact_email, region').eq('id', _orgId).single(),
+      sb.from('user_settings')
+        .select('recall_coordinator_name, recall_coordinator_contact')
+        .eq('organisation_id', _orgId).limit(1),
+    ]);
+
+    const ev     = evRes.data;
+    const acks   = acksRes.data  || [];
+    const org    = orgRes.data   || {};
+    const coord  = coordRes.data?.[0] || {};
+
+    if (!ev) { showToast('Drill event not found', 'error', 3000); return; }
+
+    const confirmed   = acks.filter(a => a.status === 'confirmed').length;
+    const total       = acks.length;
+    const pct         = total > 0 ? Math.round((confirmed / total) * 100) : 0;
+    const passed      = pct >= 80;
+
+    // Response time: from first ack created_at to last confirmed
+    const ackTimes   = acks.filter(a => a.acknowledged_at).map(a => new Date(a.acknowledged_at));
+    const startTime  = ev.published_at ? new Date(ev.published_at) : null;
+    const lastConfirm = ackTimes.length ? new Date(Math.max(...ackTimes)) : null;
+    const responseHours = startTime && lastConfirm
+      ? ((lastConfirm - startTime) / 3600000).toFixed(1)
+      : null;
+
+    const isUS       = (org.region || _orgRegion) === 'us';
+    const regRef     = isUS
+      ? 'FDA FSMA Section 204 / 21 CFR 117.126'
+      : 'EU Regulation 178/2002 Art. 19 / Matloven §16';
+    const fmtDate    = d => d ? new Date(d).toLocaleDateString('en-GB', {day:'numeric',month:'long',year:'numeric'}) : '—';
+    const fmtDT      = d => d ? new Date(d).toLocaleString('en-GB', {day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+    const drillDate  = fmtDate(ev.published_at || ev.created_at);
+    const today      = fmtDate(new Date());
+
+    // Unique cert reference
+    const certRef = 'BATCHD-DRILL-' + recallEventId.slice(0,8).toUpperCase() + '-' + new Date(ev.published_at||Date.now()).getFullYear();
+
+    const storeRows = acks.map(a => `
+      <tr style="border-bottom:1px solid #f0f0f0;">
+        <td style="padding:7px 12px;font-size:11px;color:#333;">${a.stores?.name || '—'}</td>
+        <td style="padding:7px 12px;">
+          <span style="display:inline-block;padding:2px 9px;border-radius:10px;font-size:10px;font-weight:700;
+            background:${a.status==='confirmed'?'#d1fae5':a.status==='notified'?'#fef3c7':'#e0f2fe'};
+            color:${a.status==='confirmed'?'#065f46':a.status==='notified'?'#92400e':'#0c4a6e'};">
+            ${a.status.charAt(0).toUpperCase()+a.status.slice(1)}
+          </span>
+        </td>
+        <td style="padding:7px 12px;font-size:11px;color:#555;">${fmtDT(a.acknowledged_at)}</td>
+      </tr>`).join('');
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Recall Drill Certificate — ${org.name || _orgName}</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700;800;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Figtree', 'Helvetica Neue', Arial, sans-serif;
+    background: #fff;
+    color: #111;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  @media print {
+    @page { margin: 12mm; size: A4; }
+    .no-print { display: none !important; }
+    body { padding: 0; }
+  }
+
+  /* Print bar */
+  .print-bar {
+    background: #34d399;
+    color: #065f46;
+    padding: 11px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-weight: 700;
+    font-size: 13px;
+  }
+  .print-btn {
+    background: #065f46;
+    color: #fff;
+    border: none;
+    border-radius: 7px;
+    padding: 8px 20px;
+    font-family: 'Figtree', sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  /* Page */
+  .page {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 36px 48px 48px;
+  }
+
+  /* Header band */
+  .cert-header {
+    background: #080f12;
+    color: #edfdf8;
+    padding: 28px 36px;
+    border-radius: 12px 12px 0 0;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 20px;
+    margin-bottom: 0;
+  }
+
+  .cert-logo {
+    font-weight: 900;
+    font-size: 18px;
+    color: #34d399;
+    letter-spacing: -0.02em;
+    margin-bottom: 8px;
+  }
+
+  .cert-title {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #6aaf9e;
+    margin-bottom: 6px;
+  }
+
+  .cert-org {
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    color: #edfdf8;
+  }
+
+  .cert-date {
+    font-size: 12px;
+    color: #6aaf9e;
+    margin-top: 6px;
+    font-family: 'DM Mono', monospace;
+  }
+
+  /* Pass badge */
+  .pass-badge {
+    flex-shrink: 0;
+    text-align: center;
+    padding: 16px 22px;
+    border-radius: 10px;
+    border: 2px solid;
+  }
+
+  .pass-badge.pass {
+    background: rgba(52,211,153,0.12);
+    border-color: rgba(52,211,153,0.4);
+  }
+
+  .pass-badge.fail {
+    background: rgba(245,166,35,0.12);
+    border-color: rgba(245,166,35,0.4);
+  }
+
+  .badge-icon {
+    font-size: 28px;
+    line-height: 1;
+    margin-bottom: 6px;
+  }
+
+  .badge-label {
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .pass-badge.pass .badge-label { color: #34d399; }
+  .pass-badge.fail .badge-label { color: #f5a623; }
+
+  .badge-pct {
+    font-size: 11px;
+    margin-top: 3px;
+    font-family: 'DM Mono', monospace;
+  }
+
+  .pass-badge.pass .badge-pct { color: #6aaf9e; }
+  .pass-badge.fail .badge-pct { color: #b45309; }
+
+  /* Metrics band */
+  .metrics-band {
+    background: #f8fffe;
+    border: 1px solid #e0f2ed;
+    border-top: none;
+    padding: 20px 36px;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0;
+  }
+
+  .metric {
+    text-align: center;
+    padding: 8px 12px;
+    border-right: 1px solid #e0f2ed;
+  }
+
+  .metric:last-child { border-right: none; }
+
+  .metric-val {
+    font-size: 28px;
+    font-weight: 800;
+    color: #065f46;
+    letter-spacing: -0.03em;
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+
+  .metric-val.warn { color: #92400e; }
+
+  .metric-lbl {
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #6b7280;
+  }
+
+  /* Body */
+  .cert-body {
+    border: 1px solid #e0f2ed;
+    border-top: none;
+    border-radius: 0 0 12px 12px;
+    overflow: hidden;
+    margin-bottom: 24px;
+  }
+
+  /* Declaration */
+  .declaration {
+    padding: 20px 28px;
+    background: #fff;
+    border-bottom: 1px solid #f0f0f0;
+    font-size: 13px;
+    color: #374151;
+    line-height: 1.7;
+  }
+
+  .declaration strong { color: #111; }
+
+  /* Drill details */
+  .drill-details {
+    padding: 18px 28px;
+    background: #f9fafb;
+    border-bottom: 1px solid #f0f0f0;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .detail-row {
+    display: flex;
+    gap: 8px;
+    font-size: 11px;
+  }
+
+  .detail-key {
+    color: #9ca3af;
+    min-width: 120px;
+    font-weight: 600;
+  }
+
+  .detail-val {
+    color: #374151;
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+  }
+
+  /* Store table */
+  .store-section {
+    padding: 18px 28px 0;
+  }
+
+  .section-heading {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #9ca3af;
+    margin-bottom: 10px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 0;
+  }
+
+  thead th {
+    background: #f3f4f6;
+    padding: 7px 12px;
+    text-align: left;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #6b7280;
+    border-bottom: 1px solid #e5e7eb;
+  }
+
+  /* Assessment */
+  .assessment {
+    padding: 14px 28px 18px;
+    margin: 0;
+  }
+
+  .assessment-box {
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+
+  .assessment-box.pass {
+    background: #f0fdf4;
+    border-left: 3px solid #34d399;
+    color: #065f46;
+  }
+
+  .assessment-box.fail {
+    background: #fffbeb;
+    border-left: 3px solid #f5a623;
+    color: #92400e;
+  }
+
+  /* Coordinator + Signature */
+  .signature-section {
+    margin-top: 24px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+
+  .sig-box {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 16px;
+  }
+
+  .sig-label {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #9ca3af;
+    margin-bottom: 8px;
+  }
+
+  .sig-name {
+    font-size: 14px;
+    font-weight: 700;
+    color: #111;
+    margin-bottom: 2px;
+  }
+
+  .sig-contact {
+    font-size: 11px;
+    color: #6b7280;
+    font-family: 'DM Mono', monospace;
+  }
+
+  .sig-line {
+    height: 1px;
+    background: #e5e7eb;
+    margin: 20px 0 8px;
+  }
+
+  .sig-placeholder {
+    height: 36px;
+    border-bottom: 1px solid #d1d5db;
+    margin-bottom: 6px;
+  }
+
+  .sig-under {
+    font-size: 10px;
+    color: #9ca3af;
+  }
+
+  /* Ref footer */
+  .cert-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 24px;
+    padding-top: 16px;
+    border-top: 1px solid #e5e7eb;
+    font-size: 10px;
+    color: #9ca3af;
+  }
+
+  .cert-ref {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: #6b7280;
+    background: #f3f4f6;
+    padding: 3px 8px;
+    border-radius: 4px;
+  }
+
+  .regulatory-footnote {
+    margin-top: 16px;
+    font-size: 10px;
+    color: #9ca3af;
+    line-height: 1.7;
+    padding: 10px 14px;
+    background: #fafafa;
+    border: 1px solid #f0f0f0;
+    border-radius: 6px;
+  }
+</style>
+</head>
+<body>
+
+<div class="no-print print-bar">
+  <span>🏅 Recall Drill Certificate — ready to print or save as PDF</span>
+  <button class="print-btn" onclick="window.print()">Print / Save PDF</button>
+</div>
+
+<div class="page">
+
+  <!-- Certificate header -->
+  <div class="cert-header">
+    <div>
+      <div class="cert-logo">Batch'd</div>
+      <div class="cert-title">Recall Readiness Certificate</div>
+      <div class="cert-org">${org.name || _orgName}</div>
+      <div class="cert-date">Drill conducted ${drillDate}</div>
+    </div>
+    <div class="pass-badge ${passed ? 'pass' : 'fail'}">
+      <div class="badge-icon">${passed ? '✅' : '⚠️'}</div>
+      <div class="badge-label">${passed ? 'PASSED' : 'PARTIAL'}</div>
+      <div class="badge-pct">${pct}% completion</div>
+    </div>
+  </div>
+
+  <!-- Key metrics -->
+  <div class="metrics-band">
+    ${[
+      { val: total,                                lbl: 'Stores notified',   warn: false },
+      { val: confirmed,                            lbl: 'Stores confirmed',  warn: confirmed < total },
+      { val: responseHours ? responseHours+'h' : '—', lbl: 'Response time', warn: parseFloat(responseHours) > 4 },
+      { val: pct + '%',                            lbl: 'Completion rate',  warn: pct < 80 },
+    ].map(m => `<div class="metric">
+      <div class="metric-val${m.warn?' warn':''}">${m.val}</div>
+      <div class="metric-lbl">${m.lbl}</div>
+    </div>`).join('')}
+  </div>
+
+  <div class="cert-body">
+
+    <!-- Declaration -->
+    <div class="declaration">
+      This certificate confirms that <strong>${org.name || _orgName}</strong> conducted a
+      <strong>mock product recall drill</strong> on <strong>${drillDate}</strong> using the
+      Batch'd recall management platform. The drill simulated a manufacturer recall notification
+      distributed across the organisation's store network, testing the full 5-step response chain:
+      Notified → Acknowledged → Pulled → Disposed → Confirmed.
+      ${passed
+        ? `<br><br>The organisation <strong>met the minimum completion threshold</strong> (80% of stores fully confirmed).
+           This drill satisfies recall readiness exercise requirements under <strong>${regRef}</strong>.`
+        : `<br><br>The organisation <strong>did not meet the minimum completion threshold</strong> of 80% store confirmation.
+           Targeted follow-up and retraining are recommended before the next drill.`}
+    </div>
+
+    <!-- Drill details -->
+    <div class="drill-details">
+      ${[
+        { k: 'Simulated product',  v: ev.product_name || '—' },
+        { k: 'Lot number',         v: ev.lot_number    || 'Not specified' },
+        { k: 'Simulated severity', v: ev.severity      || 'Simulated recall' },
+        { k: 'Scenario reason',    v: ev.reason        || 'Mock drill exercise' },
+        { k: 'Drill initiated',    v: fmtDT(ev.published_at || ev.created_at) },
+        { k: 'Last store response',v: lastConfirm ? fmtDT(lastConfirm) : '—' },
+        { k: 'Regulatory basis',   v: regRef },
+        { k: 'Certificate ref',    v: certRef },
+      ].map(d => `<div class="detail-row">
+        <span class="detail-key">${d.k}</span>
+        <span class="detail-val">${d.v}</span>
+      </div>`).join('')}
+    </div>
+
+    <!-- Store table -->
+    <div class="store-section">
+      <div class="section-heading">Store response record — ${total} location${total!==1?'s':''}</div>
+      <table>
+        <thead>
+          <tr>
+            <th>Store name</th>
+            <th>Final status</th>
+            <th>Acknowledgement timestamp</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${storeRows || `<tr><td colspan="3" style="padding:12px;font-size:11px;color:#9ca3af;font-style:italic;">No store acknowledgement records for this drill.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Assessment -->
+    <div class="assessment">
+      <div class="assessment-box ${passed ? 'pass' : 'fail'}">
+        <strong>Assessment: </strong>
+        ${pct === 100
+          ? `All ${total} stores completed the full 5-step recall response chain. Recall procedures are functioning as required by ${regRef}.`
+          : pct >= 80
+            ? `${confirmed} of ${total} stores (${pct}%) completed the full response chain. The minimum 80% threshold was met. ${total-confirmed} location${total-confirmed!==1?'s':''} did not reach Confirmed status — review and follow up before the next drill.`
+            : `Only ${confirmed} of ${total} stores (${pct}%) completed the full response chain. The 80% threshold was not met. Targeted retraining is required. A repeat drill should be conducted within 30 days.`}
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Coordinator + signature -->
+  <div class="signature-section">
+    <div class="sig-box">
+      <div class="sig-label">Recall coordinator (responsible party)</div>
+      ${coord.recall_coordinator_name
+        ? `<div class="sig-name">${coord.recall_coordinator_name}</div>
+           <div class="sig-contact">${coord.recall_coordinator_contact || ''}</div>`
+        : `<div style="font-size:12px;color:#9ca3af;font-style:italic;">No coordinator assigned — set one in Settings</div>`}
+      <div class="sig-line"></div>
+      <div class="sig-placeholder"></div>
+      <div class="sig-under">Coordinator signature &amp; date</div>
+    </div>
+    <div class="sig-box">
+      <div class="sig-label">Authorised by (management sign-off)</div>
+      <div style="height:18px;"></div>
+      <div class="sig-line"></div>
+      <div class="sig-placeholder"></div>
+      <div class="sig-under">Name, title &amp; date</div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div class="cert-footer">
+    <span>Batch'd · batchd.no · ${org.name || _orgName}</span>
+    <span class="cert-ref">${certRef}</span>
+    <span>Generated ${today}</span>
+  </div>
+
+  <div class="regulatory-footnote">
+    This certificate documents a recall readiness exercise conducted via the Batch'd platform.
+    It should be retained as part of your food safety management records.
+    Under ${regRef}, organisations are expected to demonstrate recall readiness through periodic testing of procedures.
+    This document does not constitute legal advice. Compliance responsibility remains with ${org.name || _orgName}.
+    For Mattilsynet submissions or FDA audit purposes, retain this document alongside your Batch'd audit trail export.
+  </div>
+
+</div>
+</body>
+</html>`;
+
+    const win = window.open('', '_blank');
+    win.document.write(html);
+    win.document.close();
+
+  } catch(e) {
+    showToast('Error generating certificate: ' + e.message, 'error', 4000);
+    console.error('generateDrillCertificate error:', e);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🏅 Download certificate'; }
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════
 // GAP 3: COMPLAINT PATTERN DETECTION
