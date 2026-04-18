@@ -2267,13 +2267,16 @@
   }
 
 
-  /* ── NO-SCROLL SCAN FLOW ── */
+  /* ── NO-SCROLL SCAN FLOW — camera-first overlay design ── */
   @media (max-width: 600px) {
-    body { overflow: hidden; }
 
+    /* Prevent page scroll when on scan view */
+    body.scan-active { overflow: hidden; }
+
+    /* Scan view: fixed fullscreen below header */
     #view-scan {
       position: fixed;
-      top: 54px; /* header height */
+      top: 54px;
       left: 0; right: 0; bottom: 0;
       display: flex !important;
       flex-direction: column;
@@ -2283,28 +2286,18 @@
       background: var(--bg);
     }
 
-    /* Scan top bar — compact single row */
+    /* ── Top bar — single tight row ── */
     .scan-top-bar {
       flex-shrink: 0;
-      padding: 6px 10px;
-      gap: 3px;
+      padding: 5px 10px;
+      gap: 0;
       background: var(--bg);
     }
+    .stb-row { gap: 5px; }
+    .stb-sq { height: 38px !important; border-radius: 8px !important; }
+    .stb-panel { padding: 5px 10px !important; }
 
-    .stb-row {
-      gap: 5px;
-    }
-
-    .stb-sq {
-      height: 40px !important;
-      border-radius: 9px !important;
-    }
-
-    .stb-panel {
-      padding: 6px 10px !important;
-    }
-
-    /* Flow card fills remaining space */
+    /* ── Flow card: fills remaining space ── */
     .flow-card {
       flex: 1;
       display: flex;
@@ -2315,36 +2308,28 @@
       border-left: none;
       border-right: none;
       border-bottom: none;
+      border-top: 1px solid var(--border);
     }
 
-    /* Stepper — compact */
+    /* ── Stepper: dots only, no labels, minimal height ── */
     .flow-stepper {
-      padding: 10px 16px 6px !important;
+      padding: 8px 24px 6px !important;
       flex-shrink: 0;
+      gap: 0;
     }
-
     .flow-step-dot {
-      width: 24px !important;
-      height: 24px !important;
-      font-size: 11px !important;
+      width: 22px !important;
+      height: 22px !important;
+      font-size: 10px !important;
     }
+    .flow-step-label { display: none !important; }
+    .flow-step:not(:last-child)::after { top: 11px !important; }
 
-    .flow-step-label {
-      font-size: 9px !important;
-      letter-spacing: 0.04em !important;
-    }
+    /* ── Phase header: hidden on mobile (stepper + overlaid title does the job) ── */
+    .flow-phase-header { display: none !important; }
 
-    .flow-step:not(:last-child)::after {
-      top: 12px !important;
-    }
-
-    /* Phase fills remaining space */
-    .flow-phase {
-      flex: 1;
-      min-height: 0;
-      overflow: hidden;
-    }
-
+    /* ── Phase: fills remaining after stepper ── */
+    .flow-phase { flex: 1; min-height: 0; overflow: hidden; }
     .flow-phase.active {
       display: flex !important;
       flex-direction: column;
@@ -2353,114 +2338,166 @@
       overflow: hidden;
     }
 
-    /* Phase header — very compact */
-    .flow-phase-header {
-      padding: 8px 14px 4px !important;
-      margin-top: 0 !important;
-      border-top: 1px solid var(--border);
-      flex-shrink: 0;
-    }
-
-    .flow-phase-title {
-      font-size: 14px !important;
-    }
-
-    .flow-phase-sub {
-      font-size: 11px !important;
-      margin-top: 1px !important;
-    }
-
-    /* Phase body — fills remaining, scrollable only if needed */
+    /* ── Phase body: NO padding, NO gap, flex column ── */
     .flow-phase-body {
       flex: 1;
       min-height: 0;
-      overflow-y: auto;
-      padding: 8px 12px 10px !important;
-      gap: 8px !important;
+      overflow: hidden;
+      padding: 0 !important;
+      gap: 0 !important;
       display: flex;
       flex-direction: column;
     }
 
-    /* Camera fills available space */
+    /* ── Camera wraps fill flex space, contain overlays ── */
+    #p1-label-wrap,
+    #p1-barcode-wrap {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+
     .camera-wrap {
       flex: 1 !important;
       aspect-ratio: unset !important;
       max-height: none !important;
-      min-height: 120px;
+      min-height: 0;
+      border-radius: 0 !important;
+      box-shadow: none !important;
+    }
+
+    /* ── Mode toggle: glassy overlay at top of camera area ── */
+    .mode-toggle {
+      position: absolute !important;
+      top: 8px !important;
+      left: 8px !important;
+      right: auto !important;
+      z-index: 20 !important;
+      background: transparent !important;
+      border: none !important;
+      padding: 0 !important;
+      flex-shrink: 0 !important;
+      display: flex !important;
+      gap: 5px !important;
+    }
+    .mode-btn {
+      background: rgba(8,15,18,0.72) !important;
+      backdrop-filter: blur(10px) !important;
+      border: 1px solid rgba(255,255,255,0.14) !important;
+      color: rgba(255,255,255,0.75) !important;
+      padding: 6px 10px !important;
+      font-size: 11px !important;
+      min-height: 32px !important;
+      border-radius: 8px !important;
+    }
+    .mode-btn.active {
+      background: rgba(52,211,153,0.28) !important;
+      border-color: rgba(52,211,153,0.55) !important;
+      color: #34d399 !important;
+    }
+    [data-theme="light"] .mode-btn {
+      background: rgba(255,255,255,0.82) !important;
+      border-color: rgba(7,122,85,0.3) !important;
+      color: var(--muted) !important;
+    }
+    [data-theme="light"] .mode-btn.active {
+      background: rgba(7,122,85,0.18) !important;
+      color: var(--accent) !important;
+    }
+
+    /* ── Capture button: overlaid at bottom of camera ── */
+    .btn-row {
+      position: absolute !important;
+      bottom: 10px !important;
+      left: 10px !important;
+      right: 10px !important;
+      z-index: 20 !important;
+      flex-shrink: 0 !important;
+      gap: 8px !important;
+    }
+    .btn-row .btn {
+      background: rgba(52,211,153,0.92) !important;
+      color: #080f12 !important;
+      border: none !important;
+      font-weight: 700 !important;
+      min-height: 46px !important;
+      font-size: 13px !important;
+      border-radius: 12px !important;
+      backdrop-filter: blur(8px) !important;
+    }
+    .btn-row .btn-ghost {
+      background: rgba(8,15,18,0.65) !important;
+      color: rgba(255,255,255,0.8) !important;
+      border: 1px solid rgba(255,255,255,0.18) !important;
+    }
+    [data-theme="light"] .btn-row .btn {
+      background: rgba(7,122,85,0.9) !important;
+      color: #fff !important;
+    }
+    [data-theme="light"] .btn-row .btn-ghost {
+      background: rgba(255,255,255,0.85) !important;
+      color: var(--text) !important;
+      border-color: var(--border) !important;
+    }
+
+    /* ── Phase 1 product field: slim strip below camera ── */
+    .flow-phase-body > .field {
+      flex-shrink: 0 !important;
+      padding: 7px 10px 0 !important;
+      margin: 0 !important;
+    }
+    .flow-phase-body > .field label { display: none !important; }
+    .flow-phase-body > .field input {
+      font-size: 15px !important;
+      padding: 10px 12px !important;
       border-radius: 10px !important;
     }
 
-    /* Mode toggle — compact */
-    .mode-toggle {
-      flex-shrink: 0 !important;
-    }
-
-    /* Product name field — compact */
-    .flow-phase-body .field {
-      flex-shrink: 0;
-    }
-
-    .flow-phase-body .field input {
-      padding: 9px 12px !important;
-      font-size: 14px !important;
-    }
-
-    /* Next button — compact but full-width, always visible at bottom */
+    /* ── Next / confirm button: slim at very bottom ── */
     .btn-next {
       flex-shrink: 0 !important;
-      padding: 13px 20px !important;
-      min-height: 44px !important;
-      margin-top: auto !important;
+      margin: 6px 10px 8px !important;
+      padding: 13px 16px !important;
+      min-height: 46px !important;
+      border-radius: 12px !important;
+      font-size: 13px !important;
     }
 
-    /* Phase 1 label area photo — tight */
-    #p1-label-wrap .camera-wrap { flex: 1; }
-    #p1-barcode-wrap .camera-wrap { flex: 1; }
-
-    /* Mode toggle buttons — smaller */
-    .mode-btn {
-      padding: 8px 12px !important;
-      font-size: 11px !important;
-      min-height: 36px !important;
-    }
-
-    /* Capture / retake buttons — compact */
-    .btn-row {
-      flex-shrink: 0 !important;
-    }
-    .btn-row .btn {
-      min-height: 40px !important;
-      padding: 8px 14px !important;
-      font-size: 12px !important;
-    }
-
-    /* OCR result panel — compact */
+    /* ── Phase 2: OCR result strip ── */
     .ocr-result {
       flex-shrink: 0 !important;
-      padding: 10px 12px !important;
+      padding: 8px 10px !important;
     }
 
-    /* Phase 3 review grid — compact */
+    /* ── Phase 3: compact review, hide non-critical fields ── */
+    #field-notes { display: none !important; }
+    #field-supplier { display: none !important; }
+    .divider { display: none !important; }
+
     .review-grid {
       flex-shrink: 0 !important;
+      padding: 8px 10px 0 !important;
     }
+    .review-row { padding: 3px 0 !important; }
+    .review-thumb { display: none !important; }
+    .review-fields { width: 100% !important; }
 
-    /* Phase 3 non-essential fields — reduced */
-    #field-notes, #field-supplier, #field-quantity-wrap {
-      display: none;  /* hidden on mobile for speed — still saved if filled on desktop */
+    /* Phase 3 body — allow scroll only here (user confirming details) */
+    #phase-3 .flow-phase-body {
+      overflow-y: auto !important;
+      padding: 0 0 8px !important;
     }
+    #phase-3 .flow-phase-body > .field {
+      padding: 6px 10px 0 !important;
+    }
+    #phase-3 .flow-phase-body > .field label { display: block !important; }
+    #field-quantity-wrap { display: block !important; }
 
-    /* Show units field only (critical) */
-    #field-quantity-wrap {
-      display: block !important;
-    }
-
-    .review-row {
-      padding: 4px 0 !important;
-    }
   }
 
-  /* ── MANAGER VIEW ─────────────────────────────── */
+    /* ── MANAGER VIEW ─────────────────────────────── */
   .manager-view {
     max-width: 860px;
     margin: 0 auto;
@@ -3340,27 +3377,11 @@
 
 
 
-    <!-- Active Recalls -->
-    <div class="settings-section">
-      <div class="settings-section-header">
-        <div class="settings-section-title" data-i18n="settings.activeRecalls">Active Recalls</div>
-        <div class="settings-section-sub"><span data-i18n="settings.activeRecallsSub">Recalls currently being checked against your scan history.</span></div>
-      </div>
-      <div class="settings-section-body">
-        <div style="display:flex;gap:8px;margin-bottom:8px;">
-          <input id="recall-search" type="text" placeholder="Search recalls…" oninput="filterRecallsList()"
-            style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:7px 10px;color:var(--text);font-size:13px;font-family:inherit;outline:none;">
-          <button onclick="loadRecallsList()" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:7px 12px;color:var(--muted);font-size:12px;cursor:pointer;white-space:nowrap;">↻ Refresh</button>
-        </div>
-        <div id="recall-source-filters" style="display:flex;gap:5px;margin-bottom:10px;flex-wrap:wrap;"></div>
-        <div class="recall-list" id="settings-recall-list">
-          <div style="font-size:13px;color:var(--muted);text-align:center;padding:12px 0;">Loading recalls…</div>
-        </div>
-        <div id="recall-list-footer" style="display:none;margin-top:8px;text-align:center;display:flex;gap:8px;justify-content:center;">
-          <button id="recall-show-more" onclick="showMoreRecalls()" style="background:transparent;border:1px solid var(--border);border-radius:8px;padding:6px 16px;font-size:12px;color:var(--muted);cursor:pointer;font-family:inherit;">Show more</button>
-          <button id="recall-show-less" onclick="showLessRecalls()" style="display:none;background:transparent;border:1px solid var(--border);border-radius:8px;padding:6px 16px;font-size:12px;color:var(--muted);cursor:pointer;font-family:inherit;">Show less</button>
-        </div>
-      </div>
+    <!-- Active Recalls moved to Recalls view — hidden stub keeps JS compat -->
+    <div style="display:none;">
+      <div class="recall-list" id="settings-recall-list"></div>
+      <div id="recall-source-filters"></div>
+      <div id="recall-list-footer"><button id="recall-show-more"></button><button id="recall-show-less"></button></div>
     </div>
 
 
@@ -6427,6 +6448,7 @@ function showView(view) {
     if (bview) b.classList.toggle('active', bview[1] === view);
   });
   document.getElementById('view-scan').style.display = view === 'scan' ? 'flex' : 'none';
+  document.body.classList.toggle('scan-active', view === 'scan');
   document.getElementById('view-history').style.display = view === 'history' ? 'block' : 'none';
   const recallsView = document.getElementById('view-recalls');
   if (recallsView) recallsView.style.display = view === 'recalls' ? 'block' : 'none';
@@ -15916,13 +15938,13 @@ function updateDrawerAccount(email, region) {
   if (regionEl) regionEl.textContent = region === 'us' ? 'United States' : 'Norway / EU';
 }
 
-// ── Recalls view ─────────────────────────────────────────────
+// ── Recalls view — cross-referenced with org scan history ─────
 async function loadRecallsView() {
   const container = document.getElementById('recalls-list-container');
-  const loading   = document.getElementById('recalls-loading');
   if (!container) return;
 
-  // Sync auto-recall banner if matches exist
+  container.innerHTML = '<div style="text-align:center;padding:32px 16px;color:var(--muted);font-size:13px;"><div class="spinner" style="margin:0 auto 10px;"></div>Checking your scan history against active recalls\u2026</div>';
+
   const autoBanner = document.getElementById('recalls-auto-banner');
   const autoText   = document.getElementById('recalls-auto-text');
   const srcText    = document.getElementById('auto-recall-text');
@@ -15932,65 +15954,89 @@ async function loadRecallsView() {
   }
 
   try {
+    const { data: scans } = await sb.from('scans')
+      .select('product_name, lot_number, barcode_number')
+      .eq('organisation_id', _currentOrgId)
+      .not('product_name', 'is', null);
+
+    const scannedProducts = new Set((scans || []).map(s => (s.product_name || '').toLowerCase().trim()));
+    const scannedLots     = new Set((scans || []).map(s => (s.lot_number   || '').toLowerCase().trim()).filter(Boolean));
+    const scannedBarcodes = new Set((scans || []).map(s => (s.barcode_number || '').toLowerCase().trim()).filter(Boolean));
+
     const [recallsRes, eventsRes] = await Promise.all([
-      sb.from('recalls').select('*').eq('active', true).eq('organisation_id', _currentOrgId).order('created_at', { ascending: false }),
+      sb.from('recalls').select('*').eq('active', true).eq('organisation_id', _currentOrgId),
       _currentOrgId
         ? sb.from('recall_distributions')
-            .select('recall_event_id, distributed_at, recall_events!inner(id, product_name, lot_number, severity, reason, published_at, is_drill)')
+            .select('recall_event_id, recall_events!inner(id, product_name, lot_number, barcode, severity, reason, published_at, is_drill)')
             .eq('retailer_org_id', _currentOrgId)
             .eq('recall_events.is_drill', false)
         : Promise.resolve({ data: [] }),
     ]);
 
-    const manualRecalls = recallsRes.data || [];
-    // Deduplicate pushed recalls
+    const manualRecalls = (recallsRes.data || []).map(r => ({ ...r, _type: 'manual' }));
     const seen = new Set();
-    const pushed = (eventsRes.data || []).filter(d => {
+    const pushedRecalls = (eventsRes.data || []).filter(d => {
       if (seen.has(d.recall_event_id)) return false;
       seen.add(d.recall_event_id); return true;
-    }).map(d => ({ ...d.recall_events, _type: 'pushed', _dist: d }));
+    }).map(d => ({ ...d.recall_events, barcode_number: d.recall_events.barcode, description: d.recall_events.reason, _type: 'pushed' }));
 
-    const allRecalls = [
-      ...pushed.map(r => ({ ...r, _type: 'pushed' })),
-      ...manualRecalls.map(r => ({ ...r, _type: 'manual' }))
-    ];
+    const allRecalls = [...pushedRecalls, ...manualRecalls];
 
-    // Update drawer badge
-    const badge = document.getElementById('drawer-recall-badge');
-    if (badge) {
-      if (allRecalls.length > 0) {
-        badge.textContent = allRecalls.length;
-        badge.style.display = 'inline';
-      } else {
-        badge.style.display = 'none';
+    function recallMatchesOrgScans(r) {
+      const rLot     = (r.lot_number || '').toLowerCase().trim();
+      const rBarcode = (r.barcode_number || '').toLowerCase().trim();
+      const rProduct = (r.product_name || '').toLowerCase().trim();
+      if (rLot && scannedLots.has(rLot)) return true;
+      if (rBarcode && scannedBarcodes.has(rBarcode)) return true;
+      if (rProduct) {
+        const rWord = rProduct.split(' ').filter(w => w.length > 3)[0] || rProduct;
+        for (const sp of scannedProducts) {
+          if (sp.includes(rWord) || rProduct.includes((sp.split(' ')[0] || ''))) return true;
+        }
       }
+      return false;
     }
 
-    if (allRecalls.length === 0) {
-      container.innerHTML = '<div style="text-align:center;padding:40px 16px;color:var(--muted);"><div style="font-size:32px;margin-bottom:10px;">✅</div><div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:6px;">No active recalls</div><div style="font-size:12px;">Your network is clear. Recalls will appear here automatically.</div></div>';
+    const matched = allRecalls.filter(recallMatchesOrgScans);
+
+    const badge = document.getElementById('drawer-recall-badge');
+    if (badge) { badge.textContent = matched.length; badge.style.display = matched.length > 0 ? 'inline' : 'none'; }
+
+    if (matched.length === 0) {
+      container.innerHTML = '<div style="text-align:center;padding:40px 16px;color:var(--muted);"><div style="font-size:32px;margin-bottom:10px;">\u2705</div><div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:6px;">No recall matches</div><div style="font-size:12px;line-height:1.6;">None of the products in your scan history match any active recall. Keep scanning to stay protected.</div></div>';
       return;
     }
 
-    const sevColor = s => s && s.includes('I') && !s.includes('II') && !s.includes('III') ? 'var(--danger)' : s && s.includes('II') ? 'var(--warn)' : 'var(--muted)';
+    const sevColor = s => {
+      if (!s) return 'var(--muted)';
+      if ((s.includes('class_i') || s.includes('Class I')) && !s.includes('II') && !s.includes('III')) return 'var(--danger)';
+      if (s.includes('class_ii') || s.includes('Class II')) return 'var(--warn)';
+      return 'var(--muted)';
+    };
 
-    container.innerHTML = allRecalls.map(r => `
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:10px;border-left:3px solid ${r._type==='pushed'?'var(--danger)':'var(--warn)'};">
-        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px;">
-          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:14px;color:var(--text);">${r.product_name || 'Unknown product'}</div>
-          <span style="font-size:10px;font-family:'DM Mono',monospace;font-weight:700;padding:2px 7px;border-radius:4px;background:rgba(255,92,92,0.1);color:var(--danger);white-space:nowrap;flex-shrink:0;">ACTIVE</span>
-        </div>
-        ${r.lot_number ? `<div style="font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;margin-bottom:4px;">Lot: <strong style="color:var(--text);">${r.lot_number}</strong></div>` : ''}
-        ${r.severity ? `<div style="font-size:11px;color:${sevColor(r.severity)};margin-bottom:4px;">${r.severity}</div>` : ''}
-        ${r.reason || r.description ? `<div style="font-size:12px;color:var(--muted);line-height:1.5;">${r.reason || r.description}</div>` : ''}
-        <div style="font-size:10px;color:var(--muted);margin-top:8px;display:flex;gap:8px;align-items:center;">
-          <span style="background:${r._type==='pushed'?'rgba(255,92,92,0.08)':'rgba(245,166,35,0.08)'};padding:2px 6px;border-radius:4px;color:${r._type==='pushed'?'var(--danger)':'var(--warn)'};">${r._type==='pushed'?'Manufacturer push':'Manual / FDA'}</span>
-          ${(r.published_at||r.created_at) ? new Date(r.published_at||r.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : ''}
-        </div>
-      </div>
-    `).join('');
+    container.innerHTML = matched.map(r => {
+      const borderCol = r._type === 'pushed' ? 'var(--danger)' : 'var(--warn)';
+      const srcLabel  = r._type === 'pushed' ? 'Manufacturer push' : 'Manual / local recall';
+      const srcBg     = r._type === 'pushed' ? 'rgba(255,92,92,0.08)' : 'rgba(245,166,35,0.08)';
+      const srcCol    = r._type === 'pushed' ? 'var(--danger)' : 'var(--warn)';
+      const dateStr   = (r.published_at || r.created_at) ? new Date(r.published_at || r.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+      return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:10px;border-left:3px solid ' + borderCol + ';">'
+        + '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px;">'
+        + '<div style="font-family:\'Figtree\',sans-serif;font-weight:700;font-size:14px;color:var(--text);">' + (r.product_name || 'Unknown product') + '</div>'
+        + '<span style="font-size:10px;font-family:\'DM Mono\',monospace;font-weight:700;padding:2px 7px;border-radius:4px;background:rgba(255,92,92,0.1);color:var(--danger);white-space:nowrap;flex-shrink:0;">ACTIVE</span>'
+        + '</div>'
+        + (r.lot_number ? '<div style="font-size:12px;color:var(--muted);font-family:\'DM Mono\',monospace;margin-bottom:4px;">Lot: <strong style="color:var(--text);">' + r.lot_number + '</strong></div>' : '')
+        + (r.severity ? '<div style="font-size:11px;color:' + sevColor(r.severity) + ';margin-bottom:4px;">' + r.severity + '</div>' : '')
+        + ((r.reason || r.description) ? '<div style="font-size:12px;color:var(--muted);line-height:1.5;">' + (r.reason || r.description) + '</div>' : '')
+        + '<div style="font-size:10px;color:var(--muted);margin-top:8px;display:flex;gap:8px;align-items:center;">'
+        + '<span style="background:' + srcBg + ';padding:2px 6px;border-radius:4px;color:' + srcCol + ';">' + srcLabel + '</span>' + dateStr
+        + '</div>'
+        + '<button onclick="drawerNav(\'history\')" style="margin-top:10px;width:100%;padding:9px;background:rgba(255,92,92,0.06);border:1px solid rgba(255,92,92,0.25);border-radius:8px;color:var(--danger);font-family:\'DM Mono\',monospace;font-size:11px;font-weight:700;cursor:pointer;">View matching records in History \u2192</button>'
+        + '</div>';
+    }).join('');
 
   } catch(e) {
-    container.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:16px;">Error loading recalls: ${e.message}</div>`;
+    container.innerHTML = '<div style="color:var(--danger);font-size:12px;padding:16px;">Error: ' + e.message + '</div>';
   }
 }
 
