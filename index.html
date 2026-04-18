@@ -1509,7 +1509,59 @@
     flex-shrink: 0;
   }
 
-    @media (max-width: 600px) {
+  
+  /* ── Help icon + tooltip system ── */
+  .help-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 15px; height: 15px;
+    border-radius: 50%;
+    background: rgba(52,211,153,0.1);
+    border: 1px solid rgba(52,211,153,0.35);
+    color: var(--accent);
+    font-size: 9px;
+    font-weight: 800;
+    cursor: pointer;
+    flex-shrink: 0;
+    vertical-align: middle;
+    margin-left: 5px;
+    font-family: 'Figtree', sans-serif;
+    letter-spacing: 0;
+    line-height: 1;
+    transition: background 0.15s, border-color 0.15s;
+    position: relative;
+    top: -1px;
+  }
+  .help-icon:hover { background: rgba(52,211,153,0.2); border-color: rgba(52,211,153,0.6); }
+  [data-theme="light"] .help-icon { background: rgba(7,122,85,0.08); border-color: rgba(7,122,85,0.35); color: var(--accent); }
+  [data-theme="light"] .help-icon:hover { background: rgba(7,122,85,0.16); border-color: rgba(7,122,85,0.6); }
+  #batchd-help-tip {
+    position: fixed;
+    z-index: 99999;
+    max-width: 280px;
+    background: var(--surface);
+    border: 1px solid var(--border-hard, var(--border));
+    border-radius: 10px;
+    padding: 11px 14px;
+    font-size: 12px;
+    font-family: 'Figtree', sans-serif;
+    color: var(--text);
+    line-height: 1.55;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.18);
+    pointer-events: none;
+    display: none;
+    backdrop-filter: blur(8px);
+  }
+  #batchd-help-tip .help-tip-title {
+    font-weight: 700;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 5px;
+  }
+  @media (max-width: 600px) {
     /* ── HEADER ── */
     header { padding: 0 16px; height: 52px; gap: 10px; }
     .tagline { display: none; }
@@ -15521,6 +15573,36 @@ Retain this document and all previous versions for 2 years.
   }, 2000);
 }
 
+
+// ── Help tooltip system ──────────────────────────────────────────────────────
+(function() {
+  var tip = null, hideTimer = null;
+  function getTip() {
+    if (!tip) { tip = document.createElement('div'); tip.id = 'batchd-help-tip'; document.body.appendChild(tip); }
+    return tip;
+  }
+  window.showHelp = function(el, title, body) {
+    clearTimeout(hideTimer);
+    var t = getTip();
+    t.innerHTML = (title ? '<div class="help-tip-title">' + title + '</div>' : '') + body;
+    t.style.display = 'block';
+    var r = el.getBoundingClientRect(), tw = 280, th = t.offsetHeight || 120;
+    var left = r.left, top = r.bottom + 8;
+    if (left + tw > window.innerWidth - 12) left = window.innerWidth - tw - 12;
+    if (top + th > window.innerHeight - 12) top = r.top - th - 8;
+    if (top < 8) top = 8;
+    t.style.left = left + 'px'; t.style.top = top + 'px';
+  };
+  window.hideHelp = function() {
+    hideTimer = setTimeout(function() { var t = getTip(); t.style.display = 'none'; }, 120);
+  };
+  document.addEventListener('click', function(e) {
+    if (!e.target.classList.contains('help-icon')) {
+      var t = document.getElementById('batchd-help-tip');
+      if (t) t.style.display = 'none';
+    }
+  });
+})();
 </script>
 
 

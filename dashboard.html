@@ -41,25 +41,25 @@
 
     /* ── Theme: light ── */
     [data-theme="light"] {
-      --bg:          #f0fdf8;
-      --surface:     rgba(255,255,255,0.75);
-      --surface2:    rgba(236,253,245,0.85);
-      --border:      rgba(5,150,105,0.15);
-      --border-hard: rgba(5,150,105,0.2);
-      --accent:      #059669;
-      --accent-dim:  #047857;
-      --text:        #064e3b;
-      --muted:       #0f766e;
-      --danger:      #dc2626;
-      --warn:        #d97706;
-      --info:        #0284c7;
-      --sidebar-bg:  rgba(255,255,255,0.8);
-      --topbar-bg:   rgba(255,255,255,0.7);
-      --glass-border:rgba(5,150,105,0.15);
-      --glow-a:      rgba(52,211,153,0.1);
-      --glow-b:      rgba(5,150,105,0.06);
-      --input-bg:    rgba(236,253,245,0.9);
-      --auth-bg:     rgba(255,255,255,0.85);
+      --bg:          #dff0ea;
+      --surface:     #ffffff;
+      --surface2:    #eaf5f0;
+      --border:      rgba(5,150,105,0.28);
+      --border-hard: rgba(5,150,105,0.45);
+      --accent:      #077a55;
+      --accent-dim:  #055e40;
+      --text:        #061a14;
+      --muted:       #2e6b57;
+      --danger:      #c0151a;
+      --warn:        #8a4d05;
+      --info:        #0369a1;
+      --sidebar-bg:  #ffffff;
+      --topbar-bg:   rgba(255,255,255,0.97);
+      --glass-border:rgba(5,150,105,0.22);
+      --glow-a:      rgba(7,122,85,0.05);
+      --glow-b:      rgba(5,150,105,0.03);
+      --input-bg:    #ffffff;
+      --auth-bg:     #ffffff;
     }
 
     /* ── Base ── */
@@ -416,6 +416,58 @@
     .auth-link { text-align: center; margin-top: 14px; font-size: 11px; color: var(--muted); }
     .auth-link a { color: var(--accent); text-decoration: none; }
 
+
+    /* ── Help icon + tooltip system ── */
+    .help-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 15px; height: 15px;
+      border-radius: 50%;
+      background: rgba(52,211,153,0.1);
+      border: 1px solid rgba(52,211,153,0.35);
+      color: var(--accent);
+      font-size: 9px;
+      font-weight: 800;
+      cursor: pointer;
+      flex-shrink: 0;
+      vertical-align: middle;
+      margin-left: 5px;
+      font-family: 'Figtree', sans-serif;
+      letter-spacing: 0;
+      line-height: 1;
+      transition: background 0.15s, border-color 0.15s;
+      position: relative;
+      top: -1px;
+    }
+    .help-icon:hover { background: rgba(52,211,153,0.2); border-color: rgba(52,211,153,0.6); }
+    [data-theme="light"] .help-icon { background: rgba(7,122,85,0.08); border-color: rgba(7,122,85,0.35); color: var(--accent); }
+    [data-theme="light"] .help-icon:hover { background: rgba(7,122,85,0.16); border-color: rgba(7,122,85,0.6); }
+    #batchd-help-tip {
+      position: fixed;
+      z-index: 99999;
+      max-width: 280px;
+      background: var(--surface);
+      border: 1px solid var(--border-hard, var(--border));
+      border-radius: 10px;
+      padding: 11px 14px;
+      font-size: 12px;
+      font-family: 'Figtree', sans-serif;
+      color: var(--text);
+      line-height: 1.55;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.18);
+      pointer-events: none;
+      display: none;
+      backdrop-filter: blur(8px);
+    }
+    #batchd-help-tip .help-tip-title {
+      font-weight: 700;
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 5px;
+    }
     @media (max-width: 1100px) {
       .kpi-grid { grid-template-columns: repeat(2, 1fr); }
       .two-col, .three-col { grid-template-columns: 1fr; }
@@ -1850,7 +1902,7 @@ async function renderOverview() {
         <div class="panel" style="cursor:default;">
           <div class="panel-header" onclick="showPanel('recalls')" style="cursor:pointer;">
             <div>
-              <div class="panel-title">Recall inbox
+              <div class="panel-title">Recall inbox<span class='help-icon' onclick="showHelp(this,'Recall inbox','Recalls pushed to your network by manufacturers, plus FDA and RASFF alerts matching scanned products. Each recall requires your stores to complete a 5-step response chain.')" onmouseleave='hideHelp()'>?</span>
                 ${activeCount>0?`<span style="background:rgba(255,92,92,0.12);color:var(--danger);font-size:10px;padding:2px 8px;border-radius:10px;margin-left:8px;font-family:'DM Mono',monospace;">${activeCount} active</span>`:''}
               </div>
               <div class="panel-sub">Recalls pushed to your network by manufacturers + FDA/RASFF alerts</div>
@@ -1963,7 +2015,7 @@ async function renderOverview() {
         <!-- Readiness ring -->
         <div class="panel" onclick="showPanel('compliance')" style="cursor:pointer;">
           <div class="panel-header">
-            <div><div class="panel-title">${_orgRegion==='us'?'FSMA 204':'EU 178/2002'} readiness</div><div class="panel-sub">Traceability health score</div></div>
+            <div><div class="panel-title">${_orgRegion==='us'?'FSMA 204':'EU 178/2002'} readiness<span class='help-icon' onclick="showHelp(this,_orgRegion==='us'?'FSMA 204 Readiness':'EU 178/2002 Readiness',_orgRegion==='us'?'The FDA Food Safety Modernization Act requires lot-level traceability for Foods on the Food Traceability List by July 2028. This score measures how ready your operation is today.':'EU Regulation 178/2002 requires you to identify any product one step back and one step forward within 4 hours of a Mattilsynet request. This score measures your current readiness.')" onmouseleave='hideHelp()'>?</span></div><div class="panel-sub">Traceability health score</div></div>
           </div>
           <div class="panel-body" style="padding:20px;">
             <div style="display:flex;align-items:center;gap:18px;">
@@ -2146,6 +2198,13 @@ async function renderRecalls() {
 
   const STEPS = ['notified','acknowledged','pulled','disposed','confirmed'];
   const STEP_LABELS  = { notified:'Notified', acknowledged:'Acknowledged', pulled:'Pulled', disposed:'Disposed', confirmed:'Confirmed' };
+  const STEP_HELP = {
+    notified:     { title: 'Notified', body: 'The recall has been sent to your store. No action taken yet. You need to acknowledge it to confirm your team is aware.' },
+    acknowledged: { title: 'Acknowledged', body: 'Your store has confirmed it received the recall notice and assigned it to a team member. The clock is now running.' },
+    pulled:       { title: 'Pulled from shelf', body: 'All units of the recalled product have been physically removed from shelves and placed in a quarantine area. Record how many units were found.' },
+    disposed:     { title: 'Disposed', body: 'Pulled units have been destroyed on-site or returned to the supplier. This must be documented before the final confirmation.' },
+    confirmed:    { title: 'Confirmed', body: 'All 5 steps are complete. Your audit record is locked and can be downloaded as a compliance document for regulators.' },
+  };
   const STEP_ACTIONS = { notified:'Acknowledge receipt', acknowledged:'Confirm product pulled from shelf', pulled:'Confirm units disposed', disposed:'Submit final confirmation', confirmed:'' };
 
   function stepCircles(currentStatus) {
@@ -2191,8 +2250,8 @@ async function renderRecalls() {
             </div>
           </div>
           <div style="display:flex;gap:8px;">
-            <button onclick="showStoreTimeline('${a.id}')" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;font-family:inherit;">Timeline</button>
-            <button onclick="generateStoreAuditReport('${a.id}','${storeName.replace(/'/g,"\\'")}')" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid rgba(52,211,153,0.3);background:none;color:var(--accent);cursor:pointer;font-family:inherit;">↓ Audit record</button>
+            <button onclick="showStoreTimeline('${a.id}')" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;font-family:inherit;">Timeline</button><span class='help-icon' onclick="showHelp(this,'Timeline','A full chronological log of every action taken at this store for this recall — who did what, and when. Used as evidence in Mattilsynet and FDA regulatory audits.')" onmouseleave='hideHelp()'>?</span>
+            <button onclick="generateStoreAuditReport('${a.id}','${storeName.replace(/'/g,"\\'")}')" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid rgba(52,211,153,0.3);background:none;color:var(--accent);cursor:pointer;font-family:inherit;">Audit record</button><span class='help-icon' onclick="showHelp(this,'Audit record','A downloadable compliance report for this store\'s recall response. Includes all 5 steps with timestamps, units removed, staff actions, and regulatory basis. Present this to Mattilsynet or FDA if requested.')" onmouseleave='hideHelp()'>?</span>
           </div>
         </div>
       </div>`;
@@ -2208,7 +2267,7 @@ async function renderRecalls() {
           </div>
           ${stepCircles(a.status)}
           <div style="background:var(--surface2);border-radius:8px;padding:9px 12px;font-size:12px;color:var(--muted);line-height:1.5;">
-            <span style="color:var(--text);font-weight:600;">Next:</span> ${STEP_ACTIONS[a.status]}
+            <span style="color:var(--text);font-weight:600;">Next:</span> ${STEP_ACTIONS[a.status]}${a.status !== 'confirmed' ? `<span class="help-icon" onclick="showHelp(this, STEP_HELP[STEPS[STEPS.indexOf(a.status)+1]]?.title||'Next step', STEP_HELP[STEPS[STEPS.indexOf(a.status)+1]]?.body||'Complete this step to advance.')" onmouseleave="hideHelp()">?</span>` : ''}
             ${a.status === 'pulled' ? `
             <div style="display:flex;align-items:center;gap:8px;margin-top:8px;">
               <input id="units-${a.id}" type="number" placeholder="Units pulled" min="0" value="${a.units_pulled||''}"
@@ -2249,7 +2308,7 @@ async function renderRecalls() {
       <div style="display:flex;align-items:center;gap:10px;">
         <div style="width:32px;height:32px;border-radius:50%;background:rgba(52,211,153,0.1);border:1px solid rgba(52,211,153,0.2);display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;">👤</div>
         <div>
-          <div style="font-size:11px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;color:var(--muted);margin-bottom:2px;">Recall coordinator</div>
+          <div style="font-size:11px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;color:var(--muted);margin-bottom:2px;">Recall coordinator<span class='help-icon' onclick="showHelp(this,'Recall coordinator','The named person responsible for managing recall responses at your organisation. Required by Mattilsynet (Norway) and FDA 21 CFR 7.49 (US). Their name and contact appear on all audit reports.')" onmouseleave='hideHelp()'>?</span></div>
           <div style="font-size:13px;font-weight:700;color:var(--text);">${coord.recall_coordinator_name}</div>
           ${coord.recall_coordinator_contact ? `<div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">${coord.recall_coordinator_contact}</div>` : ''}
           ${coord.recall_coordinator_backup ? `<div style="font-size:10px;color:var(--muted);margin-top:1px;">Backup: ${coord.recall_coordinator_backup}</div>` : ''}
@@ -2295,7 +2354,7 @@ async function renderRecalls() {
           </div>
           ${isDrill
             ? `<button onclick="generateDrillCertificate('${p.recall_event_id}')" style="font-size:11px;padding:7px 14px;border-radius:7px;border:1px solid rgba(52,211,153,0.35);background:rgba(52,211,153,0.07);color:var(--accent);cursor:pointer;font-family:inherit;font-weight:600;">🏅 Download certificate</button>`
-            : `<button onclick="generateRecallAuditReport('${p.recall_event_id}','${(ev.product_name||'').replace(/'/g,"\'")}')" style="font-size:11px;padding:7px 14px;border-radius:7px;border:1px solid rgba(52,211,153,0.35);background:none;color:var(--accent);cursor:pointer;font-family:inherit;font-weight:600;">↓ Full audit report</button>`}
+            : `<button onclick="generateRecallAuditReport('${p.recall_event_id}','${(ev.product_name||'').replace(/'/g,"\'")}')" style="font-size:11px;padding:7px 14px;border-radius:7px;border:1px solid rgba(52,211,153,0.35);background:none;color:var(--accent);cursor:pointer;font-family:inherit;font-weight:600;">Full audit report</button><span class='help-icon' onclick="showHelp(this,'Full audit report','A complete recall audit document covering all stores in your network. Shows per-store compliance, total units removed, timeline, and coordinator sign-off. Required for regulatory submissions.')" onmouseleave='hideHelp()'>?</span>`}
         </div>` : ''}
 
         <!-- Recall header -->
@@ -2323,7 +2382,7 @@ async function renderRecalls() {
 
         ${evAcks.length > 0 ? `
         <div style="border:1px solid ${isDrill?'rgba(245,166,35,0.3)':anyAction?'rgba(255,92,92,0.3)':'var(--border)'};border-top:none;border-radius:0 0 12px 12px;padding:16px 18px;background:var(--bg);">
-          <div style="font-size:10px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);margin-bottom:12px;">Store response chain — ${evAcks.filter(a=>a.status==='confirmed').length} of ${evAcks.length} complete</div>
+          <div style="font-size:10px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);margin-bottom:12px;">Store response chain<span class='help-icon' onclick="showHelp(this,'Store response chain','Each store in your network must complete all 5 steps independently: Notified → Acknowledged → Pulled → Disposed → Confirmed. Every step is timestamped and added to the audit trail automatically.')" onmouseleave='hideHelp()'>?</span> — ${evAcks.filter(a=>a.status==='confirmed').length} of ${evAcks.length} complete</div>
           ${evAcks.map(a => recallProcessCard(a, p.recall_event_id, ev.product_name)).join('')}
         </div>` : `
         <div style="border:1px solid var(--border);border-top:none;border-radius:0 0 12px 12px;padding:14px 18px;background:var(--bg);">
@@ -7523,4 +7582,34 @@ async function sendConsumerNotifications() {
     if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
   }
 }
+
+// ── Help tooltip system ──────────────────────────────────────────────────────
+(function() {
+  var tip = null, hideTimer = null;
+  function getTip() {
+    if (!tip) { tip = document.createElement('div'); tip.id = 'batchd-help-tip'; document.body.appendChild(tip); }
+    return tip;
+  }
+  window.showHelp = function(el, title, body) {
+    clearTimeout(hideTimer);
+    var t = getTip();
+    t.innerHTML = (title ? '<div class="help-tip-title">' + title + '</div>' : '') + body;
+    t.style.display = 'block';
+    var r = el.getBoundingClientRect(), tw = 280, th = t.offsetHeight || 120;
+    var left = r.left, top = r.bottom + 8;
+    if (left + tw > window.innerWidth - 12) left = window.innerWidth - tw - 12;
+    if (top + th > window.innerHeight - 12) top = r.top - th - 8;
+    if (top < 8) top = 8;
+    t.style.left = left + 'px'; t.style.top = top + 'px';
+  };
+  window.hideHelp = function() {
+    hideTimer = setTimeout(function() { var t = getTip(); t.style.display = 'none'; }, 120);
+  };
+  document.addEventListener('click', function(e) {
+    if (!e.target.classList.contains('help-icon')) {
+      var t = document.getElementById('batchd-help-tip');
+      if (t) t.style.display = 'none';
+    }
+  });
+})();
 </script>

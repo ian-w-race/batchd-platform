@@ -39,25 +39,77 @@
     }
     /* ── Theme: light ── */
     [data-theme="light"] {
-      --bg:          #f0fdf8;
-      --surface:     rgba(255,255,255,0.75);
-      --surface2:    rgba(236,253,245,0.85);
-      --border:      rgba(5,150,105,0.15);
-      --border-hard: rgba(5,150,105,0.2);
-      --accent:      #059669;
-      --accent-dim:  #047857;
-      --text:        #064e3b;
-      --muted:       #0f766e;
-      --danger:      #dc2626;
-      --warn:        #d97706;
-      --info:        #0284c7;
-      --sidebar-bg:  rgba(255,255,255,0.8);
-      --topbar-bg:   rgba(255,255,255,0.7);
-      --glass-border:rgba(5,150,105,0.15);
-      --glow-a:      rgba(52,211,153,0.1);
-      --glow-b:      rgba(5,150,105,0.06);
-      --input-bg:    rgba(236,253,245,0.9);
-      --auth-bg:     rgba(255,255,255,0.85);
+      --bg:          #dff0ea;
+      --surface:     #ffffff;
+      --surface2:    #eaf5f0;
+      --border:      rgba(5,150,105,0.28);
+      --border-hard: rgba(5,150,105,0.45);
+      --accent:      #077a55;
+      --accent-dim:  #055e40;
+      --text:        #061a14;
+      --muted:       #2e6b57;
+      --danger:      #c0151a;
+      --warn:        #8a4d05;
+      --info:        #0369a1;
+      --sidebar-bg:  #ffffff;
+      --topbar-bg:   rgba(255,255,255,0.97);
+      --glass-border:rgba(5,150,105,0.22);
+      --glow-a:      rgba(7,122,85,0.05);
+      --glow-b:      rgba(5,150,105,0.03);
+      --input-bg:    #ffffff;
+      --auth-bg:     #ffffff;
+    }
+
+    /* ── Help icon + tooltip system ── */
+    .help-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 15px; height: 15px;
+      border-radius: 50%;
+      background: rgba(52,211,153,0.1);
+      border: 1px solid rgba(52,211,153,0.35);
+      color: var(--accent);
+      font-size: 9px;
+      font-weight: 800;
+      cursor: pointer;
+      flex-shrink: 0;
+      vertical-align: middle;
+      margin-left: 5px;
+      font-family: 'Figtree', sans-serif;
+      letter-spacing: 0;
+      line-height: 1;
+      transition: background 0.15s, border-color 0.15s;
+      position: relative;
+      top: -1px;
+    }
+    .help-icon:hover { background: rgba(52,211,153,0.2); border-color: rgba(52,211,153,0.6); }
+    [data-theme="light"] .help-icon { background: rgba(7,122,85,0.08); border-color: rgba(7,122,85,0.35); color: var(--accent); }
+    [data-theme="light"] .help-icon:hover { background: rgba(7,122,85,0.16); border-color: rgba(7,122,85,0.6); }
+    #batchd-help-tip {
+      position: fixed;
+      z-index: 99999;
+      max-width: 280px;
+      background: var(--surface);
+      border: 1px solid var(--border-hard, var(--border));
+      border-radius: 10px;
+      padding: 11px 14px;
+      font-size: 12px;
+      font-family: 'Figtree', sans-serif;
+      color: var(--text);
+      line-height: 1.55;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.18);
+      pointer-events: none;
+      display: none;
+      backdrop-filter: blur(8px);
+    }
+    #batchd-help-tip .help-tip-title {
+      font-weight: 700;
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 5px;
     }
     html, body { min-height: 100vh; background: var(--bg); color: var(--text); font-family: 'DM Mono', monospace; overflow-x: hidden; transition: background 0.3s, color 0.3s; }
     body::before { content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
@@ -6841,4 +6893,34 @@ function importProducts() {
     onComplete: 'renderProducts()',
   });
 }
+
+// ── Help tooltip system ──────────────────────────────────────────────────────
+(function() {
+  var tip = null, hideTimer = null;
+  function getTip() {
+    if (!tip) { tip = document.createElement('div'); tip.id = 'batchd-help-tip'; document.body.appendChild(tip); }
+    return tip;
+  }
+  window.showHelp = function(el, title, body) {
+    clearTimeout(hideTimer);
+    var t = getTip();
+    t.innerHTML = (title ? '<div class="help-tip-title">' + title + '</div>' : '') + body;
+    t.style.display = 'block';
+    var r = el.getBoundingClientRect(), tw = 280, th = t.offsetHeight || 120;
+    var left = r.left, top = r.bottom + 8;
+    if (left + tw > window.innerWidth - 12) left = window.innerWidth - tw - 12;
+    if (top + th > window.innerHeight - 12) top = r.top - th - 8;
+    if (top < 8) top = 8;
+    t.style.left = left + 'px'; t.style.top = top + 'px';
+  };
+  window.hideHelp = function() {
+    hideTimer = setTimeout(function() { var t = getTip(); t.style.display = 'none'; }, 120);
+  };
+  document.addEventListener('click', function(e) {
+    if (!e.target.classList.contains('help-icon')) {
+      var t = document.getElementById('batchd-help-tip');
+      if (t) t.style.display = 'none';
+    }
+  });
+})();
 </script>
