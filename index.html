@@ -46,7 +46,7 @@
     --text: #edfdf8;
     --muted: #6aaf9e;
     --danger: #ff5c5c;
-    --warn: #f5a623;
+    --warn: #60a5fa;  /* blue — distinct from red recall */
     --info: #38bdf8;
     --overlay: rgba(8,15,18,0.88);
     --header-bg: rgba(8,15,18,0.92);
@@ -64,8 +64,8 @@
     --text:          #0c1e18;
     --muted:         #4e6860;
     --danger:        #b91c1c;   /* red — confirmed recall / critical */
-    --info:          #1d4ed8;   /* strong blue — manufacturer push / informational */
-    --warn:          #c2410c;   /* burnt orange — caution, clearly ≠ red */
+    --info:          #0891b2;   /* teal-cyan — secondary informational */
+    --warn:          #1d4ed8;   /* strong blue — max distinction from red */
     --overlay:       rgba(12,30,24,0.72);
     --header-bg:     rgba(255,255,255,0.97);
     --mobile-nav-bg: rgba(255,255,255,0.99);
@@ -139,7 +139,8 @@
   [data-theme="light"] .flow-phase-header { border-top-color: #e2e8e5; }
   [data-theme="light"] .scan-top-bar .stb-panel { background: #ffffff; }
   [data-theme="light"] .record-card { background: #ffffff; }
-  [data-theme="light"] .settings-section { background: #ffffff; }
+  [data-theme="light"] .settings-section { background: #ffffff;   margin-bottom: 16px;
+  }
   [data-theme="light"] nav { background: #ffffff; }
   [data-theme="light"] .mode-toggle { background: #f0f4f2; }
   [data-theme="light"] .ocr-result-title { color: var(--accent); }
@@ -2268,38 +2269,42 @@
 
 
   /* ══════════════════════════════════════════════════════════
-     NO-SCROLL SCAN FLOW
-     Camera fills all remaining screen. Every element is visible
-     without a single pixel of scroll on any modern iPhone.
+     BULLETPROOF NO-SCROLL SCAN FLOW (mobile)
      ══════════════════════════════════════════════════════════ */
   @media (max-width: 600px) {
 
-    /* Lock body scroll only on scan view */
-    body.scan-active { overflow: hidden; }
+    /* When on the scan view, aggressively lock the page + hide all else */
+    body.scan-active { overflow: hidden !important; position: fixed; width: 100%; height: 100dvh; }
+    body.scan-active #view-history,
+    body.scan-active #view-settings,
+    body.scan-active #view-manager,
+    body.scan-active #view-recalls { display: none !important; }
 
-    /* Scan view: fullscreen below header */
-    #view-scan {
+    /* Scan view: explicit height, fills below header */
+    body.scan-active #view-scan {
       position: fixed !important;
       top: 54px;
       left: 0; right: 0; bottom: 0;
+      height: calc(100dvh - 54px);
       display: flex !important;
       flex-direction: column;
       overflow: hidden;
       background: var(--bg);
-      gap: 0;
       padding: 0;
+      gap: 0;
+      z-index: 10;
     }
 
-    /* ── Top context bar — very compact ── */
-    .scan-top-bar { flex-shrink: 0; padding: 4px 8px; background: var(--bg); }
-    .stb-row { gap: 5px; }
-    .stb-sq { height: 38px !important; border-radius: 8px !important; font-size: 11px; }
-    .stb-count { font-size: 14px !important; }
-    .stb-panel { padding: 5px 8px !important; }
+    /* Top context bar — compact */
+    body.scan-active .scan-top-bar { flex-shrink: 0; padding: 4px 8px; background: var(--bg); }
+    body.scan-active .stb-row { gap: 5px; }
+    body.scan-active .stb-sq { height: 36px !important; border-radius: 8px !important; font-size: 11px; }
+    body.scan-active .stb-count { font-size: 14px !important; }
+    body.scan-active .stb-panel { padding: 4px 8px !important; }
 
-    /* ── Flow card: fills all remaining space ── */
-    .flow-card {
-      flex: 1;
+    /* Flow card — fills remaining height */
+    body.scan-active .flow-card {
+      flex: 1 1 0;
       min-height: 0;
       display: flex;
       flex-direction: column;
@@ -2311,28 +2316,28 @@
       border-top: 1px solid var(--border);
     }
 
-    /* ── Stepper: dots only, no text, minimal height ── */
-    .flow-stepper { padding: 7px 20px 5px !important; flex-shrink: 0; }
-    .flow-step-dot { width: 20px !important; height: 20px !important; font-size: 9px !important; }
-    .flow-step-label { display: none !important; }
-    .flow-step:not(:last-child)::after { top: 10px !important; left: calc(50% + 12px); right: calc(-50% + 12px); }
+    /* Stepper — dots only, no labels, tiny */
+    body.scan-active .flow-stepper { padding: 6px 20px 4px !important; flex-shrink: 0; }
+    body.scan-active .flow-step-dot { width: 20px !important; height: 20px !important; font-size: 10px !important; border-width: 2px !important; }
+    body.scan-active .flow-step-label { display: none !important; }
+    body.scan-active .flow-step:not(:last-child)::after { top: 10px !important; left: calc(50% + 12px); right: calc(-50% + 12px); }
 
-    /* ── Phase: flex column, fills remaining height ── */
-    .flow-phase { flex: 1; min-height: 0; overflow: hidden; }
-    .flow-phase.active {
+    /* Phase — fills remaining */
+    body.scan-active .flow-phase { flex: 1 1 0; min-height: 0; overflow: hidden; }
+    body.scan-active .flow-phase.active {
       display: flex !important;
       flex-direction: column;
-      flex: 1;
+      flex: 1 1 0;
       min-height: 0;
       overflow: hidden;
     }
 
-    /* ── Phase header: hidden — stepper is enough context ── */
-    .flow-phase-header { display: none !important; }
+    /* Phase header: hidden on mobile */
+    body.scan-active .flow-phase-header { display: none !important; }
 
-    /* ── Phase body: tight flex column, no padding, no scroll ── */
-    .flow-phase-body {
-      flex: 1;
+    /* Phase body: flex column, no padding */
+    body.scan-active .flow-phase-body {
+      flex: 1 1 0;
       min-height: 0;
       overflow: hidden;
       display: flex;
@@ -2341,18 +2346,10 @@
       gap: 0 !important;
     }
 
-    /* ── p1-label-wrap: the main camera container, fills all space ──
-       Contains: mode-toggle overlay, camera, capture btn, and torch  */
-    #p1-label-wrap {
-      flex: 1 !important;
-      min-height: 0;
-      display: flex;
-      flex-direction: column;
-      position: relative;   /* anchor for absolute overlay children */
-      overflow: hidden;
-    }
-    #p1-barcode-wrap {
-      flex: 1 !important;
+    /* p1-label-wrap: relative container for camera + overlays */
+    body.scan-active #p1-label-wrap,
+    body.scan-active #p1-barcode-wrap {
+      flex: 1 1 0 !important;
       min-height: 0;
       display: flex;
       flex-direction: column;
@@ -2360,9 +2357,9 @@
       overflow: hidden;
     }
 
-    /* ── Camera: fills p1-label-wrap minus btn-row ── */
-    .camera-wrap {
-      flex: 1 !important;
+    /* Camera fills the label wrap */
+    body.scan-active .camera-wrap {
+      flex: 1 1 0 !important;
       min-height: 0 !important;
       aspect-ratio: unset !important;
       max-height: none !important;
@@ -2370,50 +2367,48 @@
       box-shadow: none !important;
     }
 
-    /* ── Mode toggle: glassy overlay at top of p1-label-wrap ──
-       Works because p1-label-wrap is position:relative              */
-    #p1-mode-toggle {
+    /* Mode toggle: glassy overlay at top-left of camera */
+    body.scan-active #p1-mode-toggle {
       position: absolute !important;
-      top: 9px !important;
-      left: 9px !important;
+      top: 8px !important;
+      left: 8px !important;
       z-index: 30 !important;
       background: transparent !important;
       border: none !important;
       padding: 0 !important;
       display: flex !important;
       gap: 5px !important;
-      flex-shrink: 0 !important;
     }
-    #p1-mode-toggle .mode-btn {
-      background: rgba(8,15,18,0.68) !important;
+    body.scan-active #p1-mode-toggle .mode-btn {
+      background: rgba(8,15,18,0.7) !important;
       backdrop-filter: blur(12px) !important;
       -webkit-backdrop-filter: blur(12px) !important;
       border: 1px solid rgba(255,255,255,0.16) !important;
-      color: rgba(255,255,255,0.78) !important;
+      color: rgba(255,255,255,0.8) !important;
       padding: 6px 10px !important;
       font-size: 11px !important;
       min-height: 32px !important;
       border-radius: 8px !important;
     }
-    #p1-mode-toggle .mode-btn.active {
-      background: rgba(52,211,153,0.26) !important;
+    body.scan-active #p1-mode-toggle .mode-btn.active {
+      background: rgba(52,211,153,0.28) !important;
       border-color: rgba(52,211,153,0.5) !important;
       color: #4ade80 !important;
     }
-    [data-theme="light"] #p1-mode-toggle .mode-btn {
-      background: rgba(255,255,255,0.85) !important;
-      border-color: rgba(7,122,85,0.25) !important;
+    [data-theme="light"] body.scan-active #p1-mode-toggle .mode-btn {
+      background: rgba(255,255,255,0.88) !important;
+      border-color: rgba(7,122,85,0.28) !important;
       color: var(--muted) !important;
     }
-    [data-theme="light"] #p1-mode-toggle .mode-btn.active {
+    [data-theme="light"] body.scan-active #p1-mode-toggle .mode-btn.active {
       background: rgba(7,122,85,0.15) !important;
       border-color: rgba(7,122,85,0.45) !important;
       color: var(--accent) !important;
     }
 
-    /* ── Capture/retake buttons: overlaid at bottom of camera ── */
-    #p1-label-wrap .btn-row,
-    #p1-barcode-wrap .btn-row {
+    /* Capture/retake buttons overlaid at bottom of camera */
+    body.scan-active #p1-label-wrap .btn-row,
+    body.scan-active #p1-barcode-wrap .btn-row {
       position: absolute !important;
       bottom: 10px !important;
       left: 10px !important;
@@ -2422,8 +2417,8 @@
       flex-shrink: 0 !important;
       gap: 8px !important;
     }
-    #p1-label-wrap .btn-row .btn,
-    #p1-barcode-wrap .btn-row .btn {
+    body.scan-active #p1-label-wrap .btn-row .btn,
+    body.scan-active #p1-barcode-wrap .btn-row .btn {
       min-height: 48px !important;
       font-size: 14px !important;
       font-weight: 700 !important;
@@ -2431,76 +2426,75 @@
       backdrop-filter: blur(8px) !important;
       -webkit-backdrop-filter: blur(8px) !important;
     }
-    #p1-label-wrap .btn-row .btn-primary,
-    #p1-barcode-wrap .btn-row .btn-primary {
-      background: rgba(52,211,153,0.9) !important;
+    body.scan-active #p1-label-wrap .btn-row .btn-primary,
+    body.scan-active #p1-barcode-wrap .btn-row .btn-primary {
+      background: rgba(52,211,153,0.92) !important;
       color: #040c0e !important;
       border: none !important;
     }
-    #p1-label-wrap .btn-row .btn-ghost,
-    #p1-barcode-wrap .btn-row .btn-ghost {
+    body.scan-active #p1-label-wrap .btn-row .btn-ghost,
+    body.scan-active #p1-barcode-wrap .btn-row .btn-ghost {
       background: rgba(8,15,18,0.62) !important;
       color: rgba(255,255,255,0.85) !important;
       border: 1px solid rgba(255,255,255,0.18) !important;
     }
-    [data-theme="light"] #p1-label-wrap .btn-row .btn-primary,
-    [data-theme="light"] #p1-barcode-wrap .btn-row .btn-primary {
+    [data-theme="light"] body.scan-active #p1-label-wrap .btn-row .btn-primary,
+    [data-theme="light"] body.scan-active #p1-barcode-wrap .btn-row .btn-primary {
       background: rgba(7,122,85,0.92) !important;
       color: #fff !important;
     }
-    [data-theme="light"] #p1-label-wrap .btn-row .btn-ghost,
-    [data-theme="light"] #p1-barcode-wrap .btn-row .btn-ghost {
+    [data-theme="light"] body.scan-active #p1-label-wrap .btn-row .btn-ghost,
+    [data-theme="light"] body.scan-active #p1-barcode-wrap .btn-row .btn-ghost {
       background: rgba(255,255,255,0.88) !important;
       color: var(--text) !important;
       border-color: var(--border) !important;
     }
 
-    /* ── Product name field: slim strip, no label ── */
-    .flow-phase-body > .field {
+    /* Product name field: slim strip below camera */
+    body.scan-active .flow-phase-body > .field {
       flex-shrink: 0 !important;
       padding: 6px 8px 0 !important;
       margin: 0 !important;
     }
-    .flow-phase-body > .field > label { display: none !important; }
-    .flow-phase-body > .field > span  { display: none !important; }
-    .flow-phase-body > .field input {
+    body.scan-active .flow-phase-body > .field > label,
+    body.scan-active .flow-phase-body > .field > span { display: none !important; }
+    body.scan-active .flow-phase-body > .field input {
       font-size: 15px !important;
       padding: 10px 12px !important;
       border-radius: 10px !important;
       min-height: 44px !important;
     }
 
-    /* ── Next / confirm button: slim at very bottom ── */
-    .btn-next {
+    /* Confirm & Continue button — slim, at bottom */
+    body.scan-active .btn-next {
       flex-shrink: 0 !important;
       margin: 5px 8px 7px !important;
-      padding: 14px 16px !important;
-      min-height: 48px !important;
+      padding: 13px 16px !important;
+      min-height: 46px !important;
       border-radius: 12px !important;
-      font-size: 14px !important;
+      font-size: 13px !important;
     }
 
-    /* ── Phase 2: OCR result strip compact ── */
-    .ocr-result { flex-shrink: 0 !important; padding: 8px 10px !important; }
-    .ocr-raw    { font-size: 10px !important; }
+    /* Phase 2: OCR result strip compact */
+    body.scan-active .ocr-result { flex-shrink: 0 !important; padding: 8px 10px !important; }
+    body.scan-active .ocr-raw    { font-size: 10px !important; }
 
-    /* ── Phase 3: allow scroll (user is reviewing before confirming) ── */
-    #phase-3 .flow-phase-body {
+    /* Phase 3: allow scroll only here */
+    body.scan-active #phase-3 .flow-phase-body {
       overflow-y: auto !important;
       padding: 0 8px 8px !important;
     }
-    #phase-3 .flow-phase-body > .field {
+    body.scan-active #phase-3 .flow-phase-body > .field {
       padding: 8px 0 0 !important;
     }
-    #phase-3 .flow-phase-body > .field > label { display: block !important; }
-    #phase-3 .flow-phase-body > .field > span  { display: inline !important; }
-
-    /* Hide non-critical fields on Phase 3 mobile to reduce scroll distance */
-    #field-notes, #field-supplier { display: none !important; }
-    #field-quantity-wrap          { display: block !important; }
-    .review-thumb                 { display: none !important; }
-    .review-fields                { width: 100% !important; }
-    .divider                      { display: none !important; }
+    body.scan-active #phase-3 .flow-phase-body > .field > label { display: block !important; }
+    body.scan-active #phase-3 .flow-phase-body > .field > span  { display: inline !important; }
+    body.scan-active #field-notes,
+    body.scan-active #field-supplier { display: none !important; }
+    body.scan-active #field-quantity-wrap { display: block !important; }
+    body.scan-active .review-thumb { display: none !important; }
+    body.scan-active .review-fields { width: 100% !important; }
+    body.scan-active .divider { display: none !important; }
 
   }
 
@@ -16026,9 +16020,9 @@ async function loadRecallsView() {
       // Colour logic: pushed = red (urgent), manual/local = orange (warn)
       const isUrgent  = r._type === 'pushed';
       const borderCol = isUrgent ? 'var(--danger)' : 'var(--warn)';
-      const srcLabel  = isUrgent ? 'Manufacturer push' : 'Manual / local recall';
+      const srcLabel  = isUrgent ? 'Manufacturer push' : 'Under review';
       const srcCol    = isUrgent ? 'var(--danger)' : 'var(--warn)';
-      const srcBg     = isUrgent ? 'rgba(185,28,28,0.07)' : 'rgba(194,65,12,0.07)';
+      const srcBg     = isUrgent ? 'rgba(185,28,28,0.07)' : 'rgba(29,78,216,0.08)';
       const dateStr   = (r.published_at || r.created_at)
         ? new Date(r.published_at || r.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
 
