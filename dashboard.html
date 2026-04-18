@@ -956,10 +956,11 @@ async function signOut() {
 // ── Init ───────────────────────────────────────────────────────
 async function initDashboard(user) {
   // Get org membership
-  const { data: member } = await sb.from('organisation_members')
-    .select('organisation_id, role')
+  const { data: members } = await sb.from('organisation_members')
+    .select('organisation_id, role, store_id')
     .eq('user_id', user.id)
-    .single();
+    .in('role', ['corp_admin', 'store_manager', 'staff']);
+  const member = members?.[0];
 
   if (!member) {
     showAuthMsg('No organisation found for this account. Please sign up at batchdapp.com first.');
