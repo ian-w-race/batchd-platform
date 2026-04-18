@@ -345,12 +345,8 @@
   }
 
   .breakdown-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 11px 16px;
+    padding: 12px 16px;
     border-bottom: 1px solid var(--border);
-    gap: 12px;
   }
 
   .breakdown-row:last-child { border-bottom: none; }
@@ -358,17 +354,27 @@
   .breakdown-row.total {
     background: rgba(52,211,153,0.05);
     border-top: 1px solid rgba(52,211,153,0.2);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .breakdown-row-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 7px;
   }
 
   .breakdown-label {
     font-size: 12px;
     color: var(--muted);
-    flex: 1;
   }
 
   .breakdown-row.total .breakdown-label {
     font-weight: 700;
     color: var(--text);
+    font-size: 13px;
   }
 
   .breakdown-amount {
@@ -379,25 +385,25 @@
   }
 
   .breakdown-row.total .breakdown-amount {
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 700;
     color: var(--danger);
   }
 
   .breakdown-bar-wrap {
-    width: 80px;
-    height: 3px;
-    background: var(--border);
-    border-radius: 2px;
+    width: 100%;
+    height: 6px;
+    background: rgba(52,211,153,0.08);
+    border-radius: 3px;
     overflow: hidden;
-    flex-shrink: 0;
   }
 
   .breakdown-bar {
     height: 100%;
-    border-radius: 2px;
+    border-radius: 3px;
     background: var(--danger);
-    transition: width 0.4s ease;
+    transition: width 0.45s cubic-bezier(0.4,0,0.2,1);
+    min-width: 2px;
   }
 
   /* Comparison */
@@ -810,6 +816,36 @@
           </div>
         </div>
       </div>
+
+      <!-- Legal costs (US-focused) -->
+      <div id="legal-section" style="margin-top:20px;padding-top:18px;border-top:1px solid var(--border);">
+        <div style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);margin-bottom:14px;display:flex;align-items:center;gap:8px;">
+          <span>⚖️</span> Legal exposure
+          <span style="font-size:9px;font-weight:400;letter-spacing:0;text-transform:none;color:var(--muted);opacity:0.7;" id="legal-section-note">Based on FDA enforcement benchmarks</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:16px;">
+          <div class="field" style="margin:0;">
+            <label>Recall complexity</label>
+            <div class="field-row">
+              <select id="legal-complexity" onchange="recalculate()" style="padding:10px 12px;">
+                <option value="class3">Class III / Single-state</option>
+                <option value="class12" selected>Class I–II / Multi-state</option>
+                <option value="complex">Complex outbreak / High litigation</option>
+              </select>
+            </div>
+            <div class="field-hint" id="legal-hours-hint">Typical outside counsel hours: 150–400</div>
+          </div>
+          <div class="field" style="margin:0;">
+            <label id="lbl-legal-rate">Legal hourly rate (outside counsel)</label>
+            <div class="field-row">
+              <div class="field-prefix" id="prefix-legal">USD</div>
+              <input type="number" id="legal-rate" value="950" min="400" max="2000" oninput="recalculate()">
+              <div class="field-suffix">/hr</div>
+            </div>
+            <div class="field-hint">Typical range: 00–,100/hr for food safety litigation</div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -839,39 +875,46 @@
       <div style="font-size:10px;font-weight:600;letter-spacing:0.09em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;">Cost breakdown — per recall event</div>
       <div class="breakdown">
         <div class="breakdown-row">
-          <div class="breakdown-label">Product disposal (units × disposal rate)</div>
-          <div style="display:flex;align-items:center;gap:10px;">
-            <div class="breakdown-bar-wrap"><div class="breakdown-bar" id="bar-disposal" style="width:60%;"></div></div>
+          <div class="breakdown-row-top">
+            <div class="breakdown-label">Product disposal (units × disposal rate)</div>
             <div class="breakdown-amount" id="bd-disposal">—</div>
           </div>
+          <div class="breakdown-bar-wrap"><div class="breakdown-bar" id="bar-disposal" style="width:60%;background:var(--danger);"></div></div>
         </div>
         <div class="breakdown-row">
-          <div class="breakdown-label">Product write-off (units × retail value)</div>
-          <div style="display:flex;align-items:center;gap:10px;">
-            <div class="breakdown-bar-wrap"><div class="breakdown-bar" id="bar-writeoff" style="width:80%;background:var(--danger);"></div></div>
+          <div class="breakdown-row-top">
+            <div class="breakdown-label">Product write-off (units × retail value)</div>
             <div class="breakdown-amount" id="bd-writeoff">—</div>
           </div>
+          <div class="breakdown-bar-wrap"><div class="breakdown-bar" id="bar-writeoff" style="width:80%;background:var(--danger);"></div></div>
         </div>
         <div class="breakdown-row">
-          <div class="breakdown-label">Store staff labour (all stores)</div>
-          <div style="display:flex;align-items:center;gap:10px;">
-            <div class="breakdown-bar-wrap"><div class="breakdown-bar" id="bar-staff" style="width:40%;background:var(--warn);"></div></div>
+          <div class="breakdown-row-top">
+            <div class="breakdown-label">Store staff labour (all stores)</div>
             <div class="breakdown-amount" id="bd-staff">—</div>
           </div>
+          <div class="breakdown-bar-wrap"><div class="breakdown-bar" id="bar-staff" style="width:40%;background:var(--warn);"></div></div>
         </div>
         <div class="breakdown-row">
-          <div class="breakdown-label">Management and coordination time</div>
-          <div style="display:flex;align-items:center;gap:10px;">
-            <div class="breakdown-bar-wrap"><div class="breakdown-bar" id="bar-mgmt" style="width:30%;background:var(--warn);"></div></div>
+          <div class="breakdown-row-top">
+            <div class="breakdown-label">Management and coordination time</div>
             <div class="breakdown-amount" id="bd-mgmt">—</div>
           </div>
+          <div class="breakdown-bar-wrap"><div class="breakdown-bar" id="bar-mgmt" style="width:30%;background:var(--warn);"></div></div>
+        </div>
+        <div class="breakdown-row" id="row-legal">
+          <div class="breakdown-row-top">
+            <div class="breakdown-label" id="lbl-legal">Legal fees (outside counsel)</div>
+            <div class="breakdown-amount" id="bd-legal">—</div>
+          </div>
+          <div class="breakdown-bar-wrap"><div class="breakdown-bar" id="bar-legal" style="width:0%;background:#a78bfa;"></div></div>
         </div>
         <div class="breakdown-row">
-          <div class="breakdown-label" id="lbl-regulatory">Regulatory risk (incomplete audit trail)</div>
-          <div style="display:flex;align-items:center;gap:10px;">
-            <div class="breakdown-bar-wrap"><div class="breakdown-bar" id="bar-reg" style="width:20%;background:var(--info);"></div></div>
+          <div class="breakdown-row-top">
+            <div class="breakdown-label" id="lbl-regulatory">Regulatory risk (incomplete audit trail)</div>
             <div class="breakdown-amount" id="bd-reg">—</div>
           </div>
+          <div class="breakdown-bar-wrap"><div class="breakdown-bar" id="bar-reg" style="width:20%;background:var(--info);"></div></div>
         </div>
         <div class="breakdown-row total">
           <div class="breakdown-label">Total estimated cost per recall</div>
@@ -961,14 +1004,18 @@ function setRegion(r) {
   document.getElementById('prefix-currency').textContent = prefix;
   document.getElementById('prefix-rate').textContent = prefix;
   document.getElementById('prefix-disposal').textContent = prefix;
+  document.getElementById('prefix-legal').textContent = isUS ? 'USD' : 'NOK';
   document.getElementById('hint-hours').textContent = isUS
     ? 'FDA RFR requires reporting within 24 hours of a Class I recall. Some retailers require traceability data within 2 hours.'
     : 'EU 178/2002 requires traceability within 4 hours of a Mattilsynet request.';
   document.getElementById('lbl-regulatory').textContent = isUS
     ? 'Regulatory risk (FDA 21 CFR non-compliance)'
     : 'Regulatory risk (incomplete audit trail)';
+  document.getElementById('legal-section-note').textContent = isUS
+    ? 'Based on FDA enforcement benchmarks'
+    : 'Based on Mattilsynet enforcement cases';
   document.getElementById('assumptions-text').textContent = isUS
-    ? 'Cost estimates based on industry benchmarks for US grocery retail. Direct costs include product disposal, write-off at retail value, and staff labour. Regulatory risk figure reflects potential FDA administrative penalties for incomplete traceability records under FSMA 204. Average direct cost of a US Class I recall is $10M+ before brand damage (Allera, 2026). This calculator is indicative only.'
+    ? 'Cost estimates based on industry benchmarks for US grocery retail. Direct costs include product disposal, write-off at retail value, and staff labour. Legal fees reflect outside counsel benchmarks from FDA recall litigation; Class I multi-state recalls typically require 150–400 attorney hours at $800–$1,100/hr. Regulatory risk figure reflects potential FDA administrative penalties for incomplete traceability records under FSMA 204. Average direct cost of a US Class I recall is $10M+ before brand damage (Allera, 2026). This calculator is indicative only.'
     : 'Cost estimates based on industry benchmarks for Norwegian grocery retail. Direct costs include product disposal, write-off at retail value, and staff labour. Regulatory risk figure reflects potential Mattilsynet administrative sanctions for incomplete audit trails under EU Reg. 178/2002. Actual recall costs vary significantly. This calculator is indicative only.';
 
   // Set defaults for region
@@ -976,10 +1023,14 @@ function setRegion(r) {
     document.getElementById('staff-rate').value = 45;
     document.getElementById('unit-value').value = 8;
     document.getElementById('disposal-cost').value = 1.5;
+    document.getElementById('legal-rate').value = 950;
+    document.getElementById('lbl-legal-rate').textContent = 'Legal hourly rate (outside counsel)';
   } else {
     document.getElementById('staff-rate').value = 380;
     document.getElementById('unit-value').value = 48;
     document.getElementById('disposal-cost').value = 8;
+    document.getElementById('legal-rate').value = 7500; // NOK equiv ~00/hr, Norwegian legal rates
+    document.getElementById('lbl-legal-rate').textContent = 'Legal timepris (ekstern advokat)';
   }
   recalculate();
 }
@@ -998,17 +1049,37 @@ function fmt(n, region) {
   return isUS ? `$${Math.round(n)}` : `${Math.round(n)} NOK`;
 }
 
+// Legal hours by complexity
+const LEGAL_HOURS = {
+  class3:  { min: 40,   max: 80,   mid: 60 },
+  class12: { min: 150,  max: 400,  mid: 275 },
+  complex: { min: 1000, max: 2000, mid: 1400 },
+};
+
+function updateLegalHint(complexity) {
+  const h = LEGAL_HOURS[complexity];
+  const hint = document.getElementById('legal-hours-hint');
+  if (!hint) return;
+  hint.textContent = complexity === 'complex'
+    ? 'Typical outside counsel hours: 1,000+'
+    : 'Typical outside counsel hours: ' + h.min + '\u2013' + h.max;
+}
+
 function recalculate() {
-  const stores       = parseInt(document.getElementById('num-stores').value) || 0;
-  const unitsPer     = parseInt(document.getElementById('units-per-store').value) || 0;
-  const unitVal      = parseFloat(document.getElementById('unit-value').value) || 0;
-  const staffRate    = parseFloat(document.getElementById('staff-rate').value) || 0;
-  const staffHrs     = parseFloat(document.getElementById('staff-hours').value) || 0;
-  const mgmtHrs      = parseFloat(document.getElementById('mgmt-hours').value) || 0;
-  const disposalRate = parseFloat(document.getElementById('disposal-cost').value) || 0;
-  const numRecalls   = parseInt(document.getElementById('num-recalls').value) || 1;
-  const currentHours = parseInt(document.getElementById('current-hours').value) || 28;
-  const process      = document.getElementById('process-type').value;
+  const stores          = parseInt(document.getElementById('num-stores').value) || 0;
+  const unitsPer        = parseInt(document.getElementById('units-per-store').value) || 0;
+  const unitVal         = parseFloat(document.getElementById('unit-value').value) || 0;
+  const staffRate       = parseFloat(document.getElementById('staff-rate').value) || 0;
+  const staffHrs        = parseFloat(document.getElementById('staff-hours').value) || 0;
+  const mgmtHrs         = parseFloat(document.getElementById('mgmt-hours').value) || 0;
+  const disposalRate    = parseFloat(document.getElementById('disposal-cost').value) || 0;
+  const numRecalls      = parseInt(document.getElementById('num-recalls').value) || 1;
+  const currentHours    = parseInt(document.getElementById('current-hours').value) || 28;
+  const process         = document.getElementById('process-type').value;
+  const legalComplexity = document.getElementById('legal-complexity').value;
+  const legalRate       = parseFloat(document.getElementById('legal-rate').value) || 0;
+
+  updateLegalHint(legalComplexity);
 
   const totalUnits = stores * unitsPer;
 
@@ -1016,43 +1087,52 @@ function recalculate() {
   const costDisposal  = totalUnits * disposalRate;
   const costWriteoff  = totalUnits * unitVal;
   const costStaff     = stores * staffHrs * staffRate;
-  const mgmtRate      = staffRate * 1.5; // management premium
+  const mgmtRate      = staffRate * 1.5;
   const costMgmt      = mgmtHrs * mgmtRate;
+  const costLegal     = LEGAL_HOURS[legalComplexity].mid * legalRate;
 
-  // Regulatory risk — varies by process quality and hours
+  // Regulatory risk
   const regMultiplier = process === 'paper' ? 0.20 : process === 'email' ? 0.12 : 0.05;
   const costReg       = (costDisposal + costWriteoff + costStaff + costMgmt) * regMultiplier;
 
-  const totalSingle   = costDisposal + costWriteoff + costStaff + costMgmt + costReg;
+  const totalSingle   = costDisposal + costWriteoff + costStaff + costMgmt + costLegal + costReg;
   const totalAnnual   = totalSingle * numRecalls;
 
-  // Bars (percentage of total)
-  const barPct = (v) => Math.min(100, Math.round((v / totalSingle) * 100));
+  // Bars — scale relative to largest component so all bars are meaningful
+  const maxCost = Math.max(costDisposal, costWriteoff, costStaff, costMgmt, costLegal, costReg, 1);
+  const barPct  = (v) => Math.max(0, Math.min(100, Math.round((v / maxCost) * 100)));
   document.getElementById('bar-disposal').style.width = barPct(costDisposal) + '%';
   document.getElementById('bar-writeoff').style.width = barPct(costWriteoff) + '%';
   document.getElementById('bar-staff').style.width    = barPct(costStaff) + '%';
   document.getElementById('bar-mgmt').style.width     = barPct(costMgmt) + '%';
+  document.getElementById('bar-legal').style.width    = barPct(costLegal) + '%';
   document.getElementById('bar-reg').style.width      = barPct(costReg) + '%';
 
   // Display
-  document.getElementById('result-single').textContent    = fmt(totalSingle, _region);
-  document.getElementById('result-annual').textContent    = fmt(totalAnnual, _region);
-  document.getElementById('result-annual-sub').textContent = `${numRecalls} recall${numRecalls!==1?'s':''} per year`;
-  document.getElementById('bd-disposal').textContent      = fmt(costDisposal, _region);
-  document.getElementById('bd-writeoff').textContent      = fmt(costWriteoff, _region);
-  document.getElementById('bd-staff').textContent         = fmt(costStaff, _region);
-  document.getElementById('bd-mgmt').textContent          = fmt(costMgmt, _region);
-  document.getElementById('bd-reg').textContent           = fmt(costReg, _region);
-  document.getElementById('bd-total').textContent         = fmt(totalSingle, _region);
+  document.getElementById('result-single').textContent     = fmt(totalSingle, _region);
+  document.getElementById('result-annual').textContent     = fmt(totalAnnual, _region);
+  document.getElementById('result-annual-sub').textContent = numRecalls + ' recall' + (numRecalls!==1?'s':'') + ' per year';
+  document.getElementById('bd-disposal').textContent       = fmt(costDisposal, _region);
+  document.getElementById('bd-writeoff').textContent       = fmt(costWriteoff, _region);
+  document.getElementById('bd-staff').textContent          = fmt(costStaff, _region);
+  document.getElementById('bd-mgmt').textContent           = fmt(costMgmt, _region);
+  document.getElementById('bd-legal').textContent          = fmt(costLegal, _region);
+  document.getElementById('bd-reg').textContent            = fmt(costReg, _region);
+  document.getElementById('bd-total').textContent          = fmt(totalSingle, _region);
 
   // Response time
   document.getElementById('cmp-before').textContent = currentHours + 'h';
   const afterHours = Math.max(2, Math.min(4, Math.round(stores / 10)));
   document.getElementById('cmp-after').textContent  = afterHours <= 2 ? '2h' : '2–4h';
 
-  // Saving calculation — Batch'd eliminates ~80% of coordination cost, reduces regulatory risk to near zero
-  const batchdSavingPct    = 0.72; // 72% of total cost is reducible
-  const estimatedWithBatchd = totalSingle * (1 - batchdSavingPct);
+  // Saving calculation:
+  // Batch'd eliminates most coordination cost, regulatory risk, and significantly reduces legal exposure
+  // through complete audit trails (lawyers need fewer hours when documentation is airtight)
+  const legalSavingPct  = 0.55; // documented traceability reduces outside counsel hours ~55%
+  const otherSavingPct  = 0.80; // coordination, management, regulatory risk nearly eliminated
+  const costLegalWithBatchd = costLegal * (1 - legalSavingPct);
+  const costOtherWithBatchd = (costDisposal + costWriteoff + costStaff + costMgmt + costReg) * (1 - otherSavingPct);
+  const estimatedWithBatchd = costLegalWithBatchd + costOtherWithBatchd;
   const annualSaving        = (totalSingle - estimatedWithBatchd) * numRecalls;
 
   // Batch'd pricing estimate — roughly per store per year
