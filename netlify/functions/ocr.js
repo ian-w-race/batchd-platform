@@ -1,128 +1,120 @@
 // netlify/functions/ocr.js
-// Proxies all Anthropic vision API calls server-side so the API key never touches the browser.
-// Handles three tasks: identify_product, read_barcode, extract_codes
+// Batch'd AI OCR proxy — Anthropic vision API, server-side key
+// Tasks: identify_product | read_barcode | localise_lot | extract_codes
+//
+// Speed strategy:
+//   - localise_lot  → haiku (fast localisation pass)
+//   - extract_codes → haiku by default (useHaiku: true from client)
+//                  → sonnet only for escalation (useHaiku: false, adversarial pass)
+//   - identify_product → haiku (product name from label photo)
+//   - read_barcode     → haiku (barcode AI read)
+
+const Anthropic = require('@anthropic-ai/sdk');
+
+const MODEL_HAIKU  = 'claude-haiku-4-5-20251001';
+const MODEL_SONNET = 'claude-sonnet-4-20250514';
+const MAX_TOKENS   = 1024;
 
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, body: 'Method not allowed' };
+    return { statusCode: 405, body: 'Method Not Allowed' };
   }
-
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    return { statusCode: 500, body: JSON.stringify({ error: 'API key not configured' }) };
-  }
-
-  let body;
-  try {
-    body = JSON.parse(event.body);
-  } catch {
-    return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON' }) };
-  }
-
-  const { task, image, extra } = body;
-
-  if (!task || !image) {
-    return { statusCode: 400, body: JSON.stringify({ error: 'Missing task or image' }) };
-  }
-
-  const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
-  const headers = {
-    'Content-Type': 'application/json',
-    'x-api-key': apiKey,
-    'anthropic-version': '2023-06-01',
-  };
 
   try {
-    let requestBody;
+    const { task, image, extra = {} } = JSON.parse(event.body);
+    if (!task || !image) {
+      return { statusCode: 400, body: JSON.stringify({ error: 'task and image required' }) };
+    }
 
-    if (task === 'identify_product') {
-      requestBody = {
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 100,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: image } },
-            { type: 'text', text: 'This is a food product label. Reply with ONLY the product name (brand + product), nothing else. Example: "Tine Helmelk" or "Pepsi Cola 330ml". If you cannot identify it, reply "Unknown Product".' }
-          ]
-        }]
-      };
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-    } else if (task === 'read_barcode') {
-      requestBody = {
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 100,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: image } },
-            { type: 'text', text: 'Read the barcode number printed below the barcode stripes on this product. The number is typically 8-14 digits. Reply with ONLY the barcode number digits, no spaces, no other text. If you cannot read it, reply "null".' }
-          ]
-        }]
-      };
+    let model, prompt, maxTokens;
 
-    } else if (task === 'localise_lot') {
-      const isUS = extra?.isUSRegion || false;
-      requestBody = {
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 60,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: image } },
-            { type: 'text', text: `This is ${isUS ? 'US' : 'Norwegian/EU'} food packaging. Locate the lot number, batch number, or production code (NOT the best-before date, NOT a barcode number${isUS ? ', NOT USDA establishment numbers (EST. XXXX)' : ', NOT "NO XXXX EF" plant codes'}). Where is it vertically in the image? Reply ONLY with JSON: {"y_start": 0.0, "y_end": 1.0, "found": true} using fractions 0-1 from top. If you cannot find any lot code, reply {"found": false}.` }
-          ]
-        }]
-      };
+    switch (task) {
 
-    } else if (task === 'extract_codes') {
-      const prompt = extra?.prompt;
-      if (!prompt) {
-        return { statusCode: 400, body: JSON.stringify({ error: 'Missing prompt for extract_codes' }) };
+      // ── PRODUCT IDENTIFICATION ──────────────────────────────
+      case 'identify_product': {
+        model = MODEL_HAIKU;
+        maxTokens = 80;
+        prompt = `You are identifying a food product from a photo of its packaging.
+Return ONLY the product name (brand + product, e.g. "TINE Helmelk 1.5L" or "Gilde Kjøttdeig 400g").
+No explanations. No punctuation. Just the product name.
+If you cannot identify it, return "Unknown Product".`;
+        break;
       }
-      requestBody = {
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 300,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: image } },
-            { type: 'text', text: prompt }
-          ]
-        }]
-      };
 
-    } else {
-      return { statusCode: 400, body: JSON.stringify({ error: `Unknown task: ${task}` }) };
+      // ── BARCODE AI READ ─────────────────────────────────────
+      case 'read_barcode': {
+        model = MODEL_HAIKU;
+        maxTokens = 200;
+        prompt = `Read all barcodes visible in this image. Return ONLY a JSON array of strings, e.g. ["1234567890123"]. No markdown. If no barcode is readable, return [].`;
+        break;
+      }
+
+      // ── LOT CODE LOCALISATION ───────────────────────────────
+      // Fast pass to find WHERE on the image the lot code is.
+      // Returns crop region (y_start, y_end as 0-1 fractions).
+      case 'localise_lot': {
+        model = MODEL_HAIKU;
+        maxTokens = 150;
+        const isUS = extra.isUSRegion;
+        prompt = isUS
+          ? `Locate the Traceability Lot Code (TLC) region on this US food packaging. Look for labels: LOT, L#, BATCH, PACK DATE, MFG DATE, or GS1 AI(10).
+Return ONLY valid JSON: {"found": true/false, "y_start": 0.0, "y_end": 1.0, "description": "brief note"}
+y_start and y_end are fractions of image height (0=top, 1=bottom). No markdown.`
+          : `Locate the lot/batch number (partinummer) region on this Norwegian/EU food packaging. Look for: L, Parti, LOT, Best før/Holdbar til area, or inkjet codes near the expiry date.
+Return ONLY valid JSON: {"found": true/false, "y_start": 0.0, "y_end": 1.0, "description": "brief note"}
+y_start and y_end are fractions of image height (0=top, 1=bottom). No markdown.`;
+        break;
+      }
+
+      // ── LOT CODE EXTRACTION ─────────────────────────────────
+      // Primary extraction pass.
+      // useHaiku (default): fast haiku pass — covers 90%+ of cases
+      // !useHaiku: sonnet escalation — for hard cases where haiku returned null
+      case 'extract_codes': {
+        const useHaiku = extra.useHaiku !== false; // default true
+        model = useHaiku ? MODEL_HAIKU : MODEL_SONNET;
+        maxTokens = useHaiku ? 300 : 500;
+        // Prompt comes entirely from client — it's already built with full instructions
+        prompt = extra.prompt || 'Extract lot codes from this food packaging. Return JSON with lot, batch, expiry, lot_confidence fields.';
+        break;
+      }
+
+      default:
+        return { statusCode: 400, body: JSON.stringify({ error: `Unknown task: ${task}` }) };
     }
 
-    const resp = await fetch(ANTHROPIC_URL, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(requestBody),
+    const response = await client.messages.create({
+      model,
+      max_tokens: maxTokens,
+      messages: [{
+        role: 'user',
+        content: [
+          {
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: 'image/jpeg',
+              data: image,
+            },
+          },
+          { type: 'text', text: prompt },
+        ],
+      }],
     });
-
-    const data = await resp.json();
-
-    if (!resp.ok) {
-      console.error('Anthropic API error:', data);
-      return {
-        statusCode: resp.status,
-        body: JSON.stringify({ error: data.error?.message || 'Anthropic API error' })
-      };
-    }
 
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: data.content }),
+      body: JSON.stringify(response),
     };
 
   } catch (err) {
     console.error('OCR function error:', err);
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: err.message || 'Internal error' })
+      body: JSON.stringify({ error: err.message }),
     };
   }
 };
