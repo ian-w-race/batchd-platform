@@ -2265,18 +2265,19 @@
 
 
   /* ══════════════════════════════════════════════════════════
-     BULLETPROOF NO-SCROLL SCAN FLOW (mobile)
+     SCAN FLOW — mobile polished design
+     Edge-to-edge camera, frosted controls, step badge in corner
      ══════════════════════════════════════════════════════════ */
   @media (max-width: 600px) {
 
-    /* When on the scan view, aggressively lock the page + hide all else */
+    /* Lock body + hide other views on scan */
     body.scan-active { overflow: hidden !important; position: fixed; width: 100%; height: 100dvh; }
     body.scan-active #view-history,
     body.scan-active #view-settings,
     body.scan-active #view-manager,
     body.scan-active #view-recalls { display: none !important; }
 
-    /* Scan view: explicit height, fills below header */
+    /* Scan view fills below header */
     body.scan-active #view-scan {
       position: fixed !important;
       top: 54px;
@@ -2285,40 +2286,67 @@
       display: flex !important;
       flex-direction: column;
       overflow: hidden;
-      background: var(--bg);
+      background: #000;
       padding: 0;
       gap: 0;
       z-index: 10;
     }
 
-    /* Top context bar — compact */
-    body.scan-active .scan-top-bar { flex-shrink: 0; padding: 4px 8px; background: var(--bg); }
+    /* Top pill row unchanged */
+    body.scan-active .scan-top-bar {
+      flex-shrink: 0;
+      padding: 4px 8px;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+    }
     body.scan-active .stb-row { gap: 5px; }
     body.scan-active .stb-sq { height: 36px !important; border-radius: 8px !important; font-size: 11px; }
     body.scan-active .stb-count { font-size: 14px !important; }
     body.scan-active .stb-panel { padding: 4px 8px !important; }
 
-    /* Flow card — fills remaining height */
+    /* Flow card fills remaining */
     body.scan-active .flow-card {
       flex: 1 1 0;
       min-height: 0;
       display: flex;
       flex-direction: column;
       overflow: hidden;
+      border: none;
       border-radius: 0;
-      border-left: none;
-      border-right: none;
-      border-bottom: none;
-      border-top: 1px solid var(--border);
+      background: #000;
+      position: relative;
     }
 
-    /* Stepper — dots only, no labels, tiny */
-    body.scan-active .flow-stepper { padding: 6px 20px 4px !important; flex-shrink: 0; }
-    body.scan-active .flow-step-dot { width: 20px !important; height: 20px !important; font-size: 10px !important; border-width: 2px !important; }
-    body.scan-active .flow-step-label { display: none !important; }
-    body.scan-active .flow-step:not(:last-child)::after { top: 10px !important; left: calc(50% + 12px); right: calc(-50% + 12px); }
+    /* ── STEPPER: hidden entirely; step badge in camera corner replaces it ── */
+    body.scan-active .flow-stepper { display: none !important; }
 
-    /* Phase — fills remaining */
+    /* Step badge — "Step 1" overlay, top-right of camera view
+       Uses the flow-card's active phase to determine label via CSS */
+    body.scan-active .flow-card::before {
+      position: absolute;
+      top: 14px;
+      right: 14px;
+      z-index: 26;
+      padding: 5px 10px;
+      background: rgba(8,15,18,0.62);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid rgba(255,255,255,0.14);
+      border-radius: 8px;
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.88);
+      pointer-events: none;
+      white-space: nowrap;
+    }
+    body.scan-active .flow-card:has(#phase-1.active)::before { content: "Step 1  ·  Product"; }
+    body.scan-active .flow-card:has(#phase-2.active)::before { content: "Step 2  ·  Lot & Batch"; }
+    body.scan-active .flow-card:has(#phase-3.active)::before { content: "Step 3  ·  Review"; }
+
+    /* Phase fills remaining */
     body.scan-active .flow-phase { flex: 1 1 0; min-height: 0; overflow: hidden; }
     body.scan-active .flow-phase.active {
       display: flex !important;
@@ -2326,12 +2354,13 @@
       flex: 1 1 0;
       min-height: 0;
       overflow: hidden;
+      position: relative;
     }
 
-    /* Phase header: hidden on mobile */
+    /* Phase header hidden */
     body.scan-active .flow-phase-header { display: none !important; }
 
-    /* Phase body: flex column, no padding */
+    /* Phase body: column, camera fills, controls overlay */
     body.scan-active .flow-phase-body {
       flex: 1 1 0;
       min-height: 0;
@@ -2340,9 +2369,10 @@
       flex-direction: column;
       padding: 0 !important;
       gap: 0 !important;
+      position: relative;
     }
 
-    /* p1-label-wrap: relative container for camera + overlays */
+    /* p1-label-wrap / p1-barcode-wrap: relative containers for overlays */
     body.scan-active #p1-label-wrap,
     body.scan-active #p1-barcode-wrap {
       flex: 1 1 0 !important;
@@ -2353,7 +2383,7 @@
       overflow: hidden;
     }
 
-    /* Camera fills the label wrap */
+    /* Camera edge-to-edge — fills everything */
     body.scan-active .camera-wrap {
       flex: 1 1 0 !important;
       min-height: 0 !important;
@@ -2361,130 +2391,234 @@
       max-height: none !important;
       border-radius: 0 !important;
       box-shadow: none !important;
+      background: #000;
     }
 
-    /* Mode toggle: glassy overlay at top-left of camera */
+    /* ── Green camera frame (scan area rectangle) —
+       Keep at 15% inset but ensure it's above the video and below controls.
+       Move top/bottom inset to leave room for mode toggle + bottom strip. ── */
+    body.scan-active .camera-frame {
+      inset: 20% 15% 28% 15% !important;
+      z-index: 15;
+    }
+
+    /* ── Camera placeholder text (e.g. "Starting camera...") ── */
+    body.scan-active .camera-placeholder {
+      color: rgba(255,255,255,0.6) !important;
+      background: #000 !important;
+    }
+
+    /* ── Mode toggle (Label Photo / Scan Barcode) — glassy frosted pills ── */
     body.scan-active #p1-mode-toggle {
       position: absolute !important;
-      top: 8px !important;
-      left: 8px !important;
-      z-index: 30 !important;
+      top: 14px !important;
+      left: 14px !important;
+      right: auto !important;
+      z-index: 24 !important;
       background: transparent !important;
       border: none !important;
       padding: 0 !important;
       display: flex !important;
-      gap: 5px !important;
+      gap: 6px !important;
+      max-width: calc(100% - 120px);  /* leave room for step badge at right */
     }
     body.scan-active #p1-mode-toggle .mode-btn {
-      background: rgba(8,15,18,0.7) !important;
-      backdrop-filter: blur(12px) !important;
-      -webkit-backdrop-filter: blur(12px) !important;
-      border: 1px solid rgba(255,255,255,0.16) !important;
-      color: rgba(255,255,255,0.8) !important;
-      padding: 6px 10px !important;
+      background: rgba(8,15,18,0.62) !important;
+      backdrop-filter: blur(14px) !important;
+      -webkit-backdrop-filter: blur(14px) !important;
+      border: 1px solid rgba(255,255,255,0.14) !important;
+      color: rgba(255,255,255,0.88) !important;
+      padding: 7px 11px !important;
       font-size: 11px !important;
-      min-height: 32px !important;
-      border-radius: 8px !important;
+      min-height: 34px !important;
+      border-radius: 10px !important;
+      font-weight: 600 !important;
+      white-space: nowrap;
     }
     body.scan-active #p1-mode-toggle .mode-btn.active {
-      background: rgba(52,211,153,0.28) !important;
-      border-color: rgba(52,211,153,0.5) !important;
-      color: #4ade80 !important;
+      background: rgba(52,211,153,0.88) !important;
+      border-color: transparent !important;
+      color: #04120e !important;
     }
-    [data-theme="light"] body.scan-active #p1-mode-toggle .mode-btn {
-      background: rgba(255,255,255,0.88) !important;
-      border-color: rgba(7,122,85,0.28) !important;
-      color: var(--muted) !important;
-    }
-    [data-theme="light"] body.scan-active #p1-mode-toggle .mode-btn.active {
-      background: rgba(7,122,85,0.15) !important;
-      border-color: rgba(7,122,85,0.45) !important;
-      color: var(--accent) !important;
+    /* ALPHA badge inside mode toggle — smaller */
+    body.scan-active #p1-mode-toggle .mode-btn span[style*="ALPHA"],
+    body.scan-active #p1-mode-toggle .mode-btn > span:last-child {
+      display: none !important;
     }
 
-    /* Capture/retake buttons overlaid at bottom of camera */
+    /* ── Caption strip under mode toggle: "Photograph the label — AI fills this in" ── */
+    body.scan-active #p1-label-wrap::before,
+    body.scan-active #p1-barcode-wrap::before {
+      position: absolute;
+      top: 62px;
+      left: 14px;
+      right: 14px;
+      z-index: 23;
+      font-size: 11px;
+      color: rgba(255,255,255,0.7);
+      font-family: 'DM Mono', monospace;
+      letter-spacing: 0.02em;
+      pointer-events: none;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+    }
+    body.scan-active #p1-label-wrap::before {
+      content: "Photograph the label — AI identifies the product";
+    }
+    body.scan-active #p1-barcode-wrap::before {
+      content: "Align the barcode within the frame — hold steady";
+    }
+
+    /* ── Capture button: smaller frosted circle, centered bottom ── */
     body.scan-active #p1-label-wrap .btn-row,
     body.scan-active #p1-barcode-wrap .btn-row {
       position: absolute !important;
-      bottom: 10px !important;
-      left: 10px !important;
-      right: 10px !important;
-      z-index: 30 !important;
+      bottom: 96px !important;  /* above the input strip */
+      left: 50% !important;
+      right: auto !important;
+      transform: translateX(-50%) !important;
+      z-index: 24 !important;
       flex-shrink: 0 !important;
-      gap: 8px !important;
-    }
-    body.scan-active #p1-label-wrap .btn-row .btn,
-    body.scan-active #p1-barcode-wrap .btn-row .btn {
-      min-height: 48px !important;
-      font-size: 14px !important;
-      font-weight: 700 !important;
-      border-radius: 12px !important;
-      backdrop-filter: blur(8px) !important;
-      -webkit-backdrop-filter: blur(8px) !important;
+      gap: 12px !important;
+      display: flex !important;
+      align-items: center;
+      width: auto !important;
     }
     body.scan-active #p1-label-wrap .btn-row .btn-primary,
     body.scan-active #p1-barcode-wrap .btn-row .btn-primary {
-      background: rgba(52,211,153,0.92) !important;
-      color: #040c0e !important;
-      border: none !important;
+      width: 56px !important;
+      height: 56px !important;
+      min-height: 56px !important;
+      padding: 0 !important;
+      border-radius: 50% !important;
+      background: rgba(255,255,255,0.18) !important;
+      backdrop-filter: blur(16px) !important;
+      -webkit-backdrop-filter: blur(16px) !important;
+      color: #fff !important;
+      border: 2px solid rgba(255,255,255,0.45) !important;
+      box-shadow: 0 2px 14px rgba(0,0,0,0.4) !important;
+      font-size: 0 !important;
+      justify-content: center !important;
+      align-items: center;
+      /* Inner dot effect */
+      position: relative;
+    }
+    body.scan-active #p1-label-wrap .btn-row .btn-primary::after,
+    body.scan-active #p1-barcode-wrap .btn-row .btn-primary::after {
+      content: "";
+      position: absolute;
+      inset: 6px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.92);
+    }
+    body.scan-active #p1-label-wrap .btn-row .btn-primary svg,
+    body.scan-active #p1-barcode-wrap .btn-row .btn-primary svg {
+      display: none !important;
     }
     body.scan-active #p1-label-wrap .btn-row .btn-ghost,
     body.scan-active #p1-barcode-wrap .btn-row .btn-ghost {
-      background: rgba(8,15,18,0.62) !important;
-      color: rgba(255,255,255,0.85) !important;
-      border: 1px solid rgba(255,255,255,0.18) !important;
-    }
-    [data-theme="light"] body.scan-active #p1-label-wrap .btn-row .btn-primary,
-    [data-theme="light"] body.scan-active #p1-barcode-wrap .btn-row .btn-primary {
-      background: rgba(7,122,85,0.92) !important;
+      background: rgba(8,15,18,0.6) !important;
+      backdrop-filter: blur(12px) !important;
+      -webkit-backdrop-filter: blur(12px) !important;
       color: #fff !important;
-    }
-    [data-theme="light"] body.scan-active #p1-label-wrap .btn-row .btn-ghost,
-    [data-theme="light"] body.scan-active #p1-barcode-wrap .btn-row .btn-ghost {
-      background: rgba(255,255,255,0.88) !important;
-      color: var(--text) !important;
-      border-color: var(--border) !important;
+      border: 1px solid rgba(255,255,255,0.2) !important;
+      border-radius: 18px !important;
+      min-height: 36px !important;
+      padding: 0 14px !important;
+      font-size: 11px !important;
     }
 
-    /* Product name field: slim strip below camera */
+    /* ── Bottom input strip: product name, frosted dark ── */
     body.scan-active .flow-phase-body > .field {
+      position: absolute !important;
+      bottom: 52px !important;
+      left: 10px; right: 10px;
       flex-shrink: 0 !important;
-      padding: 6px 8px 0 !important;
+      padding: 0 !important;
       margin: 0 !important;
+      z-index: 23;
     }
     body.scan-active .flow-phase-body > .field > label,
     body.scan-active .flow-phase-body > .field > span { display: none !important; }
     body.scan-active .flow-phase-body > .field input {
-      font-size: 15px !important;
-      padding: 10px 12px !important;
-      border-radius: 10px !important;
-      min-height: 44px !important;
-    }
-
-    /* Confirm & Continue button — slim, at bottom */
-    body.scan-active .btn-next {
-      flex-shrink: 0 !important;
-      margin: 5px 8px 7px !important;
-      padding: 13px 16px !important;
-      min-height: 46px !important;
+      width: 100%;
+      font-size: 14px !important;
+      padding: 11px 14px !important;
       border-radius: 12px !important;
+      min-height: 42px !important;
+      background: rgba(8,15,18,0.72) !important;
+      backdrop-filter: blur(14px) !important;
+      -webkit-backdrop-filter: blur(14px) !important;
+      border: 1px solid rgba(255,255,255,0.15) !important;
+      color: #fff !important;
+    }
+    body.scan-active .flow-phase-body > .field input::placeholder {
+      color: rgba(255,255,255,0.5) !important;
       font-size: 13px !important;
     }
+    body.scan-active .flow-phase-body > .field input.field-required {
+      border-color: rgba(255,255,255,0.15) !important;
+      background: rgba(8,15,18,0.72) !important;
+    }
 
-    /* Phase 2: OCR result strip compact */
-    body.scan-active .ocr-result { flex-shrink: 0 !important; padding: 8px 10px !important; }
-    body.scan-active .ocr-raw    { font-size: 10px !important; }
+    /* ── Confirm & Continue: slim strip at very bottom ── */
+    body.scan-active .btn-next {
+      position: absolute !important;
+      bottom: 8px !important;
+      left: 10px !important;
+      right: 10px !important;
+      margin: 0 !important;
+      padding: 11px 18px !important;
+      min-height: 40px !important;
+      border-radius: 12px !important;
+      font-size: 13px !important;
+      font-weight: 700 !important;
+      z-index: 23;
+      flex-shrink: 0 !important;
+    }
+    body.scan-active .btn-next:disabled {
+      background: rgba(8,15,18,0.6) !important;
+      color: rgba(255,255,255,0.4) !important;
+      backdrop-filter: blur(12px) !important;
+      -webkit-backdrop-filter: blur(12px) !important;
+      border: 1px solid rgba(255,255,255,0.1) !important;
+    }
 
-    /* Phase 3: allow scroll only here */
+    /* Phase 2 specific — OCR result strip */
+    body.scan-active .ocr-result {
+      flex-shrink: 0 !important;
+      padding: 8px 10px !important;
+      background: rgba(8,15,18,0.75) !important;
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border-radius: 10px;
+      margin: 8px;
+    }
+    body.scan-active .ocr-raw { font-size: 10px !important; }
+
+    /* ── Phase 3 — scroll allowed (review) — revert to content-over-bg ── */
+    body.scan-active #phase-3 { background: var(--bg); }
     body.scan-active #phase-3 .flow-phase-body {
       overflow-y: auto !important;
-      padding: 0 8px 8px !important;
+      padding: 12px !important;
+      gap: 10px !important;
     }
     body.scan-active #phase-3 .flow-phase-body > .field {
-      padding: 8px 0 0 !important;
+      position: static !important;
+      padding: 0 !important;
+      left: auto; right: auto; bottom: auto;
     }
     body.scan-active #phase-3 .flow-phase-body > .field > label { display: block !important; }
-    body.scan-active #phase-3 .flow-phase-body > .field > span  { display: inline !important; }
+    body.scan-active #phase-3 .flow-phase-body > .field > span { display: inline !important; }
+    body.scan-active #phase-3 .flow-phase-body > .field input {
+      background: var(--surface) !important;
+      color: var(--text) !important;
+      border: 1px solid var(--border) !important;
+      backdrop-filter: none !important;
+    }
+    body.scan-active #phase-3 .btn-next {
+      position: static !important;
+      margin-top: 6px !important;
+    }
     body.scan-active #field-notes,
     body.scan-active #field-supplier { display: none !important; }
     body.scan-active #field-quantity-wrap { display: block !important; }
@@ -2699,8 +2833,8 @@
       <button onclick="showView('settings')" data-i18n="nav.settings">Settings</button>
       <button id="nav-btn-manager" onclick="showView('manager')" style="display:none;" data-i18n="nav.manager">Manager</button>
     </nav>
-    <button onclick="openDrawer()" aria-label="Menu" style="width:48px;height:48px;display:flex;align-items:center;justify-content:center;background:none;border:none;cursor:pointer;color:var(--text);border-radius:10px;transition:background 0.15s;flex-shrink:0;">
-      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+    <button onclick="openDrawer()" aria-label="Menu" style="width:48px;height:48px;display:flex;align-items:center;justify-content:center;background:none;border:none;cursor:pointer;color:var(--text);border-radius:10px;transition:background 0.15s;flex-shrink:0;padding:0;">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
         <line x1="3" y1="6" x2="21" y2="6"/>
         <line x1="3" y1="12" x2="21" y2="12"/>
         <line x1="3" y1="18" x2="21" y2="18"/>
@@ -2830,7 +2964,7 @@
             <div class="mode-toggle" id="p1-mode-toggle">
               <button class="mode-btn active" id="p1-mode-btn-label" onclick="setPhase1Mode('label')">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-                <span data-i18n="p1.photoLabel">Photo Label</span>
+                <span data-i18n="p1.photoLabel">Label Photo</span>
               </button>
               <button class="mode-btn" id="p1-mode-btn-barcode" onclick="setPhase1Mode('barcode')">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9V5a2 2 0 0 1 2-2h4M3 15v4a2 2 0 0 0 2 2h4M21 9V5a2 2 0 0 0-2-2h-4M21 15v4a2 2 0 0 1-2 2h-4"/><line x1="7" y1="12" x2="7" y2="12.01"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="17" y1="12" x2="17" y2="12.01"/></svg>
@@ -2881,7 +3015,7 @@
               <div style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;">Barcode detected</div>
               <div id="p1-barcode-value" style="font-family:'DM Mono',monospace;font-size:13px;color:var(--accent);font-weight:600;"></div>
               <div id="p1-product-found" style="margin-top:6px;font-size:13px;color:var(--text);"></div>
-              <div id="p1-product-notfound" style="display:none;margin-top:6px;font-size:12px;color:var(--muted);">Not found in database — please enter name below or switch to Photo Label.</div>
+              <div id="p1-product-notfound" style="display:none;margin-top:6px;font-size:12px;color:var(--muted);">Not found in database — please enter name below or switch to Label Photo.</div>
               <!-- Second barcode prompt — shown after EAN scan -->
               <div id="p1-second-barcode-prompt" style="display:none;margin-top:10px;padding:8px 10px;background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.25);border-radius:8px;">
                 <div style="font-size:11px;color:var(--accent);font-weight:600;margin-bottom:4px;">Check for a second barcode</div>
@@ -3322,7 +3456,7 @@
     <!-- Header -->
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:12px;flex-wrap:wrap;">
       <div>
-        <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:20px;color:var(--text);" data-i18n="mgr.recalls">Active Recalls</div>
+        <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:20px;color:var(--text);">Active Recalls</div>
         <div style="font-size:12px;color:var(--muted);margin-top:2px;">Recalls currently being checked against your scan history.</div>
       </div>
       <button onclick="loadHistory()" class="btn btn-ghost" style="font-size:12px;gap:5px;padding:8px 14px;">
@@ -11839,7 +11973,7 @@ const TRANSLATIONS = {
     // Phase 1
     'p1.title': 'Identify Product',
     'p1.sub': 'Photograph the label before placing on shelf — AI identifies it',
-    'p1.photoLabel': 'Photo Label', 'p1.scanBarcode': 'Scan Barcode',
+    'p1.photoLabel': 'Label Photo', 'p1.scanBarcode': 'Scan Barcode',
     'p1.productName': 'Product Name', 'p1.confirm': 'Confirm & Continue →',
     // Phase 2
     'p2.title': 'Lot & Batch Numbers (TLC)',
@@ -15987,19 +16121,13 @@ async function loadRecallsView() {
 
     // Step 3: cross-reference — only show if this org has scanned something matching
     function matchesOrgHistory(r) {
+      // STRICT MATCHING: only exact lot or exact barcode triggers a match.
+      // A recall targets specific lot codes — product-name fuzzy matching
+      // produces false positives and is never correct for recall logic.
       const rLot     = (r.lot_number || '').toLowerCase().trim();
       const rBarcode = (r.barcode_number || '').toLowerCase().trim();
-      const rProduct = (r.product_name || '').toLowerCase();
-
       if (rLot && scannedLots.has(rLot)) return true;
       if (rBarcode && scannedBarcodes.has(rBarcode)) return true;
-      // product word overlap: any significant word from recall product name matches a scanned product word
-      if (rProduct) {
-        const rWords = rProduct.split(/\s+/).filter(w => w.length > 3);
-        for (const rw of rWords) {
-          if (scannedWords.has(rw)) return true;
-        }
-      }
       return false;
     }
 
