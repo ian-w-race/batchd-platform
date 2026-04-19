@@ -46,7 +46,7 @@
     --text: #edfdf8;
     --muted: #6aaf9e;
     --danger: #ff5c5c;
-    --warn: #60a5fa;  /* blue — distinct from red recall */
+    --warn: #f5a623;      /* amber */
     --info: #38bdf8;
     --overlay: rgba(8,15,18,0.88);
     --header-bg: rgba(8,15,18,0.92);
@@ -64,8 +64,8 @@
     --text:          #0c1e18;
     --muted:         #4e6860;
     --danger:        #b91c1c;   /* red — confirmed recall / critical */
-    --info:          #0891b2;   /* teal-cyan — secondary informational */
-    --warn:          #1d4ed8;   /* strong blue — max distinction from red */
+    --info:          #0369a1;
+    --warn:          #92400e;   /* dark amber for light mode readability */
     --overlay:       rgba(12,30,24,0.72);
     --header-bg:     rgba(255,255,255,0.97);
     --mobile-nav-bg: rgba(255,255,255,0.99);
@@ -4791,6 +4791,7 @@ async function showApp(user) {
   // ── Hide login screen IMMEDIATELY — before any async work ──
   document.getElementById('login-screen').classList.add('hidden');
   document.getElementById('session-expired').style.display = 'none';
+  document.body.classList.add('scan-active');  // scan is the default view after login
   document.getElementById('user-email').textContent = user.email;
   if (typeof updateDrawerAccount === 'function') { updateDrawerAccount(user.email, localStorage.getItem('batched_region') || 'no'); }
 
@@ -6449,6 +6450,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ── NAV ─────────────────────────────────────────────────────
 function showView(view) {
+  document.body.classList.toggle('scan-active', view === 'scan');
   document.querySelectorAll('nav button').forEach(b => {
     const bview = b.getAttribute('onclick') && b.getAttribute('onclick').match(/showView\('(\w+)'\)/);
     if (bview) b.classList.toggle('active', bview[1] === view);
@@ -16017,35 +16019,33 @@ async function loadRecallsView() {
     }
 
     container.innerHTML = matched.map(r => {
-      // Colour logic: pushed = red (urgent), manual/local = orange (warn)
-      const isUrgent  = r._type === 'pushed';
-      const borderCol = isUrgent ? 'var(--danger)' : 'var(--warn)';
-      const srcLabel  = isUrgent ? 'Manufacturer push' : 'Under review';
-      const srcCol    = isUrgent ? 'var(--danger)' : 'var(--warn)';
-      const srcBg     = isUrgent ? 'rgba(185,28,28,0.07)' : 'rgba(29,78,216,0.08)';
-      const dateStr   = (r.published_at || r.created_at)
+      // ALL recall matches are urgent (they match your scanned products) → single red treatment.
+      // Source is shown as a neutral text badge, not via color.
+      const srcLabel = r._type === 'pushed'
+        ? 'MANUFACTURER PUSH'
+        : (r.source || '').toLowerCase().includes('fda')
+          ? 'FDA / RASFF'
+          : 'MANUAL';
+      const dateStr = (r.published_at || r.created_at)
         ? new Date(r.published_at || r.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
 
       const sevColor = (() => {
         const s = r.severity || '';
         if ((s.includes('class_i') || s.includes('Class I')) && !s.includes('II') && !s.includes('III')) return 'var(--danger)';
-        if (s.includes('class_ii') || s.includes('Class II')) return 'var(--warn)';
+        if (s.includes('class_ii') || s.includes('Class II')) return 'var(--muted)';
         return 'var(--muted)';
       })();
 
-      return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:10px;border-left:3px solid ' + borderCol + ';">'
+      return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:10px;border-left:3px solid var(--danger);">'
         + '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px;">'
-        + '<div style="font-family:Figtree,sans-serif;font-weight:700;font-size:14px;color:var(--text);">' + (r.product_name || 'Unknown product') + '</div>'
+        + '<div style="font-family:Figtree,sans-serif;font-weight:700;font-size:14px;color:var(--text);line-height:1.3;">' + (r.product_name || 'Unknown product') + '</div>'
         + '<span style="font-size:10px;font-family:DM Mono,monospace;font-weight:700;padding:2px 7px;border-radius:4px;background:rgba(185,28,28,0.1);color:var(--danger);white-space:nowrap;flex-shrink:0;">ACTIVE</span>'
         + '</div>'
+        + '<div style="font-size:10px;font-family:DM Mono,monospace;font-weight:700;letter-spacing:0.06em;color:var(--muted);margin-bottom:8px;">' + srcLabel + (dateStr ? ' · ' + dateStr : '') + '</div>'
         + (r.lot_number ? '<div style="font-size:12px;color:var(--muted);font-family:DM Mono,monospace;margin-bottom:4px;">Lot: <strong style="color:var(--text);">' + r.lot_number + '</strong></div>' : '')
         + (r.severity ? '<div style="font-size:11px;color:' + sevColor + ';margin-bottom:5px;">' + r.severity + '</div>' : '')
         + ((r.reason || r.description) ? '<div style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:8px;">' + (r.reason || r.description) + '</div>' : '')
-        + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
-        + '<span style="font-size:10px;background:' + srcBg + ';padding:2px 8px;border-radius:5px;color:' + srcCol + ';font-family:DM Mono,monospace;font-weight:700;">' + srcLabel + '</span>'
-        + (dateStr ? '<span style="font-size:10px;color:var(--muted);">' + dateStr + '</span>' : '')
-        + '</div>'
-        + '<button onclick="drawerNav(&apos;history&apos;)" style="margin-top:10px;width:100%;padding:9px;background:rgba(185,28,28,0.06);border:1px solid rgba(185,28,28,0.22);border-radius:8px;color:var(--danger);font-family:DM Mono,monospace;font-size:11px;font-weight:700;cursor:pointer;letter-spacing:0.02em;">View matching records in History →</button>'
+        + '<button onclick="drawerNav(&apos;history&apos;)" style="margin-top:4px;width:100%;padding:9px;background:rgba(185,28,28,0.06);border:1px solid rgba(185,28,28,0.22);border-radius:8px;color:var(--danger);font-family:DM Mono,monospace;font-size:11px;font-weight:700;cursor:pointer;letter-spacing:0.02em;">View matching records in History →</button>'
         + '</div>';
     }).join('');
 
