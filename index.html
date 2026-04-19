@@ -2522,23 +2522,133 @@
       border: 1px solid var(--border) !important;
     }
 
-    /* ── PHASE 2 — controls row via pseudo-element ── */
-    body.scan-active #phase-2 .flow-phase-body::before {
+    /* ── PHASE 2 — mobile layout ── */
+    /* Hide packaging guide (too early / inaccurate) */
+    body.scan-active #lot-location-hint { display: none !important; }
+    body.scan-active #gs1-full-capture-banner { display: none !important; }
+
+    /* Phase 2 body scrollable column */
+    body.scan-active #phase-2 .flow-phase-body {
+      overflow-y: auto !important;
+      flex: 1 1 0 !important;
+      gap: 0 !important;
+      padding: 0 !important;
+    }
+
+    /* Mode toggle — same controls-row treatment as Phase 1 */
+    body.scan-active #phase-2 .mode-toggle {
+      position: relative !important;
+      flex-shrink: 0 !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: space-between !important;
+      padding: 8px 12px !important;
+      background: var(--bg) !important;
+      border: none !important;
+      border-bottom: 1px solid var(--border) !important;
+      border-radius: 0 !important;
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+      gap: 8px !important;
+    }
+    /* Step 2/3 badge on right */
+    body.scan-active #phase-2 .mode-toggle::after {
       content: "Step 2/3";
       flex-shrink: 0;
-      display: flex;
-      align-items: center;
-      justify-content: flex-end;
-      padding: 8px 12px;
-      background: var(--bg);
-      border-bottom: 1px solid var(--border);
+      padding: 6px 13px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
       font-family: 'DM Mono', monospace;
       font-size: 11px;
       font-weight: 700;
       letter-spacing: 0.05em;
-      color: var(--muted);
+      color: var(--text);
+      white-space: nowrap;
     }
-    /* OCR result strip at bottom of camera */
+    body.scan-active #phase-2 .mode-toggle .mode-btn {
+      background: var(--surface) !important;
+      border: 1px solid var(--border) !important;
+      color: var(--muted) !important;
+      padding: 7px 14px !important;
+      font-size: 12px !important;
+      min-height: 34px !important;
+      border-radius: 8px !important;
+      font-weight: 600 !important;
+      white-space: nowrap;
+      display: flex !important;
+      align-items: center !important;
+      gap: 5px !important;
+    }
+    body.scan-active #phase-2 .mode-toggle .mode-btn.active {
+      background: var(--accent) !important;
+      color: #04120e !important;
+      border-color: var(--accent) !important;
+    }
+    body.scan-active #phase-2 .mode-toggle .mode-btn > span[style*="rgba(245"] { display: none !important; }
+    body.scan-active #phase-2 .mode-toggle .mode-btn svg { width: 13px !important; height: 13px !important; }
+
+    /* Camera — fixed height with green border, not fullscreen */
+    body.scan-active #barcode-cam-wrap {
+      flex-shrink: 0 !important;
+      flex: none !important;
+      height: clamp(220px, 38vh, 320px) !important;
+      width: calc(100% - 20px) !important;
+      max-height: none !important;
+      margin: 10px !important;
+      border: 2.5px solid var(--accent) !important;
+      border-radius: 16px !important;
+      overflow: hidden !important;
+      box-shadow: 0 0 0 4px rgba(52,211,153,0.1) !important;
+      aspect-ratio: unset !important;
+      position: relative !important;
+      background: #000 !important;
+    }
+    body.scan-active #barcode-cam-wrap video { width: 100% !important; height: 100% !important; object-fit: cover !important; }
+
+    /* Snap & Analyse button — full width below camera */
+    body.scan-active #phase-2 .btn-row {
+      display: flex !important;
+      position: static !important;
+      transform: none !important;
+      padding: 0 10px 10px !important;
+      gap: 8px !important;
+      flex-shrink: 0 !important;
+    }
+    body.scan-active #phase-2 .btn-row .btn-primary,
+    body.scan-active #phase-2 .btn-row .btn-ghost {
+      width: auto !important;
+      height: auto !important;
+      min-height: 46px !important;
+      padding: 0 18px !important;
+      border-radius: 12px !important;
+      font-size: 13px !important;
+      font-weight: 700 !important;
+      flex: 1 !important;
+      justify-content: center !important;
+      background: var(--accent) !important;
+      color: #04120e !important;
+      border: none !important;
+    }
+    body.scan-active #phase-2 .btn-row .btn-primary::after { display: none !important; }
+    body.scan-active #phase-2 .btn-row .btn-ghost {
+      background: var(--surface) !important;
+      color: var(--muted) !important;
+      border: 1px solid var(--border) !important;
+      flex: 0 0 auto !important;
+      padding: 0 16px !important;
+    }
+    body.scan-active #phase-2 .btn-row .btn-primary svg { display: inline-block !important; }
+
+    /* Form fields below camera — spaced with padding */
+    body.scan-active #phase-2 .flow-phase-body > div:not(.mode-toggle):not(.btn-row),
+    body.scan-active #phase-2 .flow-phase-body > .field {
+      padding: 0 10px !important;
+      flex-shrink: 0 !important;
+      position: static !important;
+    }
+
+    /* OCR result panel — inside camera area */
     body.scan-active .ocr-result {
       flex-shrink: 0 !important;
       padding: 8px 12px !important;
@@ -2935,6 +3045,17 @@
               <div class="analyzing-overlay" id="product-analyzing">
                 <div class="spinner"></div>
                 AI identifying product…
+              </div>
+              <!-- Product name confirmation overlay — shown after AI identifies product -->
+              <div id="product-confirm-overlay" style="display:none;position:absolute;inset:0;z-index:30;flex-direction:column;justify-content:flex-end;pointer-events:auto;">
+                <div style="padding:16px 16px 20px;background:linear-gradient(transparent,rgba(8,15,18,0.94));border-radius:0 0 14px 14px;">
+                  <div style="font-size:10px;font-family:'DM Mono',monospace;letter-spacing:0.09em;color:var(--accent);margin-bottom:5px;font-weight:700;">✦ AI IDENTIFIED</div>
+                  <div id="product-confirm-name" style="font-size:18px;font-weight:700;font-family:'Figtree',sans-serif;color:#fff;line-height:1.3;margin-bottom:16px;"></div>
+                  <div style="display:flex;gap:8px;">
+                    <button onclick="confirmProductName()" style="flex:1;background:var(--accent);color:#04120e;border:none;border-radius:10px;padding:13px;font-family:'Figtree',sans-serif;font-weight:700;font-size:14px;cursor:pointer;min-height:48px;">✓ That's right</button>
+                    <button onclick="retakeProduct()" style="background:rgba(255,255,255,0.1);color:#fff;border:1px solid rgba(255,255,255,0.2);border-radius:10px;padding:13px 16px;font-family:'DM Mono',monospace;font-size:12px;cursor:pointer;white-space:nowrap;min-height:48px;">Retake</button>
+                  </div>
+                </div>
               </div>
             </div>
             <div class="btn-row">
@@ -5581,6 +5702,23 @@ function setProductNameFilled(name) {
   field.value = name;
   field.classList.remove('field-required');
   field.classList.add('auto-filled');
+  // Show confirmation overlay so user can verify AI's identification
+  const overlay = document.getElementById('product-confirm-overlay');
+  const nameEl = document.getElementById('product-confirm-name');
+  if (overlay && nameEl && name) {
+    nameEl.textContent = name;
+    overlay.style.display = 'flex';
+    document.getElementById('btn-next-1').disabled = true; // require explicit confirm
+  } else {
+    document.getElementById('btn-next-1').disabled = !name;
+    updateFtlBadge(name);
+  }
+}
+
+function confirmProductName() {
+  const overlay = document.getElementById('product-confirm-overlay');
+  if (overlay) overlay.style.display = 'none';
+  const name = document.getElementById('field-product-name').value;
   document.getElementById('btn-next-1').disabled = !name;
   updateFtlBadge(name);
 }
@@ -6668,6 +6806,9 @@ async function snapProduct() {
 function retakeProduct() {
   stopAutoCapture();
   productBlob = null;
+  // Hide confirm overlay
+  const overlay = document.getElementById('product-confirm-overlay');
+  if (overlay) overlay.style.display = 'none';
   document.getElementById('product-captured').style.display = 'none';
   document.getElementById('product-captured').src = '';
   document.getElementById('field-product-name').value = '';
