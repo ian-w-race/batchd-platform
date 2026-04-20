@@ -8036,42 +8036,50 @@ async function checkRecallsOnLogin(silent = false) {
 
     if (!recentScans || !recentScans.length) return;
 
+    // Build exact-match Sets from scan history — same approach as loadRecallsView.
+    // Using exact lot/barcode matching avoids false positives from fuzzy product
+    // name matching (which caused the badge to show 2 when only 1 recall is real).
+    const scannedLots     = new Set(recentScans.map(r => (r.lot_number    ||'').toLowerCase().trim()).filter(Boolean));
+    const scannedBarcodes = new Set(recentScans.map(r => (r.barcode_number||'').toLowerCase().trim()).filter(Boolean));
+
     loginRecallMatches = [];
-    for (const recall of uniqueRecalls) {
-      const exactScans    = recentScans.filter(r => recallMatchLevel(r, recall).level === 'exact');
-      const possibleScans = recentScans.filter(r => recallMatchLevel(r, recall).level === 'possible');
-      if (exactScans.length || possibleScans.length) {
-        const allMatched = [...exactScans, ...possibleScans];
-        loginRecallMatches.push({
-          recall,
-          count: allMatched.length,
-          exactCount: exactScans.length,
-          possibleCount: possibleScans.length,
-          stores: [...new Set(allMatched.map(m => m.store_name).filter(Boolean))]
-        });
-      }
-    }
-
-    if (!loginRecallMatches.length) return;
-
-    // Deduplicate loginRecallMatches by lot_number alone.
-    // The same recall can exist in both 'recalls' table and 'recall_events' with
-    // slightly different product name formatting — keying on lot_number collapses them.
-    // Manufacturer push wins if both exist (authoritative source).
     const _matchDedupeMap = new Map();
-    for (const m of loginRecallMatches) {
-      const k = (m.recall.lot_number||'').toLowerCase().replace(/[\s\-_]/g, '');
-      if (!k) {
-        // No lot number — fall back to product name key
-        const pk = (m.recall.product_name||'').toLowerCase().trim();
-        if (!_matchDedupeMap.has('p:' + pk) || m.recall.source === 'manufacturer_push') {
-          _matchDedupeMap.set('p:' + pk, m);
-        }
-      } else if (!_matchDedupeMap.has(k) || m.recall.source === 'manufacturer_push') {
-        _matchDedupeMap.set(k, m);
+
+    for (const recall of uniqueRecalls) {
+      const rLot     = (recall.lot_number     || '').toLowerCase().trim();
+      const rBarcode = (recall.barcode_number || '').toLowerCase().trim();
+
+      // Exact lot OR exact barcode match — same logic as loadRecallsView
+      const lotHit     = rLot     && scannedLots.has(rLot);
+      const barcodeHit = rBarcode && scannedBarcodes.has(rBarcode);
+      if (!lotHit && !barcodeHit) continue;
+
+      // Find which scans actually matched
+      const matchedScans = recentScans.filter(r =>
+        (rLot     && (r.lot_number     ||'').toLowerCase().trim() === rLot)     ||
+        (rBarcode && (r.barcode_number ||'').toLowerCase().trim() === rBarcode)
+      );
+
+      const match = {
+        recall,
+        count:         matchedScans.length,
+        exactCount:    matchedScans.length,
+        possibleCount: 0,
+        stores: [...new Set(matchedScans.map(m => m.store_name).filter(Boolean))]
+      };
+
+      // Deduplicate by product+lot key — same as loadRecallsView
+      const dedupKey = ((recall.product_name||'').toLowerCase().trim())
+                     + '|' + rLot;
+      if (!_matchDedupeMap.has(dedupKey)) {
+        _matchDedupeMap.set(dedupKey, match);
+      } else if (recall.source === 'manufacturer_push') {
+        _matchDedupeMap.set(dedupKey, match); // prefer authoritative source
       }
     }
     loginRecallMatches = Array.from(_matchDedupeMap.values());
+
+    if (!loginRecallMatches.length) return;
 
     // Update drawer recall badge
     const _drawerBadge = document.getElementById('drawer-recall-badge');
