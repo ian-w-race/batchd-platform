@@ -2700,7 +2700,7 @@
       backdrop-filter: none !important;
     }
     body.scan-active #phase-3 .btn-next { margin-top: 4px !important; }
-    body.scan-active #field-notes,
+    /* Notes shown in phase 3 review — supplier hidden (not needed in fast scan flow) */
     body.scan-active #field-supplier { display: none !important; }
     body.scan-active #field-quantity-wrap { display: block !important; }
     body.scan-active .review-thumb { display: none !important; }
@@ -2931,7 +2931,7 @@
 <div id="drawer-panel" style="position:fixed;top:0;right:0;bottom:0;width:272px;max-width:85vw;background:var(--surface);border-left:1px solid var(--border);z-index:901;display:flex;flex-direction:column;transform:translateX(100%);transition:transform 0.28s cubic-bezier(0.4,0,0.2,1);overflow-y:auto;">
   <div style="height:54px;padding:0 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);flex-shrink:0;">
     <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:18px;color:var(--accent);letter-spacing:-0.3px;">Batch'd</div>
-    <button onclick="closeDrawer()" style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;background:none;border:none;cursor:pointer;color:var(--muted);border-radius:8px;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    <button onclick="closeDrawer()" style="width:44px;height:44px;display:flex;align-items:center;justify-content:center;background:var(--surface2);border:1px solid var(--border);cursor:pointer;color:var(--text);border-radius:10px;flex-shrink:0;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
   </div>
   <div style="flex:1;padding:10px 8px;display:flex;flex-direction:column;gap:2px;">
     <div style="font-size:10px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);padding:12px 10px 6px;opacity:0.65;">Navigate</div>
@@ -3128,9 +3128,12 @@
             <input type="text" id="field-product-name" data-i18n-placeholder="scan.productPlaceholder" placeholder="Photograph the label — AI will fill this in…" class="field-required" oninput="onProductNameInput()" />
           </div>
 
-          <button class="btn-next" id="btn-next-1" onclick="goToPhase(2)" disabled data-i18n="p1.confirm">
-            Confirm & Continue →
-          </button>
+          <!-- Hint text replaces the old Confirm button — "That's right" auto-advances -->
+          <p id="btn-next-1-hint" style="text-align:center;font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;padding:8px 16px 2px;letter-spacing:0.03em;line-height:1.5;">
+            Hold product in front of camera — Batch'd will identify it automatically
+          </p>
+          <!-- Hidden button kept for JS compat (disabled/enabled logic) -->
+          <button id="btn-next-1" style="display:none;" onclick="goToPhase(2)" disabled></button>
         </div>
       </div>
 
@@ -3388,9 +3391,10 @@
             <input type="text" id="field-notes" placeholder="e.g. End-cap display, 2 facings…" />
           </div>
 
-          <div class="field">
+          <!-- Supplier field: hidden on mobile, available on desktop for EU Art.18 traceability -->
+          <div class="field" id="field-supplier-wrap">
             <label>Supplier / Delivered by <span id="supplier-field-label" style="color:var(--muted);font-size:10px;">optional — EU Art. 18 / Mattilsynet traceability</span></label>
-            <input type="text" id="field-supplier" id="field-supplier-input" placeholder="e.g. ASKO, Norgesgruppen, Tine…" autocorrect="off" onfocus="showSupplierSuggestions()" onblur="setTimeout(hideSupplierSuggestions,200)" />
+            <input type="text" id="field-supplier" placeholder="e.g. ASKO, Norgesgruppen, Tine…" autocorrect="off" onfocus="showSupplierSuggestions()" onblur="setTimeout(hideSupplierSuggestions,200)" />
           </div>
 
           <!-- FSMA 204 (USA) KDE fields — shown only for FTL products -->
@@ -5737,8 +5741,9 @@ function confirmProductName() {
   const overlay = document.getElementById('product-confirm-overlay');
   if (overlay) overlay.style.display = 'none';
   const name = document.getElementById('field-product-name').value;
-  document.getElementById('btn-next-1').disabled = !name;
   updateFtlBadge(name);
+  // Auto-advance — no need to press Confirm & Continue separately
+  goToPhase(2);
 }
 
 // ── CUSTOMER EXPOSURE NOTICE (#8) ────────────────────────────
@@ -7969,6 +7974,22 @@ async function checkRecallsOnLogin(silent = false) {
     }
 
     if (!loginRecallMatches.length) return;
+
+    // Deduplicate loginRecallMatches by product+lot — same recall can come from
+    // both 'recalls' table and 'recall_events' with slightly different product names.
+    // The badge should show unique affected recalls, not unique DB rows.
+    const _matchDedupeMap = new Map();
+    for (const m of loginRecallMatches) {
+      const k = `${(m.recall.product_name||'').toLowerCase().trim()}|${(m.recall.lot_number||'').toLowerCase().trim()}`;
+      if (!_matchDedupeMap.has(k)) {
+        _matchDedupeMap.set(k, m);
+      } else if (m.recall.source === 'manufacturer_push') {
+        // Prefer the authoritative manufacturer push version
+        _matchDedupeMap.set(k, m);
+      }
+    }
+    loginRecallMatches = Array.from(_matchDedupeMap.values());
+
     // Update drawer recall badge
     const _drawerBadge = document.getElementById('drawer-recall-badge');
     if (_drawerBadge && loginRecallMatches.length > 0) {
