@@ -3123,7 +3123,7 @@
         <div class="flow-phase-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;">
           <div>
             <div class="flow-phase-title" data-i18n="p2.title">Lot Code (TLC)</div>
-            <div class="flow-phase-sub" id="step2-sub" data-i18n="p2.sub">Capture the lot code — this is your traceability record</div>
+            <div class="flow-phase-sub" id="step2-sub" data-i18n="p2.sub">Find the best-before date — the lot code is printed right next to it. Frame both together, 20-25cm away, camera flat-on.</div>
           </div>
           <button onclick="cancelScan()" class="cancel-scan-btn" title="Cancel and start over">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg>
@@ -3232,6 +3232,10 @@
               <div class="swap-hint" id="swap-hint"></div>
             </div>
             <div class="ocr-raw" id="ocr-raw-text"></div>
+            <!-- Post-failure contextual guidance — populated by renderOcrResult -->
+            <div id="ocr-guidance" style="display:none;margin-top:8px;padding:10px 12px;border-radius:8px;background:rgba(245,166,35,0.07);border:1px solid rgba(245,166,35,0.2);font-size:11px;line-height:1.6;color:var(--text);font-family:'DM Mono',monospace;">
+              <div id="ocr-guidance-text"></div>
+            </div>
           </div>
 
           <!-- Buttons -->
@@ -7077,6 +7081,39 @@ async function handleP1BarcodeDetected(barcode) {
 // 2. Open Food Facts v0 fallback
 // 3. UPC Item DB (good US/Canadian coverage, no key needed)
 async function lookupProductName(barcode) {
+  // Source 0: Batch'd own databases — instant, covers repeat scans of any product
+  // including Norwegian products not indexed in Open Food Facts.
+
+  // 0a: code_patterns — barcode seen before by THIS org's staff
+  try {
+    const { data: cp } = await sb.from('code_patterns')
+      .select('product_name')
+      .eq('barcode_number', barcode)
+      .order('scan_count', { ascending: false })
+      .limit(1);
+    if (cp && cp[0] && cp[0].product_name && cp[0].product_name.length > 1) {
+      console.log('[Barcode] Found in pattern DB:', cp[0].product_name);
+      return cp[0].product_name;
+    }
+  } catch(e) { /* continue */ }
+
+  // 0b: scans table — barcode seen before in org's scan history
+  if (_currentOrgId) {
+    try {
+      const { data: sc } = await sb.from('scans')
+        .select('product_name')
+        .eq('barcode_number', barcode)
+        .eq('organisation_id', _currentOrgId)
+        .not('product_name', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      if (sc && sc[0] && sc[0].product_name && sc[0].product_name.length > 1) {
+        console.log('[Barcode] Found in scan history:', sc[0].product_name);
+        return sc[0].product_name;
+      }
+    } catch(e) { /* continue */ }
+  }
+
   // Source 1: Open Food Facts v2 — faster, field-limited
   try {
     const resp = await fetch(
@@ -10288,8 +10325,8 @@ function setMode(mode) {
   document.getElementById('scan-line').style.display = 'none';
 
   document.getElementById('step2-sub').textContent = mode === 'barcode'
-    ? 'Point camera at the barcode — will detect in real time'
-    : 'Photograph the printed lot/batch text — AI will read it';
+    ? 'Point camera at the barcode — AI will detect in real time'
+    : 'Find the best-before date — the lot code is printed right next to it. Frame both together, 20-25cm away, camera flat-on.';
 
   // If user manually switches mode, clear GS1 full-capture state — they want to re-scan
   _gs1FullCapture = null;
@@ -10303,6 +10340,8 @@ function setMode(mode) {
   document.getElementById('barcode-captured').src = '';
   document.getElementById('btn-retake-barcode').style.display = 'none';
   document.getElementById('ocr-result').classList.remove('visible');
+  const _gEl = document.getElementById('ocr-guidance');
+  if (_gEl) _gEl.style.display = 'none';
   document.getElementById('field-lot').value = '';
   document.getElementById('field-lot').classList.remove('auto-filled');
   // field-batch removed from UI
@@ -10350,6 +10389,8 @@ let _acActive   = false;  // is the loop running?
 let _acPhase    = null;   // 'product' | 'ocr'
 let _acChecking = false;  // AI call in flight — don't stack calls
 let _acCanvas   = null;   // reusable 160×120 sampling canvas
+let _acPrevGray = null;   // previous frame grayscale for motion detection
+let _acStableFrames = 0; // consecutive stable frames counter
 let _acCtx      = null;
 let _acLastAiCall = 0;    // timestamp of last AI check
 
@@ -10359,6 +10400,8 @@ const AC_SHARP_MIN      = 8;     // Laplacian pre-filter (rejects obvious blur/d
 const AC_BRIGHT_MIN     = 45;
 const AC_BRIGHT_MAX     = 215;
 const AC_CONTRAST_MIN   = 25;    // std-dev pre-filter
+const AC_MOTION_MAX     = 12;    // max mean-absolute-diff between frames (motion gate)
+const AC_STABLE_MIN     = 2;     // consecutive stable frames before triggering
 
 function startAutoCapture(phase) {
   stopAutoCapture();
@@ -10366,6 +10409,8 @@ function startAutoCapture(phase) {
   _acActive = true;
   _acLastAiCall = 0;
   _acChecking = false;
+  _acPrevGray = null;
+  _acStableFrames = 0;
   if (!_acCanvas) {
     _acCanvas = document.createElement('canvas');
     _acCanvas.width = 160; _acCanvas.height = 120;
@@ -10428,11 +10473,51 @@ function _acLoop() {
 
     if (!frameOk) {
       _acSetReady(false);
+      _acStableFrames = 0;
+      _acPrevGray = gray.slice();
       _acTimer = setTimeout(_acLoop, AC_LOOP_INTERVAL);
       return;
     }
 
-    // Frame looks usable — show subtle indicator while AI checks
+    // ── Motion gate: compare consecutive frames ───────────────
+    // Mean absolute difference between current and previous grayscale.
+    // High MAD = camera is moving → don't trigger capture.
+    let motionScore = 0;
+    if (_acPrevGray) {
+      for (let i = 0; i < W * H; i++) {
+        motionScore += Math.abs(gray[i] - _acPrevGray[i]);
+      }
+      motionScore /= (W * H);
+    }
+    _acPrevGray = gray.slice();
+
+    const isMoving = motionScore > AC_MOTION_MAX;
+    if (isMoving) {
+      _acStableFrames = 0;
+      _acSetReady(false);
+      // Show "Hold still" state on indicator
+      const indId = _acPhase === 'product' ? 'auto-indicator-product' : 'auto-indicator-ocr';
+      const ind = document.getElementById(indId);
+      if (ind) { ind.textContent = '⬤ Hold still…'; ind.classList.add('visible'); }
+      _acTimer = setTimeout(_acLoop, AC_LOOP_INTERVAL);
+      return;
+    }
+
+    // Frame is sharp, bright, and stable — increment stable counter
+    _acStableFrames++;
+    const indId2 = _acPhase === 'product' ? 'auto-indicator-product' : 'auto-indicator-ocr';
+    const ind2 = document.getElementById(indId2);
+    if (ind2) {
+      ind2.textContent = _acStableFrames >= AC_STABLE_MIN ? '✦ Auto-capturing…' : '◎ Focusing…';
+    }
+
+    // Don't trigger until we have AC_STABLE_MIN consecutive stable frames
+    if (_acStableFrames < AC_STABLE_MIN) {
+      _acTimer = setTimeout(_acLoop, AC_LOOP_INTERVAL);
+      return;
+    }
+
+    // Frame looks usable and stable — show indicator while AI checks
     _acSetReady(true);
 
     // ── Stage 2: AI confirmation (rate-limited to every 1.5s) ─
@@ -10764,6 +10849,34 @@ function renderOcrResult(assignment, confidence, source, raw) {
     if (lotFld) { lotFld.value = assignment.lot; lotFld.classList.add('auto-filled'); }
   }
   // batch field no longer exists in the UI — skip all batch DOM operations
+
+  // ── POST-FAILURE CONTEXTUAL GUIDANCE ──────────────────────
+  // Give staff specific, actionable advice when the read fails or is uncertain.
+  const guidanceEl    = document.getElementById('ocr-guidance');
+  const guidanceText  = document.getElementById('ocr-guidance-text');
+  if (guidanceEl && guidanceText) {
+    let guidance = '';
+    if (!assignment.lot && !raw) {
+      // Nothing read at all — likely angle, glare, or wrong area
+      guidance = '📷 Nothing readable in the frame. Is the lot code area facing the camera directly? Try rotating the product so the code is flat-on to the lens.';
+    } else if (!assignment.lot && raw) {
+      // Text found but no lot code identified
+      guidance = "🔍 We saw text but couldn't identify the lot code. Make sure the best-before date is also in frame — the lot code is almost always printed right next to it.";
+    } else if (confidence === 'low') {
+      // Found something but not confident
+      guidance = "⚠ Low confidence — please verify this code matches exactly what's printed. If wrong, edit the field below or tap Retake to try again.";
+    } else if (confidence === 'medium') {
+      // Medium confidence — mild prompt to verify
+      guidance = "~ Please confirm this code matches what's printed on the packaging before continuing.";
+    }
+
+    if (guidance) {
+      guidanceText.textContent = guidance;
+      guidanceEl.style.display = 'block';
+    } else {
+      guidanceEl.style.display = 'none';
+    }
+  }
 }
 
 function swapLotBatch() {
@@ -11346,8 +11459,30 @@ async function preprocessImage(blob, targetWidth) {
       try {
         const imageData = ctx.getImageData(0, 0, w, h);
         const d = imageData.data;
-        // Contrast boost 1.4x
-        const contrast = 1.4;
+
+        // ── Pass 1: Adaptive histogram stretch ────────────────
+        // Find actual min/max luminance in the image, then stretch
+        // to fill 0–255. Critical for low-contrast inkjet codes on
+        // light cardboard — common in Norwegian grocery packaging.
+        let lo = 255, hi = 0;
+        for (let i = 0; i < d.length; i += 4) {
+          const lum = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
+          if (lum < lo) lo = lum;
+          if (lum > hi) hi = lum;
+        }
+        // Only stretch if the range is genuinely narrow (low contrast image)
+        const range = hi - lo;
+        if (range > 0 && range < 200) {
+          const scale = 255 / range;
+          for (let i = 0; i < d.length; i += 4) {
+            d[i]   = Math.min(255, Math.max(0, (d[i]   - lo) * scale));
+            d[i+1] = Math.min(255, Math.max(0, (d[i+1] - lo) * scale));
+            d[i+2] = Math.min(255, Math.max(0, (d[i+2] - lo) * scale));
+          }
+        }
+
+        // ── Pass 2: Fixed contrast boost on top of stretch ────
+        const contrast = 1.3;
         const intercept = 128 * (1 - contrast);
         for (let i = 0; i < d.length; i += 4) {
           d[i]   = Math.min(255, Math.max(0, d[i]   * contrast + intercept));
@@ -11356,7 +11491,7 @@ async function preprocessImage(blob, targetWidth) {
         }
         ctx.putImageData(imageData, 0, 0);
 
-        // Unsharp mask
+        // ── Pass 3: Unsharp mask (edge enhancement) ───────────
         const sCanvas = document.createElement('canvas');
         sCanvas.width = w; sCanvas.height = h;
         const sCtx = sCanvas.getContext('2d');
@@ -11365,7 +11500,7 @@ async function preprocessImage(blob, targetWidth) {
         const blurred = sCtx.getImageData(0, 0, w, h).data;
         const sharp = ctx.getImageData(0, 0, w, h);
         const sd = sharp.data;
-        const amount = 1.2;
+        const amount = 1.4; // slightly stronger than before since adaptive stretch handles base contrast
         for (let i = 0; i < sd.length; i += 4) {
           sd[i]   = Math.min(255, Math.max(0, sd[i]   + amount * (sd[i]   - blurred[i])));
           sd[i+1] = Math.min(255, Math.max(0, sd[i+1] + amount * (sd[i+1] - blurred[i+1])));
@@ -12204,7 +12339,7 @@ const TRANSLATIONS = {
     'p1.productName': 'Product Name', 'p1.confirm': 'Confirm & Continue →',
     // Phase 2
     'p2.title': 'Lot Code (TLC)',
-    'p2.sub': 'Capture the lot code (TLC) — Traceability Lot Code',
+    'p2.sub': 'Find the best-before date — the lot code is printed right next to it. Frame both together, 20-25cm away, camera flat-on.',
     'p2.visualOcr': 'Visual OCR', 'p2.barcodeScan': 'Barcode Scan',
     'p2.confirm': 'Confirm & Review →', 'p2.swap': '⇄ Swap Lot & Batch (TLC)',
     // Phase 3
@@ -12583,7 +12718,7 @@ const TRANSLATIONS = {
     'p1.productName': 'Produktnavn', 'p1.confirm': 'Bekreft & fortsett →',
     // Phase 2
     'p2.title': 'Partinummer & batch',
-    'p2.sub': 'Registrer partinummeret — dette er sporbarhetsregistreringen din',
+    'p2.sub': 'Finn best-før datoen — partinummeret er trykket rett ved siden av den. Ta bildet av begge, 20-25cm unna, kameraet flatt mot pakningen.',
     'p2.visualOcr': 'Visuell OCR', 'p2.barcodeScan': 'Strekkodeskanning',
     'p2.confirm': 'Bekreft & se gjennom →', 'p2.swap': '⇄ Bytt parti og batch',
     // Phase 3
@@ -13738,7 +13873,7 @@ function toggleEscalatedTab() {
 async function loadMgrPatterns() {
   const el = document.getElementById('mgr-patterns-output');
   if (!el) return;
-  el.innerHTML = `<div style="font-size:13px;color:var(--muted);padding:20px 0;text-align:center;font-family:'DM Mono',monospace;"><div class="spinner" style="margin:0 auto 8px;"></div>Loading patterns…</div>`;
+  el.innerHTML = '<div style="font-size:13px;color:var(--muted);padding:20px 0;text-align:center;font-family:\'DM Mono\',monospace;"><div class="spinner" style="margin:0 auto 8px;"></div>Loading patterns\u2026</div>';
 
   try {
     const { data: patterns, error } = await sb.from('code_patterns')
@@ -13748,69 +13883,109 @@ async function loadMgrPatterns() {
     if (error) throw error;
     const list = patterns || [];
 
-    const confColor = c => c === 'high' ? 'var(--accent)' : c === 'medium' ? 'var(--warn)' : 'var(--danger)';
-    const confBg    = c => c === 'high' ? 'rgba(52,211,153,0.1)' : c === 'medium' ? 'rgba(245,166,35,0.1)' : 'rgba(255,92,92,0.1)';
+    function confColor(c) { return c==='high'?'var(--accent)':c==='medium'?'var(--warn)':'var(--danger)'; }
+    function confBg(c)    { return c==='high'?'rgba(52,211,153,0.1)':c==='medium'?'rgba(245,166,35,0.1)':'rgba(255,92,92,0.1)'; }
+
+    function getTier(p) {
+      const sc = p.scan_count || 0;
+      const cc = p.crop_scan_count || 0;
+      if (sc >= 20 && p.confidence_level === 'high')
+        return { label: '\u2605 Expert',       color: 'var(--accent)', bg: 'rgba(52,211,153,0.1)',  desc: 'Pass 0 skipped + format-locked' };
+      if (sc >= 5 && cc >= 5)
+        return { label: '\u26a1 Established', color: '#38bdf8',       bg: 'rgba(56,189,248,0.1)',  desc: 'Pass 0 skipped \u2014 using stored crop' };
+      if (sc >= 2)
+        return { label: '\u25ce Learning',    color: 'var(--warn)',   bg: 'rgba(245,166,35,0.1)',  desc: (5-sc) + ' more scans to unlock skip' };
+      return   { label: '\u00b7 New',         color: 'var(--muted)',  bg: 'var(--surface2)',        desc: 'Just started learning' };
+    }
+
+    function cropBar(p) {
+      if (p.crop_y_start == null || p.crop_y_end == null) return '';
+      const ps = Math.round(p.crop_y_start * 100);
+      const pe = Math.round(p.crop_y_end   * 100);
+      const zone = ps < 33 ? 'top' : ps < 66 ? 'middle' : 'lower';
+      return '<div style="margin-top:8px;">'
+        + '<div style="font-size:9px;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:4px;">'
+        + 'Lot code region (' + zone + ' ' + ps + '\u2013' + pe + '% of image) \u00b7 ' + (p.crop_scan_count||0) + ' crop obs.</div>'
+        + '<div style="height:8px;background:var(--surface2);border-radius:4px;position:relative;overflow:hidden;">'
+        + '<div style="position:absolute;top:0;bottom:0;left:' + ps + '%;width:' + (pe-ps) + '%;background:var(--accent);border-radius:3px;opacity:0.7;"></div>'
+        + '</div></div>';
+    }
 
     if (list.length === 0) {
-      el.innerHTML = `
-        <div style="text-align:center;padding:40px 20px;color:var(--muted);font-family:'DM Mono',monospace;">
-          <div style="font-size:32px;margin-bottom:12px;opacity:0.4;">📍</div>
-          <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:6px;">No patterns learned yet</div>
-          <div style="font-size:12px;line-height:1.6;">Patterns are built automatically as staff scan products.<br>After a few scans of the same product, its lot code location is remembered.</div>
-        </div>`;
+      el.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--muted);font-family:\'DM Mono\',monospace;">'
+        + '<div style="font-size:32px;margin-bottom:12px;opacity:0.4;">\ud83d\udccd</div>'
+        + '<div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:6px;">No patterns learned yet</div>'
+        + '<div style="font-size:12px;line-height:1.6;">Patterns are built automatically as staff scan products.<br>After a few scans of the same product, its lot code location is remembered.</div>'
+        + '</div>';
       return;
     }
 
-    el.innerHTML = `
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;margin-bottom:16px;">
-        <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;">
-          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:4px;">Products</div>
-          <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:22px;color:var(--accent);">${list.length}</div>
-        </div>
-        <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;">
-          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:4px;">Total scans</div>
-          <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:22px;color:var(--text);">${list.reduce((s,p)=>s+(p.scan_count||0),0)}</div>
-        </div>
-        <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;">
-          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:4px;">High confidence</div>
-          <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:22px;color:var(--text);">${list.filter(p=>p.confidence_level==='high').length}</div>
-        </div>
-      </div>
+    const skipCount   = list.filter(function(p){ return (p.crop_scan_count||0) >= 5; }).length;
+    const expertCount = list.filter(function(p){ return (p.scan_count||0) >= 20 && p.confidence_level === 'high'; }).length;
+    const totalScans  = list.reduce(function(s,p){ return s + (p.scan_count||0); }, 0);
 
-      <div style="margin-bottom:12px;padding:10px 14px;background:rgba(56,189,248,0.05);border:1px solid rgba(56,189,248,0.15);border-radius:8px;font-size:11px;color:var(--muted);line-height:1.6;">
-        📍 Each entry records where the lot code lives on a product's packaging so future OCR reads are faster and more accurate.
-      </div>
+    let html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;margin-bottom:16px;">';
+    html += '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;">'
+          + '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:4px;">Products</div>'
+          + '<div style="font-family:\'Figtree\',sans-serif;font-weight:800;font-size:22px;color:var(--accent);">' + list.length + '</div></div>';
+    html += '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;">'
+          + '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:4px;">Total scans</div>'
+          + '<div style="font-family:\'Figtree\',sans-serif;font-weight:800;font-size:22px;color:var(--text);">' + totalScans + '</div></div>';
+    html += '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;">'
+          + '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:4px;">\u26a1 Skip enabled</div>'
+          + '<div style="font-family:\'Figtree\',sans-serif;font-weight:800;font-size:22px;color:#38bdf8;">' + skipCount + '</div></div>';
+    html += '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;">'
+          + '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:4px;">\u2605 Expert</div>'
+          + '<div style="font-family:\'Figtree\',sans-serif;font-weight:800;font-size:22px;color:var(--accent);">' + expertCount + '</div></div>';
+    html += '</div>';
 
-      ${list.map(p => `
-        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:8px;">
-          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
-            <div>
-              <div style="font-size:13px;font-weight:600;color:var(--text);font-family:'Figtree',sans-serif;">${p.product_name||'—'}</div>
-              ${p.barcode_number ? `<div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:2px;">${p.barcode_number}</div>` : ''}
-            </div>
-            <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
-              <span style="font-size:10px;padding:2px 8px;border-radius:10px;background:${confBg(p.confidence_level)};color:${confColor(p.confidence_level)};text-transform:capitalize;">${p.confidence_level||'—'}</span>
-              <span style="font-size:11px;color:var(--muted);">${p.scan_count||0} scan${(p.scan_count||0)!==1?'s':''}</span>
-              <button onclick="deleteMgrPattern('${p.id}', this)"
-                style="font-family:'DM Mono',monospace;font-size:10px;padding:3px 8px;border-radius:6px;border:1px solid rgba(255,92,92,0.3);background:rgba(255,92,92,0.07);color:var(--danger);cursor:pointer;">
-                Delete
-              </button>
-            </div>
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-            <div style="background:var(--surface2);border-radius:6px;padding:8px 10px;">
-              <div style="font-size:9px;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:3px;">Lot format</div>
-              <div style="font-size:11px;color:var(--text);font-family:'DM Mono',monospace;">${p.lot_format||'—'}</div>
-            </div>
-            <div style="background:var(--surface2);border-radius:6px;padding:8px 10px;">
-              <div style="font-size:9px;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:3px;">Label location</div>
-              <div style="font-size:11px;color:var(--muted);line-height:1.4;">${p.label_hint ? p.label_hint.replace(/Label text observed:.*?(?=\.|Found|embossed|bottom|top|gable|stamped|$)/s,'').trim().slice(0,100)+(p.label_hint.length>100?'…':'') : '—'}</div>
-            </div>
-          </div>
-          ${p.code_a ? `<div style="margin-top:8px;font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">Example: <span style="color:var(--text);">${p.code_a}</span>${p.code_b?' / '+p.code_b:''}</div>` : ''}
-        </div>`).join('')}`;
+    html += '<div style="margin-bottom:12px;padding:10px 14px;background:rgba(56,189,248,0.05);border:1px solid rgba(56,189,248,0.15);border-radius:8px;font-size:11px;color:var(--muted);line-height:1.6;">'
+          + '\u26a1 <strong style="color:var(--text);">Skip enabled</strong> products bypass the localisation API call \u2014 about 1s faster per scan. '
+          + '<strong style="color:var(--text);">\u2605 Expert</strong> products also get format-locked extraction for highest accuracy.</div>';
+
+    list.forEach(function(p) {
+      const tier = getTier(p);
+      html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:8px;">';
+
+      // Header row
+      html += '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px;">';
+      html += '<div style="min-width:0;flex:1;">';
+      html += '<div style="font-size:13px;font-weight:600;color:var(--text);font-family:\'Figtree\',sans-serif;">' + (p.product_name||'\u2014') + '</div>';
+      if (p.barcode_number) html += '<div style="font-size:10px;color:var(--muted);font-family:\'DM Mono\',monospace;margin-top:2px;">' + p.barcode_number + '</div>';
+      html += '</div>';
+
+      // Badges
+      html += '<div style="display:flex;align-items:center;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end;">';
+      html += '<span style="font-size:10px;padding:3px 8px;border-radius:10px;background:' + tier.bg + ';color:' + tier.color + ';font-weight:700;font-family:\'DM Mono\',monospace;white-space:nowrap;" title="' + tier.desc + '">' + tier.label + '</span>';
+      html += '<span style="font-size:11px;color:var(--muted);">' + (p.scan_count||0) + ' scan' + ((p.scan_count||0)!==1?'s':'') + '</span>';
+      html += '<button onclick="deleteMgrPattern(\'' + p.id + '\', this)" style="font-family:\'DM Mono\',monospace;font-size:10px;padding:3px 8px;border-radius:6px;border:1px solid rgba(255,92,92,0.3);background:rgba(255,92,92,0.07);color:var(--danger);cursor:pointer;">Delete</button>';
+      html += '</div></div>';
+
+      // Detail grid
+      html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">';
+      html += '<div style="background:var(--surface2);border-radius:6px;padding:8px 10px;">'
+            + '<div style="font-size:9px;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:3px;">Lot format</div>'
+            + '<div style="font-size:11px;color:var(--text);font-family:\'DM Mono\',monospace;">' + (p.lot_format||'\u2014') + '</div></div>';
+      const hint = p.label_hint ? p.label_hint.slice(0,90) + (p.label_hint.length>90?'\u2026':'') : '\u2014';
+      html += '<div style="background:var(--surface2);border-radius:6px;padding:8px 10px;">'
+            + '<div style="font-size:9px;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:3px;">Label location</div>'
+            + '<div style="font-size:11px;color:var(--muted);line-height:1.4;">' + hint + '</div></div>';
+      html += '</div>';
+
+      // Crop bar
+      html += cropBar(p);
+
+      // Example code
+      if (p.code_a) {
+        html += '<div style="margin-top:8px;font-size:10px;color:var(--muted);font-family:\'DM Mono\',monospace;">Example: <span style="color:var(--text);">' + p.code_a + '</span>' + (p.code_b?' / '+p.code_b:'') + '</div>';
+      }
+      html += '</div>';
+    });
+
+    el.innerHTML = html;
+
   } catch(e) {
-    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:16px;">Error: ${e.message}</div>`;
+    el.innerHTML = '<div style="color:var(--danger);font-size:12px;padding:16px;">Error: ' + e.message + '</div>';
   }
 }
 
