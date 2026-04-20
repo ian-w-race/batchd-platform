@@ -3164,6 +3164,11 @@
 
         <div class="flow-phase-body">
 
+          <!-- Recall pre-screening warning — populated by checkStep1RecallWarning() when product identified -->
+          <div id="p2-recall-warning" style="display:none;margin-bottom:12px;padding:12px 14px;background:rgba(245,166,35,0.08);border:1.5px solid rgba(245,166,35,0.45);border-radius:10px;">
+            <div id="p2-recall-warning-text"></div>
+          </div>
+
           <!-- Mode toggle -->
           <div class="mode-toggle">
             <button class="mode-btn active" id="mode-btn-ocr" onclick="setMode('ocr')">
@@ -3238,6 +3243,7 @@
                 <label><span data-i18n="field.lotNumber">Lot Code (TLC)</span> <span style="color:var(--danger);font-size:10px;" data-i18n="label.required">*required</span></label>
                 <div class="ocr-val" id="ocr-lot-display">—</div>
                 <div id="ocr-lot-badge"></div>
+                <div id="ocr-pattern-chip" style="display:none;margin-top:5px;font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);letter-spacing:0.04em;"></div>
               </div>
 
             </div>
@@ -3771,6 +3777,9 @@
     <button class="mgr-tab" id="mgr-tab-patterns" onclick="switchMgrTab('patterns')">
       OCR Patterns
     </button>
+    <button class="mgr-tab" id="mgr-tab-intel" onclick="switchMgrTab('intel')">
+      Intelligence
+    </button>
   </div>
 
   <!-- Cross-Store Panel -->
@@ -4259,6 +4268,17 @@
     </div>
     <div id="mgr-patterns-output">
       <div style="font-size:13px;color:var(--muted);padding:20px 0;text-align:center;font-family:'DM Mono',monospace;">Loading patterns…</div>
+    </div>
+  </div>
+
+  <!-- Intelligence Digest Panel -->
+  <div id="mgr-panel-intel" style="display:none;">
+    <div style="margin-bottom:16px;">
+      <div style="font-size:16px;font-weight:700;color:var(--text);font-family:'Figtree',sans-serif;">Intelligence Digest</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:2px;">Automated weekly summary of scanning health, recall alerts and complaint signals</div>
+    </div>
+    <div id="mgr-intel-output">
+      <div style="font-size:13px;color:var(--muted);padding:20px 0;text-align:center;font-family:'DM Mono',monospace;"><div class="spinner" style="margin:0 auto 8px;"></div>Loading…</div>
     </div>
   </div>
 
@@ -5745,7 +5765,10 @@ function confirmProductName() {
   if (overlay) overlay.style.display = 'none';
   const name = document.getElementById('field-product-name').value;
   updateFtlBadge(name);
-  // Auto-advance — no need to press Confirm & Continue separately
+  // Run recall pre-screen before advancing — shows amber warning in Phase 2 if matched
+  const barcodeNum = document.getElementById('field-barcode')?.value.trim() || '';
+  checkStep1RecallWarning(name, barcodeNum);
+  // Auto-advance
   goToPhase(2);
 }
 
@@ -7020,6 +7043,8 @@ async function handleP1BarcodeDetected(barcode) {
       `<strong style="color:var(--accent);">✓</strong> <strong>${esc(productName)}</strong>`;
     setProductNameFilled(productName);
     _prefetchedPattern = await lookupLearnedPattern(productName, lookupCode, null, null);
+    // Recall pre-screen at product identification time
+    checkStep1RecallWarning(productName, lookupCode);
   } else if (!gs1.lot) {
     // No product found and no lot in the code — standard fallback
     showToast('Barcode not in database — switching to label photo for identification.', 'warn', 4000);
@@ -8893,6 +8918,7 @@ function renderRecords(records, recallQ) {
             : `"${esc(r.notes)}"` }
         </div>` : ''}
         ${r.recall_resolved && r.recall_resolved_by ? `<div style="font-size:11px;color:var(--accent);margin-top:2px;">${t('card.resolvedBy')} ${esc(r.recall_resolved_by.split('@')[0])} · ${fmtRegionDate(r.recall_resolved_at, true)}</div>` : ''}
+        ${r.complaint_filed ? `<div style="display:inline-flex;align-items:center;gap:5px;margin-top:4px;font-size:10px;font-family:'DM Mono',monospace;padding:3px 9px;border-radius:10px;background:rgba(245,166,35,0.1);border:1px solid rgba(245,166,35,0.3);color:var(--warn);">⚑ Complaint filed</div>` : ''}
         ${exposureHtml}
         <div class="record-photos">
           ${r.product_photo_url ? `<img class="thumb-mini" src="${r.product_photo_url}" title="Product label" onclick="openLightbox('${r.product_photo_url}')" />` : ''}
@@ -10384,6 +10410,8 @@ function setMode(mode) {
   document.getElementById('ocr-result').classList.remove('visible');
   const _gEl = document.getElementById('ocr-guidance');
   if (_gEl) _gEl.style.display = 'none';
+  const _rw = document.getElementById('p2-recall-warning');
+  if (_rw) _rw.style.display = 'none';
   document.getElementById('field-lot').value = '';
   document.getElementById('field-lot').classList.remove('auto-filled');
   // field-batch removed from UI
@@ -10891,6 +10919,9 @@ function renderOcrResult(assignment, confidence, source, raw) {
     if (lotFld) { lotFld.value = assignment.lot; lotFld.classList.add('auto-filled'); }
   }
   // batch field no longer exists in the UI — skip all batch DOM operations
+
+  // ── PATTERN CONFIDENCE CHIP ──────────────────────────────
+  renderPatternChip(ocrState?.localisedCrop || null, _prefetchedPattern || null);
 
   // ── POST-FAILURE CONTEXTUAL GUIDANCE ──────────────────────
   // Give staff specific, actionable advice when the read fails or is uncertain.
@@ -13922,7 +13953,7 @@ function mgrViewStoreScans(storeName) {
 
 function switchMgrTab(tab) {
   _mgrActiveTab = tab;
-  ['stores','storemgmt','staff','recalls','audit','escalated','gs1','fsma','patterns'].forEach(t => {
+  ['stores','storemgmt','staff','recalls','audit','escalated','gs1','fsma','patterns','intel'].forEach(t => {
     document.getElementById('mgr-tab-' + t)?.classList.toggle('active', t === tab);
     const panel = document.getElementById('mgr-panel-' + t);
     if (panel) panel.style.display = t === tab ? 'block' : 'none';
@@ -13933,6 +13964,7 @@ function switchMgrTab(tab) {
   if (tab === 'escalated') loadMgrEscalated();
   if (tab === 'storemgmt') loadStoreMgmt();
   if (tab === 'patterns') loadMgrPatterns();
+  if (tab === 'intel') loadMgrIntel();
   if (tab !== 'gs1') gs1StopScanner();
 }
 
@@ -14056,6 +14088,284 @@ async function loadMgrPatterns() {
       }
       html += '</div>';
     });
+
+    el.innerHTML = html;
+
+  } catch(e) {
+    el.innerHTML = '<div style="color:var(--danger);font-size:12px;padding:16px;">Error: ' + e.message + '</div>';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FEATURE 1: RECALL PRE-SCREENING AT STEP 1
+// Uses _cachedActiveRecalls (loaded at login) — no extra API call.
+// Called right after product is identified, before Phase 2 opens.
+// Shows amber warning so staff know to check the lot carefully.
+// ═══════════════════════════════════════════════════════════════
+function checkStep1RecallWarning(productName, barcodeNum) {
+  const warnEl  = document.getElementById('p2-recall-warning');
+  const textEl  = document.getElementById('p2-recall-warning-text');
+  if (!warnEl || !textEl) return;
+  warnEl.style.display = 'none';
+
+  if (!_cachedActiveRecalls || !_cachedActiveRecalls.length) return;
+
+  const nameLower    = (productName  || '').toLowerCase().trim();
+  const barcodeClean = (barcodeNum   || '').toLowerCase().trim();
+
+  const matches = _cachedActiveRecalls.filter(r => {
+    // Exact barcode match — strongest signal
+    if (r.barcode_number && barcodeClean &&
+        r.barcode_number.toLowerCase().trim() === barcodeClean) return true;
+    // Product name match — first meaningful word must appear in scan product
+    if (r.product_name && nameLower) {
+      const rWords = r.product_name.toLowerCase().trim().split(/\s+/);
+      const firstLong = rWords.find(w => w.length >= 4) || rWords[0] || '';
+      if (firstLong.length >= 4 && nameLower.includes(firstLong)) return true;
+    }
+    return false;
+  });
+
+  if (!matches.length) return;
+
+  // Deduplicate by lot number
+  const seen = new Set();
+  const unique = matches.filter(r => {
+    const k = (r.lot_number || r.product_name || '').toLowerCase();
+    if (seen.has(k)) return false;
+    seen.add(k); return true;
+  });
+
+  const lotList = unique.map(r => r.lot_number).filter(Boolean);
+  const isNo    = currentLang === 'no';
+
+  let html = '<div style="display:flex;align-items:flex-start;gap:10px;">';
+  html += '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;margin-top:1px;color:var(--warn);"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
+  html += '<div style="flex:1;min-width:0;">';
+  html += '<div style="font-size:12px;font-weight:700;color:var(--warn);font-family:\'Figtree\',sans-serif;margin-bottom:4px;">';
+  html += isNo ? '⚠ Aktivt tilbakekall på dette produktet' : '⚠ Active recall on this product';
+  html += '</div>';
+  if (lotList.length) {
+    html += '<div style="font-size:11px;color:var(--text);font-family:\'DM Mono\',monospace;margin-bottom:5px;">';
+    html += (isNo ? 'Tilbakalt parti' : 'Recalled lot') + (lotList.length > 1 ? 's' : '') + ': ';
+    html += '<strong>' + lotList.map(l => esc(l)).join(' &nbsp;·&nbsp; ') + '</strong></div>';
+  }
+  html += '<div style="font-size:11px;color:var(--muted);line-height:1.5;">';
+  html += isNo
+    ? 'Skann partinummeret nøye. Hvis det stemmer, ikke legg varen på hylla — varsle lederen din umiddelbart.'
+    : 'Scan the lot code carefully. If it matches, do not place on shelf — notify your manager immediately.';
+  html += '</div></div></div>';
+
+  textEl.innerHTML = html;
+  warnEl.style.display = 'block';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FEATURE 2: PATTERN CONFIDENCE CHIP
+// Called from renderOcrResult — shows learning tier and scan count.
+// ═══════════════════════════════════════════════════════════════
+function renderPatternChip(localisedCrop, prefetchedPattern) {
+  const chip = document.getElementById('ocr-pattern-chip');
+  if (!chip) return;
+
+  const scanCount  = localisedCrop?.cropScanCount || prefetchedPattern?.scan_count || 0;
+  const cropCount  = localisedCrop?.cropScanCount || 0;
+
+  let label = '', color = 'var(--muted)', bg = 'transparent';
+
+  if (scanCount >= 20 && cropCount >= 5) {
+    label = '★ Expert pattern · seen ' + scanCount + '+ times · format-locked';
+    color = 'var(--accent)'; bg = 'rgba(52,211,153,0.07)';
+  } else if (cropCount >= 5) {
+    label = '⚡ Established · crop region learned · ' + scanCount + ' scans';
+    color = '#38bdf8'; bg = 'rgba(56,189,248,0.07)';
+  } else if (scanCount >= 2) {
+    label = '◎ Learning · seen ' + scanCount + ' time' + (scanCount !== 1 ? 's' : '') + ' · ' + Math.max(0, 5 - cropCount) + ' more to unlock skip';
+    color = 'var(--warn)'; bg = 'rgba(245,166,35,0.07)';
+  } else if (scanCount === 1) {
+    label = '· Second scan of this product';
+    color = 'var(--muted)';
+  } else {
+    label = '· First scan of this product — Batch\'d is starting to learn it';
+    color = 'var(--muted)';
+  }
+
+  chip.textContent = label;
+  chip.style.color = color;
+  chip.style.background = bg;
+  chip.style.padding = bg !== 'transparent' ? '3px 8px' : '0';
+  chip.style.borderRadius = '5px';
+  chip.style.display = 'block';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FEATURE 3: COMPLAINT LINKAGE
+// Sets complaint_filed flag on linked scan when complaint submitted.
+// loadHistory() queries this flag and renders yellow badge.
+// ═══════════════════════════════════════════════════════════════
+async function flagScanWithComplaint(scanId) {
+  if (!scanId) return;
+  try {
+    await sb.from('scans').update({ complaint_filed: true }).eq('id', scanId);
+  } catch(e) { console.warn('Could not flag scan with complaint:', e.message); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FEATURE 4: INTELLIGENCE DIGEST
+// Weekly automated summary of scanning health, recall status,
+// complaint signals and pattern learning progress.
+// ═══════════════════════════════════════════════════════════════
+async function loadMgrIntel() {
+  const el = document.getElementById('mgr-intel-output');
+  if (!el) return;
+  el.innerHTML = '<div style="font-size:13px;color:var(--muted);padding:20px 0;text-align:center;"><div class="spinner" style="margin:0 auto 8px;"></div>Analysing last 7 days…</div>';
+
+  try {
+    const since7  = new Date(Date.now() - 7  * 86400000).toISOString();
+    const since30 = new Date(Date.now() - 30 * 86400000).toISOString();
+
+    const [scansRes, storesRes, complaintsRes] = await Promise.all([
+      sb.from('scans')
+        .select('product_name, lot_number, store_name, scanned_by, created_at, complaint_filed, recall_resolved')
+        .eq('organisation_id', _currentOrgId)
+        .gte('created_at', since7)
+        .order('created_at', { ascending: false }),
+      sb.from('stores').select('name').eq('organisation_id', _currentOrgId).eq('active', true),
+      sb.from('scans')
+        .select('product_name, lot_number, store_name, created_at')
+        .eq('organisation_id', _currentOrgId)
+        .eq('complaint_filed', true)
+        .gte('created_at', since30),
+    ]);
+
+    const scans      = scansRes.data      || [];
+    const allStores  = (storesRes.data    || []).map(s => s.name);
+    const complaints = complaintsRes.data || [];
+
+    // ── Top products by scan count ──
+    const productCounts = {};
+    scans.forEach(s => {
+      const k = s.product_name || 'Unknown';
+      productCounts[k] = (productCounts[k] || 0) + 1;
+    });
+    const topProducts = Object.entries(productCounts)
+      .sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+    // ── Stores with zero scans this week ──
+    const activeStores = new Set(scans.map(s => s.store_name).filter(Boolean));
+    const silentStores = allStores.filter(s => !activeStores.has(s));
+
+    // ── Recall alerts this week ──
+    const recallScans = scans.filter(s => s.recall_resolved !== null && s.recall_resolved !== undefined);
+
+    // ── Complaint signals (last 30 days) ──
+    const complaintsByProduct = {};
+    complaints.forEach(c => {
+      const k = c.product_name || 'Unknown';
+      complaintsByProduct[k] = (complaintsByProduct[k] || 0) + 1;
+    });
+
+    // ── Staff scan counts ──
+    const staffCounts = {};
+    scans.forEach(s => {
+      const k = (s.scanned_by || '').split('@')[0] || 'Unknown';
+      staffCounts[k] = (staffCounts[k] || 0) + 1;
+    });
+    const topStaff = Object.entries(staffCounts).sort((a,b) => b[1]-a[1]).slice(0,5);
+
+    // ── Render ──
+    const stat = (val, label, color) =>
+      '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;text-align:center;">'
+      + '<div style="font-family:\'Figtree\',sans-serif;font-weight:800;font-size:24px;color:' + color + ';">' + val + '</div>'
+      + '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.07em;margin-top:2px;">' + label + '</div>'
+      + '</div>';
+
+    const sectionHead = (title, sub) =>
+      '<div style="margin:20px 0 10px;">'
+      + '<div style="font-size:13px;font-weight:700;color:var(--text);font-family:\'Figtree\',sans-serif;">' + title + '</div>'
+      + (sub ? '<div style="font-size:11px;color:var(--muted);margin-top:2px;">' + sub + '</div>' : '')
+      + '</div>';
+
+    let html = '';
+
+    // Summary tiles
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:8px;margin-bottom:4px;">';
+    html += stat(scans.length, 'Scans this week', 'var(--accent)');
+    html += stat(activeStores.size, 'Active stores', 'var(--text)');
+    html += stat(silentStores.length, 'Silent stores', silentStores.length > 0 ? 'var(--warn)' : 'var(--muted)');
+    html += stat(complaints.length, 'Complaints (30d)', complaints.length > 0 ? 'var(--danger)' : 'var(--muted)');
+    html += stat(loginRecallMatches.length, 'Recall matches', loginRecallMatches.length > 0 ? 'var(--danger)' : 'var(--muted)');
+    html += '</div>';
+
+    // Recall matches alert
+    if (loginRecallMatches.length > 0) {
+      html += '<div style="margin-top:14px;padding:12px 14px;background:rgba(255,92,92,0.08);border:1.5px solid rgba(255,92,92,0.4);border-radius:10px;">';
+      html += '<div style="font-size:12px;font-weight:700;color:var(--danger);margin-bottom:6px;">⚠ ' + loginRecallMatches.length + ' active recall match' + (loginRecallMatches.length > 1 ? 'es' : '') + ' in your scan history</div>';
+      loginRecallMatches.forEach(m => {
+        html += '<div style="font-size:11px;font-family:\'DM Mono\',monospace;color:var(--text);margin-top:4px;">'
+              + esc(m.recall.product_name || '—') + ' · Lot: <strong>' + esc(m.recall.lot_number || '—') + '</strong>'
+              + ' · ' + m.count + ' scan' + (m.count !== 1 ? 's' : '')
+              + (m.stores.length ? ' · ' + m.stores.map(s => esc(s)).join(', ') : '')
+              + '</div>';
+      });
+      html += '</div>';
+    }
+
+    // Top products
+    html += sectionHead('Top products scanned (7 days)', 'Products your staff scanned most');
+    if (topProducts.length === 0) {
+      html += '<div style="font-size:12px;color:var(--muted);font-family:\'DM Mono\',monospace;">No scans recorded this week.</div>';
+    } else {
+      const maxCount = topProducts[0][1];
+      html += topProducts.map(([name, count], i) => {
+        const pct = Math.round((count / maxCount) * 100);
+        return '<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);">'
+          + '<div style="width:18px;text-align:right;font-family:\'DM Mono\',monospace;font-size:10px;color:var(--muted);flex-shrink:0;">' + (i+1) + '</div>'
+          + '<div style="flex:1;min-width:0;">'
+          + '<div style="font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(name) + '</div>'
+          + '<div style="height:3px;background:var(--surface2);border-radius:2px;margin-top:4px;"><div style="height:3px;width:' + pct + '%;background:var(--accent);border-radius:2px;"></div></div>'
+          + '</div>'
+          + '<div style="font-family:\'DM Mono\',monospace;font-size:12px;color:var(--accent);flex-shrink:0;">' + count + '</div>'
+          + '</div>';
+      }).join('');
+    }
+
+    // Silent stores
+    if (silentStores.length > 0) {
+      html += sectionHead('Stores with no scans this week', 'These stores haven\'t logged any products in 7 days');
+      html += silentStores.map(s =>
+        '<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);">'
+        + '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--warn);flex-shrink:0;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'
+        + '<div style="font-size:12px;color:var(--warn);">' + esc(s) + '</div></div>'
+      ).join('');
+    }
+
+    // Complaint signals
+    if (Object.keys(complaintsByProduct).length > 0) {
+      html += sectionHead('Complaint signals (30 days)', 'Products with staff-filed complaints');
+      html += Object.entries(complaintsByProduct).sort((a,b) => b[1]-a[1]).map(([name, count]) =>
+        '<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);">'
+        + '<div style="font-size:12px;color:var(--text);">' + esc(name) + '</div>'
+        + '<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(255,92,92,0.1);color:var(--danger);font-family:\'DM Mono\',monospace;">' + count + ' complaint' + (count !== 1 ? 's' : '') + '</span>'
+        + '</div>'
+      ).join('');
+    }
+
+    // Top staff
+    html += sectionHead('Staff scanning activity (7 days)', '');
+    if (topStaff.length === 0) {
+      html += '<div style="font-size:12px;color:var(--muted);font-family:\'DM Mono\',monospace;">No activity yet this week.</div>';
+    } else {
+      html += topStaff.map(([name, count]) =>
+        '<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);">'
+        + '<div style="font-size:12px;color:var(--text);font-family:\'DM Mono\',monospace;">' + esc(name) + '</div>'
+        + '<span style="font-size:11px;color:var(--muted);">' + count + ' scan' + (count !== 1 ? 's' : '') + '</span>'
+        + '</div>'
+      ).join('');
+    }
+
+    // Last updated
+    html += '<div style="margin-top:16px;font-size:10px;color:var(--muted);font-family:\'DM Mono\',monospace;text-align:right;">Refreshed ' + new Date().toLocaleTimeString() + '</div>';
 
     el.innerHTML = html;
 
@@ -15817,6 +16127,9 @@ async function submitComplaintFromScan() {
     });
     const data = await res.json();
     if (data.error) throw new Error(data.error);
+
+    // Flag the linked scan in the database so history shows complaint badge
+    if (_complaintScanId) flagScanWithComplaint(_complaintScanId);
 
     // Show success
     btn.style.display = 'none';
