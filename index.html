@@ -7543,6 +7543,13 @@ async function saveRecord() {
   const supplierVal = document.getElementById('field-supplier')?.value.trim();
   const expiryVal   = document.getElementById('field-expiry')?.value.trim() || null;
   const lotUnavailSave = document.getElementById('lot-unavailable-toggle')?.checked || false;
+  // Compute retain_until based on region:
+  // Norway/EU (EU Reg. 178/2002): 2 years (conservative general-products floor)
+  // USA (FSMA 21 CFR): 2 years minimum
+  // Both use 2 years — specific product-type extensions tracked separately.
+  const _retainYears = 2;
+  const _retainUntil = new Date(Date.now() + _retainYears * 365.25 * 24 * 60 * 60 * 1000).toISOString();
+
   const payload = {
     product_name:    productName,
     barcode_number:  barcodeNum  || null,
@@ -7556,6 +7563,7 @@ async function saveRecord() {
     notes:           (notesVal || '') + (lotUnavailSave ? (notesVal ? ' | ' : '') + 'LOT_UNAVAILABLE' : '') || null,
     supplier_name:   supplierVal || null,
     organisation_id: _currentOrgId || null,
+    retain_until:    _retainUntil,
     // FSMA 204 (USA) KDEs
     reference_document: (document.getElementById('field-reference-doc')?.value.trim()) || null,
     tlc_source:         (document.getElementById('field-tlc-source')?.value.trim()) || null,
@@ -7588,10 +7596,12 @@ async function saveRecord() {
     let productUrl = null;
     let barcodeUrl = null;
 
-    // Upload photos independently — a missing blob (e.g. lot unavailable)
-    // must never crash the entire save. Each upload is best-effort.
+    // Photos stored under orgs/{orgId}/scans/{ts}_{type}.jpg
+    // Namespaced by org so photos are traceable and can be managed per-org.
+    // Each upload is independent — a missing blob never crashes the save.
+    const orgPrefix = (_currentOrgId || 'unknown').slice(0, 8);
     if (productBlob) {
-      const productPath = `product-${ts}.jpg`;
+      const productPath = `orgs/${orgPrefix}/scans/${ts}_product.jpg`;
       const pUp = await sb.storage.from('scan-photos').upload(productPath, productBlob, { contentType: 'image/jpeg' });
       if (!pUp.error) {
         productUrl = sb.storage.from('scan-photos').getPublicUrl(productPath).data.publicUrl;
@@ -7600,7 +7610,7 @@ async function saveRecord() {
       }
     }
     if (barcodeBlob) {
-      const barcodePath = `barcode-${ts}.jpg`;
+      const barcodePath = `orgs/${orgPrefix}/scans/${ts}_lotcode.jpg`;
       const bUp = await sb.storage.from('scan-photos').upload(barcodePath, barcodeBlob, { contentType: 'image/jpeg' });
       if (!bUp.error) {
         barcodeUrl = sb.storage.from('scan-photos').getPublicUrl(barcodePath).data.publicUrl;
@@ -8868,42 +8878,37 @@ function renderRecords(records, recallQ) {
           ${r.product_photo_url ? `<img class="thumb-mini" src="${r.product_photo_url}" title="Product label" onclick="openLightbox('${r.product_photo_url}')" />` : ''}
           ${r.barcode_photo_url ? `<img class="thumb-mini" src="${r.barcode_photo_url}" title="Lot code photo" onclick="openLightbox('${r.barcode_photo_url}')" />` : ''}
         </div>
-        <!-- Inline editor — lot, product name, best before, shelf location -->
+        <!-- Audit note + shelf update panel — core traceability fields are locked -->
           <div id="lot-edit-${r.id}" style="display:none;margin-top:8px;padding:12px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;">
-            <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:10px;">${t('card.editRecord')}</div>
-            <div style="display:grid;grid-template-columns:1fr;gap:8px;margin-bottom:10px;">
-
-              <div>
-                <label style="font-size:10px;color:var(--muted);display:block;margin-bottom:3px;">${t('field.productName')}</label>
-                <input id="lot-edit-name-${r.id}" type="text" value="${esc(r.product_name || '')}" placeholder="${t('field.productName')}"
-                  style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;font-family:'DM Mono',monospace;font-size:12px;color:var(--text);outline:none;box-sizing:border-box;" />
-              </div>
-
-              <div>
-                <label style="font-size:10px;color:var(--muted);display:block;margin-bottom:3px;">${t('card.lotNumberTlc')}</label>
-                <input id="lot-edit-lot-${r.id}" type="text" value="${esc(r.lot_number || '')}" autocapitalize="characters" placeholder="${t('field.lotNumber')}"
-                  style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;font-family:'DM Mono',monospace;font-size:13px;color:var(--text);outline:none;box-sizing:border-box;" />
-              </div>
-
-              <div>
-                <label style="font-size:10px;color:var(--muted);display:block;margin-bottom:3px;">${t('scan.bestBefore')} <span style="color:var(--muted);opacity:0.7;">(${t('label.optional')})</span></label>
-                <input id="lot-edit-expiry-${r.id}" type="text" value="${esc(r.notes?.match(/EXPIRY:([^|]+)/)?.[1]?.trim() || '')}" placeholder="${bestBeforePlaceholder()}"
-                  style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;font-family:'DM Mono',monospace;font-size:13px;color:var(--text);outline:none;box-sizing:border-box;" />
-              </div>
-
-              <div>
-                <label style="font-size:10px;color:var(--muted);display:block;margin-bottom:3px;">${t('scan.shelfPlaceholder')} <span style="color:var(--muted);opacity:0.7;">(${t('label.optional')})</span></label>
-                <input id="lot-edit-shelf-${r.id}" type="text" value="${esc(r.shelf_location || '')}" placeholder="${t('scan.shelfPlaceholder')}"
-                  style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;font-family:'DM Mono',monospace;font-size:12px;color:var(--text);outline:none;box-sizing:border-box;" />
-              </div>
-
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--accent);flex-shrink:0;"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              <span style="font-size:10px;text-transform:uppercase;letter-spacing:0.07em;color:var(--accent);font-weight:700;">Locked record — add note or update shelf only</span>
             </div>
-            <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">${t('card.ocrFeedback')}</div>
+            <div style="margin-bottom:10px;padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;">
+              <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:4px;">Immutable fields (cannot be changed)</div>
+              <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);line-height:1.8;">
+                Product: <span style="color:var(--text);">${esc(r.product_name||'—')}</span><br>
+                Lot code: <span style="color:var(--text);">${esc(r.lot_number||'—')}</span><br>
+                Scanned: <span style="color:var(--text);">${placedStr} by ${esc((r.scanned_by||'').split('@')[0]||'—')}</span>
+              </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr;gap:8px;margin-bottom:10px;">
+              <div>
+                <label style="font-size:10px;color:var(--muted);display:block;margin-bottom:3px;">Update shelf location <span style="opacity:0.7;">(optional)</span></label>
+                <input id="lot-edit-shelf-${r.id}" type="text" value="${esc(r.shelf_location || '')}" placeholder="e.g. Dairy aisle 3, shelf 2"
+                  style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;font-family:'DM Mono',monospace;font-size:12px;color:var(--text);outline:none;box-sizing:border-box;" />
+              </div>
+              <div>
+                <label style="font-size:10px;color:var(--muted);display:block;margin-bottom:3px;">Add audit note <span style="opacity:0.7;">(appended to record, cannot be removed)</span></label>
+                <input id="lot-edit-note-${r.id}" type="text" placeholder="e.g. Checked by supervisor, temperature OK on arrival…"
+                  style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;font-family:'DM Mono',monospace;font-size:12px;color:var(--text);outline:none;box-sizing:border-box;" />
+              </div>
+            </div>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
               <button onclick="saveLotEdit('${r.id}')" class="btn btn-primary" style="font-size:12px;padding:7px 16px;gap:5px;">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>${t('card.saveCorrection')}
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>Save
               </button>
-              <button onclick="cancelLotEdit('${r.id}')" class="btn btn-ghost" style="font-size:12px;padding:7px 14px;">${t('action.cancel')}</button>
+              <button onclick="cancelLotEdit('${r.id}')" class="btn btn-ghost" style="font-size:12px;padding:7px 14px;">Cancel</button>
               <div id="lot-edit-msg-${r.id}" style="font-size:11px;flex:1;text-align:right;min-height:16px;"></div>
             </div>
           </div>
@@ -8911,7 +8916,8 @@ function renderRecords(records, recallQ) {
           <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-top:6px;">
           <div class="record-time">${t('js.placedOnShelfLabel')} ${placedStr}</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;">
-            <button onclick="openLotEdit('${r.id}')" style="font-family:'DM Mono',monospace;font-size:11px;padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);cursor:pointer;" title="${t('card.edit')}">${t('card.edit')}</button>
+            <button onclick="openLotEdit('${r.id}')" style="font-family:'DM Mono',monospace;font-size:11px;padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);cursor:pointer;" title="Add note or update shelf">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline;vertical-align:-1px;margin-right:3px;"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Add Note</button>
             ${!r.removed_from_shelf_at
               ? `<button onclick="pullFromShelf('${r.id}')" style="font-family:'DM Mono',monospace;font-size:11px;padding:4px 10px;border-radius:6px;border:1px solid var(--muted);background:rgba(61,107,94,0.15);color:var(--muted);cursor:pointer;">${t('js.pullFromShelf')}</button>`
               : `<button onclick="undoPullFromShelf('${r.id}')" style="font-family:'DM Mono',monospace;font-size:11px;padding:4px 10px;border-radius:6px;border:1px solid rgba(245,166,35,0.5);background:rgba(245,166,35,0.08);color:var(--warn);cursor:pointer;">${t('card.undoRemoval')}</button>`
@@ -14512,42 +14518,22 @@ function cancelLotEdit(scanId) {
 }
 
 async function saveLotEdit(scanId) {
+  // ── IMMUTABLE RECORD — only shelf location and appended notes can change ──
+  // Product name, lot number, barcode, store, photos are permanently locked.
   const r = allRecords.find(rec => rec.id === scanId);
   if (!r) return;
 
-  const lotInput    = document.getElementById('lot-edit-lot-'    + scanId);
-  const nameInput   = document.getElementById('lot-edit-name-'   + scanId);
-  const shelfInput  = document.getElementById('lot-edit-shelf-'  + scanId);
-  const expiryInput = document.getElementById('lot-edit-expiry-' + scanId);
-  const msgEl       = document.getElementById('lot-edit-msg-'    + scanId);
+  const shelfInput = document.getElementById('lot-edit-shelf-' + scanId);
+  const noteInput  = document.getElementById('lot-edit-note-'  + scanId);
+  const msgEl      = document.getElementById('lot-edit-msg-'   + scanId);
 
-  const newLot   = (lotInput?.value   || '').trim().toUpperCase();
-  const newName  = (nameInput?.value  || '').trim();
-  const newShelf = (shelfInput?.value || '').trim();
-  const newExpiry = (expiryInput?.value || '').trim();
+  const newShelf   = (shelfInput?.value || '').trim();
+  const auditNote  = (noteInput?.value  || '').trim();
 
-  // Lot is only required if not previously marked unavailable
-  const wasLotUnavail = (r.notes || '').includes('LOT_UNAVAILABLE');
-  if (!newLot && !wasLotUnavail) {
-    msgEl.style.color = 'var(--danger)';
-    msgEl.textContent = currentLang === 'no' ? '⚠ Partinummer kreves' : '⚠ Lot number required';
-    return;
-  }
-
-  const lotChanged   = newLot   !== (r.lot_number    || '').toUpperCase();
-  const nameChanged  = newName  !== (r.product_name  || '');
   const shelfChanged = newShelf !== (r.shelf_location || '');
-
-  // Update expiry in notes — preserve other notes, replace/add EXPIRY tag
-  const baseNotes = (r.notes || '').replace(/\s*\|\s*EXPIRY:[^|]*/g, '').replace(/^EXPIRY:[^|]*\s*\|?\s*/g, '').trim();
-  const newNotes = newExpiry
-    ? (baseNotes ? baseNotes + ' | EXPIRY:' + newExpiry : 'EXPIRY:' + newExpiry)
-    : baseNotes || null;
-  const expiryChanged = newNotes !== (r.notes || null);
-
-  if (!lotChanged && !nameChanged && !shelfChanged && !expiryChanged) {
+  if (!shelfChanged && !auditNote) {
     msgEl.style.color = 'var(--muted)';
-    msgEl.textContent = currentLang==='no'?'Ingen endringer gjort':'No changes made';
+    msgEl.textContent = 'No changes made';
     setTimeout(() => cancelLotEdit(scanId), 1200);
     return;
   }
@@ -14556,138 +14542,38 @@ async function saveLotEdit(scanId) {
   msgEl.textContent = t('js.saving');
 
   try {
-    // ── 1. Build update payload ──
+    // Append note to existing notes — never overwrite
+    const existingNotes = r.notes || '';
+    const timestamp = new Date().toLocaleString('en-GB', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' });
+    const newNotes = auditNote
+      ? (existingNotes ? existingNotes + ' | [' + timestamp + '] ' + auditNote : '[' + timestamp + '] ' + auditNote)
+      : existingNotes || null;
+
     const updatePayload = {};
-    if (lotChanged)   updatePayload.lot_number    = newLot || null;
-    if (nameChanged)  updatePayload.product_name  = newName || null;
     if (shelfChanged) updatePayload.shelf_location = newShelf || null;
-    if (expiryChanged) updatePayload.notes         = newNotes;
+    if (auditNote)    updatePayload.notes           = newNotes;
 
     const { error } = await sb.from('scans').update(updatePayload).eq('id', scanId);
     if (error) throw error;
 
-    // ── 2. Update local cache ──
+    // Update local cache
     const idx = allRecords.findIndex(rec => rec.id === scanId);
     if (idx !== -1) {
-      if (lotChanged)   allRecords[idx].lot_number    = newLot || null;
-      if (nameChanged)  allRecords[idx].product_name  = newName || null;
       if (shelfChanged) allRecords[idx].shelf_location = newShelf || null;
-      if (expiryChanged) allRecords[idx].notes         = newNotes;
-    }
-
-    // ── 3. Feed lot correction into pattern learner ──
-    if (lotChanged && r.product_name) {
-      await recordManualCorrection(
-        newName || r.product_name,
-        r.barcode_number || null,
-        newLot,
-        null,
-        true,
-        null
-      );
+      if (auditNote)    allRecords[idx].notes           = newNotes;
     }
 
     msgEl.style.color = 'var(--accent)';
-    msgEl.textContent = '✓ ' + (currentLang === 'no' ? 'Lagret' : 'Saved');
-
-    // ── 4. Update visible chips in the card without full re-render ──
-    const card = document.getElementById('lot-edit-' + scanId)?.closest('.record-card');
-    if (card) {
-      if (lotChanged) {
-        card.querySelectorAll('.meta-chip').forEach(chip => {
-          if (chip.textContent.startsWith('Lot:')) chip.innerHTML = `Lot: <strong>${esc(newLot)}</strong>`;
-        });
-      }
-      if (nameChanged) {
-        const titleEl = card.querySelector('.record-title');
-        if (titleEl) titleEl.textContent = newName;
-      }
-      if (shelfChanged) {
-        card.querySelectorAll('.meta-chip').forEach(chip => {
-          if (chip.querySelector('svg[data-shelf]') || chip.style.cssText.includes('pin') || chip.innerHTML.includes('M21 10c0')) {
-            // shelf chip — harder to identify, just re-render on close
-          }
-        });
-      }
-    }
-
-    setTimeout(() => {
-      cancelLotEdit(scanId);
-      showToast(currentLang === 'no' ? 'Oppføring oppdatert' : 'Record updated', 'ok', 2500);
-    }, 700);
+    msgEl.textContent = '✓ Saved';
+    if (noteInput) noteInput.value = '';
+    setTimeout(() => { cancelLotEdit(scanId); applyFilters(); }, 1000);
 
   } catch(e) {
     msgEl.style.color = 'var(--danger)';
-    msgEl.textContent = '✗ ' + e.message;
+    msgEl.textContent = '✗ ' + (e.message || 'Save failed');
   }
 }
 
-// ── FEATURE 1: VISUAL REGION CONFIRMATION ────────────────────
-// After OCR on medium/low confidence, show the captured photo with
-// a bounding box highlighting where the lot code was found.
-// The employee taps "Looks right" to accept, or "Retake" to redo.
-
-let _pendingOcrResult = null; // holds the result while awaiting confirmation
-
-function showRegionConfirmation(blob, localisedCrop, assignment, confidence, source, raw) {
-  // Only show for medium or low confidence
-  if (confidence === 'high' || confidence === 'learned') {
-    // Auto-accept — skip overlay
-    finaliseOcrResult(assignment, confidence, source, raw);
-    return;
-  }
-
-  _pendingOcrResult = { assignment, confidence, source, raw };
-
-  const overlay = document.getElementById('region-confirm-overlay');
-  const confirmBar = document.getElementById('region-confirm-bar');
-  const img = document.getElementById('region-confirm-img');
-  const badge = document.getElementById('region-confirm-badge');
-  const label = document.getElementById('region-confirm-label');
-  const capturedImg = document.getElementById('barcode-captured');
-
-  // Use the same image as barcode-captured
-  img.src = capturedImg.src;
-  overlay.style.display = 'block';
-  confirmBar.style.display = 'block';
-
-  // Draw bounding box on canvas if we have localisation coordinates
-  img.onload = () => {
-    const canvas = document.getElementById('region-confirm-canvas');
-    canvas.width  = img.naturalWidth  || img.clientWidth;
-    canvas.height = img.naturalHeight || img.clientHeight;
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    if (localisedCrop) {
-      const y1 = localisedCrop.yStart * canvas.height;
-      const y2 = localisedCrop.yEnd   * canvas.height;
-      // Semi-transparent overlay on the rest of the image
-      ctx.fillStyle = 'rgba(0,0,0,0.45)';
-      ctx.fillRect(0, 0, canvas.width, y1);
-      ctx.fillRect(0, y2, canvas.width, canvas.height - y2);
-      // Highlight box
-      ctx.strokeStyle = '#34d399';
-      ctx.lineWidth = 3;
-      ctx.strokeRect(4, y1 + 2, canvas.width - 8, y2 - y1 - 4);
-      // Corner accents
-      const cSize = 14;
-      ctx.lineWidth = 4;
-      [[4, y1+2], [canvas.width-4, y1+2], [4, y2-2], [canvas.width-4, y2-2]].forEach(([cx, cy], i) => {
-        const dx = i % 2 === 0 ? 1 : -1;
-        const dy = i < 2 ? 1 : -1;
-        ctx.beginPath();
-        ctx.moveTo(cx, cy + dy*cSize); ctx.lineTo(cx, cy); ctx.lineTo(cx + dx*cSize, cy);
-        ctx.stroke();
-      });
-    }
-  };
-  if (img.complete) img.onload();
-
-  badge.textContent = assignment.lot || '?';
-  label.innerHTML = `<strong style="color:${confidence === 'low' ? 'var(--danger)' : 'var(--warn)'}">${confidence === 'low' ? '? Low confidence' : '~ Medium confidence'}</strong> — AI extracted this code. Does it look right?`;
-  document.getElementById('btn-retake-barcode').style.display = 'none'; // hide until confirmed/retaken
-}
 
 function confirmRegion() {
   if (!_pendingOcrResult) return;
