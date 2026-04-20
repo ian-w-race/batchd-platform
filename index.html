@@ -723,10 +723,16 @@
     position: absolute;
     inset: 0;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
+    color: var(--border);
+    gap: 4px;
+    font-size: 10px;
+    font-family: 'DM Mono', monospace;
+    letter-spacing: 0.04em;
     color: var(--muted);
-    font-size: 24px;
+    opacity: 0.5;
   }
 
   .record-info {
@@ -7579,19 +7585,29 @@ async function saveRecord() {
 
   try {
     const ts = Date.now();
-    const productPath = `product-${ts}.jpg`;
-    const barcodePath = `barcode-${ts}.jpg`;
+    let productUrl = null;
+    let barcodeUrl = null;
 
-    const [pUp, bUp] = await Promise.all([
-      sb.storage.from('scan-photos').upload(productPath, productBlob, { contentType: 'image/jpeg' }),
-      sb.storage.from('scan-photos').upload(barcodePath, barcodeBlob, { contentType: 'image/jpeg' })
-    ]);
-
-    if (pUp.error) throw pUp.error;
-    if (bUp.error) throw bUp.error;
-
-    const productUrl = sb.storage.from('scan-photos').getPublicUrl(productPath).data.publicUrl;
-    const barcodeUrl = sb.storage.from('scan-photos').getPublicUrl(barcodePath).data.publicUrl;
+    // Upload photos independently — a missing blob (e.g. lot unavailable)
+    // must never crash the entire save. Each upload is best-effort.
+    if (productBlob) {
+      const productPath = `product-${ts}.jpg`;
+      const pUp = await sb.storage.from('scan-photos').upload(productPath, productBlob, { contentType: 'image/jpeg' });
+      if (!pUp.error) {
+        productUrl = sb.storage.from('scan-photos').getPublicUrl(productPath).data.publicUrl;
+      } else {
+        console.warn('Product photo upload failed:', pUp.error.message);
+      }
+    }
+    if (barcodeBlob) {
+      const barcodePath = `barcode-${ts}.jpg`;
+      const bUp = await sb.storage.from('scan-photos').upload(barcodePath, barcodeBlob, { contentType: 'image/jpeg' });
+      if (!bUp.error) {
+        barcodeUrl = sb.storage.from('scan-photos').getPublicUrl(barcodePath).data.publicUrl;
+      } else {
+        console.warn('Lot code photo upload failed:', bUp.error.message);
+      }
+    }
 
     const { error } = await sb.from('scans').insert({
       ...payload,
@@ -8820,7 +8836,7 @@ function renderRecords(records, recallQ) {
       <div class="record-thumb">
         ${r.product_photo_url
           ? `<img src="${r.product_photo_url}" alt="Product" onclick="openLightbox('${r.product_photo_url}')" style="cursor:pointer;" />`
-          : '<div class="record-thumb-placeholder"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>'}
+          : '<div class="record-thumb-placeholder"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg><span>No photo</span></div>'}
       </div>
       <div class="record-info">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
@@ -14363,7 +14379,7 @@ async function loadMgrEscalated() {
         <div class="record-thumb">
           ${r.product_photo_url
             ? `<img src="${r.product_photo_url}" alt="Product" onclick="openLightbox('${r.product_photo_url}')" style="cursor:pointer;" />`
-            : '<div class="record-thumb-placeholder"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>'}
+            : '<div class="record-thumb-placeholder"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg><span>No photo</span></div>'}
         </div>
         <div class="record-info">
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
