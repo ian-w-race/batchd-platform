@@ -7573,7 +7573,7 @@ async function saveRecord() {
         productName, barcodeNum || null,
         ocrState.codeA, ocrState.codeB,
         ocrState.lotIsFirst, ocrState.raw, ocrState.locationHint,
-        ocrState.confidence
+        ocrState.confidence, ocrState.localisedCrop || null
       );
     }
 
@@ -10597,7 +10597,9 @@ async function snapOcr() {
       source,
       raw: aiResult.raw,
       locationHint: aiResult.locationHint || '',
-      expiry: aiResult.expiry || null
+      expiry: aiResult.expiry || null,
+      // Crop region from localisation pass — persisted to enable learned-crop shortcut
+      localisedCrop: aiResult.localisedCrop || null
     };
 
     // Auto-populate expiry field if AI found one
@@ -11105,7 +11107,11 @@ function buildPatternResult(row, source) {
     batchFormat: row.batch_format,
     labelHint: locationHint,
     confidence: row.confidence_level || 'low',
-    source
+    source,
+    // Stored crop coordinates — used to skip localisation pass for known products
+    cropYStart: (row.crop_y_start != null) ? row.crop_y_start : null,
+    cropYEnd:   (row.crop_y_end   != null) ? row.crop_y_end   : null,
+    cropScanCount: row.crop_scan_count || 0
   };
 }
 
@@ -11167,7 +11173,7 @@ function describeCodeFormat(code) {
 // Confidence ranking for gate checks
 const CONF_RANK = { high: 4, medium: 3, low: 2, brand: 1 };
 
-async function saveLearnedPattern(productName, barcodeNumber, codeA, codeB, lotIsFirst, rawText, locationHint, newConfidence) {
+async function saveLearnedPattern(productName, barcodeNumber, codeA, codeB, lotIsFirst, rawText, locationHint, newConfidence, localisedCrop) {
   if (!productName || !codeA) return;
   try {
     const lotCode   = lotIsFirst ? codeA : codeB;
@@ -11225,6 +11231,26 @@ async function saveLearnedPattern(productName, barcodeNumber, codeA, codeB, lotI
         freq[key] = (freq[key] || 0) + 1;
       }
 
+      // ── CROP COORDINATE LEARNING ─────────────────────────────
+      // Running weighted average — converges on the true region over ~10 scans
+      let newCropYStart = existing.crop_y_start;
+      let newCropYEnd   = existing.crop_y_end;
+      let newCropScanCount = existing.crop_scan_count || 0;
+      if (localisedCrop && localisedCrop.yStart != null && localisedCrop.yEnd != null
+          && localisedCrop.source !== 'learned') { // don't average with itself
+        newCropScanCount++;
+        if (existing.crop_y_start == null) {
+          // First crop observation
+          newCropYStart = localisedCrop.yStart;
+          newCropYEnd   = localisedCrop.yEnd;
+        } else {
+          // Weighted average: weight recent scans slightly less to avoid drift
+          const alpha = Math.max(0.1, 1 / Math.min(newCropScanCount, 15));
+          newCropYStart = existing.crop_y_start * (1 - alpha) + localisedCrop.yStart * alpha;
+          newCropYEnd   = existing.crop_y_end   * (1 - alpha) + localisedCrop.yEnd   * alpha;
+        }
+      }
+
       await sb.from('code_patterns').update({
         scan_count:         (existing.scan_count || 1) + 1,
         barcode_number:     barcodeNumber || existing.barcode_number,
@@ -11237,7 +11263,10 @@ async function saveLearnedPattern(productName, barcodeNumber, codeA, codeB, lotI
         location_frequency: JSON.stringify(freq),
         confidence_level:   newConfidence || existing.confidence_level,
         product_key:        normKey,
-        brand_key:          brand
+        brand_key:          brand,
+        crop_y_start:       newCropYStart,
+        crop_y_end:         newCropYEnd,
+        crop_scan_count:    newCropScanCount
       }).eq('id', existing.id);
 
     } else {
@@ -11258,7 +11287,10 @@ async function saveLearnedPattern(productName, barcodeNumber, codeA, codeB, lotI
         label_hint:         labelHint,
         location_frequency: JSON.stringify(freq),
         confidence_level:   newConfidence || 'low',
-        scan_count:         1
+        scan_count:         1,
+        crop_y_start:       localisedCrop?.yStart ?? null,
+        crop_y_end:         localisedCrop?.yEnd   ?? null,
+        crop_scan_count:    (localisedCrop?.yStart != null) ? 1 : 0
       });
     }
   } catch(e) {
@@ -11598,26 +11630,49 @@ async function extractCodesFromImage(blob, learnedContext) {
       if (subEl) subEl.innerHTML = `${tip.icon} ${tip.tip}`;
     }
 
-    // ── PASS 0: LOT CODE LOCALISATION (haiku) ───────────────
-    // Finds WHERE on the image the lot code is. Fast and cheap.
-    // Falls back gracefully — pipeline continues with full image if it fails.
+    // ── LEARNED CROP SHORTCUT ────────────────────────────────
+    // If we have stored crop coordinates from 5+ previous scans of this product,
+    // skip Pass 0 (haiku localisation) entirely. We already know where the lot
+    // code lives on this packaging. One fewer API round-trip = ~1s faster.
     let localisedCrop = null;
-    try {
-      const locBlob = await preprocessImage(blob, 800); // small for haiku
-      const locB64  = await blobToBase64(locBlob);
-      const locData = await callOcrFunction('localise_lot', locB64, { isUSRegion });
-      const locText = (locData.content?.[0]?.text || '').replace(/```json|```/g,'').trim();
-      const loc = JSON.parse(locText);
-      if (loc.found && typeof loc.y_start === 'number' && typeof loc.y_end === 'number') {
-        const pad = 0.08;
-        const yS = Math.max(0, loc.y_start - pad);
-        const yE = Math.min(1, loc.y_end   + pad);
-        if (yE - yS < 0.85) { // only use if it's a meaningful sub-region
-          localisedCrop = { yStart: yS, yEnd: yE };
+
+    const _hasLearnedCrop = learnedContext
+      && learnedContext.cropYStart != null
+      && learnedContext.cropYEnd   != null
+      && (learnedContext.cropScanCount || 0) >= 5;
+
+    if (_hasLearnedCrop) {
+      localisedCrop = {
+        yStart: learnedContext.cropYStart,
+        yEnd:   learnedContext.cropYEnd,
+        source: 'learned'
+      };
+      console.log(
+        `[LEARNED CROP] Skipping Pass 0 — using stored region ` +
+        `y=${localisedCrop.yStart.toFixed(2)}–${localisedCrop.yEnd.toFixed(2)} ` +
+        `(${learnedContext.cropScanCount} crop observations, ${learnedContext.scanCount} total scans)`
+      );
+    } else {
+      // ── PASS 0: LOT CODE LOCALISATION (haiku) ─────────────
+      // Finds WHERE on the image the lot code is. Fast and cheap.
+      // Falls back gracefully — pipeline continues with full image if it fails.
+      try {
+        const locBlob = await preprocessImage(blob, 800); // small for haiku
+        const locB64  = await blobToBase64(locBlob);
+        const locData = await callOcrFunction('localise_lot', locB64, { isUSRegion });
+        const locText = (locData.content?.[0]?.text || '').replace(/```json|```/g,'').trim();
+        const loc = JSON.parse(locText);
+        if (loc.found && typeof loc.y_start === 'number' && typeof loc.y_end === 'number') {
+          const pad = 0.08;
+          const yS = Math.max(0, loc.y_start - pad);
+          const yE = Math.min(1, loc.y_end   + pad);
+          if (yE - yS < 0.85) { // only use if it's a meaningful sub-region
+            localisedCrop = { yStart: yS, yEnd: yE, source: 'localised' };
+          }
         }
+      } catch(e) {
+        console.warn('[Pass 0] Localise failed, using full image:', e.message);
       }
-    } catch(e) {
-      console.warn('[Pass 0] Localise failed, using full image:', e.message);
     }
 
     // ── PREPARE PRIMARY IMAGE ────────────────────────────────
@@ -11628,14 +11683,42 @@ async function extractCodesFromImage(blob, learnedContext) {
       : await preprocessImage(blob, 1600);
     const b64Primary = await blobToBase64(primaryBlob);
 
-    // Build context hint from learned patterns
+    // Build context hint from learned patterns — more specific as confidence grows
     let contextHint = '';
-    if (learnedContext && learnedContext.labelHint && learnedContext.source !== 'brand') {
-      contextHint = `\n\nPREVIOUSLY LEARNED FOR THIS PRODUCT (${productName}, ${learnedContext.scanCount} scan${learnedContext.scanCount!==1?'s':''}):\n${learnedContext.labelHint}\nUse this as your primary guide.`;
+    const _scanCount = learnedContext?.scanCount || 0;
+
+    if (learnedContext && learnedContext.source !== 'brand' && _scanCount >= 20
+        && learnedContext.confidence === 'high' && learnedContext.lotFormat) {
+      // ── HIGH CONFIDENCE MODE (20+ scans) ──────────────────
+      // We know this product extremely well. Lock the format and location.
+      const cropDesc = _hasLearnedCrop
+        ? `The lot code region is in the ${localisedCrop.yStart < 0.5 ? 'upper' : 'lower'} portion of this cropped image.`
+        : '';
+      contextHint = `\n\nHIGH CONFIDENCE PATTERN FOR "${productName}" (${_scanCount} confirmed scans):\n`
+        + `Lot code format: ${learnedContext.lotFormat}\n`
+        + (learnedContext.batchFormat ? `Batch format: ${learnedContext.batchFormat}\n` : '')
+        + (learnedContext.labelHint ? `Location: ${learnedContext.labelHint}\n` : '')
+        + `${cropDesc}\n`
+        + `IMPORTANT: Find a code matching this EXACT format. Do not return a different code type.`;
+
+    } else if (learnedContext && learnedContext.source !== 'brand' && _scanCount >= 5) {
+      // ── ESTABLISHED PATTERN (5-19 scans) ──────────────────
+      // Good confidence — use format + location as strong guide.
+      contextHint = `\n\nESTABLISHED PATTERN FOR THIS PRODUCT (${productName}, ${_scanCount} scans):\n`
+        + (learnedContext.labelHint ? `${learnedContext.labelHint}\n` : '')
+        + (learnedContext.lotFormat ? `Expected lot format: ${learnedContext.lotFormat}` : '')
+        + `\nPrioritise codes matching this pattern.`;
+
+    } else if (learnedContext && learnedContext.labelHint && learnedContext.source !== 'brand') {
+      // ── EARLY LEARNING (1-4 scans) ────────────────────────
+      contextHint = `\n\nPREVIOUSLY LEARNED FOR THIS PRODUCT (${productName}, ${_scanCount} scan${_scanCount!==1?'s':''}):\n${learnedContext.labelHint}\nUse this as a guide.`;
+
     } else if (learnedContext && learnedContext.labelHint && learnedContext.source === 'brand') {
       contextHint = `\n\nBRAND KNOWLEDGE FOR "${productName}":\n${learnedContext.labelHint}`;
+
     } else if (learnedContext && learnedContext.lotFormat) {
       contextHint = `\n\nPREVIOUSLY LEARNED FOR "${productName}":\nLot format: ${learnedContext.lotFormat}${learnedContext.batchFormat ? `\nBatch format: ${learnedContext.batchFormat}` : '\nNo separate batch code expected.'}\nPrioritise codes matching these formats.`;
+
     } else if (productName) {
       contextHint = `\n\nPRODUCT: "${productName}" — use any knowledge of where this type of product typically stamps its lot code.`;
     }
