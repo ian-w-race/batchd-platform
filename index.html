@@ -4357,6 +4357,8 @@
         <div id="complaint-success-title" style="font-size:15px;font-weight:700;color:var(--text);"></div>
         <div id="complaint-success-ref" style="font-size:11px;color:var(--accent);background:rgba(52,211,153,0.08);padding:3px 12px;border-radius:20px;font-family:'DM Mono',monospace;"></div>
         <div id="complaint-success-triage" style="font-size:12px;color:var(--muted);line-height:1.5;max-width:320px;"></div>
+        <!-- Recall match warning — shown when complaint matches an active recall -->
+        <div id="complaint-recall-match-warning" style="display:none;align-items:flex-start;gap:8px;padding:10px 12px;background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.3);border-radius:8px;font-size:12px;color:var(--text);line-height:1.5;text-align:left;max-width:340px;"></div>
         <div id="complaint-success-sub" style="font-size:12px;color:var(--muted);"></div>
         <button onclick="closeComplaintSheet()" id="complaint-close-btn" style="background:var(--surface2);border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;margin-top:4px;"></button>
       </div>
@@ -8218,6 +8220,46 @@ async function checkRecallsOnLogin(silent = false) {
     }
     loginRecallMatches = Array.from(_matchDedupeMap.values());
 
+    // ── #2: Manufacturer push → cross-reference engine ──────────
+    // recall_events don't trigger the DB sweep (only recalls table does).
+    // For any pushed recall that matched scans, persist those matches now.
+    // Fire-and-forget — doesn't block the login flow.
+    (async () => {
+      try {
+        for (const m of loginRecallMatches) {
+          if (m.recall.source !== 'manufacturer_push' || !m.recall.id) continue;
+          // Upsert match rows for each matched scan
+          const rowsToInsert = m.stores.length > 0
+            ? recentScans.filter(s => {
+                const sLot     = (s.lot_number     ||'').toLowerCase().trim();
+                const sBarcode = (s.barcode_number ||'').toLowerCase().trim();
+                const rLot     = (m.recall.lot_number     ||'').toLowerCase().trim();
+                const rBarcode = (m.recall.barcode_number ||'').toLowerCase().trim();
+                return (rLot && sLot === rLot) || (rBarcode && sBarcode === rBarcode);
+              }).map(s => ({
+                scan_id:         s.id,
+                recall_id:       m.recall.id,
+                recall_source:   'manufacturer_push',
+                recall_product:  m.recall.product_name || null,
+                recall_lot:      m.recall.lot_number   || null,
+                match_type:      (m.recall.lot_number && (s.lot_number||'').toLowerCase().trim() === (m.recall.lot_number||'').toLowerCase().trim()) ? 'exact_lot' : 'exact_barcode',
+                match_confidence:'high',
+                organisation_id: _currentOrgId,
+                store_name:      s.store_name || null,
+                scanned_by:      s.scanned_by || null,
+                placed_at:       s.created_at || null,
+                quantity:        s.quantity || 1,
+              }))
+            : [];
+          if (rowsToInsert.length) {
+            await sb.from('scan_recall_matches').upsert(rowsToInsert, {
+              onConflict: 'scan_id,recall_id', ignoreDuplicates: true,
+            });
+          }
+        }
+      } catch(e) { console.warn('[cross-ref] pushed recall sweep failed:', e.message); }
+    })();
+
     if (!loginRecallMatches.length) return;
 
     // Update drawer recall badge
@@ -9394,9 +9436,18 @@ async function submitQuickAddRecall() {
       .eq('organisation_id', _currentOrgId)
       .order('created_at', { ascending: false }).limit(1)).data?.[0]?.id;
     if (_newRecallId) {
-      sweepScansForRecall(_newRecallId).then(n => {
-        if (n > 0) showToast(`Recall filed — ${n} existing scan${n !== 1 ? 's' : ''} matched across your stores.`, 'warn', 6000);
-        else showToast(`Recall filed for "${product}" — active for all stores.`, 'ok', 4000);
+      sweepScansForRecall(_newRecallId).then(async n => {
+        // Also check if any matched scans already had complaints
+        const priorComplaints = await checkPriorComplaintsForRecall(_newRecallId);
+        if (priorComplaints > 0 && n > 0) {
+          showToast(`Recall filed — ${n} scan${n!==1?'s':''} matched · ⚑ ${priorComplaints} prior complaint${priorComplaints!==1?'s':''} on this product`, 'warn', 8000);
+        } else if (priorComplaints > 0) {
+          showToast(`Recall filed — ⚑ ${priorComplaints} prior complaint${priorComplaints!==1?'s':''} found for this product`, 'warn', 7000);
+        } else if (n > 0) {
+          showToast(`Recall filed — ${n} existing scan${n !== 1 ? 's' : ''} matched across your stores.`, 'warn', 6000);
+        } else {
+          showToast(`Recall filed for "${product}" — active for all stores.`, 'ok', 4000);
+        }
       });
     } else {
       showToast(`Recall filed for "${product}" — active for all stores.`, 'ok', 4000);
@@ -14342,6 +14393,91 @@ async function flagScanWithComplaint(scanId) {
   } catch(e) { console.warn('Could not flag scan with complaint:', e.message); }
 }
 
+// ── DIRECTION A: Check a complaint's product+lot against active recalls ──
+// Returns the matching recall object if found, null otherwise.
+// Called immediately after a complaint is successfully submitted.
+function checkComplaintAgainstRecalls(productName, lotNumber, barcodeNumber) {
+  if (!_cachedActiveRecalls || !_cachedActiveRecalls.length) return null;
+  const lot     = (lotNumber     || '').toLowerCase().trim();
+  const barcode = (barcodeNumber || '').toLowerCase().trim();
+  const product = (productName   || '').toLowerCase().trim();
+
+  for (const r of _cachedActiveRecalls) {
+    const rLot     = (r.lot_number     || '').toLowerCase().trim();
+    const rBarcode = (r.barcode_number || '').toLowerCase().trim();
+    const rProduct = (r.product_name   || '').toLowerCase().trim();
+
+    if (rLot && lot && rLot === lot)                       return r;
+    if (rBarcode && barcode && rBarcode === barcode)       return r;
+    if (!rLot && rProduct && product) {
+      const fw = rProduct.split(/\s+/).find(w => w.length >= 4) || '';
+      if (fw.length >= 4 && product.includes(fw))          return r;
+    }
+  }
+  return null;
+}
+
+// Auto-escalate a scan when a complaint+recall intersection is detected.
+// Marks the scan as manager_escalated so it surfaces in the Escalated tab
+// and the manager gets the full paper trail in one place.
+async function autoEscalateForComplaintRecallMatch(scanId, recall) {
+  if (!scanId) return;
+  try {
+    const now = new Date().toISOString();
+    await sb.from('scans').update({
+      manager_escalated:    true,
+      manager_escalated_at: now,
+      manager_escalated_by: 'system:complaint+recall',
+    }).eq('id', scanId);
+
+    // Update local cache
+    const idx = allRecords?.findIndex(r => r.id === scanId);
+    if (idx >= 0) {
+      allRecords[idx].manager_escalated    = true;
+      allRecords[idx].manager_escalated_at = now;
+      allRecords[idx].manager_escalated_by = 'system:complaint+recall';
+    }
+    console.log('[cross-ref] Auto-escalated scan', scanId, 'due to complaint+recall match:', recall.product_name);
+  } catch(e) {
+    console.warn('[cross-ref] autoEscalateForComplaintRecallMatch failed:', e.message);
+  }
+}
+
+// ── DIRECTION B: Recall fires → surface any prior complaints for same product ──
+// Called after a recall is added. Checks scan_recall_matches for scans
+// that already had complaints filed, and returns a count.
+// Result is surfaced in the recall-save toast.
+async function checkPriorComplaintsForRecall(recallId) {
+  if (!recallId || !_currentOrgId) return 0;
+  try {
+    const { data, error } = await sb
+      .from('scan_recall_matches')
+      .select('scan_id, scans!inner(complaint_filed)')
+      .eq('recall_id', recallId)
+      .eq('organisation_id', _currentOrgId)
+      .eq('scans.complaint_filed', true);
+    if (error) throw error;
+    return (data || []).length;
+  } catch(e) {
+    // Fallback: direct scan query
+    try {
+      const { data: matchData } = await sb
+        .from('scan_recall_matches')
+        .select('scan_id')
+        .eq('recall_id', recallId)
+        .eq('organisation_id', _currentOrgId);
+      if (!matchData?.length) return 0;
+      const scanIds = matchData.map(m => m.scan_id);
+      const { data: flagged } = await sb
+        .from('scans')
+        .select('id')
+        .in('id', scanIds)
+        .eq('complaint_filed', true);
+      return (flagged || []).length;
+    } catch(e2) { return 0; }
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════
 // FEATURE 4: INTELLIGENCE DIGEST
 // Weekly automated summary of scanning health, recall status,
@@ -14396,6 +14532,24 @@ async function loadMgrIntel() {
       const k = c.product_name || 'Unknown';
       complaintsByProduct[k] = (complaintsByProduct[k] || 0) + 1;
     });
+
+    // ── Direction C: Emerging signals — complaints without active recall ──
+    // Group complaints by product+lot. Where >= 2 complaints exist for a
+    // product that has NO active recall, surface as an emerging signal.
+    const complaintsByProductLot = {};
+    complaints.forEach(c => {
+      const k = (c.product_name || 'Unknown') + '||' + (c.lot_number || '');
+      if (!complaintsByProductLot[k]) complaintsByProductLot[k] = { product: c.product_name, lot: c.lot_number, count: 0, stores: new Set() };
+      complaintsByProductLot[k].count++;
+      if (c.store_name) complaintsByProductLot[k].stores.add(c.store_name);
+    });
+    const recalledProducts = new Set(_cachedActiveRecalls.map(r => (r.product_name||'').toLowerCase().trim()));
+    const emergingSignals = Object.values(complaintsByProductLot).filter(g => {
+      if (g.count < 2) return false; // need at least 2 complaints
+      const productLow = (g.product || '').toLowerCase().trim();
+      // No active recall covering this product
+      return ![...recalledProducts].some(rp => rp.length >= 4 && productLow.includes(rp.split(' ')[0]));
+    }).sort((a, b) => b.count - a.count);
 
     // ── Staff scan counts ──
     const staffCounts = {};
@@ -14473,14 +14627,37 @@ async function loadMgrIntel() {
     }
 
     // Complaint signals
+    // ── Emerging signals (Direction C) ──────────────────────────
+    if (emergingSignals.length > 0) {
+      html += sectionHead('⚠ Emerging signals', '2+ complaints on same product with no active recall — consider investigation');
+      html += emergingSignals.map(g => {
+        const storeList = [...g.stores].slice(0, 3).map(s => esc(s)).join(', ');
+        return '<div style="padding:10px 12px;margin-bottom:6px;background:rgba(245,166,35,0.07);border:1px solid rgba(245,166,35,0.3);border-radius:8px;">'
+          + '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px;">'
+          + '<div style="font-size:12px;font-weight:600;color:var(--text);">' + esc(g.product || 'Unknown') + '</div>'
+          + '<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(245,166,35,0.15);color:var(--warn);font-family:\'DM Mono\',monospace;white-space:nowrap;">' + g.count + ' complaint' + (g.count !== 1 ? 's' : '') + '</span>'
+          + '</div>'
+          + (g.lot ? '<div style="font-size:11px;color:var(--muted);font-family:\'DM Mono\',monospace;">Lot: <strong style="color:var(--text);">' + esc(g.lot) + '</strong></div>' : '')
+          + (storeList ? '<div style="font-size:11px;color:var(--muted);margin-top:2px;">Stores: ' + storeList + (g.stores.size > 3 ? ' +' + (g.stores.size - 3) + ' more' : '') + '</div>' : '')
+          + '<div style="font-size:10px;color:var(--warn);margin-top:5px;font-family:\'DM Mono\',monospace;">No active recall — monitor or investigate</div>'
+          + '</div>';
+      }).join('');
+    }
+
+    // ── Complaint signals (all, last 30 days) ────────────────────
     if (Object.keys(complaintsByProduct).length > 0) {
       html += sectionHead('Complaint signals (30 days)', 'Products with staff-filed complaints');
-      html += Object.entries(complaintsByProduct).sort((a,b) => b[1]-a[1]).map(([name, count]) =>
-        '<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);">'
-        + '<div style="font-size:12px;color:var(--text);">' + esc(name) + '</div>'
-        + '<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(255,92,92,0.1);color:var(--danger);font-family:\'DM Mono\',monospace;">' + count + ' complaint' + (count !== 1 ? 's' : '') + '</span>'
-        + '</div>'
-      ).join('');
+      html += Object.entries(complaintsByProduct).sort((a,b) => b[1]-a[1]).map(([name, count]) => {
+        // Flag if this product also has an active recall
+        const nameLow = name.toLowerCase();
+        const hasRecall = [...recalledProducts].some(rp => rp.length >= 4 && nameLow.includes(rp.split(' ')[0]));
+        return '<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);">'
+          + '<div style="font-size:12px;color:var(--text);">' + esc(name)
+          + (hasRecall ? ' <span style="font-size:9px;font-family:\'DM Mono\',monospace;padding:1px 5px;border-radius:3px;background:rgba(255,92,92,0.1);color:var(--danger);margin-left:4px;">RECALLED</span>' : '')
+          + '</div>'
+          + '<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(255,92,92,0.1);color:var(--danger);font-family:\'DM Mono\',monospace;">' + count + ' complaint' + (count !== 1 ? 's' : '') + '</span>'
+          + '</div>';
+      }).join('');
     }
 
     // Top staff
@@ -16263,17 +16440,42 @@ async function submitComplaintFromScan() {
     // Flag the linked scan in the database so history shows complaint badge
     if (_complaintScanId) flagScanWithComplaint(_complaintScanId);
 
+    // ── Cross-reference: check if complaint product+lot has an active recall ──
+    const _cRecallMatch = checkComplaintAgainstRecalls(
+      _complaintScanData.productName || '',
+      _complaintScanData.lotNumber   || '',
+      _complaintScanData.barcodeNumber || ''
+    );
+    if (_cRecallMatch && _complaintScanId) {
+      // Auto-escalate the linked scan — recall + complaint = immediate manager flag
+      autoEscalateForComplaintRecallMatch(_complaintScanId, _cRecallMatch);
+    }
+
     // Show success
     btn.style.display = 'none';
     const successEl = document.getElementById('complaint-sheet-success');
     successEl.style.display = 'flex';
     document.getElementById('complaint-success-ref').textContent = data.complaint_number || '';
 
-    // Triage level indicator
+    // Triage level indicator — upgrade to CRITICAL if recall match found
+    const effectiveLevel = _cRecallMatch ? 'critical' : (data.triage_level || 'pending');
     const levelColors = { critical: 'var(--danger)', serious: 'var(--warn)', monitor: 'var(--accent)', pending: 'var(--info)' };
-    const levelColor = levelColors[data.triage_level] || 'var(--muted)';
+    const levelColor = levelColors[effectiveLevel] || 'var(--muted)';
+    const triageSummary = _cRecallMatch
+      ? `Active recall matched — manager auto-notified. Recalled lot: ${_cRecallMatch.lot_number || 'see recall details'}`
+      : (data.triage_summary || '');
     document.getElementById('complaint-success-triage').innerHTML =
-      `<span style="background:${levelColor.replace('var','rgba').replace(')',',0.12)').replace('rgba(var','rgba(')};color:${levelColor};font-size:10px;font-weight:700;font-family:'DM Mono',monospace;padding:2px 8px;border-radius:4px;letter-spacing:0.05em;">${(data.triage_level||'').toUpperCase()}</span> ${data.triage_summary || ''}`;
+      `<span style="background:${levelColor.replace('var','rgba').replace(')',',0.12)').replace('rgba(var','rgba(')};color:${levelColor};font-size:10px;font-weight:700;font-family:'DM Mono',monospace;padding:2px 8px;border-radius:4px;letter-spacing:0.05em;">${effectiveLevel.toUpperCase()}</span> ${triageSummary}`;
+    const recallWarnEl = document.getElementById('complaint-recall-match-warning');
+    if (recallWarnEl) {
+      if (_cRecallMatch) {
+        recallWarnEl.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;color:var(--danger);"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
+          + '<span><strong style="color:var(--danger);">Active recall matched.</strong> The manager has been automatically notified and this item has been flagged for urgent review.</span>';
+        recallWarnEl.style.display = 'flex';
+      } else {
+        recallWarnEl.style.display = 'none';
+      }
+    }
 
   } catch(e) {
     btn.disabled = false;
