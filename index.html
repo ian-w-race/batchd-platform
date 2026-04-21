@@ -7564,10 +7564,10 @@ async function matchScanAgainstRecalls(scanId, scanData) {
     let matchType = null;
     if (rLot && lot && rLot === lot)           matchType = 'exact_lot';
     else if (rBarcode && barcode && rBarcode === barcode) matchType = 'exact_barcode';
-    else if (!rLot && rProduct && product) {
-      const firstWord = rProduct.split(/\s+/).find(w => w.length >= 4) || '';
-      if (firstWord.length >= 4 && product.includes(firstWord)) matchType = 'product_name';
-    }
+    // NOTE: product_name fallback removed — recalls without a lot number are too broad
+    // to match reliably. A recall missing a lot code should not auto-match every scan
+    // of a similarly-named product (e.g. a Mattilsynet recall titled
+    // "Coop tilbakekaller X" would match ALL Coop-brand scans via first-word matching).
     if (!matchType) continue;
 
     seenRecallIds.add(r.id);

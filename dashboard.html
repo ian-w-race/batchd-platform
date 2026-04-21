@@ -206,13 +206,13 @@
     .kpi-card.red::before    { background: var(--danger); }
     .kpi-card.amber::before  { background: var(--warn); }
     .kpi-card.blue::before   { background: var(--info); }
-    .kpi-label { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+    .kpi-label { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; padding-right: 72px; }
     .kpi-value { font-family: 'Figtree', sans-serif; font-weight: 800; font-size: 28px; color: var(--text); line-height: 1; margin-bottom: 4px; }
     .kpi-value.danger { color: var(--danger); }
     .kpi-value.warn   { color: var(--warn); }
     .kpi-value.accent { color: var(--accent); }
     .kpi-sub { font-size: 10px; color: var(--muted); }
-    .kpi-trend { position: absolute; top: 16px; right: 16px; font-size: 10px; padding: 2px 7px; border-radius: 10px; }
+    .kpi-trend { position: absolute; top: 14px; right: 14px; font-size: 9px; padding: 2px 6px; border-radius: 10px; max-width: 80px; text-align: center; line-height: 1.3; white-space: normal; }
     .kpi-trend.up   { background: rgba(52,211,153,0.12); color: var(--accent); }
     .kpi-trend.down { background: rgba(255,92,92,0.12); color: var(--danger); }
     .kpi-trend.flat { background: rgba(106,175,158,0.1); color: var(--muted); }
@@ -7685,7 +7685,7 @@ async function renderConsumerNotification() {
 }
 
 // ── Consumer notify search + show-more functions ──────────────
-window._cnShowAll = false;
+window._cnShowCount = 5;  // how many recalls to show; grows by 10 per click
 
 function cnInit() {
   const el = document.getElementById('cn-recalls-data');
@@ -7693,21 +7693,18 @@ function cnInit() {
   try {
     window._cnAllRecalls = JSON.parse(decodeURIComponent(el.dataset.recalls || '[]'));
     window._cnSelected   = el.dataset.selected || '';
-    window._cnShowAll    = false;
+    window._cnShowCount  = 5;
   } catch(e) { window._cnAllRecalls = []; }
 }
 
 function cnToggleShowAll() {
-  window._cnShowAll = !window._cnShowAll;
-  const btn   = document.getElementById('cn-show-more-btn');
-  const label = document.getElementById('cn-count-label');
-  const total = (window._cnAllRecalls||[]).length;
-  if (window._cnShowAll) {
-    if (btn)   btn.textContent = 'Show less ↑';
-    if (label) label.textContent = 'Showing all ' + total + ' recalls';
+  const all   = window._cnAllRecalls || [];
+  const total = all.length;
+  // If we've already shown everything, collapse back to 5
+  if (window._cnShowCount >= total) {
+    window._cnShowCount = 5;
   } else {
-    if (btn)   btn.textContent = 'Show ' + (total - 5) + ' more ↓';
-    if (label) label.textContent = 'Showing 5 of ' + total + ' recalls';
+    window._cnShowCount = Math.min(window._cnShowCount + 10, total);
   }
   cnFilterRecalls();
 }
@@ -7715,11 +7712,15 @@ function cnToggleShowAll() {
 function cnFilterRecalls() {
   const query   = (document.getElementById('cn-recall-search')?.value || '').toLowerCase().trim();
   const all     = window._cnAllRecalls || [];
-  const showAll = window._cnShowAll;
   const listEl  = document.getElementById('cn-recall-list');
   const noRes   = document.getElementById('cn-no-results');
   const moreRow = document.getElementById('cn-show-more-row');
+  const btn     = document.getElementById('cn-show-more-btn');
+  const label   = document.getElementById('cn-count-label');
   if (!listEl) return;
+
+  // When searching, reset show count so user sees all filtered results
+  if (query) window._cnShowCount = all.length;
 
   const filtered = query ? all.filter(r =>
     r.product_name.toLowerCase().includes(query) ||
@@ -7730,9 +7731,24 @@ function cnFilterRecalls() {
     r.date.toLowerCase().includes(query)
   ) : all;
 
-  const visible = (query || showAll) ? filtered : filtered.slice(0, 5);
-  if (moreRow) moreRow.style.display = (!query && filtered.length > 5) ? '' : 'none';
-  if (noRes)   noRes.style.display   = filtered.length === 0 ? '' : 'none';
+  const showCount = query ? filtered.length : Math.min(window._cnShowCount, filtered.length);
+  const visible = filtered.slice(0, showCount);
+  const remaining = filtered.length - showCount;
+
+  // Update show-more button and label
+  if (moreRow) moreRow.style.display = (!query && filtered.length > 5 && filtered.length > showCount) || (!query && showCount > 5 && showCount <= filtered.length) ? '' : 'none';
+  if (remaining > 0) {
+    if (btn)   btn.textContent = 'Show ' + Math.min(remaining, 10) + ' more ↓';
+    if (label) label.textContent = 'Showing ' + showCount + ' of ' + filtered.length + ' recalls';
+    if (moreRow) moreRow.style.display = '';
+  } else if (showCount > 5 && !query) {
+    if (btn)   btn.textContent = 'Show less ↑';
+    if (label) label.textContent = 'Showing all ' + filtered.length + ' recalls';
+    if (moreRow) moreRow.style.display = '';
+  } else {
+    if (moreRow) moreRow.style.display = 'none';
+  }
+  if (noRes) noRes.style.display = filtered.length === 0 ? '' : 'none';
 
   const selected = window._cnSelected || '';
   listEl.innerHTML = visible.map(r => {
