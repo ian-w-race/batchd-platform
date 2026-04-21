@@ -186,7 +186,7 @@
     .alert-action:hover { background: rgba(255,92,92,0.1); }
 
     /* ── KPI grid ── */
-    .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 20px; }
+    .kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; margin-bottom: 20px; }
     .kpi-card {
       background: var(--surface);
       backdrop-filter: var(--blur-md);
@@ -1637,13 +1637,14 @@ async function renderOverview() {
     const days30 = new Date(now - 30 * 86400000).toISOString();
     const days7  = new Date(now - 7  * 86400000).toISOString();
 
-    const [storesRes, scansRes, partnersRes, shipmentsRes, acksRes, distRes] = await Promise.all([
+    const [storesRes, scansRes, partnersRes, shipmentsRes, acksRes, distRes, srmRes] = await Promise.all([
       sb.from('stores').select('id, name, active').eq('organisation_id', _orgId),
       sb.from('scans').select('id, created_at, store_name, store_id, product_name, lot_number, scanned_by, recall_resolved').eq('organisation_id', _orgId).gte('created_at', days30).order('created_at', {ascending:false}).limit(500),
       sb.from('trading_partners').select('id, status, organisations!trading_partners_manufacturer_id_fkey(id,name)').eq('retailer_id', _orgId),
       sb.from('shipments').select('id, lot_number, quantity, unit, shipped_at, stores(name), organisations!shipments_manufacturer_id_fkey(id,name), products(name)').eq('retailer_id', _orgId).order('shipped_at', {ascending:false}).limit(200),
       sb.from('recall_acknowledgements').select('id, status, recall_event_id, store_id, updated_at, organisation_id').eq('organisation_id', _orgId),
       sb.from('recall_distributions').select('recall_event_id, distributed_at').eq('retailer_org_id', _orgId),
+      sb.from('scan_recall_matches').select('recall_id, recall_product, recall_lot, store_name, quantity, placed_at, removed_at, match_confidence').eq('organisation_id', _orgId),
     ]);
 
     const stores    = storesRes.data    || [];
@@ -1652,6 +1653,15 @@ async function renderOverview() {
     const shipments = shipmentsRes.data || [];
     const acks      = acksRes.data      || [];
     const dists     = distRes.data      || [];
+    const srmRows   = srmRes.data       || [];
+
+    // ── Exposure metrics from scan_recall_matches ─────────────
+    const srmOnShelf  = srmRows.filter(m => !m.removed_at);
+    const srmPulled   = srmRows.filter(m =>  m.removed_at);
+    const unitsOnShelf  = srmOnShelf.reduce((s, m) => s + (m.quantity || 1), 0);
+    const unitsPulled   = srmPulled.reduce((s, m)  => s + (m.quantity || 1), 0);
+    const storesExposed = new Set(srmRows.map(m => m.store_name).filter(Boolean)).size;
+    const productsAtRisk = new Set(srmOnShelf.map(m => (m.recall_product||'').toLowerCase()).filter(Boolean)).size;
 
     // ── Fetch pushed recall events distributed to this retailer ──
     let recallEvents = [];
@@ -1824,7 +1834,26 @@ async function renderOverview() {
       .eq('status', 'open')
       .limit(5);
 
+    // ── Units on shelf risk signal (from scan_recall_matches) ──
+    const unitsOnShelfSignals = unitsOnShelf > 0 ? (() => {
+      // Group by product for cleaner signals
+      const byProduct = {};
+      srmOnShelf.forEach(m => {
+        const k = (m.recall_product || 'Unknown product').toLowerCase();
+        if (!byProduct[k]) byProduct[k] = { product: m.recall_product, lot: m.recall_lot, units: 0, stores: new Set() };
+        byProduct[k].units += (m.quantity || 1);
+        if (m.store_name) byProduct[k].stores.add(m.store_name);
+      });
+      return Object.values(byProduct).map(g => ({
+        level: 'high', icon: '🚨',
+        title: `${g.units} unit${g.units!==1?'s':''} of recalled product on shelf`,
+        detail: `${g.product || 'Unknown'}${g.lot ? ' · Lot ' + g.lot : ''} · ${g.stores.size} store${g.stores.size!==1?'s':''}`,
+        action: `showPanel('recalls')`, cta: 'Review now',
+      }));
+    })() : [];
+
     const riskSignals = [
+      ...unitsOnShelfSignals,
       ...predictiveSignals.map(({store, avgPerDay, expected7d}) => ({
         level: 'warn', icon: '📉',
         title: `${store.name} — below baseline`,
@@ -1879,9 +1908,11 @@ async function renderOverview() {
     <div class="alert-banner" onclick="showPanel('recalls')" style="cursor:pointer;${exposedShipments.length > 0 ? 'border-color:rgba(255,92,92,0.5);background:rgba(255,92,92,0.08);animation:pulse-border 1.5s ease-in-out infinite;' : ''}">
       <div class="alert-dot"></div>
       <div class="alert-text">
-        ${exposedShipments.length > 0
-          ? `<strong>${exposedShipments.length} recalled lot${exposedShipments.length>1?'s':''} match products in your shipment records</strong> — verify these are off shelf immediately.`
-          : `<strong>${activeCount} active recall${activeCount>1?'s':''}</strong> pushed to your network — check response status.`}
+        ${unitsOnShelf > 0
+          ? `<strong>${unitsOnShelf} unit${unitsOnShelf>1?'s':''} of recalled product may still be on shelf</strong> across ${storesExposed} store${storesExposed!==1?'s':''} — immediate action required.`
+          : exposedShipments.length > 0
+            ? `<strong>${exposedShipments.length} recalled lot${exposedShipments.length>1?'s':''} match products in your shipment records</strong> — verify these are off shelf.`
+            : `<strong>${activeCount} active recall${activeCount>1?'s':''}</strong> pushed to your network — check response status.`}
       </div>
       <button class="alert-action">Review recalls →</button>
     </div>` : ''}
@@ -1915,6 +1946,15 @@ async function renderOverview() {
         <div class="kpi-value ${confirmedPartners>0?'accent':'warn'}">${confirmedPartners}</div>
         <div class="kpi-sub">${shipments.length} shipment${shipments.length!==1?'s':''} tracked · ${[...myLotNumbers].length} lot${[...myLotNumbers].length!==1?'s':''} on record</div>
         <span class="kpi-trend ${confirmedPartners>0?'up':'down'}">${confirmedPartners>0?'✓ Connected':'⚠ No partners'}</span>
+      </div>
+
+      <div class="kpi-card ${unitsOnShelf>0?'red':'green'}" onclick="showPanel('recalls')" style="cursor:pointer;" title="Units matched to active recalls via scan history">
+        <div class="kpi-label">Units at risk</div>
+        <div class="kpi-value ${unitsOnShelf>0?'danger':'accent'}">${unitsOnShelf}</div>
+        <div class="kpi-sub">${unitsOnShelf>0
+          ? `${unitsPulled} confirmed pulled · ${storesExposed} store${storesExposed!==1?'s':''} exposed`
+          : `${unitsPulled > 0 ? unitsPulled + ' pulled · ' : ''}all confirmed clear`}</div>
+        <span class="kpi-trend ${unitsOnShelf>0?'down':'up'}">${unitsOnShelf>0?'⚠ Action needed':'✓ Clear'}</span>
       </div>
 
     </div>
