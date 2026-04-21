@@ -359,17 +359,10 @@
       </button>
 
       <div class="nav-section">Recalls</div>
-      <button class="nav-item nav-item-cta" onclick="showPanel('push')">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-        Push Recall
-      </button>
-      <button class="nav-item" onclick="showPanel('history')">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-        Recall History
-      </button>
-      <button class="nav-item" onclick="showPanel('acknowledgements')">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-        Acknowledgements
+      <button class="nav-item nav-item-cta" onclick="showPanel('recalls')" id="nav-recalls">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        Recalls
+        <span id="recalls-badge" style="display:none;margin-left:auto;background:var(--danger);color:#fff;font-size:10px;font-family:'DM Mono',monospace;padding:1px 6px;border-radius:10px;font-weight:700;"></span>
       </button>
 
       <div class="nav-section">Operations</div>
@@ -410,10 +403,6 @@
       <button class="nav-item" onclick="showPanel('compliance')" id="nav-compliance">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
         Compliance
-      </button>
-      <button class="nav-item" onclick="showPanel('drills')" id="nav-drills">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
-        Mock Drills
       </button>
       <button class="nav-item" onclick="showPanel('mock_audit')" id="nav-mock-audit">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg>
@@ -685,13 +674,13 @@ async function initPortal(user) {
 
 // ── Panel router ───────────────────────────────────────────────
 function showPanel(name) {
-  const titles = { overview:'Dashboard', push:'Push a Recall', history:'Recall History', acknowledgements:'Acknowledgements', partners:'Trading Partners', shipments:'Shipments', suppliers:'Supplier Risk', my_suppliers:'My Suppliers', products:'Products', lots:'Lot Codes', triage:'Complaint Triage', widget:'Widget Setup', investigations:'Investigations', settings:'Settings', compliance:'Compliance', mock_audit:'Mock Audit', timeline:'Incident Timeline' };
+  const titles = { overview:'Dashboard', recalls:'Recalls', push:'Push a Recall', history:'Recall History', acknowledgements:'Acknowledgements', partners:'Trading Partners', shipments:'Shipments', suppliers:'Supplier Risk', my_suppliers:'My Suppliers', products:'Products', lots:'Lot Codes', triage:'Complaint Triage', widget:'Widget Setup', investigations:'Investigations', settings:'Settings', compliance:'Compliance', mock_audit:'Mock Audit', timeline:'Incident Timeline' };
   document.getElementById('topbar-title').textContent = titles[name] || name;
   document.querySelectorAll('.nav-item').forEach(el => {
     el.classList.toggle('active', el.getAttribute('onclick')?.includes(`'${name}'`));
   });
   _pushStep = 1;
-  const fns = { overview: renderOverview, push: renderPush, drills: renderDrills, history: renderHistory, acknowledgements: renderAcknowledgements, partners: renderPartners, products: renderProducts, lots: renderLots, shipments: renderShipments, suppliers: renderSupplierRisk, my_suppliers: renderMySuppliers, patterns: renderPatterns, triage: renderTriage, widget: renderWidgetSetup, investigations: renderInvestigations, settings: renderMfrSettings, compliance: renderMfrCompliance, mock_audit: renderMockAudit, timeline: renderIncidentTimeline };
+  const fns = { overview: renderOverview, recalls: renderMfrRecalls, push: renderPush, drills: renderDrills, history: renderHistory, acknowledgements: renderAcknowledgements, partners: renderPartners, products: renderProducts, lots: renderLots, shipments: renderShipments, suppliers: renderSupplierRisk, my_suppliers: renderMySuppliers, patterns: renderPatterns, triage: renderTriage, widget: renderWidgetSetup, investigations: renderInvestigations, settings: renderMfrSettings, compliance: renderMfrCompliance, mock_audit: renderMockAudit, timeline: renderIncidentTimeline };
   const panelFn = fns[name];
   if (panelFn) {
     const result = panelFn();
@@ -761,7 +750,7 @@ async function renderOverview() {
     <div class="panel">
       <div class="panel-header">
         <div><div class="panel-title">Recent recall events</div></div>
-        <button class="btn-danger" onclick="showPanel('push')" style="font-size:11px;padding:7px 14px;">
+        <button class="btn-danger" onclick="_mfrRecallsTab='push';showPanel('recalls')" style="font-size:11px;padding:7px 14px;">
           + Push new recall
         </button>
       </div>
@@ -1144,8 +1133,8 @@ async function pushRecall() {
           </div>
           ${impactSummary}
           <div style="display:flex;gap:10px;justify-content:center;">
-            <button class="btn-ghost" onclick="showPanel('acknowledgements')">View acknowledgements →</button>
-            <button class="btn-ghost" onclick="showPanel('push')">Push another recall</button>
+            <button class="btn-ghost" onclick="_mfrRecallsTab='active';showPanel('recalls')">View acknowledgements →</button>
+            <button class="btn-ghost" onclick="_mfrRecallsTab='push';showPanel('recalls')">Push another recall</button>
           </div>
         </div>
       </div>`;
@@ -1155,6 +1144,271 @@ async function pushRecall() {
     btn.disabled = false;
     btn.innerHTML = _isDrill ? '⚠ Send mock drill →' : '🚨 Push recall →';
   }
+}
+
+
+// ── Recalls hub ────────────────────────────────────────────────
+let _mfrRecallsTab = 'active'; // 'active' | 'push' | 'drills' | 'history'
+
+async function renderMfrRecalls() {
+  // Push and drill wizards render independently — no tab bar needed
+  if (_mfrRecallsTab === 'push')   { renderPush(); return; }
+  if (_mfrRecallsTab === 'drills') { renderDrills(); return; }
+
+  const el = document.getElementById('main-content');
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading recalls…</div>`;
+
+  try {
+    const { data: events } = await sb.from('recall_events')
+      .select('*').eq('source_org_id', _orgId).order('published_at', {ascending:false});
+    const allEvents = events || [];
+
+    // Fetch acknowledgements for all events
+    const eventIds = allEvents.map(e => e.id);
+    let allAcks = [];
+    let retailerInfo = {};
+    if (eventIds.length > 0) {
+      const { data: acks } = await sb.from('recall_acknowledgements')
+        .select('*, stores(name), organisations(name, contact_email, recall_coordinator_name, recall_coordinator_contact)')
+        .in('recall_event_id', eventIds)
+        .order('created_at', {ascending:false});
+      allAcks = acks || [];
+
+      // Build retailer info map keyed by organisation_id
+      allAcks.forEach(a => {
+        if (a.organisation_id && a.organisations && !retailerInfo[a.organisation_id]) {
+          retailerInfo[a.organisation_id] = a.organisations;
+        }
+      });
+    }
+
+    const liveEvents  = allEvents.filter(e => !e.is_drill);
+    const drillEvents = allEvents.filter(e =>  e.is_drill);
+    const liveCount   = liveEvents.length;
+
+    // Update nav badge
+    const badge = document.getElementById('recalls-badge');
+    if (badge) {
+      const pendingAcks = allAcks.filter(a => a.status === 'notified').length;
+      if (pendingAcks > 0) { badge.textContent = pendingAcks; badge.style.display = 'inline'; }
+    }
+
+    const STEPS = ['notified','acknowledged','pulled','disposed','confirmed'];
+    const STEP_LABELS = { notified:'Notified', acknowledged:'Acknowledged', pulled:'Pulled', disposed:'Disposed', confirmed:'Confirmed' };
+
+    const tabBar = (active) => `
+      <div style="display:flex;align-items:center;gap:2px;margin-bottom:20px;border-bottom:1px solid var(--border);padding-bottom:0;flex-wrap:wrap;">
+        ${[
+          { id:'active',  label:`Active${liveCount>0?' ('+liveCount+')':''}`, danger: liveCount > 0 },
+          { id:'push',    label:'+ Push recall' },
+          { id:'drills',  label:'Drills' },
+          { id:'history', label:'History' },
+        ].map(t => `<button onclick="_mfrRecallsTab='${t.id}';renderMfrRecalls()"
+          style="font-family:'DM Mono',monospace;font-size:11px;padding:8px 14px;border:none;background:none;cursor:pointer;border-bottom:2px solid ${active===t.id?(t.danger?'var(--danger)':'var(--accent)'):'transparent'};color:${active===t.id?(t.danger?'var(--danger)':'var(--accent)'):'var(--muted)'};margin-bottom:-1px;transition:all 0.15s;font-weight:${active===t.id?'700':'400'};"
+          onmouseover="if('${active}'!=='${t.id}')this.style.color='var(--text)'"
+          onmouseout="if('${active}'!=='${t.id}')this.style.color='var(--muted)'">${t.label}</button>`).join('')}
+      </div>`;
+
+    // ── Shared: render acks for a single event as a table ──────
+    function ackTable(eventId, isDrill) {
+      const evAcks = allAcks.filter(a => a.recall_event_id === eventId);
+      if (!evAcks.length) return `<div style="font-size:11px;color:var(--muted);padding:12px 0;">No store responses yet — waiting for retailers to acknowledge.</div>`;
+      const confirmed = evAcks.filter(a => a.status === 'confirmed').length;
+      const pending   = evAcks.filter(a => a.status === 'notified').length;
+      return `
+        <div style="font-size:10px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;">
+          Store responses — ${confirmed}/${evAcks.length} confirmed${pending>0?` · <span style="color:var(--danger);">${pending} awaiting</span>`:''}
+        </div>
+        <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+          <table style="width:100%;border-collapse:collapse;font-size:11px;">
+            <thead><tr style="background:var(--surface2);">
+              <th style="padding:8px 12px;text-align:left;color:var(--muted);font-weight:600;letter-spacing:0.06em;font-size:10px;text-transform:uppercase;">Store</th>
+              <th style="padding:8px 12px;text-align:left;color:var(--muted);font-weight:600;letter-spacing:0.06em;font-size:10px;text-transform:uppercase;">Retailer</th>
+              <th style="padding:8px 12px;text-align:left;color:var(--muted);font-weight:600;letter-spacing:0.06em;font-size:10px;text-transform:uppercase;">Status</th>
+              <th style="padding:8px 12px;text-align:left;color:var(--muted);font-weight:600;letter-spacing:0.06em;font-size:10px;text-transform:uppercase;">Units pulled</th>
+              <th style="padding:8px 12px;text-align:left;color:var(--muted);font-weight:600;letter-spacing:0.06em;font-size:10px;text-transform:uppercase;">Last updated</th>
+            </tr></thead>
+            <tbody>
+              ${evAcks.map((a,i) => {
+                const idx = STEPS.indexOf(a.status);
+                const statusColor = a.status==='confirmed'?'var(--accent)':a.status==='notified'?'var(--danger)':'var(--warn)';
+                return `<tr style="border-top:1px solid var(--border);background:${i%2?'transparent':'rgba(0,0,0,0.06)'};">
+                  <td style="padding:9px 12px;color:var(--text);">${a.stores?.name||'—'}</td>
+                  <td style="padding:9px 12px;color:var(--muted);">${a.organisations?.name||'—'}</td>
+                  <td style="padding:9px 12px;">
+                    <span style="font-size:10px;padding:2px 8px;border-radius:10px;background:${statusColor}1a;color:${statusColor};font-weight:600;">${STEP_LABELS[a.status]||a.status}</span>
+                    <div style="width:100%;height:2px;background:var(--border);border-radius:2px;margin-top:5px;overflow:hidden;"><div style="height:100%;width:${idx/4*100}%;background:${statusColor};border-radius:2px;transition:width 0.3s;"></div></div>
+                  </td>
+                  <td style="padding:9px 12px;color:var(--muted);font-family:'DM Mono',monospace;">${a.units_pulled ?? '—'}</td>
+                  <td style="padding:9px 12px;color:var(--muted);">${a.acknowledged_at?new Date(a.acknowledged_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'—'}</td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>`;
+    }
+
+    // ── Collaboration section for each recall card ─────────────
+    function collabSection(ev) {
+      const evAcks = allAcks.filter(a => a.recall_event_id === ev.id);
+      const orgIds = [...new Set(evAcks.map(a => a.organisation_id).filter(Boolean))];
+      const retailers = orgIds.map(id => retailerInfo[id]).filter(Boolean);
+
+      const pendingAcks = evAcks.filter(a => a.status === 'notified');
+      const laggingRetailers = [...new Set(pendingAcks.map(a => a.organisations?.name).filter(Boolean))];
+
+      return `
+        <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+            <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);">Retailer collaboration</div>
+            <button onclick="toggleMfrCollabLog('${ev.id}')" style="font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid var(--glass-border);background:none;color:var(--muted);cursor:pointer;">Audit trail ▾</button>
+          </div>
+
+          ${retailers.length > 0 ? `
+          <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;">
+            ${retailers.map(r => {
+              const hasEmail = r.contact_email && r.contact_email.includes('@');
+              const subject  = encodeURIComponent('Re: Recall — ' + (ev.product_name||'') + (ev.lot_number?' Lot '+ev.lot_number:''));
+              const body     = encodeURIComponent('Dear ' + r.name + ',\n\nRe: ' + (ev.product_name||'Unknown') + (ev.lot_number?' (Lot: '+ev.lot_number+')':'') + '.\n\n[Add your message]\n\n— ' + _orgName);
+              return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--surface2);border-radius:7px;padding:8px 12px;flex-wrap:wrap;">
+                <div>
+                  <div style="font-size:12px;font-weight:600;color:var(--text);">${r.name}</div>
+                  ${r.recall_coordinator_name ? `<div style="font-size:11px;color:var(--muted);">${r.recall_coordinator_name}</div>` : ''}
+                  ${r.contact_email ? `<div style="font-size:11px;font-family:'DM Mono',monospace;color:var(--muted);">${r.contact_email}</div>` : ''}
+                </div>
+                ${hasEmail ? `<a href="mailto:${r.contact_email}?subject=${subject}&body=${body}" style="display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:5px 10px;border-radius:6px;border:1px solid var(--glass-border);background:var(--surface);color:var(--text);text-decoration:none;">📧 Message</a>` : ''}
+              </div>`;
+            }).join('')}
+          </div>` : '<div style="font-size:11px;color:var(--muted);margin-bottom:8px;">No retailer contacts on file yet.</div>'}
+
+          ${laggingRetailers.length > 0 ? `
+          <div style="background:rgba(255,92,92,0.06);border:1px solid rgba(255,92,92,0.2);border-radius:7px;padding:8px 12px;font-size:11px;color:var(--warn);margin-bottom:10px;">
+            ⏱ ${laggingRetailers.length} retailer${laggingRetailers.length!==1?'s':''} haven't acknowledged yet: ${laggingRetailers.slice(0,3).join(', ')}${laggingRetailers.length>3?' +more':''}
+          </div>` : ''}
+
+          <div id="mfr-collab-log-${ev.id}" style="display:none;">
+            <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;font-size:11px;line-height:1.9;">
+              <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">Audit log — ${new Date(ev.published_at||ev.created_at).toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</div>
+              <div style="display:flex;gap:10px;padding:5px 0;border-bottom:1px solid var(--border);">
+                <span style="color:var(--muted);font-family:'DM Mono',monospace;flex-shrink:0;width:150px;">${new Date(ev.published_at||ev.created_at).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</span>
+                <span style="color:var(--text);">🔔 Recall pushed by <strong>${_orgName}</strong>${ev.is_drill?' <span style="color:var(--warn);">[DRILL]</span>':''} · Reached ${orgIds.length} retailer${orgIds.length!==1?'s':''}</span>
+              </div>
+              ${evAcks.sort((a,b) => (a.acknowledged_at||a.created_at) > (b.acknowledged_at||b.created_at) ? 1 : -1).map(a => {
+                const idx = STEPS.indexOf(a.status);
+                const completedSteps = STEPS.slice(0, idx+1);
+                return completedSteps.filter((_,i) => i > 0 || a.created_at).map((s, i) => {
+                  const timeField = ['created_at','acknowledged_at','pulled_at','disposed_at','confirmed_at'][i];
+                  const t = a[timeField] || (i===0 ? a.created_at : null);
+                  if (!t) return '';
+                  return `<div style="display:flex;gap:10px;padding:5px 0;border-bottom:1px solid rgba(22,61,55,0.4);">
+                    <span style="color:var(--muted);font-family:'DM Mono',monospace;flex-shrink:0;width:150px;">${new Date(t).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</span>
+                    <span style="color:${s==='confirmed'?'var(--accent)':'var(--text)'};">✓ ${a.organisations?.name||'Retailer'} / ${a.stores?.name||'Store'}: ${STEP_LABELS[s]}</span>
+                  </div>`;
+                }).join('');
+              }).join('')}
+            </div>
+            <div style="font-size:10px;color:var(--muted);margin-top:6px;">This log is timestamped and immutable. Download full documentation via History → Defense Package.</div>
+          </div>
+        </div>`;
+    }
+
+    // ── ACTIVE TAB ─────────────────────────────────────────────
+    if (_mfrRecallsTab === 'active') {
+      el.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+          <div>
+            <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Recalls</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px;">${liveCount} live · ${drillEvents.length} drill${drillEvents.length!==1?'s':''}</div>
+          </div>
+        </div>
+        ${tabBar('active')}
+        ${liveEvents.length === 0 ? `
+        <div style="background:var(--surface);border:1px solid var(--glass-border);border-radius:14px;padding:48px 24px;text-align:center;">
+          <div style="font-size:32px;margin-bottom:12px;">✅</div>
+          <div style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:6px;">No live recalls</div>
+          <div style="font-size:13px;color:var(--muted);margin-bottom:16px;line-height:1.7;">Push a recall when a product needs to be removed from retailer shelves. All connected retail partners will be notified within 90 seconds.</div>
+          <button onclick="_mfrRecallsTab='push';renderMfrRecalls()" style="background:var(--danger);color:#fff;border:none;border-radius:8px;padding:10px 22px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">+ Push a recall</button>
+        </div>` :
+        liveEvents.map(ev => {
+          const evAcks = allAcks.filter(a => a.recall_event_id === ev.id);
+          const confirmed = evAcks.filter(a => a.status==='confirmed').length;
+          const pending   = evAcks.filter(a => a.status==='notified').length;
+          const allDone   = evAcks.length > 0 && evAcks.every(a => a.status==='confirmed');
+          const sevColor  = ev.severity?.includes('class_i')&&!ev.severity?.includes('ii')&&!ev.severity?.includes('iii') ? 'var(--danger)' : ev.severity?.includes('class_ii') ? 'var(--warn)' : 'var(--muted)';
+          return `<div style="margin-bottom:20px;background:var(--surface);border:1px solid ${pending>0?'rgba(255,92,92,0.3)':allDone?'rgba(52,211,153,0.25)':'var(--glass-border)'};border-radius:12px;overflow:hidden;">
+            <div style="padding:16px 18px;border-bottom:1px solid var(--border);">
+              <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+                <div style="flex:1;min-width:0;">
+                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;flex-wrap:wrap;">
+                    <div style="width:8px;height:8px;border-radius:50%;background:${sevColor};flex-shrink:0;${!ev.severity?.includes('ii')&&!ev.severity?.includes('iii')&&ev.severity?.includes('i')?'box-shadow:0 0 8px rgba(255,92,92,0.5);':''}"></div>
+                    <div style="font-size:15px;font-weight:700;color:var(--text);">${ev.product_name||'—'}</div>
+                    ${pending>0?`<span style="font-size:10px;background:rgba(255,92,92,0.12);color:var(--danger);padding:2px 8px;border-radius:10px;font-weight:600;">${pending} awaiting</span>`:''}
+                    ${allDone?`<span style="font-size:10px;background:rgba(52,211,153,0.12);color:var(--accent);padding:2px 8px;border-radius:10px;font-weight:600;">✓ ALL CONFIRMED</span>`:''}
+                  </div>
+                  <div style="font-size:12px;color:var(--muted);">
+                    ${ev.lot_number?`Lot: <span style="font-family:'DM Mono',monospace;color:var(--text);">${ev.lot_number}</span> · `:''}
+                    ${ev.severity?.replace('_',' ')||'—'} · ${ev.reason||'—'}
+                    <br><span style="font-size:11px;">Pushed ${new Date(ev.published_at||ev.created_at).toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</span>
+                  </div>
+                </div>
+                <div style="display:flex;gap:7px;flex-shrink:0;flex-wrap:wrap;">
+                  <button onclick="generateLegalPackage('${ev.id}')" style="background:rgba(56,189,248,0.1);border:1px solid rgba(56,189,248,0.3);color:var(--info);border-radius:7px;padding:6px 11px;font-size:11px;font-weight:600;cursor:pointer;">🛡 Defense Package</button>
+                  <button onclick="setTimelineContext('${ev.id}',this)" data-product="${(ev.product_name||'').replace(/"/g,'&quot;')}" style="background:rgba(52,211,153,0.1);border:1px solid rgba(52,211,153,0.3);color:var(--accent);border-radius:7px;padding:6px 11px;font-size:11px;font-weight:600;cursor:pointer;">📅 Timeline</button>
+                </div>
+              </div>
+            </div>
+            <div style="padding:14px 18px;">
+              ${ackTable(ev.id, false)}
+              ${collabSection(ev)}
+            </div>
+          </div>`;
+        }).join('')}`;
+
+    // ── HISTORY TAB ────────────────────────────────────────────
+    } else if (_mfrRecallsTab === 'history') {
+      const fmtDate = d => new Date(d).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});
+      el.innerHTML = `
+        <div style="margin-bottom:16px;">
+          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Recalls</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">${allEvents.length} total events</div>
+        </div>
+        ${tabBar('history')}
+        ${allEvents.length === 0 ? `<div class="empty" style="padding:40px 24px;text-align:center;">No recalls pushed yet.</div>` :
+        allEvents.map(ev => {
+          const evAcks = allAcks.filter(a => a.recall_event_id === ev.id);
+          const confirmed = evAcks.filter(a=>a.status==='confirmed').length;
+          return `<div style="background:var(--surface);border:1px solid var(--glass-border);border-radius:10px;padding:14px 16px;margin-bottom:10px;">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+              <div style="flex:1;min-width:0;">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap;">
+                  <span style="font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600;background:${ev.is_drill?'rgba(245,166,35,0.12)':'rgba(255,92,92,0.12)'};color:${ev.is_drill?'var(--warn)':'var(--danger)'};">${ev.is_drill?'DRILL':'LIVE'}</span>
+                  <span style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);">${fmtDate(ev.created_at)}</span>
+                  ${confirmed>0?`<span style="font-size:10px;color:var(--accent);">✓ ${confirmed}/${evAcks.length} confirmed</span>`:''}
+                </div>
+                <div style="font-size:14px;font-weight:600;color:var(--text);">${ev.product_name||'—'}</div>
+                <div style="font-size:12px;color:var(--muted);margin-top:3px;">${ev.severity?.replace('_',' ')||''}${ev.lot_number?' · Lot: '+ev.lot_number:''}${ev.reason?' · '+ev.reason:''}</div>
+              </div>
+              <div style="display:flex;gap:7px;flex-wrap:wrap;flex-shrink:0;">
+                <button onclick="setTimelineContext('${ev.id}',this)" data-product="${(ev.product_name||'').replace(/"/g,'&quot;')}" style="background:rgba(52,211,153,0.1);border:1px solid rgba(52,211,153,0.3);color:var(--accent);border-radius:7px;padding:6px 11px;font-size:11px;font-weight:600;cursor:pointer;">📅 Timeline</button>
+                <button onclick="generateLegalPackage('${ev.id}')" style="background:rgba(56,189,248,0.1);border:1px solid rgba(56,189,248,0.3);color:var(--info);border-radius:7px;padding:6px 11px;font-size:11px;font-weight:600;cursor:pointer;">🛡 Defense Package</button>
+                <button onclick="openCAPForm('${ev.id}','${(ev.product_name||'').replace(/'/g,"\\'")}','${(ev.lot_number||'').replace(/'/g,"\\'")}','${(ev.reason||'').replace(/'/g,"\\'")}' )" style="background:rgba(245,166,35,0.1);border:1px solid rgba(245,166,35,0.3);color:var(--warn);border-radius:7px;padding:6px 11px;font-size:11px;font-weight:600;cursor:pointer;">📋 Action Plan</button>
+              </div>
+            </div>
+            ${evAcks.length > 0 ? `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">${ackTable(ev.id, ev.is_drill)}</div>` : ''}
+            ${collabSection(ev)}
+          </div>`;
+        }).join('')}`;
+    }
+
+  } catch(e) {
+    document.getElementById('main-content').innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error: ${e.message}</div>`;
+  }
+}
+
+function toggleMfrCollabLog(recallEventId) {
+  const el = document.getElementById('mfr-collab-log-' + recallEventId);
+  if (!el) return;
+  el.style.display = el.style.display === 'none' ? '' : 'none';
 }
 
 
@@ -2444,7 +2698,7 @@ function pushFromTriage(productName, lotNumber, barcode, triageCategory, triageS
   _pushDraft.description = triageSummary ? 'Triggered by complaint triage. ' + triageSummary : '';
   _pushDraft.authority = '';
   _selectedSeverity = 'class_i';
-  showPanel('push');
+  _mfrRecallsTab='push';showPanel('recalls');
 }
 
 // Load triage badge count on init
@@ -3599,7 +3853,7 @@ async function escalateInvestigationToRecall(id) {
     authority: '',
     is_drill: false,
   };
-  showPanel('push');
+  _mfrRecallsTab='push';showPanel('recalls');
 }
 </script>
 
@@ -3796,6 +4050,7 @@ const MFR_I18N = {
   en: {
     nav_overview:'Dashboard', nav_triage:'Triage', nav_widget:'Widget Setup',
     nav_investigations:'Investigations', nav_compliance:'Compliance', nav_push:'Push Recall',
+    nav_recalls:'Recalls',
     nav_history:'Recall History', nav_acks:'Acknowledgements', nav_products:'Products',
     nav_lots:'Lot Codes', nav_shipments:'Shipments', nav_suppliers:'Supplier Risk',
     nav_patterns:'Pattern Library', nav_partners:'Trading Partners', nav_settings:'Settings',
@@ -3811,6 +4066,7 @@ const MFR_I18N = {
   no: {
     nav_overview:'Oversikt', nav_triage:'Klagesaker', nav_widget:'Widget-oppsett',
     nav_investigations:'Undersokelser', nav_compliance:'Samsvar', nav_push:'Send tilbakekalling',
+    nav_recalls:'Tilbakekallinger',
     nav_history:'Tilbakekallingshistorikk', nav_acks:'Bekreftelser', nav_products:'Produkter',
     nav_lots:'Partinumre', nav_shipments:'Leveranser', nav_suppliers:'Leverandorrisk',
     nav_patterns:'Monstersbibliotek', nav_partners:'Handelspartnere', nav_settings:'Innstillinger',
@@ -3827,9 +4083,10 @@ const MFR_I18N = {
 
 const NAV_MAP = {
   'overview':'nav_overview','triage':'nav_complaint_triage', 'suppliers':'nav_supplier_risk','widget':'nav_widget',
-  'investigations':'nav_investigations','compliance':'nav_compliance','push':'nav_push',
-  'history':'nav_history','acknowledgements':'nav_acks','products':'nav_products',
-  'lots':'nav_lots','shipments':'nav_shipments','suppliers':'nav_suppliers',
+  'investigations':'nav_investigations','compliance':'nav_compliance',
+  'recalls':'nav_recalls','push':'nav_recalls','history':'nav_recalls','acknowledgements':'nav_recalls','drills':'nav_recalls',
+  'products':'nav_products',
+  'lots':'nav_lots','shipments':'nav_shipments',
   'patterns':'nav_patterns','partners':'nav_partners','settings':'nav_settings',
   'mock_audit':'nav_mock_audit',
   'my_suppliers':'nav_my_suppliers',
@@ -5271,7 +5528,7 @@ async function pushDrill() {
           Track per-store responses in <strong style="color:var(--text);">Acknowledgements</strong>. When all stores confirm, you can generate a drill compliance report from the corporate dashboard Compliance panel.
         </div>
         <div style="display:flex;gap:10px;justify-content:center;">
-          <button onclick="showPanel('acknowledgements')" class="btn-ghost">Track responses →</button>
+          <button onclick="_mfrRecallsTab='active';showPanel('recalls')" class="btn-ghost">Track responses →</button>
           <button onclick="_drillStep=0;_drillDraft={product:'',lot:'',reason:'Simulated contamination — drill exercise',description:'',targetHours:4};renderDrills()" class="btn-ghost">Run another drill</button>
         </div>
       </div>
@@ -5528,7 +5785,7 @@ function setTimelineContext(recallId, btn) {
 async function renderIncidentTimeline() {
   const el = document.getElementById('main-content');
   if (!_timelineRecallId) {
-    el.innerHTML = `<div style="color:var(--muted);padding:40px;text-align:center;">Open a recall from <button onclick="showPanel('history')" style="background:none;border:none;color:var(--accent);cursor:pointer;text-decoration:underline;font-family:inherit;font-size:inherit;">Recall History</button> to view its incident timeline.</div>`;
+    el.innerHTML = `<div style="color:var(--muted);padding:40px;text-align:center;">Open a recall from <button onclick="_mfrRecallsTab='history';showPanel('recalls')" style="background:none;border:none;color:var(--accent);cursor:pointer;text-decoration:underline;font-family:inherit;font-size:inherit;">Recall History</button> to view its incident timeline.</div>`;
     return;
   }
 
@@ -5613,7 +5870,7 @@ async function renderIncidentTimeline() {
   el.innerHTML = `
     <div style="max-width:780px;">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap;">
-        <button onclick="showPanel('history')" style="background:var(--surface);border:1px solid var(--glass-border);color:var(--muted);border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer;">← Recall History</button>
+        <button onclick="_mfrRecallsTab='history';showPanel('recalls')" style="background:var(--surface);border:1px solid var(--glass-border);color:var(--muted);border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer;">← Recall History</button>
         <div>
           <div style="font-size:15px;font-weight:600;color:var(--text);">Incident Timeline — ${ev.product_name}</div>
           <div style="font-size:12px;color:var(--muted);">
