@@ -7529,6 +7529,96 @@ function stopStream(stream) {
 }
 
 // ── SAVE RECORD ──────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+// CROSS-REFERENCE ENGINE
+// Two entry points:
+//   matchScanAgainstRecalls(scanId, scanData)   — on every scan save
+//   sweepScansForRecall(recallId, recallData)    — on every recall save
+//
+// Both write to scan_recall_matches. Idempotent — safe to call
+// multiple times, duplicates are blocked by the DB unique check
+// inside the Postgres sweep function.
+// ═══════════════════════════════════════════════════════════════
+
+// Called after a scan is saved. Checks all active recalls and
+// writes a match row for each hit. Non-blocking — fires and forgets.
+async function matchScanAgainstRecalls(scanId, scanData) {
+  if (!scanId || !_cachedActiveRecalls || !_cachedActiveRecalls.length) return;
+
+  const lot     = (scanData.lot_number     || '').toLowerCase().trim();
+  const barcode = (scanData.barcode_number || '').toLowerCase().trim();
+  const product = (scanData.product_name   || '').toLowerCase().trim();
+  if (!lot && !barcode) return;
+
+  const rows = [];
+  const seenRecallIds = new Set();
+
+  for (const r of _cachedActiveRecalls) {
+    if (!r.id || seenRecallIds.has(r.id)) continue;
+    const rLot     = (r.lot_number     || '').toLowerCase().trim();
+    const rBarcode = (r.barcode_number || '').toLowerCase().trim();
+    const rProduct = (r.product_name   || '').toLowerCase().trim();
+
+    let matchType = null;
+    if (rLot && lot && rLot === lot)           matchType = 'exact_lot';
+    else if (rBarcode && barcode && rBarcode === barcode) matchType = 'exact_barcode';
+    else if (!rLot && rProduct && product) {
+      const firstWord = rProduct.split(/\s+/).find(w => w.length >= 4) || '';
+      if (firstWord.length >= 4 && product.includes(firstWord)) matchType = 'product_name';
+    }
+    if (!matchType) continue;
+
+    seenRecallIds.add(r.id);
+    rows.push({
+      scan_id:          scanId,
+      recall_id:        r.id,
+      recall_source:    r.source || 'manual',
+      recall_product:   r.product_name || null,
+      recall_lot:       r.lot_number   || null,
+      match_type:       matchType,
+      match_confidence: matchType === 'product_name' ? 'medium' : 'high',
+      organisation_id:  _currentOrgId,
+      store_name:       scanData.store_name || null,
+      store_id:         scanData.store_id   || null,
+      scanned_by:       scanData.scanned_by || null,
+      placed_at:        new Date().toISOString(),
+      quantity:         scanData.quantity   || 1,
+    });
+  }
+
+  if (!rows.length) return;
+
+  try {
+    // upsert — ignore conflicts (scan_id + recall_id already matched)
+    await sb.from('scan_recall_matches').upsert(rows, {
+      onConflict: 'scan_id,recall_id',
+      ignoreDuplicates: true,
+    });
+  } catch(e) {
+    console.warn('[cross-ref] matchScanAgainstRecalls failed:', e.message);
+  }
+}
+
+// Called after a recall is saved. Invokes the Postgres sweep function
+// which retroactively matches all scans in the lookback window.
+// The DB trigger handles this automatically too, but calling explicitly
+// gives us the result count to surface in the UI.
+async function sweepScansForRecall(recallId) {
+  if (!recallId || !_currentOrgId) return 0;
+  try {
+    const { data, error } = await sb.rpc('sweep_recall_matches', {
+      p_recall_id:       recallId,
+      p_organisation_id: _currentOrgId,
+      p_lookback_days:   180,
+    });
+    if (error) throw error;
+    return data || 0;
+  } catch(e) {
+    console.warn('[cross-ref] sweepScansForRecall failed:', e.message);
+    return 0;
+  }
+}
+
 async function saveRecord() {
   const productName = document.getElementById('field-product-name').value.trim();
   const barcodeNum = document.getElementById('field-barcode').value.trim();
@@ -7663,6 +7753,30 @@ async function saveRecord() {
     });
 
     if (error) throw error;
+
+    // ── Cross-reference: match this scan against all active recalls ──
+    // Fire-and-forget — never blocks the scan confirmation UX.
+    // Gets the inserted scan ID from a follow-up query.
+    (async () => {
+      try {
+        const { data: inserted } = await sb.from('scans')
+          .select('id').eq('organisation_id', _currentOrgId)
+          .eq('product_name', productName)
+          .eq('store_name', storeName || '')
+          .order('created_at', { ascending: false }).limit(1);
+        if (inserted?.[0]?.id) {
+          await matchScanAgainstRecalls(inserted[0].id, {
+            lot_number: lotNum || null,
+            barcode_number: barcodeNum || null,
+            product_name: productName,
+            store_name: storeName || null,
+            store_id: _currentStoreId || null,
+            scanned_by: currentUser?.email || null,
+            quantity: quantity,
+          });
+        }
+      } catch(e) { console.warn('[cross-ref] post-save match failed:', e.message); }
+    })();
 
     // Correction feedback loop — if employee edited lot/batch, record it as high-confidence
     await maybeRecordCorrection(productName, barcodeNum || null);
@@ -8468,6 +8582,12 @@ async function addManualRecall() {
       active: true
     });
     if (error) throw error;
+    // Retroactive sweep — non-blocking
+    (async () => {
+      const { data: r } = await sb.from('recalls').select('id')
+        .eq('product_name', productName).order('created_at', { ascending: false }).limit(1);
+      if (r?.[0]?.id) sweepScansForRecall(r[0].id);
+    })();
     msgEl.style.color = 'var(--accent)'; msgEl.textContent = '✓ Recall added';
     document.getElementById('recall-product-name').value = '';
     document.getElementById('recall-lot').value = '';
@@ -9268,7 +9388,19 @@ async function submitQuickAddRecall() {
     // Update cached recalls immediately
     _cachedActiveRecalls.push({ product_name: product, lot_number: lot || null, barcode_number: barcode || null, description: reason, active: true, source: 'manual' });
 
-    showToast(`Recall filed for "${product}" — active for all stores.`, 'ok', 4000);
+    // Sweep existing scans for this new recall — non-blocking
+    const _newRecallId = (await sb.from('recalls').select('id')
+      .eq('product_name', product)
+      .eq('organisation_id', _currentOrgId)
+      .order('created_at', { ascending: false }).limit(1)).data?.[0]?.id;
+    if (_newRecallId) {
+      sweepScansForRecall(_newRecallId).then(n => {
+        if (n > 0) showToast(`Recall filed — ${n} existing scan${n !== 1 ? 's' : ''} matched across your stores.`, 'warn', 6000);
+        else showToast(`Recall filed for "${product}" — active for all stores.`, 'ok', 4000);
+      });
+    } else {
+      showToast(`Recall filed for "${product}" — active for all stores.`, 'ok', 4000);
+    }
     closeQuickAddRecall();
 
     // Refresh history and manager recall list if open
@@ -16833,34 +16965,76 @@ async function loadRecallsView() {
       return;
     }
 
+    // Fetch exposure data from scan_recall_matches for all matched recall IDs
+    const recallIds = matched.map(r => r.id).filter(Boolean);
+    let exposureByRecall = {};
+    if (recallIds.length) {
+      try {
+        const { data: matchRows } = await sb
+          .from('scan_recall_matches')
+          .select('recall_id, store_name, quantity, placed_at, removed_at, scanned_by, match_type')
+          .in('recall_id', recallIds)
+          .eq('organisation_id', _currentOrgId);
+        if (matchRows) {
+          matchRows.forEach(m => {
+            if (!exposureByRecall[m.recall_id]) exposureByRecall[m.recall_id] = [];
+            exposureByRecall[m.recall_id].push(m);
+          });
+        }
+      } catch(e) { console.warn('[exposure] Failed to load match rows:', e.message); }
+    }
+
     container.innerHTML = matched.map(r => {
-      // ALL recall matches are urgent (they match your scanned products) → single red treatment.
-      // Source is shown as a neutral text badge, not via color.
       const srcLabel = r._type === 'pushed'
         ? 'MANUFACTURER PUSH'
-        : (r.source || '').toLowerCase().includes('fda')
-          ? 'FDA / RASFF'
-          : 'MANUAL';
+        : (r.source || '').toLowerCase().includes('fda') ? 'FDA' : (r.source || 'MANUAL').toUpperCase();
       const dateStr = (r.published_at || r.created_at)
         ? new Date(r.published_at || r.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
 
-      const sevColor = (() => {
-        const s = r.severity || '';
-        if ((s.includes('class_i') || s.includes('Class I')) && !s.includes('II') && !s.includes('III')) return 'var(--danger)';
-        if (s.includes('class_ii') || s.includes('Class II')) return 'var(--muted)';
-        return 'var(--muted)';
-      })();
+      // ── Exposure summary from scan_recall_matches ──
+      const rows       = exposureByRecall[r.id] || [];
+      const totalUnits = rows.reduce((s, m) => s + (m.quantity || 1), 0);
+      const pulledRows = rows.filter(m => m.removed_at);
+      const onShelf    = rows.filter(m => !m.removed_at);
+      const unitsPulled= pulledRows.reduce((s, m) => s + (m.quantity || 1), 0);
+      const unitsOnShelf = onShelf.reduce((s, m) => s + (m.quantity || 1), 0);
+      const stores     = [...new Set(rows.map(m => m.store_name).filter(Boolean))];
+      const maxExposure= rows.length ? Math.max(...rows.map(m => {
+        const end   = m.removed_at ? new Date(m.removed_at) : new Date();
+        const start = m.placed_at  ? new Date(m.placed_at)  : end;
+        return (end - start) / 3600000; // ms → hours
+      })) : null;
+      const firstPlaced= rows.length ? rows.reduce((a, b) => a.placed_at < b.placed_at ? a : b).placed_at : null;
+
+      let exposureHtml = '';
+      if (rows.length > 0) {
+        const urgency = unitsOnShelf > 0 ? 'var(--danger)' : 'var(--accent)';
+        exposureHtml += '<div style="margin:10px 0;padding:10px 12px;background:var(--surface2);border-radius:8px;border:1px solid var(--border);">';
+        exposureHtml += '<div style="font-size:9px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);font-family:DM Mono,monospace;margin-bottom:8px;">Exposure Summary</div>';
+        exposureHtml += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px;">';
+        exposureHtml += '<div style="text-align:center;"><div style="font-family:Figtree,sans-serif;font-weight:800;font-size:20px;color:' + urgency + ';">' + unitsOnShelf + '</div><div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;">Still on shelf</div></div>';
+        exposureHtml += '<div style="text-align:center;"><div style="font-family:Figtree,sans-serif;font-weight:800;font-size:20px;color:var(--accent);">' + unitsPulled + '</div><div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;">Confirmed pulled</div></div>';
+        exposureHtml += '<div style="text-align:center;"><div style="font-family:Figtree,sans-serif;font-weight:800;font-size:20px;color:var(--text);">' + stores.length + '</div><div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;">Store' + (stores.length !== 1 ? 's' : '') + '</div></div>';
+        exposureHtml += '</div>';
+        if (stores.length) exposureHtml += '<div style="font-size:11px;color:var(--muted);font-family:DM Mono,monospace;margin-bottom:4px;">Stores: <span style="color:var(--text);">' + stores.map(s => esc(s)).join(' · ') + '</span></div>';
+        if (firstPlaced) exposureHtml += '<div style="font-size:11px;color:var(--muted);font-family:DM Mono,monospace;margin-bottom:4px;">First placed: <span style="color:var(--text);">' + new Date(firstPlaced).toLocaleDateString('en-GB', {day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) + '</span></div>';
+        if (maxExposure !== null) exposureHtml += '<div style="font-size:11px;color:' + (unitsOnShelf > 0 ? 'var(--danger)' : 'var(--muted)') + ';font-family:DM Mono,monospace;">Max exposure window: <strong>' + (maxExposure < 1 ? '<1h' : Math.round(maxExposure) + 'h') + '</strong></div>';
+        exposureHtml += '</div>';
+      } else {
+        // No match rows yet — DB trigger runs async, may take a moment
+        exposureHtml += '<div style="margin:10px 0;padding:8px 12px;background:var(--surface2);border-radius:8px;font-size:11px;color:var(--muted);font-family:DM Mono,monospace;">Calculating exposure… if this persists, the sweep may still be running.</div>';
+      }
 
       return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:10px;border-left:3px solid var(--danger);">'
-        + '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px;">'
-        + '<div style="font-family:Figtree,sans-serif;font-weight:700;font-size:14px;color:var(--text);line-height:1.3;">' + (r.product_name || 'Unknown product') + '</div>'
+        + '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:4px;">'
+        + '<div style="font-family:Figtree,sans-serif;font-weight:700;font-size:14px;color:var(--text);line-height:1.3;">' + esc(r.product_name || 'Unknown product') + '</div>'
         + '<span style="font-size:10px;font-family:DM Mono,monospace;font-weight:700;padding:2px 7px;border-radius:4px;background:rgba(185,28,28,0.1);color:var(--danger);white-space:nowrap;flex-shrink:0;">ACTIVE</span>'
         + '</div>'
-        + '<div style="font-size:10px;font-family:DM Mono,monospace;font-weight:700;letter-spacing:0.06em;color:var(--muted);margin-bottom:8px;">' + srcLabel + (dateStr ? ' · ' + dateStr : '') + '</div>'
-        + (r.lot_number ? '<div style="font-size:12px;color:var(--muted);font-family:DM Mono,monospace;margin-bottom:4px;">Lot: <strong style="color:var(--text);">' + r.lot_number + '</strong></div>' : '')
-        + (r.severity ? '<div style="font-size:11px;color:' + sevColor + ';margin-bottom:5px;">' + r.severity + '</div>' : '')
-        + ((r.reason || r.description) ? '<div style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:8px;">' + (r.reason || r.description) + '</div>' : '')
-        + '<button onclick="drawerNav(&apos;history&apos;)" style="margin-top:4px;width:100%;padding:9px;background:rgba(185,28,28,0.06);border:1px solid rgba(185,28,28,0.22);border-radius:8px;color:var(--danger);font-family:DM Mono,monospace;font-size:11px;font-weight:700;cursor:pointer;letter-spacing:0.02em;">View matching records in History →</button>'
+        + '<div style="font-size:10px;font-family:DM Mono,monospace;font-weight:700;letter-spacing:0.06em;color:var(--muted);margin-bottom:6px;">' + srcLabel + (dateStr ? ' · ' + dateStr : '') + '</div>'
+        + (r.lot_number ? '<div style="font-size:12px;color:var(--muted);font-family:DM Mono,monospace;margin-bottom:4px;">Lot: <strong style="color:var(--text);">' + esc(r.lot_number) + '</strong></div>' : '')
+        + ((r.reason || r.description) ? '<div style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:6px;">' + esc(r.reason || r.description) + '</div>' : '')
+        + exposureHtml
+        + '<button onclick="drawerNav(&apos;history&apos;)" style="margin-top:8px;width:100%;padding:9px;background:rgba(185,28,28,0.06);border:1px solid rgba(185,28,28,0.22);border-radius:8px;color:var(--danger);font-family:DM Mono,monospace;font-size:11px;font-weight:700;cursor:pointer;letter-spacing:0.02em;">View matching records in History →</button>'
         + '</div>';
     }).join('');
 
