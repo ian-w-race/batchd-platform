@@ -19,6 +19,9 @@ const { createClient } = require('@supabase/supabase-js');
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://lurxucdmrugikdlvvebc.supabase.co';
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
+// Netlify native scheduled function — runs daily at 06:00 UTC
+exports.schedule = '0 6 * * *';
+
 exports.handler = async (event) => {
   // Accept both scheduled invocations and manual POST triggers
   const isScheduled = event?.['scheduled'] === true;
