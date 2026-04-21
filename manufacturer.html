@@ -730,36 +730,11 @@ async function renderOverview() {
   const shipmentCount = (shipmentsRes.data || []).length;
 
   // Network effect banner
-  const networkBanner = partnerCount > 0 ? `
-    <div style="background:linear-gradient(135deg,rgba(52,211,153,0.08),rgba(52,211,153,0.04));border:1px solid rgba(52,211,153,0.2);border-radius:14px;padding:18px 22px;margin-bottom:18px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;">
-      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
-        <div style="display:flex;align-items:center;gap:8px;">
-          <div style="width:10px;height:10px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px rgba(52,211,153,0.6);"></div>
-          <span style="font-size:13px;font-weight:700;color:var(--accent);">Live on Batchd network</span>
-        </div>
-        <div style="display:flex;gap:20px;flex-wrap:wrap;">
-          <div style="text-align:center;">
-            <div style="font-size:22px;font-weight:800;color:var(--text);font-family:'Figtree',sans-serif;line-height:1;">${partnerCount}</div>
-            <div style="font-size:10px;color:var(--muted);margin-top:1px;">retail partner${partnerCount!==1?'s':''} connected</div>
-          </div>
-          <div style="text-align:center;">
-            <div style="font-size:22px;font-weight:800;color:var(--text);font-family:'Figtree',sans-serif;line-height:1;">${productCount}</div>
-            <div style="font-size:10px;color:var(--muted);margin-top:1px;">product${productCount!==1?'s':''} registered</div>
-          </div>
-          <div style="text-align:center;">
-            <div style="font-size:22px;font-weight:800;color:var(--text);font-family:'Figtree',sans-serif;line-height:1;">${shipmentCount}</div>
-            <div style="font-size:10px;color:var(--muted);margin-top:1px;">lot${shipmentCount!==1?'s':''} traceable</div>
-          </div>
-          <div style="text-align:center;">
-            <div style="font-size:22px;font-weight:800;color:${liveRecalls>0?'var(--danger)':'var(--accent)'};font-family:'Figtree',sans-serif;line-height:1;">${liveRecalls>0?'⚠ '+liveRecalls:'✓ 0'}</div>
-            <div style="font-size:10px;color:var(--muted);margin-top:1px;">active recall${liveRecalls!==1?'s':''}</div>
-          </div>
-        </div>
-      </div>
-      <div style="font-size:11px;color:var(--muted);font-style:italic;">If you push a recall now, it reaches ${partnerCount} retail partner${partnerCount!==1?'s':''} in under 60 seconds.</div>
-    </div>` : '';
-
-  el.innerHTML = networkBanner + `
+  el.innerHTML = `
+    <div style="margin-bottom:18px;">
+      <div style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);letter-spacing:0.06em;text-transform:uppercase;margin-bottom:4px;">Dashboard</div>
+      ${partnerCount > 0 ? `<div style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;"><div style="width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 6px rgba(52,211,153,0.7);flex-shrink:0;"></div>If you push a recall now, it reaches <strong style="color:var(--text);">${partnerCount} retail partner${partnerCount!==1?'s':''}</strong> in under 60 seconds.</div>` : `<div style="font-size:12px;color:var(--muted);">Connect retail trading partners to start tracking recall exposure.</div>`}
+    </div>
     <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);">
       <div class="kpi-card ${liveRecalls>0?'red':'green'}">
         <div class="kpi-label">Live recalls issued</div>
@@ -3870,11 +3845,11 @@ function applyMfrLang(lang) {
     if (!match) return;
     const key = NAV_MAP[match[1]];
     if (!key || !t[key]) return;
-    // Walk childNodes backwards to find the last raw text node
+    // Walk childNodes backwards — skip whitespace-only nodes to avoid
+    // appending after a badge <span>, which causes text duplication
     for (let i = btn.childNodes.length - 1; i >= 0; i--) {
       const node = btn.childNodes[i];
-      if (node.nodeType === 3) {
-        // Preserve any badge span that may follow
+      if (node.nodeType === 3 && node.textContent.trim()) {
         node.textContent = '\n        ' + t[key] + '\n      ';
         break;
       }

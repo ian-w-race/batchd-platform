@@ -5982,16 +5982,22 @@ async function csvParseAndPreview(text, filename) {
   modal._csvRows    = rows;
   modal._csvHeaders = headers;
 
-  const autoMap = {};
-  config.fields.forEach(f => {
-    const fLabel = f.label.toLowerCase().replace(/[^a-z0-9]/g,'');
-    const fKey   = f.key.toLowerCase();
-    const match  = headers.find(h => {
-      const hn = h.toLowerCase().replace(/[^a-z0-9]/g,'');
-      return hn === fLabel || hn === fKey || hn.includes(fLabel.slice(0,6)) || fLabel.includes(hn.slice(0,6));
+  // Use custom autoMapFn if provided (e.g. consumer notify with alias lists),
+  // otherwise fall back to the default label/key prefix matcher
+  let autoMap = {};
+  if (typeof config.autoMapFn === 'function') {
+    autoMap = config.autoMapFn(headers) || {};
+  } else {
+    config.fields.forEach(f => {
+      const fLabel = f.label.toLowerCase().replace(/[^a-z0-9]/g,'');
+      const fKey   = f.key.toLowerCase();
+      const match  = headers.find(h => {
+        const hn = h.toLowerCase().replace(/[^a-z0-9]/g,'');
+        return hn === fLabel || hn === fKey || hn.includes(fLabel.slice(0,6)) || fLabel.includes(hn.slice(0,6));
+      });
+      if (match) autoMap[f.key] = match;
     });
-    if (match) autoMap[f.key] = match;
-  });
+  }
 
   document.getElementById('csv-step-upload').style.display = 'none';
   document.getElementById('csv-step-preview').style.display = '';
@@ -7554,32 +7560,58 @@ async function renderConsumerNotification() {
           <div style="font-size:13px;color:var(--muted);">Consumer notifications will appear here when recalls are active for your network.</div>
         </div>` : `
 
-      <!-- Step 1: Select recall -->
+      <!-- Step 1: Select recall — with search + show more/less -->
       <div class="panel" style="margin-bottom:16px;">
-        <div class="panel-header">
+        <div class="panel-header" style="flex-direction:column;align-items:stretch;gap:10px;">
           <div class="panel-title">Step 1 — Select recall to notify about</div>
+          <div style="position:relative;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--muted);pointer-events:none;"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <input id="cn-recall-search" type="text" placeholder="Search by product, lot, severity, source, or date…"
+              oninput="cnFilterRecalls()"
+              style="width:100%;background:var(--surface2);border:1px solid var(--glass-border);border-radius:8px;padding:8px 12px 8px 32px;font-size:12px;color:var(--text);font-family:'Figtree',sans-serif;outline:none;transition:border-color 0.15s;"
+              onfocus="this.style.borderColor='rgba(52,211,153,0.4)'" onblur="this.style.borderColor='var(--glass-border)'">
+          </div>
         </div>
         <div class="panel-body" style="padding:0;">
-          ${allRecalls.map(r => {
-            const isSelected = _consumerNotifRecallId === r.id;
-            return `<div onclick="selectNotifRecall('${r.id}','${encodeURIComponent(r.product_name||'')}','${encodeURIComponent(r.lot_number||'')}','${encodeURIComponent(r.reason||'')}')"
-              style="display:flex;align-items:center;gap:14px;padding:14px 18px;border-bottom:1px solid var(--border);cursor:pointer;background:${isSelected?'rgba(52,211,153,0.06)':'transparent'};transition:background 0.15s;"
-              onmouseover="this.style.background='rgba(52,211,153,0.04)'" onmouseout="this.style.background='${isSelected?'rgba(52,211,153,0.06)':'transparent'}'">
-              <div style="width:20px;height:20px;border-radius:50%;border:2px solid ${isSelected?'var(--accent)':'var(--border)'};background:${isSelected?'var(--accent)':'transparent'};display:flex;align-items:center;justify-content:center;flex-shrink:0;">
-                ${isSelected?`<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#065f46" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>`:''}
-              </div>
-              <div style="flex:1;">
-                <div style="font-size:13px;font-weight:600;color:var(--text);">${r.product_name||'—'}</div>
-                <div style="font-size:11px;color:var(--muted);margin-top:2px;">
-                  ${r.lot_number?`Lot: <span style="font-family:'DM Mono',monospace;">${r.lot_number}</span> · `:''}
-                  ${r._type==='pushed'?'Manufacturer push':'Manual'} · ${new Date(r.published_at||r.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}
+          <div id="cn-recall-list">
+            ${allRecalls.slice(0, 5).map((r,idx) => {
+              const isSelected = _consumerNotifRecallId === r.id;
+              return `<div class="cn-recall-row" data-idx="${idx}" data-product="${(r.product_name||'').toLowerCase()}" data-lot="${(r.lot_number||'').toLowerCase()}" data-source="${r._type}" data-severity="${(r.severity||'').toLowerCase()}" data-date="${new Date(r.published_at||r.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}).toLowerCase()}"
+                onclick="selectNotifRecall('${r.id}','${encodeURIComponent(r.product_name||'')}','${encodeURIComponent(r.lot_number||'')}','${encodeURIComponent(r.reason||'')}')"
+                style="display:flex;align-items:center;gap:14px;padding:14px 18px;border-bottom:1px solid var(--border);cursor:pointer;background:${isSelected?'rgba(52,211,153,0.06)':'transparent'};transition:background 0.15s;"
+                onmouseover="if(!this.classList.contains('cn-selected'))this.style.background='rgba(52,211,153,0.04)'" onmouseout="if(!this.classList.contains('cn-selected'))this.style.background='transparent'">
+                <div style="width:20px;height:20px;border-radius:50%;border:2px solid ${isSelected?'var(--accent)':'var(--border)'};background:${isSelected?'var(--accent)':'transparent'};display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                  ${isSelected?`<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#065f46" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>`:''}
                 </div>
-              </div>
-              ${r.severity?`<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(255,92,92,0.1);color:var(--danger);">${r.severity}</span>`:''}
-            </div>`;
-          }).join('')}
+                <div style="flex:1;min-width:0;">
+                  <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${r.product_name||'—'}</div>
+                  <div style="font-size:11px;color:var(--muted);margin-top:2px;">
+                    ${r.lot_number?`Lot: <span style="font-family:'DM Mono',monospace;">${r.lot_number}</span> · `:''}
+                    ${r._type==='pushed'?'Manufacturer push':'Manual'} · ${new Date(r.published_at||r.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}
+                  </div>
+                </div>
+                ${r.severity?`<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(255,92,92,0.1);color:var(--danger);white-space:nowrap;flex-shrink:0;">${r.severity}</span>`:''}
+              </div>`;
+            }).join('')}
+          </div>
+          ${allRecalls.length > 5 ? `
+          <div id="cn-show-more-row" style="padding:12px 18px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
+            <div style="font-size:11px;color:var(--muted);" id="cn-count-label">Showing 5 of ${allRecalls.length} recalls</div>
+            <button onclick="cnToggleShowAll()" id="cn-show-more-btn"
+              style="font-family:'DM Mono',monospace;font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid var(--glass-border);background:none;color:var(--muted);cursor:pointer;transition:all 0.15s;"
+              onmouseenter="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'"
+              onmouseleave="this.style.borderColor='var(--glass-border)';this.style.color='var(--muted)'">
+              Show ${allRecalls.length - 5} more ↓
+            </button>
+          </div>` : ''}
+          <div id="cn-no-results" style="display:none;padding:20px 18px;text-align:center;font-size:12px;color:var(--muted);">No recalls match your search.</div>
         </div>
       </div>
+      <div id="cn-recalls-data" data-recalls="${encodeURIComponent(JSON.stringify(allRecalls.map(r => ({
+        id: r.id, product_name: r.product_name||'', lot_number: r.lot_number||'',
+        severity: r.severity||'', _type: r._type, reason: r.reason||'',
+        date: new Date(r.published_at||r.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}),
+      }))))}" data-selected="${_consumerNotifRecallId||''}" style="display:none;"></div>
 
       <!-- Step 2: Customer data -->
       <div class="panel" style="margin-bottom:16px;${!_consumerNotifRecallId?'opacity:0.5;pointer-events:none;':''}">
@@ -7644,9 +7676,85 @@ async function renderConsumerNotification() {
         </div>
       </div>`}`;
 
+    // Init search + show-more after DOM is painted
+    requestAnimationFrame(() => { cnInit(); cnFilterRecalls(); });
+
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error: ${e.message}</div>`;
   }
+}
+
+// ── Consumer notify search + show-more functions ──────────────
+window._cnShowAll = false;
+
+function cnInit() {
+  const el = document.getElementById('cn-recalls-data');
+  if (!el) return;
+  try {
+    window._cnAllRecalls = JSON.parse(decodeURIComponent(el.dataset.recalls || '[]'));
+    window._cnSelected   = el.dataset.selected || '';
+    window._cnShowAll    = false;
+  } catch(e) { window._cnAllRecalls = []; }
+}
+
+function cnToggleShowAll() {
+  window._cnShowAll = !window._cnShowAll;
+  const btn   = document.getElementById('cn-show-more-btn');
+  const label = document.getElementById('cn-count-label');
+  const total = (window._cnAllRecalls||[]).length;
+  if (window._cnShowAll) {
+    if (btn)   btn.textContent = 'Show less ↑';
+    if (label) label.textContent = 'Showing all ' + total + ' recalls';
+  } else {
+    if (btn)   btn.textContent = 'Show ' + (total - 5) + ' more ↓';
+    if (label) label.textContent = 'Showing 5 of ' + total + ' recalls';
+  }
+  cnFilterRecalls();
+}
+
+function cnFilterRecalls() {
+  const query   = (document.getElementById('cn-recall-search')?.value || '').toLowerCase().trim();
+  const all     = window._cnAllRecalls || [];
+  const showAll = window._cnShowAll;
+  const listEl  = document.getElementById('cn-recall-list');
+  const noRes   = document.getElementById('cn-no-results');
+  const moreRow = document.getElementById('cn-show-more-row');
+  if (!listEl) return;
+
+  const filtered = query ? all.filter(r =>
+    r.product_name.toLowerCase().includes(query) ||
+    r.lot_number.toLowerCase().includes(query) ||
+    r.severity.toLowerCase().includes(query) ||
+    r._type.toLowerCase().includes(query) ||
+    r.reason.toLowerCase().includes(query) ||
+    r.date.toLowerCase().includes(query)
+  ) : all;
+
+  const visible = (query || showAll) ? filtered : filtered.slice(0, 5);
+  if (moreRow) moreRow.style.display = (!query && filtered.length > 5) ? '' : 'none';
+  if (noRes)   noRes.style.display   = filtered.length === 0 ? '' : 'none';
+
+  const selected = window._cnSelected || '';
+  listEl.innerHTML = visible.map(r => {
+    const isSel = selected === r.id;
+    const selBg = 'rgba(52,211,153,0.06)';
+    return `<div onclick="selectNotifRecall('${r.id}','${encodeURIComponent(r.product_name)}','${encodeURIComponent(r.lot_number)}','${encodeURIComponent(r.reason)}')"
+      style="display:flex;align-items:center;gap:14px;padding:14px 18px;border-bottom:1px solid var(--border);cursor:pointer;background:${isSel?selBg:'transparent'};transition:background 0.15s;"
+      onmouseover="if(this.style.background!=='${selBg}')this.style.background='rgba(52,211,153,0.04)'"
+      onmouseout="if(this.style.background!=='${selBg}')this.style.background='transparent'">
+      <div style="width:20px;height:20px;border-radius:50%;border:2px solid ${isSel?'var(--accent)':'var(--border)'};background:${isSel?'var(--accent)':'transparent'};display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+        ${isSel?'<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#065f46" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>':''}
+      </div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${r.product_name||'—'}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px;">
+          ${r.lot_number?`Lot: <span style="font-family:'DM Mono',monospace;">${r.lot_number}</span> · `:''}
+          ${r._type==='pushed'?'Manufacturer push':'Manual'} · ${r.date}
+        </div>
+      </div>
+      ${r.severity?`<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(255,92,92,0.1);color:var(--danger);white-space:nowrap;flex-shrink:0;">${r.severity}</span>`:''}
+    </div>`;
+  }).join('');
 }
 
 function selectNotifRecall(id, productEncoded, lotEncoded, reasonEncoded) {
@@ -7662,41 +7770,77 @@ function selectNotifRecall(id, productEncoded, lotEncoded, reasonEncoded) {
 
 function openConsumerCSVImport(mode) {
   const isMatched = mode === 'matched';
+
+  // Broad field definitions so the auto-mapper catches common CSV formats:
+  // "Email", "Email Address", "E-mail", "Customer Email", "contact_email", etc.
+  const broadcastFields = [
+    { key:'email', label:'Customer Email', required:true,  type:'text',
+      aliases:['email','e-mail','emailaddress','email_address','customeremail','contactemail','mail','customer_email','email address'] },
+    { key:'name',  label:'Customer Name',  required:false, type:'text',
+      aliases:['name','fullname','full_name','customername','customer_name','customer','firstname','first_name','contact','recipient'] },
+  ];
+  const matchedFields = [
+    { key:'email',        label:'Customer Email',  required:true,  type:'text',
+      aliases:['email','e-mail','emailaddress','email_address','customeremail','contactemail','mail','customer_email','email address'] },
+    { key:'name',         label:'Customer Name',   required:false, type:'text',
+      aliases:['name','fullname','full_name','customername','customer_name','customer','firstname','first_name','contact'] },
+    { key:'product_name', label:'Product Name',    required:false, type:'text',
+      aliases:['product','productname','product_name','item','itemname','description','product name'] },
+    { key:'lot_number',   label:'Lot Number',      required:false, type:'mono',
+      aliases:['lot','lotnumber','lot_number','batch','batchnumber','batch_number','lotcode','lot_code','lot number','batch number'] },
+  ];
+
   openCSVImport({
     title: isMatched ? 'Upload Purchase History' : 'Upload Customer Emails',
     description: isMatched
-      ? 'Customers matching the recalled product/lot will be notified'
-      : 'All uploaded customers will receive the recall broadcast',
-    fields: isMatched
-      ? [
-          { key:'email',        label:'Customer Email',  required:true,  type:'text' },
-          { key:'product_name', label:'Product Name',    required:false, type:'text' },
-          { key:'lot_number',   label:'Lot Number',      required:false, type:'mono' },
-        ]
-      : [
-          { key:'email', label:'Customer Email', required:true, type:'text' },
-          { key:'name',  label:'Customer Name',  required:false, type:'text' },
-        ],
+      ? "Upload any customer spreadsheet — we'll map your columns automatically"
+      : "Upload any email list — Batch'd detects email and name columns regardless of how they're named",
+    fields: isMatched ? matchedFields : broadcastFields,
     templateExample: isMatched
-      ? [['sarah@example.com','Organic Olive Oil 500ml','L2026-04-01A'],['tom@example.com','Gilde Bacon 200g','B2026-03-15']]
+      ? [['sarah@example.com','Sarah Hansen','Organic Olive Oil 500ml','L2026-04-01A'],['tom@example.com','Tom Nilsen','Gilde Bacon 200g','B2026-03-15']]
       : [['sarah@example.com','Sarah Hansen'],['tom@example.com','Tom Nilsen']],
+    autoMapFn: (headers) => {
+      // Enhanced auto-mapping: try aliases first, then partial match, then email-pattern detection
+      const fields = isMatched ? matchedFields : broadcastFields;
+      const map = {};
+      const norm = h => h.toLowerCase().replace(/[^a-z0-9]/g,'');
+      fields.forEach(f => {
+        // 1. Try exact alias match
+        let match = headers.find(h => f.aliases && f.aliases.includes(norm(h)));
+        // 2. Try partial alias match
+        if (!match) match = headers.find(h => f.aliases && f.aliases.some(a => norm(h).includes(a) || a.includes(norm(h))));
+        // 3. For email field: detect by looking for @ in data values
+        if (!match && f.key === 'email') match = headers.find(h => norm(h).includes('mail'));
+        if (match) map[f.key] = match;
+      });
+      return map;
+    },
     insertRow: async (row) => {
-      // Don't insert to DB — just collect locally
+      // Validate email looks like an email
+      const email = (row.email || '').trim();
+      if (!email || !email.includes('@') || !email.includes('.')) return { error: null }; // skip invalid
+
+      const name = (row.name || '').trim();
       const recallProduct = _consumerNotifCustomers[0]?._product || '';
       const recallLot     = _consumerNotifCustomers[0]?._lot || '';
 
       if (isMatched) {
-        // Only include if product name or lot matches recall
-        const productMatch = !row.product_name || !recallProduct ||
-          row.product_name.toLowerCase().includes(recallProduct.toLowerCase().split(' ')[0]) ||
-          recallProduct.toLowerCase().includes(row.product_name.toLowerCase().split(' ')[0]);
-        const lotMatch = !row.lot_number || !recallLot ||
-          row.lot_number.toLowerCase() === recallLot.toLowerCase();
-        if (productMatch || lotMatch || (!row.product_name && !row.lot_number)) {
-          _consumerNotifCustomers.push({ email: row.email, name: row.name || '', mode: 'matched' });
+        const rp = recallProduct.toLowerCase();
+        const rl = recallLot.toLowerCase();
+        const rowProduct = (row.product_name||'').toLowerCase();
+        const rowLot     = (row.lot_number||'').toLowerCase();
+
+        // Include if: no filter columns present, or lot matches, or product name overlaps
+        const noFilters  = !rowProduct && !rowLot;
+        const lotMatch   = rl && rowLot && (rowLot === rl || rowLot.includes(rl) || rl.includes(rowLot));
+        const prodMatch  = rp && rowProduct && (
+          rowProduct.includes(rp.split(' ')[0]) || rp.includes(rowProduct.split(' ')[0])
+        );
+        if (noFilters || lotMatch || prodMatch) {
+          _consumerNotifCustomers.push({ email, name, mode: 'matched' });
         }
       } else {
-        _consumerNotifCustomers.push({ email: row.email, name: row.name || '', mode: 'broadcast' });
+        _consumerNotifCustomers.push({ email, name, mode: 'broadcast' });
       }
       return { error: null };
     },
