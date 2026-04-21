@@ -1687,12 +1687,21 @@ async function renderOverview() {
       .select('id, product_name, lot_number, active, source, created_at, reason, is_pushed, recall_event_id')
       .eq('organisation_id', _orgId)
       .eq('active', true);
+    // Feed sources — imported from FDA/RASFF/Mattilsynet daily feeds.
+    // These are NOT operational alerts unless they match something in scan history.
+    const FEED_SOURCES = new Set(['fda','rasff','FDA','RASFF','mattilsynet','Mattilsynet']);
+
+    // IDs of recalls that have a confirmed scan match (from scan_recall_matches)
+    const matchedRecallIds = new Set((srmRows||[]).map(m => m.recall_id).filter(Boolean));
+
     // Deduplicate: remove any recall that is already represented by a recall_event
     const pushedLotKeys = new Set(recallEvents.map(e => (e.product_name||'').toLowerCase() + '|' + (e.lot_number||'').toLowerCase()));
     const ownRecalls = (ownRecallsRaw || []).filter(r => {
-      if (r.is_pushed || r.recall_event_id) return false; // exact duplicate marker
+      if (r.is_pushed || r.recall_event_id) return false; // auto-created from push — skip
+      // Feed-imported recalls only show if they've matched something in scan history
+      if (FEED_SOURCES.has(r.source)) return matchedRecallIds.has(r.id);
       const key = (r.product_name||'').toLowerCase() + '|' + (r.lot_number||'').toLowerCase();
-      return !pushedLotKeys.has(key); // fuzzy dedup by product+lot
+      return !pushedLotKeys.has(key);
     });
 
     // ── Cross-reference: which recall events affect YOUR lots on shelf? ──
@@ -2256,14 +2265,25 @@ async function renderRecalls() {
   }
 
   const activePushed = pushed.filter(p => !p.recall_events?.is_drill).length;
-  // Exclude recalls that are exact duplicates of pushed recall_events
+
+  // Feed-sourced recalls (imported from national databases) only appear if they
+  // match something in recent scan history. Manual recalls created by this org always show.
+  const RECALL_FEED_SOURCES = new Set(['fda','rasff','FDA','RASFF','mattilsynet','Mattilsynet']);
+
+  // Load scan_recall_matches to know which feed recalls have confirmed scan matches
+  const { data: recallMatchRows } = await sb.from('scan_recall_matches')
+    .select('recall_id')
+    .eq('organisation_id', _orgId);
+  const matchedIds = new Set((recallMatchRows||[]).map(m => m.recall_id).filter(Boolean));
+
   const pushedKeys = new Set(pushed.map(p => (p.recall_events?.product_name||'').toLowerCase() + '|' + (p.recall_events?.lot_number||'').toLowerCase()));
   const manualRecalls = recalls.filter(r => {
     if (!r.active) return false;
     if (r.is_pushed || r.recall_event_id) return false; // auto-created from push — skip
-    if (['fda','rasff','FDA','RASFF'].includes(r.source)) return false;
+    // Feed-imported recalls: only show if they have a confirmed match in scan history
+    if (RECALL_FEED_SOURCES.has(r.source)) return matchedIds.has(r.id);
     const key = (r.product_name||'').toLowerCase() + '|' + (r.lot_number||'').toLowerCase();
-    return !pushedKeys.has(key); // skip if already shown as a manufacturer push
+    return !pushedKeys.has(key);
   });
   const active = manualRecalls.length + activePushed;
   const unacknowledged = acks.filter(a => a.status === 'notified').length;
@@ -4834,8 +4854,9 @@ async function renderSettings() {
   const { data: org } = await sb.from('organisations').select('*').eq('id', _orgId).single();
 
   const userId = (await sb.auth.getUser()).data?.user?.id;
-  const { data: userSett } = await sb.from('user_settings').select('recall_coordinator_name, recall_coordinator_contact, recall_coordinator_backup').eq('user_id', userId).single();
+  const { data: userSett } = await sb.from('user_settings').select('recall_coordinator_name, recall_coordinator_contact, recall_coordinator_backup, recall_lookback_days').eq('user_id', userId).single();
   const coord = userSett || {};
+  const lookbackDays = userSett?.recall_lookback_days || 180;
 
   el.innerHTML = `
     <div style="margin-bottom:16px;">
@@ -4865,6 +4886,34 @@ async function renderSettings() {
             <input type="text" value="${_orgId}" readonly style="opacity:0.5;font-size:10px;" />
           </div>
           <button class="btn-primary" onclick="saveOrgSettings()" id="btn-save-org" style="margin-top:8px;">Save changes</button>
+        </div>
+      </div>
+
+      <!-- Recall settings -->
+      <div class="panel">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Recall matching</div>
+            <div class="panel-sub">How far back Batch'd looks when cross-referencing recalls against scan history</div>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div id="recall-sett-msg" style="display:none;font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;"></div>
+          <div class="field">
+            <label>Scan history lookback window</label>
+            <select id="lookback-days-input">
+              <option value="90"  ${lookbackDays<=90?'selected':''}>90 days (3 months)</option>
+              <option value="180" ${lookbackDays>90&&lookbackDays<=180?'selected':''}>180 days (6 months) — recommended</option>
+              <option value="270" ${lookbackDays>180&&lookbackDays<=270?'selected':''}>270 days (9 months)</option>
+              <option value="365" ${lookbackDays>270?'selected':''}>365 days (1 year)</option>
+            </select>
+          </div>
+          <div style="background:var(--surface2);border-radius:8px;padding:11px 13px;font-size:11px;color:var(--muted);line-height:1.7;margin-bottom:14px;">
+            <strong style="color:var(--text);">How this works:</strong> When a recall fires, Batch'd checks your store scan records back this many days to identify which products may still be on shelf. A longer window catches products with longer shelf lives but may surface older, already-sold items.
+            <br><br>
+            <strong style="color:var(--text);">Our recommendation: 180 days.</strong> Covers most ambient and chilled products. EU Reg. 178/2002 requires records for shelf-life + 6 months — 180 days covers the operational response window. For frozen or long-life products, use 270–365 days.
+          </div>
+          <button class="btn-primary" onclick="saveRecallSettings()" id="btn-save-recall-sett">Save</button>
         </div>
       </div>
 
@@ -4967,6 +5016,22 @@ async function renderSettings() {
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading settings: ${e.message}</div>`;
   }
+}
+
+async function saveRecallSettings() {
+  const days  = parseInt(document.getElementById('lookback-days-input')?.value || '180', 10);
+  const btn   = document.getElementById('btn-save-recall-sett');
+  const msgEl = document.getElementById('recall-sett-msg');
+  const setMsg = (txt, ok) => { if (msgEl) { msgEl.textContent=txt; msgEl.style.cssText='display:block;font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;background:'+( ok?'rgba(52,211,153,0.1)':'rgba(255,92,92,0.1)')+';border:1px solid '+(ok?'rgba(52,211,153,0.3)':'rgba(255,92,92,0.3)')+';color:'+(ok?'var(--accent)':'var(--danger)'); } };
+  if (btn) { btn.disabled=true; btn.textContent='Saving…'; }
+  const userId = (await sb.auth.getUser()).data?.user?.id;
+  const { error } = await sb.from('user_settings').upsert({
+    user_id: userId, organisation_id: _orgId,
+    recall_lookback_days: days,
+  }, { onConflict: 'user_id' });
+  if (error) { setMsg(error.message, false); }
+  else { setMsg(`✓ Lookback window set to ${days} days`, true); }
+  if (btn) { btn.disabled=false; btn.textContent='Save'; }
 }
 
 
