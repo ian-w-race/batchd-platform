@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Batch'd API Docs — ERP Webhook</title>
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <meta name="theme-color" content="#34d399" />
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700;800;900&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #080f12; --surface: #0d1e1c; --surface2: #13302b;
+      --border: #163d37; --accent: #34d399; --text: #edfdf8;
+      --muted: #6aaf9e; --danger: #ff5c5c; --warn: #f5a623; --info: #38bdf8;
+    }
+    body { background: var(--bg); color: var(--text); font-family: 'Figtree', sans-serif; line-height: 1.6; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* ── Layout ── */
+    .layout { display: grid; grid-template-columns: 260px 1fr; min-height: 100vh; }
+    .sidebar {
+      position: sticky; top: 0; height: 100vh; overflow-y: auto;
+      background: var(--surface); border-right: 1px solid var(--border);
+      padding: 32px 0;
+    }
+    .sidebar-logo { padding: 0 24px 28px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+    .sidebar-logo .brand { font-weight: 800; font-size: 20px; color: var(--accent); }
+    .sidebar-logo .sub { font-size: 11px; color: var(--muted); margin-top: 2px; font-family: 'DM Mono', monospace; }
+    .nav-section { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); padding: 12px 24px 6px; }
+    .nav-item { display: block; padding: 8px 24px; font-size: 13px; color: var(--muted); cursor: pointer; transition: all 0.15s; border-left: 2px solid transparent; }
+    .nav-item:hover, .nav-item.active { color: var(--text); border-color: var(--accent); background: rgba(52,211,153,0.05); }
+
+    /* ── Content ── */
+    .content { max-width: 820px; padding: 48px 40px; }
+    .page-title { font-size: 28px; font-weight: 800; color: var(--text); margin-bottom: 6px; }
+    .page-sub { font-size: 14px; color: var(--muted); margin-bottom: 40px; }
+
+    /* ── Sections ── */
+    .doc-section { margin-bottom: 52px; }
+    .section-title { font-size: 18px; font-weight: 700; color: var(--text); margin-bottom: 6px; border-bottom: 1px solid var(--border); padding-bottom: 10px; }
+    .section-sub { font-size: 13px; color: var(--muted); margin-bottom: 20px; }
+    p { font-size: 13px; color: var(--muted); margin-bottom: 12px; line-height: 1.7; }
+    strong { color: var(--text); }
+
+    /* ── Endpoint pill ── */
+    .endpoint {
+      display: flex; align-items: center; gap: 12px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 14px 18px; margin: 16px 0;
+    }
+    .method { font-family: 'DM Mono', monospace; font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 6px; background: rgba(52,211,153,0.12); color: var(--accent); flex-shrink: 0; }
+    .method.post { background: rgba(56,189,248,0.12); color: var(--info); }
+    .endpoint-url { font-family: 'DM Mono', monospace; font-size: 13px; color: var(--text); }
+
+    /* ── Code block ── */
+    .code-wrap { position: relative; margin: 12px 0 20px; }
+    pre {
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 10px; padding: 20px; overflow-x: auto;
+      font-family: 'DM Mono', monospace; font-size: 12px; line-height: 1.7;
+      color: var(--text);
+    }
+    .copy-btn {
+      position: absolute; top: 10px; right: 10px;
+      background: var(--surface); border: 1px solid var(--border);
+      color: var(--muted); font-size: 10px; font-family: 'DM Mono', monospace;
+      padding: 4px 10px; border-radius: 6px; cursor: pointer; transition: all 0.15s;
+    }
+    .copy-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .kw { color: var(--info); }
+    .str { color: #a5f3b8; }
+    .num { color: var(--warn); }
+    .cmt { color: var(--muted); font-style: italic; }
+
+    /* ── Table ── */
+    table { width: 100%; border-collapse: collapse; margin: 12px 0 20px; font-size: 12px; }
+    th { background: var(--surface2); padding: 10px 14px; text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); border-bottom: 1px solid var(--border); }
+    td { padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    td:first-child { font-family: 'DM Mono', monospace; color: var(--accent); white-space: nowrap; }
+    td:nth-child(2) { color: var(--muted); }
+    td.required::after { content: ' *'; color: var(--danger); }
+    .badge { display: inline-block; font-size: 10px; padding: 2px 8px; border-radius: 10px; font-family: 'DM Mono', monospace; font-weight: 700; }
+    .badge.req  { background: rgba(255,92,92,0.1); color: var(--danger); }
+    .badge.opt  { background: rgba(106,175,158,0.1); color: var(--muted); }
+    .badge.cond { background: rgba(245,166,35,0.1); color: var(--warn); }
+
+    /* ── Alert boxes ── */
+    .alert { padding: 14px 16px; border-radius: 10px; font-size: 12px; margin: 16px 0; line-height: 1.6; }
+    .alert.info  { background: rgba(56,189,248,0.07); border: 1px solid rgba(56,189,248,0.2); color: var(--text); }
+    .alert.warn  { background: rgba(245,166,35,0.07); border: 1px solid rgba(245,166,35,0.2); color: var(--text); }
+    .alert.green { background: rgba(52,211,153,0.07); border: 1px solid rgba(52,211,153,0.2); color: var(--text); }
+
+    /* ── Response codes ── */
+    .resp-grid { display: grid; grid-template-columns: 80px 1fr; gap: 8px 16px; margin: 12px 0 20px; }
+    .resp-code { font-family: 'DM Mono', monospace; font-size: 12px; font-weight: 700; }
+    .resp-code.ok   { color: var(--accent); }
+    .resp-code.err  { color: var(--danger); }
+    .resp-desc { font-size: 12px; color: var(--muted); }
+
+    @media (max-width: 768px) {
+      .layout { grid-template-columns: 1fr; }
+      .sidebar { position: static; height: auto; }
+      .content { padding: 32px 20px; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="layout">
+
+  <!-- Sidebar nav -->
+  <nav class="sidebar">
+    <div class="sidebar-logo">
+      <div class="brand">Batch'd</div>
+      <div class="sub">API Documentation</div>
+    </div>
+    <div class="nav-section">Webhooks</div>
+    <a class="nav-item active" href="#webhook-recall">POST /webhook-recall</a>
+    <div class="nav-section">Reference</div>
+    <a class="nav-item" href="#auth">Authentication</a>
+    <a class="nav-item" href="#request-body">Request body</a>
+    <a class="nav-item" href="#response">Response</a>
+    <a class="nav-item" href="#errors">Errors</a>
+    <div class="nav-section">Guides</div>
+    <a class="nav-item" href="#sap">SAP integration</a>
+    <a class="nav-item" href="#oracle">Oracle / Dynamics</a>
+    <a class="nav-item" href="#testing">Testing</a>
+    <div style="padding: 24px 24px 0; margin-top: 16px; border-top: 1px solid var(--border);">
+      <div style="font-size: 11px; color: var(--muted); line-height: 1.7;">
+        Questions?<br>
+        <a href="mailto:ian.w.race@gmail.com">ian.w.race@gmail.com</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Main content -->
+  <main class="content">
+
+    <div class="page-title">ERP Webhook API</div>
+    <div class="page-sub">Push recall events directly from your ERP or quality management system into Batch'd — no manual entry required.</div>
+
+    <!-- ── Overview ── -->
+    <section class="doc-section" id="webhook-recall">
+      <div class="section-title">POST /webhook-recall</div>
+      <div class="section-sub">Create a recall event and immediately notify all connected retailer stores</div>
+
+      <div class="endpoint">
+        <span class="method post">POST</span>
+        <span class="endpoint-url">https://app.batchdapp.com/.netlify/functions/webhook-recall</span>
+      </div>
+
+      <p>When you fire this endpoint, Batch'd will:</p>
+      <ol style="font-size:13px;color:var(--muted);padding-left:20px;margin-bottom:16px;line-height:2;">
+        <li>Create a <code style="font-family:'DM Mono',monospace;font-size:11px;background:var(--surface2);padding:1px 5px;border-radius:3px;">recall_event</code> record in the database</li>
+        <li>Distribute it to all active retailer trading partners</li>
+        <li>Create per-store acknowledgement records (5-step chain: notified → acknowledged → pulled → disposed → confirmed)</li>
+        <li>Cross-reference against scan history to compute unit exposure immediately</li>
+        <li>Send recall alert emails to each retailer's contact address</li>
+      </ol>
+
+      <div class="alert info">
+        <strong>Average time to all stores notified:</strong> &lt; 90 seconds from webhook receipt.
+      </div>
+    </section>
+
+    <!-- ── Authentication ── -->
+    <section class="doc-section" id="auth">
+      <div class="section-title">Authentication</div>
+      <p>All requests must include your manufacturer API key as a header.</p>
+
+      <table>
+        <thead><tr><th>Header</th><th>Value</th><th>Required</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>X-Batchd-Api-Key</td>
+            <td>Your manufacturer API key from the Batch'd portal under Settings → API Key</td>
+            <td><span class="badge req">Required</span></td>
+          </tr>
+          <tr>
+            <td>Content-Type</td>
+            <td>application/json</td>
+            <td><span class="badge req">Required</span></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="code-wrap">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <pre><span class="cmt"># Example using curl</span>
+curl -X POST https://app.batchdapp.com/.netlify/functions/webhook-recall \
+  -H <span class="str">"X-Batchd-Api-Key: your_api_key_here"</span> \
+  -H <span class="str">"Content-Type: application/json"</span> \
+  -d '{...}'</pre>
+      </div>
+
+      <div class="alert warn">
+        <strong>Keep your API key secret.</strong> Do not include it in client-side code or commit it to source control. If compromised, regenerate it immediately in the Batch'd manufacturer portal.
+      </div>
+    </section>
+
+    <!-- ── Request body ── -->
+    <section class="doc-section" id="request-body">
+      <div class="section-title">Request body</div>
+      <p>Send a JSON object with the following fields:</p>
+
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Description</th><th>Required</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>product_name</td>
+            <td style="color:var(--info);font-family:'DM Mono',monospace;font-size:11px;">string</td>
+            <td>Full product name as it appears on packaging. Used to match against retailer scan records.</td>
+            <td><span class="badge req">Required</span></td>
+          </tr>
+          <tr>
+            <td>lot_number</td>
+            <td style="color:var(--info);font-family:'DM Mono',monospace;font-size:11px;">string</td>
+            <td>Lot or batch code. Must match exactly the format printed on the product. Include all characters including prefixes (e.g. <code style="font-family:'DM Mono',monospace;font-size:11px;background:var(--surface2);padding:1px 5px;border-radius:3px;">L2026-04-01A</code>).</td>
+            <td><span class="badge req">Required</span></td>
+          </tr>
+          <tr>
+            <td>reason</td>
+            <td style="color:var(--info);font-family:'DM Mono',monospace;font-size:11px;">string</td>
+            <td>Human-readable reason for the recall. Included in notification emails and dashboard display.</td>
+            <td><span class="badge req">Required</span></td>
+          </tr>
+          <tr>
+            <td>severity</td>
+            <td style="color:var(--info);font-family:'DM Mono',monospace;font-size:11px;">string</td>
+            <td>Classification. Must be one of: <code style="font-family:'DM Mono',monospace;font-size:11px;background:var(--surface2);padding:1px 5px;border-radius:3px;">unknown</code>, <code style="font-family:'DM Mono',monospace;font-size:11px;background:var(--surface2);padding:1px 5px;border-radius:3px;">class_i</code>, <code style="font-family:'DM Mono',monospace;font-size:11px;background:var(--surface2);padding:1px 5px;border-radius:3px;">class_ii</code>, <code style="font-family:'DM Mono',monospace;font-size:11px;background:var(--surface2);padding:1px 5px;border-radius:3px;">class_iii</code>, <code style="font-family:'DM Mono',monospace;font-size:11px;background:var(--surface2);padding:1px 5px;border-radius:3px;">market_withdrawal</code></td>
+            <td><span class="badge req">Required</span></td>
+          </tr>
+          <tr>
+            <td>barcode</td>
+            <td style="color:var(--info);font-family:'DM Mono',monospace;font-size:11px;">string</td>
+            <td>EAN-13 or UPC-A barcode. Improves matching accuracy when lot codes vary in format.</td>
+            <td><span class="badge opt">Optional</span></td>
+          </tr>
+          <tr>
+            <td>description</td>
+            <td style="color:var(--info);font-family:'DM Mono',monospace;font-size:11px;">string</td>
+            <td>Extended description — allergen details, affected date range, authority reference numbers, etc.</td>
+            <td><span class="badge opt">Optional</span></td>
+          </tr>
+          <tr>
+            <td>authority_reference</td>
+            <td style="color:var(--info);font-family:'DM Mono',monospace;font-size:11px;">string</td>
+            <td>Regulatory case number (e.g. FDA recall number, Mattilsynet case reference).</td>
+            <td><span class="badge opt">Optional</span></td>
+          </tr>
+          <tr>
+            <td>is_drill</td>
+            <td style="color:var(--info);font-family:'DM Mono',monospace;font-size:11px;">boolean</td>
+            <td>Set to <code style="font-family:'DM Mono',monospace;font-size:11px;background:var(--surface2);padding:1px 5px;border-radius:3px;">true</code> to send a mock recall drill. Retailers see "[DRILL]" banners and emails are flagged. Drill records are tracked separately and excluded from compliance reporting.</td>
+            <td><span class="badge opt">Optional</span></td>
+          </tr>
+          <tr>
+            <td>target_retailer_ids</td>
+            <td style="color:var(--info);font-family:'DM Mono',monospace;font-size:11px;">string[]</td>
+            <td>Array of specific Batch'd retailer org IDs to target. If omitted, the recall is sent to all active trading partners.</td>
+            <td><span class="badge opt">Optional</span></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="code-wrap">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <pre>{
+  <span class="kw">"product_name"</span>: <span class="str">"Gilde Kjøttdeig 400g"</span>,
+  <span class="kw">"lot_number"</span>:    <span class="str">"L2026-04-01A"</span>,
+  <span class="kw">"reason"</span>:       <span class="str">"Potential Listeria monocytogenes contamination"</span>,
+  <span class="kw">"severity"</span>:     <span class="str">"class_i"</span>,
+  <span class="kw">"barcode"</span>:      <span class="str">"7038010013882"</span>,
+  <span class="kw">"description"</span>:  <span class="str">"Lot produced 2026-04-01. All retailers please remove from shelf immediately. Authority reference: MT-2026-00142."</span>,
+  <span class="kw">"authority_reference"</span>: <span class="str">"MT-2026-00142"</span>,
+  <span class="kw">"is_drill"</span>:     <span class="num">false</span>
+}</pre>
+      </div>
+    </section>
+
+    <!-- ── Response ── -->
+    <section class="doc-section" id="response">
+      <div class="section-title">Response</div>
+      <p>On success, the endpoint returns <code style="font-family:'DM Mono',monospace;font-size:11px;background:var(--surface2);padding:1px 5px;border-radius:3px;">200 OK</code> with:</p>
+
+      <div class="code-wrap">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <pre>{
+  <span class="kw">"recall_event_id"</span>: <span class="str">"8f3a2b1c-..."</span>,  <span class="cmt">// UUID of the created recall event</span>
+  <span class="kw">"retailer_count"</span>:  <span class="num">12</span>,             <span class="cmt">// Number of retailers notified</span>
+  <span class="kw">"store_count"</span>:     <span class="num">47</span>,             <span class="cmt">// Total stores across all retailers</span>
+  <span class="kw">"emails_sent"</span>:     <span class="num">12</span>,             <span class="cmt">// Confirmation emails dispatched</span>
+  <span class="kw">"is_drill"</span>:        <span class="num">false</span>
+}</pre>
+      </div>
+
+      <div class="resp-grid">
+        <div class="resp-code ok">200</div><div class="resp-desc">Recall created and distributed successfully</div>
+        <div class="resp-code err">401</div><div class="resp-desc">Missing or invalid API key</div>
+        <div class="resp-code err">400</div><div class="resp-desc">Missing required fields — check <code style="font-family:'DM Mono',monospace;font-size:11px;">product_name</code>, <code style="font-family:'DM Mono',monospace;font-size:11px;">lot_number</code>, <code style="font-family:'DM Mono',monospace;font-size:11px;">reason</code>, <code style="font-family:'DM Mono',monospace;font-size:11px;">severity</code></div>
+        <div class="resp-code err">422</div><div class="resp-desc">Invalid <code style="font-family:'DM Mono',monospace;font-size:11px;">severity</code> value</div>
+        <div class="resp-code err">500</div><div class="resp-desc">Internal error — retry with exponential backoff</div>
+      </div>
+    </section>
+
+    <!-- ── Errors ── -->
+    <section class="doc-section" id="errors">
+      <div class="section-title">Error handling</div>
+      <p>All errors return a JSON body with an <code style="font-family:'DM Mono',monospace;font-size:11px;background:var(--surface2);padding:1px 5px;border-radius:3px;">error</code> field:</p>
+      <div class="code-wrap">
+        <pre>{ <span class="kw">"error"</span>: <span class="str">"product_name is required"</span> }</pre>
+      </div>
+      <p>We recommend implementing retry logic with exponential backoff for 5xx errors. Network timeouts should be set to at least 30 seconds — the webhook creates DB records, distributes to retailers, and sends emails synchronously.</p>
+      <div class="alert warn">
+        <strong>Idempotency:</strong> The webhook does not currently support idempotency keys. If your ERP retries on timeout, a duplicate recall event may be created. Deduplication by product+lot is applied automatically in the retailer dashboard, but avoid retrying 200 responses.
+      </div>
+    </section>
+
+    <!-- ── SAP guide ── -->
+    <section class="doc-section" id="sap">
+      <div class="section-title">SAP integration</div>
+      <p>Trigger the webhook from an SAP Business Process Automation or ABAP program on quality notification creation. Map SAP QM fields as follows:</p>
+
+      <table>
+        <thead><tr><th>SAP Field</th><th>Batch'd Field</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>QMEL-QMTXT (short text)</td><td>reason</td><td>Quality notification description</td></tr>
+          <tr><td>MARA-MAKTX (material desc)</td><td>product_name</td><td>Material long text preferred</td></tr>
+          <tr><td>MCH7-CHARG (batch number)</td><td>lot_number</td><td>Include plant prefix if applicable</td></tr>
+          <tr><td>MARA-EAN11 (EAN/UPC)</td><td>barcode</td><td>International Article Number</td></tr>
+          <tr><td>QM notification category</td><td>severity</td><td>Map to class_i / class_ii / class_iii</td></tr>
+        </tbody>
+      </table>
+
+      <div class="code-wrap">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <pre><span class="cmt">// Example: SAP BPA HTTP call via Groovy script</span>
+<span class="kw">def</span> payload = [
+  product_name: materialDescription,
+  lot_number:   batchNumber,
+  reason:       notificationText,
+  severity:     mapSeverity(notificationCategory),
+  barcode:      eanNumber
+]
+<span class="kw">def</span> response = httpClient.post(
+  url:     <span class="str">'https://app.batchdapp.com/.netlify/functions/webhook-recall'</span>,
+  headers: [<span class="str">'X-Batchd-Api-Key'</span>: apiKey, <span class="str">'Content-Type'</span>: <span class="str">'application/json'</span>],
+  body:    JsonOutput.toJson(payload)
+)</pre>
+      </div>
+    </section>
+
+    <!-- ── Oracle/Dynamics guide ── -->
+    <section class="doc-section" id="oracle">
+      <div class="section-title">Oracle / Microsoft Dynamics</div>
+
+      <p><strong>Oracle Cloud SCM:</strong> Use Oracle Integration Cloud (OIC) with an HTTP adapter. Trigger on Quality Issue lifecycle event type "Recall" or "Withdrawal".</p>
+      <p><strong>Microsoft Dynamics 365:</strong> Use Power Automate with an HTTP action triggered on a Recall work order status change. Map Product Name and Lot Tracking Number to the corresponding Batch'd fields.</p>
+
+      <div class="code-wrap">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <pre><span class="cmt">// Power Automate — HTTP action body (dynamic content)</span>
+{
+  <span class="kw">"product_name"</span>: <span class="str">"@{triggerBody()?['ProductName']}"</span>,
+  <span class="kw">"lot_number"</span>:   <span class="str">"@{triggerBody()?['LotNumber']}"</span>,
+  <span class="kw">"reason"</span>:       <span class="str">"@{triggerBody()?['RecallReason']}"</span>,
+  <span class="kw">"severity"</span>:     <span class="str">"class_i"</span>
+}</pre>
+      </div>
+
+      <div class="alert info">
+        Contact <a href="mailto:ian.w.race@gmail.com">ian.w.race@gmail.com</a> for dedicated integration support, field mapping worksheets, or to schedule a technical call with your ERP team.
+      </div>
+    </section>
+
+    <!-- ── Testing ── -->
+    <section class="doc-section" id="testing">
+      <div class="section-title">Testing</div>
+      <p>Use the <code style="font-family:'DM Mono',monospace;font-size:11px;background:var(--surface2);padding:1px 5px;border-radius:3px;">"is_drill": true</code> flag to send test recalls without affecting live operations. Drill events:</p>
+      <ul style="font-size:13px;color:var(--muted);padding-left:20px;margin-bottom:16px;line-height:2.2;">
+        <li>Appear to all retailers with an amber "[DRILL]" banner</li>
+        <li>Trigger the full 5-step acknowledgement chain</li>
+        <li>Send notification emails clearly labelled as drills</li>
+        <li>Generate response time metrics for compliance reporting</li>
+        <li>Are <strong>excluded</strong> from regulatory audit trail exports</li>
+      </ul>
+
+      <p>We recommend running a drill before going live with your ERP integration to verify the field mapping and confirm all retail contacts receive the email correctly.</p>
+
+      <div class="code-wrap">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <pre><span class="cmt"># Test recall drill — safe to run at any time</span>
+curl -X POST https://app.batchdapp.com/.netlify/functions/webhook-recall \
+  -H <span class="str">"X-Batchd-Api-Key: your_api_key_here"</span> \
+  -H <span class="str">"Content-Type: application/json"</span> \
+  -d '{
+    "product_name": "Integration Test Product",
+    "lot_number":   "TEST-001",
+    "reason":       "ERP integration test — not a real recall",
+    "severity":     "unknown",
+    "is_drill":     true
+  }'</pre>
+      </div>
+
+      <div class="alert green">
+        <strong>Expected response for a successful drill:</strong><br>
+        <code style="font-family:'DM Mono',monospace;font-size:11px;">{"recall_event_id":"...","retailer_count":N,"store_count":N,"emails_sent":N,"is_drill":true}</code>
+      </div>
+    </section>
+
+    <div style="border-top:1px solid var(--border);padding-top:28px;margin-top:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+      <div style="font-size:11px;color:var(--muted);">
+        <strong style="color:var(--text);">Batch'd API</strong> · Food traceability &amp; recall management<br>
+        <a href="https://batchd.no">batchd.no</a> · <a href="mailto:ian.w.race@gmail.com">ian.w.race@gmail.com</a>
+      </div>
+      <div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">Last updated April 2026</div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+  function copyCode(btn) {
+    const pre = btn.nextElementSibling;
+    const text = pre.textContent;
+    navigator.clipboard.writeText(text).then(() => {
+      btn.textContent = 'Copied ✓';
+      setTimeout(() => btn.textContent = 'Copy', 2000);
+    }).catch(() => {
+      btn.textContent = 'Failed';
+      setTimeout(() => btn.textContent = 'Copy', 2000);
+    });
+  }
+
+  // Highlight active nav item on scroll
+  const sections = document.querySelectorAll('.doc-section[id]');
+  const navItems = document.querySelectorAll('.nav-item[href^="#"]');
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        navItems.forEach(n => n.classList.remove('active'));
+        const link = document.querySelector(`.nav-item[href="#${e.target.id}"]`);
+        if (link) link.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-20% 0px -70% 0px' });
+  sections.forEach(s => observer.observe(s));
+</script>
+
+</body>
+</html>

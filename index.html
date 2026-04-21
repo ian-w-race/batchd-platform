@@ -7813,13 +7813,16 @@ async function saveRecord() {
 async function checkDuplicate(productName, lotNum, storeName) {
   try {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const { data } = await sb.from('scans')
+    // Use UUID when available — store names can change, UUIDs never do
+    const storeUUID = window._storeIdMap?.[storeName] || null;
+    let q = sb.from('scans')
       .select('id')
       .ilike('product_name', productName)
       .eq('lot_number', lotNum)
-      .eq('store_name', storeName)
       .gte('created_at', since)
       .limit(1);
+    q = storeUUID ? q.eq('store_id', storeUUID) : q.eq('store_name', storeName);
+    const { data } = await q;
     return data && data.length > 0;
   } catch(e) { return false; }
 }
@@ -9868,7 +9871,11 @@ async function generateAuditReport() {
     let query = sb.from('scans').select('*').order('created_at', { ascending: true });
     if (from)  query = query.gte('created_at', from);
     if (to)    { const td = new Date(to); td.setHours(23,59,59,999); query = query.lte('created_at', td.toISOString()); }
-    if (store) query = query.eq('store_name', store);
+    if (store) {
+      // Use UUID when available (rename-safe) — fall back to name for legacy scans without store_id
+      const storeUUID = window._storeIdMap?.[store] || null;
+      query = storeUUID ? query.eq('store_id', storeUUID) : query.eq('store_name', store);
+    }
     const { data, error } = await query;
     if (error) throw error;
 
@@ -10235,7 +10242,10 @@ async function fsmaExport() {
       .lte('created_at', toVal + 'T23:59:59')
       .order('created_at', { ascending: true });
 
-    if (storeVal) query = query.eq('store_name', storeVal);
+    if (storeVal) {
+      const storeUUID = window._storeIdMap?.[storeVal] || null;
+      query = storeUUID ? query.eq('store_id', storeUUID) : query.eq('store_name', storeVal);
+    }
 
     const { data: scans, error } = await query;
     if (error) throw error;
