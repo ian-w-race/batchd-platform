@@ -4132,12 +4132,17 @@ async function renderReports() {
       {
         key: 'exposure', cat: 'Recalls',
         title: 'Exposure notice', icon: '📢', color: 'var(--danger)',
-        desc: 'Customer-facing recall notification template for in-store and digital communication',
-        stats: [
-          { val: recallCount, label: 'recalls to notify on' },
-          { val: '—', label: 'customers matched' },
-          { val: 'Template', label: 'format' },
-        ],
+        desc: 'Customer-facing recall notification template — includes live unit exposure from scan history',
+        stats: (() => {
+          const srmAll = (srmRes.data||[]);
+          const onShelf = srmAll.filter(m => !m.removed_at).reduce((s,m)=>s+(m.quantity||1),0);
+          const pulled  = srmAll.filter(m =>  m.removed_at).reduce((s,m)=>s+(m.quantity||1),0);
+          return [
+            { val: recallCount, label: 'recalls to notify on' },
+            { val: onShelf > 0 ? onShelf : (pulled > 0 ? pulled + ' pulled' : '—'), label: onShelf > 0 ? 'units still on shelf' : 'units pulled' },
+            { val: new Set(srmAll.map(m=>m.store_name).filter(Boolean)).size || '—', label: 'stores exposed' },
+          ];
+        })(),
         reg: 'Consumer notification',
       },
       {
@@ -4743,11 +4748,24 @@ async function downloadReport(key) {
         ])
       );
     } else if (key === 'recalls') {
+      // Fetch exposure data for the CSV
+      const srmForCsv = await sb.from('scan_recall_matches')
+        .select('recall_id, quantity, removed_at, store_name')
+        .eq('organisation_id', _orgId);
+      const srmData = srmForCsv.data || [];
+      const exposureForRecall = id => {
+        const rows = srmData.filter(m => m.recall_id === id);
+        const onShelf = rows.filter(m=>!m.removed_at).reduce((s,m)=>s+(m.quantity||1),0);
+        const pulled  = rows.filter(m=> m.removed_at).reduce((s,m)=>s+(m.quantity||1),0);
+        const stores  = [...new Set(rows.map(m=>m.store_name).filter(Boolean))].join('; ');
+        return { onShelf, pulled, stores };
+      };
       downloadCSV(`batchd-recall-history-${date}.csv`,
-        ['Date','Product','Lot Number','Barcode','Source','Severity','Reason','Authority Reference','Status','Is Drill'],
+        ['Date','Product','Lot Number','Barcode','Source','Severity','Reason','Authority Reference','Status','Is Drill','Units On Shelf','Units Pulled','Stores Exposed'],
         data.map(r => {
           const isPushed = r._type === 'pushed';
           const d = isPushed ? (r.published_at||r.created_at) : r.created_at;
+          const exp = exposureForRecall(r.id);
           return [
             d ? new Date(d).toLocaleDateString('en-GB') : '',
             r.product_name, r.lot_number, r.barcode||'',
@@ -4755,6 +4773,7 @@ async function downloadReport(key) {
             r.severity||'', r.reason||'', r.authority_reference||'',
             isPushed ? 'Active' : (r.active ? 'Active' : 'Resolved'),
             r.is_drill ? 'Yes' : 'No',
+            exp.onShelf, exp.pulled, exp.stores,
           ];
         })
       );
