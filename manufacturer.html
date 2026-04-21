@@ -3988,12 +3988,12 @@ const MFR_FRAMEWORKS = {
       { label:'Labels in Norwegian', detail:'Matinformasjonsforskriften §2 — all product labels sold in Norway', urgency:'med' },
     ],
     checklist: [
-      { id:'mf_coord',    label:'Recall Coordinator designated', detail:'Named person with 24/7 contact — required for Mattilsynet notifications' },
-      { id:'mf_lots',     label:'Lot codes registered', detail:'All products on shelf have partinummer documented' },
-      { id:'mf_ship',     label:'Shipment records logged', detail:'One step forward — who received each lot (EU 178/2002 Art. 18)' },
-      { id:'mf_partner',  label:'Retailer trading partners connected', detail:'Distribution network documented for recall reach' },
-      { id:'mf_drill',    label:'Mock recall drill conducted', detail:'Recommended annually under IK-mat guidelines' },
-      { id:'mf_plan',     label:'Written recall procedure', detail:'Documented withdrawal/recall process per IK-mat forskriften' },
+      { id:'mf_coord',    label:'Recall Coordinator designated', detail:'Named person with 24/7 contact — required for Mattilsynet notifications', action:'Go to Settings → Recall Coordinator and add name + contact' },
+      { id:'mf_lots',     label:'Lot codes registered', detail:'All products on shelf have partinummer documented', action:'Go to Lot Codes and register lot codes for all products' },
+      { id:'mf_ship',     label:'Shipment records logged', detail:'One step forward — who received each lot (EU 178/2002 Art. 18)', action:'Go to Shipments and log delivery records for each lot' },
+      { id:'mf_partner',  label:'Retailer trading partners connected', detail:'Distribution network documented for recall reach', action:'Go to Trading Partners and request connections with your retailers' },
+      { id:'mf_drill',    label:'Mock recall drill conducted', detail:'Recommended annually under IK-mat guidelines', action:'Use Push Recall with is_drill=true to run a test recall with all connected retailers' },
+      { id:'mf_plan',     label:'Written recall procedure', detail:'Documented withdrawal/recall process per IK-mat forskriften', action:'Generate a Recall Procedure document from the Documents section below' },
     ],
   },
   eu_178: {
@@ -4023,12 +4023,12 @@ const MFR_FRAMEWORKS = {
       { label:'Food Safety Plan reanalysis', detail:'Required after every recall event — document findings', urgency:'med' },
     ],
     checklist: [
-      { id:'fda_coord',   label:'Recall Coordinator designated', detail:'Required for FDA Recall Plan documentation (21 CFR 117 Subpart F)' },
-      { id:'fda_plan',    label:'Written Recall Plan', detail:'Documented procedures per 21 CFR 117 Subpart F' },
+      { id:'fda_coord',   label:'Recall Coordinator designated', detail:'Required for FDA Recall Plan documentation (21 CFR 117 Subpart F)', action:'Go to Settings → Recall Coordinator' },
+      { id:'fda_plan',    label:'Written Recall Plan', detail:'Documented procedures per 21 CFR 117 Subpart F', action:'Generate a Recall Procedure document from the Documents section' },
       { id:'fda_haccp',   label:'HACCP / Preventive Controls plan', detail:'Hazard analysis and preventive controls documented (21 CFR 117)' },
-      { id:'fda_partner', label:'Customer/distributor records', detail:'Who received each lot — required for effective recalls' },
-      { id:'fda_mock',    label:'Mock recall drill', detail:'FDA and industry guidance (FMI) recommend annual mock recalls' },
-      { id:'fda_rfr',     label:'RFR notification process documented', detail:'Procedure for 24-hour reportable food submission' },
+      { id:'fda_partner', label:'Customer/distributor records', detail:'Who received each lot — required for effective recalls', action:'Connect retail trading partners and log shipments' },
+      { id:'fda_mock',    label:'Mock recall drill', detail:'FDA and industry guidance (FMI) recommend annual mock recalls', action:'Use Push Recall with the Drill flag to run a test with all retail partners' },
+      { id:'fda_rfr',     label:'RFR notification process documented', detail:'Procedure for 24-hour reportable food submission', action:'Ensure your Recall Coordinator knows the RFR portal URL and process' },
     ],
   },
   fsma_204: {
@@ -4071,27 +4071,42 @@ async function renderMfrCompliance() {
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading compliance data…</div>`;
 
   // Load org data + activity counts for scoring
-  const [orgRes, productsRes, lotsRes, shipmentsRes, partnersRes, recallsRes] = await Promise.all([
+  const drillCutoff = new Date(Date.now() - 365*86400000).toISOString();
+  const [orgRes, productsRes, lotsRes, shipmentsRes, partnersRes, recallsRes, drillsRes] = await Promise.all([
     sb.from('organisations').select('recall_coordinator_name, recall_coordinator_contact, regulatory_frameworks, region').eq('id', _orgId).single(),
     sb.from('products').select('id').eq('manufacturer_id', _orgId),
     sb.from('product_lots').select('id').eq('manufacturer_id', _orgId),
     sb.from('shipments').select('id').eq('manufacturer_id', _orgId),
     sb.from('trading_partners').select('id').eq('manufacturer_id', _orgId).eq('status', 'active'),
     sb.from('recall_events').select('id').eq('source_org_id', _orgId),
+    sb.from('mock_recall_drills').select('id, created_at').eq('initiating_org_id', _orgId).gte('created_at', drillCutoff).limit(5),
   ]);
 
   const org = orgRes.data || {};
   const frameworks = org.regulatory_frameworks || (org.region === 'us' ? ['fda_food','fsma_204'] : ['mattilsynet','eu_178']);
-  const hasCoord = !!(org.recall_coordinator_name && org.recall_coordinator_contact);
-  const hasLots = (lotsRes.data||[]).length > 0;
-  const hasShipments = (shipmentsRes.data||[]).length > 0;
+  const hasCoord    = !!(org.recall_coordinator_name && org.recall_coordinator_contact);
+  const hasLots     = (lotsRes.data||[]).length > 0;
+  const hasShipments= (shipmentsRes.data||[]).length > 0;
   const hasPartners = (partnersRes.data||[]).length > 0;
   const hasProducts = (productsRes.data||[]).length > 0;
+  const hasDrills   = (drillsRes.data||[]).length > 0;
+  const lastDrill   = drillsRes.data?.[0] || null;
 
   // Overall readiness score
-  const scores = { hasCoord, hasLots, hasShipments, hasPartners, hasProducts };
-  const scoreCount = Object.values(scores).filter(Boolean).length;
-  const overallPct = Math.round(scoreCount / Object.keys(scores).length * 100);
+  // Score across all checklist items from active frameworks (more granular than 5 items)
+  const checkResults_tmp = {
+    mf_coord:hasCoord, fda_coord:hasCoord, f204_coord:hasCoord, fsis_coord:hasCoord,
+    mf_lots:hasLots, f204_lots:hasLots, mf_ship:hasShipments, eu_customer:hasShipments,
+    fda_partner:hasPartners, mf_partner:hasPartners, mf_drill:hasDrills, fda_mock:hasDrills,
+    mf_plan:hasCoord&&hasPartners, eu_supplier:hasShipments, eu_hazard:'self_declare',
+    eu_notify:hasCoord, fda_plan:hasCoord, fda_haccp:'self_declare', fda_rfr:hasCoord,
+    f204_plan:hasLots&&hasCoord, f204_kde:hasLots&&hasShipments, f204_export:hasShipments,
+    fsis_est:'self_declare', fsis_plan:hasCoord,
+  };
+  const allFrameworkItems = (frameworks || []).flatMap(fk => (MFR_FRAMEWORKS[fk]?.checklist||[]));
+  const scorableItems = allFrameworkItems.filter(i => checkResults_tmp[i.id] !== 'self_declare');
+  const passingItems  = scorableItems.filter(i => checkResults_tmp[i.id] === true);
+  const overallPct    = scorableItems.length > 0 ? Math.round(passingItems.length / scorableItems.length * 100) : 0;
   const scoreColor = overallPct >= 80 ? 'var(--accent)' : overallPct >= 50 ? 'var(--warn)' : 'var(--danger)';
 
   el.innerHTML = `
@@ -4101,13 +4116,14 @@ async function renderMfrCompliance() {
           <div style="font-size:15px;font-weight:600;color:var(--text);">Compliance Centre</div>
           <div style="font-size:12px;color:var(--muted);margin-top:2px;">Regulatory readiness across your active frameworks. Your legal protection depends on this.</div>
         </div>
-        <div style="display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--glass-border);border-radius:10px;padding:12px 18px;">
-          <div>
-            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;">Overall Readiness</div>
-            <div style="font-size:28px;font-weight:800;color:${scoreColor};font-family:'Figtree',sans-serif;line-height:1;">${overallPct}%</div>
+        <div style="display:flex;align-items:center;gap:14px;background:var(--surface);border:1px solid var(--glass-border);border-radius:10px;padding:14px 20px;">
+          <div style="width:52px;height:52px;border-radius:50%;background:conic-gradient(${scoreColor} ${overallPct*3.6}deg, var(--surface2) 0deg);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <div style="width:38px;height:38px;border-radius:50%;background:var(--surface);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:${scoreColor};">${overallPct}%</div>
           </div>
-          <div style="width:48px;height:48px;border-radius:50%;background:conic-gradient(${scoreColor} ${overallPct*3.6}deg, var(--surface2) 0deg);display:flex;align-items:center;justify-content:center;">
-            <div style="width:36px;height:36px;border-radius:50%;background:var(--surface);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:${scoreColor};">${scoreCount}/${Object.keys(scores).length}</div>
+          <div>
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:2px;">Overall Readiness</div>
+            <div style="font-size:13px;font-weight:700;color:${scoreColor};">${overallPct>=80?'Good standing':overallPct>=50?'Needs attention':'Action required'}</div>
+            <div style="font-size:10px;color:var(--muted);margin-top:2px;">${passingItems.length}/${scorableItems.length} checks passing · ${lastDrill?'Last drill: '+new Date(lastDrill.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short'}):'No drill on record'}</div>
           </div>
         </div>
       </div>
@@ -4123,26 +4139,32 @@ async function renderMfrCompliance() {
         if (!fw) return '';
 
         // Score checklist items
+        // 'self_declare' = can't check from DB data; needs manual confirmation
         const checkResults = {
-          // cross-cutting
-          mf_coord: hasCoord, fda_coord: hasCoord, f204_coord: hasCoord, fsis_coord: hasCoord,
-          mf_lots: hasLots,   f204_lots: hasLots,
-          mf_ship: hasShipments, eu_customer: hasShipments, fda_partner: hasPartners,
+          mf_coord:   hasCoord,
+          fda_coord:  hasCoord,
+          f204_coord: hasCoord,
+          fsis_coord: hasCoord,
+          mf_lots:    hasLots,
+          f204_lots:  hasLots,
+          mf_ship:    hasShipments,
+          eu_customer:hasShipments,
+          fda_partner:hasPartners,
           mf_partner: hasPartners,
-          mf_drill: false, // TODO: check mock_recall_drills
-          mf_plan: hasCoord && hasPartners,
-          eu_supplier: hasShipments,
-          eu_hazard: false,
-          eu_notify: hasCoord,
-          fda_plan: hasCoord,
-          fda_haccp: false,
-          fda_mock: false,
-          fda_rfr: hasCoord,
-          f204_plan: hasLots && hasCoord,
-          f204_kde: hasLots && hasShipments,
-          f204_export: hasShipments,
-          fsis_est: false,
-          fsis_plan: hasCoord,
+          mf_drill:   hasDrills,
+          fda_mock:   hasDrills,
+          mf_plan:    hasCoord && hasPartners,
+          eu_supplier:hasShipments,
+          eu_hazard:  'self_declare', // hazard analysis — external document, must be self-declared
+          eu_notify:  hasCoord,
+          fda_plan:   hasCoord,
+          fda_haccp:  'self_declare', // HACCP plan — external document, must be self-declared
+          fda_rfr:    hasCoord,
+          f204_plan:  hasLots && hasCoord,
+          f204_kde:   hasLots && hasShipments,
+          f204_export:hasShipments,
+          fsis_est:   'self_declare', // FSIS establishment number — must be self-declared
+          fsis_plan:  hasCoord,
         };
 
         const items = fw.checklist || [];
@@ -4189,17 +4211,24 @@ async function renderMfrCompliance() {
             <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px;">Compliance Checklist</div>
             ${items.map(item => {
               const pass = checkResults[item.id];
-              return `<div style="display:flex;align-items:flex-start;gap:10px;padding:9px 0;border-bottom:1px solid rgba(22,61,55,0.4);">
-                <div style="width:18px;height:18px;border-radius:50%;flex-shrink:0;margin-top:1px;
-                  background:${pass?'rgba(52,211,153,0.15)':'rgba(255,92,92,0.1)'};
-                  border:1px solid ${pass?'rgba(52,211,153,0.4)':'rgba(255,92,92,0.3)'};
-                  display:flex;align-items:center;justify-content:center;font-size:9px;
-                  color:${pass?'var(--accent)':'var(--danger)'};">${pass?'✓':'✗'}</div>
-                <div>
-                  <div style="font-size:12px;color:${pass?'var(--text)':'var(--muted)'};">${item.label}</div>
-                  <div style="font-size:11px;color:${pass?'var(--muted)':'var(--warn)'};margin-top:1px;line-height:1.4;">${item.detail}</div>
-                </div>
-              </div>`;
+              const isSelf = pass === 'self_declare';
+              const bgColor = isSelf ? 'rgba(245,166,35,0.1)' : pass ? 'rgba(52,211,153,0.15)' : 'rgba(255,92,92,0.1)';
+              const bdColor = isSelf ? 'rgba(245,166,35,0.3)' : pass ? 'rgba(52,211,153,0.4)' : 'rgba(255,92,92,0.3)';
+              const icon    = isSelf ? '?' : pass ? '✓' : '✗';
+              const iconCol = isSelf ? 'var(--warn)' : pass ? 'var(--accent)' : 'var(--danger)';
+              const titleCol= isSelf ? 'var(--text)' : pass ? 'var(--text)' : 'var(--muted)';
+              const detailCol= isSelf ? 'var(--warn)' : pass ? 'var(--muted)' : 'var(--warn)';
+              const action  = item.action;
+              return '<div style="display:flex;align-items:flex-start;gap:10px;padding:9px 0;border-bottom:1px solid rgba(22,61,55,0.4);">'
+                + '<div style="width:18px;height:18px;border-radius:50%;flex-shrink:0;margin-top:1px;background:'+bgColor+';border:1px solid '+bdColor+';display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:'+iconCol+';">'+icon+'</div>'
+                + '<div style="flex:1;">'
+                + '<div style="font-size:12px;color:'+titleCol+';">'+item.label
+                + (isSelf ? ' <span style="font-size:9px;font-family:\'DM Mono\',monospace;padding:1px 6px;border-radius:3px;background:rgba(245,166,35,0.1);color:var(--warn);margin-left:4px;">SELF-DECLARE</span>' : '')
+                + '</div>'
+                + '<div style="font-size:11px;color:'+detailCol+';margin-top:1px;line-height:1.4;">'+item.detail+'</div>'
+                + (!pass && !isSelf && action ? '<div style="font-size:11px;color:var(--info);margin-top:4px;font-style:italic;">→ '+action+'</div>' : '')
+                + (isSelf ? '<div style="font-size:11px;color:var(--warn);margin-top:4px;">→ Keep this document on file and ensure it is current. Batch’d cannot verify it automatically.</div>' : '')
+                + '</div></div>';
             }).join('')}
           </div>
         </div>`;

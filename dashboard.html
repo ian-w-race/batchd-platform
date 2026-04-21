@@ -3532,12 +3532,12 @@ function showInvMsg(txt, type) {
 
 // ── Compliance panel ──────────────────────────────────────────
 // Compliance assessment state
-let _complianceStep = 0;  // 0=start, 1-4=categories, 5=results
+let _complianceStep = 0;  // 0=live dashboard, 1-4=detail categories, 5=results
 let _complianceData = null;
 
 async function renderCompliance() {
   const el = document.getElementById('main-content');
-  if (_complianceStep === 0) { renderComplianceStart(el); return; }
+  // Detail view requested (from "Full assessment" button)
   if (_complianceStep >= 1 && _complianceStep <= 4) {
     if (!_complianceData) { await loadComplianceData(el); }
     renderComplianceCategory(el, _complianceStep);
@@ -3546,8 +3546,201 @@ async function renderCompliance() {
   if (_complianceStep === 5) {
     if (!_complianceData) { await loadComplianceData(el); }
     renderComplianceResults(el);
+    return;
   }
+  // Default: always-on live dashboard
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading compliance data…</div>`;
+  await loadComplianceData(el);
+  renderComplianceDashboard(el);
 }
+
+function renderComplianceDashboard(el) {
+  const d = _complianceData;
+  if (!d) return;
+  const sc = d.scores;
+  const isUS = d.isUS;
+  const scoreColor = v => v >= 80 ? 'var(--accent)' : v >= 50 ? 'var(--warn)' : 'var(--danger)';
+  const scoreLabel = v => v >= 80 ? 'Good standing' : v >= 50 ? 'Needs attention' : 'Action required';
+  const fmtDate = dt => new Date(dt).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});
+
+  // Build priority actions list
+  const gaps = [];
+  if (d.scans.length === 0)                                              gaps.push({ cat:'Record keeping',    msg:'No scan records — open the scanning app and start scanning products', link:"showPanel('traceability')" });
+  else if (d.lotScans/Math.max(d.scans.length,1) < 0.7)                 gaps.push({ cat:'Record keeping',    msg:`Lot code coverage is ${Math.round(d.lotScans/Math.max(d.scans.length,1)*100)}% — target 100% to meet ${isUS?'FSMA 204':'EU 178/2002'} requirements`, link:null });
+  if (d.confirmedPartners === 0)                                         gaps.push({ cat:'Traceability',       msg:'No manufacturer partners connected — one-step-back traceability is incomplete', link:"showPanel('partners')" });
+  if (d.supplierScans === 0 && d.scans.length > 0)                      gaps.push({ cat:'Traceability',       msg:'Supplier names not recorded on any scans — ask staff to enter supplier during scanning', link:null });
+  if (!d.drillInYear)                                                    gaps.push({ cat:'Recall readiness',   msg:'No mock recall drill in the last 12 months — run one now to test your response chain', link:"showPanel('recalls')" });
+  if (d.acks.length > 0 && d.acksProgressed === 0)                      gaps.push({ cat:'Recall readiness',   msg:'Recalls received but none acknowledged — open the Recalls panel and progress your response', link:"showPanel('recalls')" });
+  if (d.activeStores.length === 0)                                       gaps.push({ cat:'Store coverage',     msg:'No active stores registered — add stores in the Store Network panel', link:"showPanel('stores')" });
+  else if (d.activeStores.length - d.storesActiveRecent > 0)            gaps.push({ cat:'Store coverage',     msg:`${d.activeStores.length - d.storesActiveRecent} dark store${d.activeStores.length-d.storesActiveRecent!==1?'s':''} detected — no recent scanning activity`, link:"showPanel('stores')" });
+
+  const catCards = [
+    { label:'Record keeping',     score:sc.docScore,       icon:'📄', reg:isUS?'FSMA 204 §1.1330':'EU 178/2002 Art. 17',
+      stats:`${d.scans.length} records · ${Math.round(d.lotScans/Math.max(d.scans.length,1)*100)}% lot code coverage`,
+      step:1 },
+    { label:'Traceability chain', score:sc.traceScore,     icon:'🔗', reg:isUS?'FSMA 204 KDEs / CTEs':'EU 178/2002 Art. 18',
+      stats:`${d.confirmedPartners} manufacturer${d.confirmedPartners!==1?'s':''} · ${Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)}% supplier coverage`,
+      step:2 },
+    { label:'Recall readiness',   score:sc.recallScore,    icon:'🚨', reg:isUS?'FDA 21 CFR · 24h RFR notification':'Mattilsynet §16 · Immediate notification',
+      stats:`${d.drills.length} drill${d.drills.length!==1?'s':''} · ${d.acksConfirmed} full response${d.acksConfirmed!==1?'s':''} completed`,
+      step:3 },
+    { label:'Store coverage',     score:sc.coverageScore,  icon:'🏪', reg:isUS?'FSMA 204 — records per location':'EU 178/2002 Art. 3 — all stages',
+      stats:`${d.storesActiveRecent}/${d.activeStores.length} stores active · ${d.recentScans.length} scans (30 days)`,
+      step:4 },
+  ];
+
+  // Authority contacts
+  const authority = isUS ? [
+    { name:'FDA RFR Portal', detail:'Class I recall — notify within 24 hours', url:'https://www.accessdata.fda.gov/scripts/rfr/index.cfm', phone:'1-888-INFO-FDA', color:'var(--info)' },
+    { name:'USDA FSIS', detail:'Meat/poultry/eggs — mandatory recall authority', url:'https://www.fsis.usda.gov/recalls', phone:'1-888-674-6854', color:'var(--warn)' },
+  ] : [
+    { name:'Mattilsynet', detail:'Recall notification — "umiddelbart" (immediately)', url:'https://www.mattilsynet.no/skjemaer/meldeskjema-for-virksomhetene', phone:'22 40 00 00 · 03008', color:'var(--accent)' },
+    { name:'RASFF portal', detail:'For cross-border food safety alerts', url:'https://webgate.ec.europa.eu/rasff-window/consumer', phone:'Via Mattilsynet', color:'var(--info)' },
+  ];
+
+  el.innerHTML = `
+    <div style="max-width:820px;">
+
+      <!-- Header row: overall score + last assessed -->
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:20px;flex-wrap:wrap;">
+        <div>
+          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Compliance Centre</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">${isUS?'FDA · FSMA 204 · USDA FSIS':'EU Regulation 178/2002 · Mattilsynet · RASFF'} · Last checked ${fmtDate(d.assessedAt)}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 20px;">
+          <div style="width:54px;height:54px;border-radius:50%;background:conic-gradient(${scoreColor(sc.overallScore)} ${sc.overallScore*3.6}deg,var(--border) 0deg);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <div style="width:40px;height:40px;border-radius:50%;background:var(--surface);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;color:${scoreColor(sc.overallScore)};">${sc.overallScore}%</div>
+          </div>
+          <div>
+            <div style="font-size:14px;font-weight:700;color:${scoreColor(sc.overallScore)};">${scoreLabel(sc.overallScore)}</div>
+            <div style="font-size:11px;color:var(--muted);">${gaps.length} gap${gaps.length!==1?'s':''} · ${4 - gaps.filter((g,i,a)=>a.findIndex(x=>x.cat===g.cat)===i).length} of 4 categories passing</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Priority gaps -->
+      ${gaps.length > 0 ? `
+      <div style="background:rgba(245,166,35,0.05);border:1px solid rgba(245,166,35,0.2);border-radius:12px;padding:16px 18px;margin-bottom:16px;">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--warn);margin-bottom:12px;">Priority actions — ${gaps.length} gap${gaps.length!==1?'s':''}</div>
+        ${gaps.map(g => `<div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:8px;font-size:12px;">
+          <span style="color:var(--warn);flex-shrink:0;margin-top:1px;">→</span>
+          <div>
+            <span style="font-family:'DM Mono',monospace;font-size:10px;padding:1px 6px;border-radius:4px;background:rgba(245,166,35,0.12);color:var(--warn);margin-right:6px;">${g.cat}</span>
+            ${g.msg}
+            ${g.link ? `<button onclick="${g.link}" style="margin-left:8px;font-size:10px;padding:2px 8px;border-radius:4px;border:1px solid var(--glass-border);background:none;color:var(--info);cursor:pointer;">Go →</button>` : ''}
+          </div>
+        </div>`).join('')}
+      </div>` : `
+      <div style="background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.2);border-radius:12px;padding:14px 18px;margin-bottom:16px;display:flex;align-items:center;gap:10px;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+        <div style="font-size:13px;color:var(--accent);font-weight:600;">All key requirements met — no priority gaps</div>
+      </div>`}
+
+      <!-- Category score cards -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(185px,1fr));gap:10px;margin-bottom:16px;">
+        ${catCards.map(c => `
+          <div onclick="_complianceStep=${c.step};renderCompliance()" style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;cursor:pointer;transition:all 0.15s;" onmouseover="this.style.borderColor='rgba(52,211,153,0.3)'" onmouseout="this.style.borderColor='var(--border)'">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+              <div style="font-size:16px;">${c.icon}</div>
+              <div style="font-size:15px;font-weight:800;color:${scoreColor(c.score)};">${c.score}%</div>
+            </div>
+            <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:3px;">${c.label}</div>
+            <div style="font-size:10px;color:var(--muted);line-height:1.5;margin-bottom:6px;">${c.stats}</div>
+            <div style="font-size:9px;font-family:'DM Mono',monospace;color:rgba(52,211,153,0.4);">${c.reg}</div>
+          </div>`).join('')}
+      </div>
+
+      <!-- Live compliance checks — two-col layout -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px;">
+
+        <!-- Record keeping + Traceability -->
+        <div style="display:flex;flex-direction:column;gap:14px;">
+          <div class="panel" style="margin:0;">
+            <div style="padding:13px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
+              <div style="font-size:12px;font-weight:700;color:var(--text);">📄 Record keeping</div>
+              <span style="font-size:11px;font-weight:700;color:${scoreColor(sc.docScore)};">${sc.docScore}%</span>
+            </div>
+            <div style="padding:0 16px;">
+              ${complianceCheck(d.scans.length > 0, 'Scan records on file', d.scans.length > 0 ? d.scans.length+' product records' : 'No records yet', 'Open scanning app')}
+              ${complianceCheck(d.lotScans > 0, 'Lot codes captured', d.lotScans > 0 ? Math.round(d.lotScans/Math.max(d.scans.length,1)*100)+'% of records have lot codes' : 'No lot codes on record', 'Ensure staff photograph lot codes')}
+              ${complianceCheck(true, 'Records retrievable within 24h', 'Met by design — all Batch\u2019d records are instantly queryable', null)}
+              ${complianceCheck(d.acks.length > 0 || d.scans.length > 0, 'Records link to recall response', d.acks.length > 0 ? d.acks.length+' recall acknowledgement records' : 'No recalls received yet', null)}
+            </div>
+          </div>
+          <div class="panel" style="margin:0;">
+            <div style="padding:13px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
+              <div style="font-size:12px;font-weight:700;color:var(--text);">🔗 Traceability chain</div>
+              <span style="font-size:11px;font-weight:700;color:${scoreColor(sc.traceScore)};">${sc.traceScore}%</span>
+            </div>
+            <div style="padding:0 16px;">
+              ${complianceCheck(d.confirmedPartners > 0, 'Manufacturer partners connected', d.confirmedPartners > 0 ? d.confirmedPartners+' confirmed partner'+( d.confirmedPartners!==1?'s':'') : 'No partners — one-step-back incomplete', 'Go to Manufacturer Partners')}
+              ${complianceCheck(d.supplierScans > 0, 'Supplier name documented (one-step back)', d.supplierScans > 0 ? Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)+'% of scans include supplier' : 'No supplier data on scans', 'Staff should enter supplier during scanning')}
+              ${complianceCheck(d.supplierScans/Math.max(d.scans.length,1) > 0.5, 'Traceability coverage >50%', Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)+'% of records have supplier data', 'Target 100% for all received goods')}
+              ${complianceCheck(d.confirmedPartners > 0 && d.supplierScans > 0, 'Full one-step-back chain established', d.confirmedPartners > 0 && d.supplierScans > 0 ? 'Both manufacturer connections and supplier records present' : 'Requires manufacturer connections + supplier records', null)}
+            </div>
+          </div>
+        </div>
+
+        <!-- Recall readiness + Store coverage -->
+        <div style="display:flex;flex-direction:column;gap:14px;">
+          <div class="panel" style="margin:0;">
+            <div style="padding:13px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
+              <div style="font-size:12px;font-weight:700;color:var(--text);">🚨 Recall readiness</div>
+              <span style="font-size:11px;font-weight:700;color:${scoreColor(sc.recallScore)};">${sc.recallScore}%</span>
+            </div>
+            <div style="padding:0 16px;">
+              ${complianceCheck(d.drillInYear, 'Mock recall drill (last 12 months)', d.drillInYear ? d.drills.length+' drill'+( d.drills.length!==1?'s':'')+' — last: '+fmtDate(d.drills[0].created_at) : 'No drills on record', 'Run a mock recall drill from Manager Dashboard')}
+              ${complianceCheck(d.acks.length > 0, 'Recall alert network active', d.acks.length > 0 ? d.acks.length+' recall acknowledgements received' : 'No recalls received yet', 'Connect manufacturer partners')}
+              ${complianceCheck(d.acksProgressed > 0, 'Recall responses documented', d.acksProgressed > 0 ? d.acksProgressed+' recall'+(d.acksProgressed!==1?'s':'')+' progressed through response chain' : 'No responses documented yet', 'Document each step in the Recalls panel')}
+              ${complianceCheck(d.acksConfirmed > 0 || d.acks.length === 0, 'Full 5-step response chain completed', d.acksConfirmed > 0 ? d.acksConfirmed+' full response'+( d.acksConfirmed!==1?'s':'')+' completed' : d.acks.length > 0 ? 'No recalls fully confirmed yet' : 'Chain not yet exercised', null)}
+            </div>
+          </div>
+          <div class="panel" style="margin:0;">
+            <div style="padding:13px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
+              <div style="font-size:12px;font-weight:700;color:var(--text);">🏪 Store coverage</div>
+              <span style="font-size:11px;font-weight:700;color:${scoreColor(sc.coverageScore)};">${sc.coverageScore}%</span>
+            </div>
+            <div style="padding:0 16px;">
+              ${complianceCheck(d.activeStores.length > 0, 'Store network registered', d.activeStores.length > 0 ? d.activeStores.length+' active store'+( d.activeStores.length!==1?'s':'') : 'No active stores registered', 'Add stores in Store Network')}
+              ${complianceCheck(d.recentScans.length > 0, 'Scanning activity (last 30 days)', d.recentScans.length > 0 ? d.recentScans.length+' scans in last 30 days' : 'No scanning activity this month', 'Ensure staff are using the scanning app')}
+              ${complianceCheck(d.activeStores.length > 0 && d.storesActiveRecent/Math.max(d.activeStores.length,1)>=0.8, 'At least 80% of stores scanning', d.activeStores.length > 0 ? d.storesActiveRecent+'/'+d.activeStores.length+' stores scanned in 30 days ('+Math.round(d.storesActiveRecent/Math.max(d.activeStores.length,1)*100)+'%)' : 'No stores registered', 'Investigate dark stores')}
+              ${complianceCheck(d.activeStores.length > 0 && d.storesActiveRecent===d.activeStores.length, 'No dark stores', d.activeStores.length-d.storesActiveRecent > 0 ? (d.activeStores.length-d.storesActiveRecent)+' store'+(d.activeStores.length-d.storesActiveRecent!==1?'s':'')+' with no recent scanning' : 'All stores scanning', 'Follow up with dark stores')}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Authority contacts -->
+      <div class="panel" style="margin:0 0 14px;">
+        <div style="padding:13px 18px;border-bottom:1px solid var(--border);">
+          <div style="font-size:12px;font-weight:700;color:var(--text);">Regulatory authority contacts</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">Direct contacts and portals for ${isUS?'US':'Norwegian/EU'} regulatory notifications</div>
+        </div>
+        <div style="padding:14px 18px;display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          ${authority.map(a => `<div style="background:var(--surface2);border-radius:8px;padding:12px 14px;">
+            <div style="font-size:12px;font-weight:700;color:${a.color};margin-bottom:4px;">${a.name}</div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:6px;line-height:1.5;">${a.detail}</div>
+            <div style="font-size:11px;font-family:'DM Mono',monospace;color:var(--muted);margin-bottom:6px;">${a.phone}</div>
+            <a href="${a.url}" target="_blank" style="font-size:11px;color:${a.color};text-decoration:none;">Notify / report ↗</a>
+          </div>`).join('')}
+        </div>
+      </div>
+
+      <!-- Actions row: full assessment + download report -->
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <button onclick="_complianceStep=1;renderCompliance()" style="font-family:'DM Mono',monospace;font-size:11px;padding:8px 16px;border-radius:8px;border:1px solid var(--glass-border);background:var(--surface2);color:var(--text);cursor:pointer;display:flex;align-items:center;gap:6px;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--glass-border)'">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+          Full detailed assessment →
+        </button>
+        <button onclick="generateComplianceReport()" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:8px 16px;font-size:11px;font-weight:700;cursor:pointer;font-family:'DM Mono',monospace;display:flex;align-items:center;gap:6px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download compliance report
+        </button>
+        <div style="font-size:11px;color:var(--muted);margin-left:4px;">Data refreshes each time you open this page</div>
+      </div>
+    </div>`;
+}
+
 
 function renderComplianceStart(el) {
   const isUS = _orgRegion === 'us';
@@ -4859,100 +5052,68 @@ async function renderSettings() {
   const lookbackDays = userSett?.recall_lookback_days || 180;
 
   el.innerHTML = `
-    <div style="margin-bottom:16px;">
-      <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Organisation settings</div>
+    <div style="margin-bottom:20px;">
+      <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Settings</div>
       <div style="font-size:11px;color:var(--muted);margin-top:2px;">${_orgName}</div>
     </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:900px;">
-      <!-- Organisation details -->
-      <div class="panel">
-        <div class="panel-header"><div class="panel-title">Organisation details</div></div>
-        <div class="panel-body">
-          <div id="org-settings-msg" style="display:none;font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;"></div>
-          <div class="field"><label>Organisation name</label>
-            <input id="org-name-input" type="text" value="${org?.name||_orgName}" />
+    <div style="display:flex;flex-direction:column;gap:16px;max-width:860px;">
+
+      <!-- Row 1: Organisation + Account -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div class="panel" style="margin:0;">
+          <div class="panel-header"><div class="panel-title">Organisation</div></div>
+          <div class="panel-body">
+            <div id="org-settings-msg" style="display:none;font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;"></div>
+            <div class="field"><label>Organisation name</label>
+              <input id="org-name-input" type="text" value="${org?.name||_orgName}" /></div>
+            <div class="field"><label>Contact email</label>
+              <input id="org-email-input" type="email" value="${org?.contact_email||''}" placeholder="e.g. safety@yourcompany.com" /></div>
+            <div class="field"><label>Region</label>
+              <select id="org-region-input">
+                <option value="no" ${_orgRegion!=='us'?'selected':''}>Norway / EU</option>
+                <option value="us" ${_orgRegion==='us'?'selected':''}>United States</option>
+              </select></div>
+            <div class="field" style="margin-bottom:12px;"><label>Organisation ID</label>
+              <input type="text" value="${_orgId}" readonly style="opacity:0.5;font-size:10px;" /></div>
+            <button class="btn-primary" onclick="saveOrgSettings()" id="btn-save-org">Save changes</button>
           </div>
-          <div class="field"><label>Contact email</label>
-            <input id="org-email-input" type="email" value="${org?.contact_email||''}" placeholder="e.g. safety@yourcompany.com" />
+        </div>
+        <div class="panel" style="margin:0;">
+          <div class="panel-header"><div class="panel-title">Your account</div></div>
+          <div class="panel-body">
+            <div class="field"><label>Email</label>
+              <input type="text" value="${_session?.user?.email||''}" readonly style="opacity:0.7;" /></div>
+            <div class="field"><label>Role</label>
+              <input type="text" value="${_userRole?.replace('_',' ')||'corp_admin'}" readonly style="opacity:0.7;text-transform:capitalize;" /></div>
+            <div class="field" style="margin-bottom:0;"><label>Organisation</label>
+              <input type="text" value="${_orgName}" readonly style="opacity:0.7;" /></div>
+            <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border);">
+              <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">To change your password or email, visit account settings.</div>
+              <a href="https://batchdapp.com" style="font-size:11px;color:var(--accent);text-decoration:none;">batchdapp.com →</a>
+            </div>
           </div>
-          <div class="field"><label>Region</label>
-            <select id="org-region-input">
-              <option value="no" ${_orgRegion!=='us'?'selected':''}>Norway / EU</option>
-              <option value="us" ${_orgRegion==='us'?'selected':''}>United States</option>
-            </select>
-          </div>
-          <div class="field" style="margin-bottom:4px;"><label>Organisation ID</label>
-            <input type="text" value="${_orgId}" readonly style="opacity:0.5;font-size:10px;" />
-          </div>
-          <button class="btn-primary" onclick="saveOrgSettings()" id="btn-save-org" style="margin-top:8px;">Save changes</button>
         </div>
       </div>
 
-      <!-- Recall settings -->
-      <div class="panel">
+      <!-- Row 2: Recall management — coordinator + lookback combined -->
+      <div class="panel" style="margin:0;">
         <div class="panel-header">
           <div>
-            <div class="panel-title">Recall matching</div>
-            <div class="panel-sub">How far back Batch'd looks when cross-referencing recalls against scan history</div>
-          </div>
-        </div>
-        <div class="panel-body">
-          <div id="recall-sett-msg" style="display:none;font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;"></div>
-          <div class="field">
-            <label>Scan history lookback window</label>
-            <select id="lookback-days-input">
-              <option value="90"  ${lookbackDays<=90?'selected':''}>90 days (3 months)</option>
-              <option value="180" ${lookbackDays>90&&lookbackDays<=180?'selected':''}>180 days (6 months) — recommended</option>
-              <option value="270" ${lookbackDays>180&&lookbackDays<=270?'selected':''}>270 days (9 months)</option>
-              <option value="365" ${lookbackDays>270?'selected':''}>365 days (1 year)</option>
-            </select>
-          </div>
-          <div style="background:var(--surface2);border-radius:8px;padding:11px 13px;font-size:11px;color:var(--muted);line-height:1.7;margin-bottom:14px;">
-            <strong style="color:var(--text);">How this works:</strong> When a recall fires, Batch'd checks your store scan records back this many days to identify which products may still be on shelf. A longer window catches products with longer shelf lives but may surface older, already-sold items.
-            <br><br>
-            <strong style="color:var(--text);">Our recommendation: 180 days.</strong> Covers most ambient and chilled products. EU Reg. 178/2002 requires records for shelf-life + 6 months — 180 days covers the operational response window. For frozen or long-life products, use 270–365 days.
-          </div>
-          <button class="btn-primary" onclick="saveRecallSettings()" id="btn-save-recall-sett">Save</button>
-        </div>
-      </div>
-
-      <!-- Account -->
-      <div class="panel">
-        <div class="panel-header"><div class="panel-title">Your account</div></div>
-        <div class="panel-body">
-          <div class="field"><label>Email</label>
-            <input type="text" value="${_session?.user?.email||''}" readonly style="opacity:0.7;" />
-          </div>
-          <div class="field"><label>Role</label>
-            <input type="text" value="${_userRole?.replace('_',' ')||'corp_admin'}" readonly style="opacity:0.7;text-transform:capitalize;" />
-          </div>
-          <div class="field" style="margin-bottom:4px;"><label>Organisation</label>
-            <input type="text" value="${_orgName}" readonly style="opacity:0.7;" />
-          </div>
-          <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
-            <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">Need to change your password or email? Visit your account settings.</div>
-            <a href="https://batchdapp.com" style="font-size:11px;color:var(--accent);text-decoration:none;">batchdapp.com →</a>
-          </div>
-        </div>
-      
-      <!-- Recall coordinator — spans both columns -->
-      <div class="panel" style="grid-column:1/-1;">
-        <div class="panel-header">
-          <div>
-            <div class="panel-title">Recall coordinator</div>
-            <div class="panel-sub">${_orgRegion==='us'?'FDA 21 CFR 7.49 — named coordinator required':'Mattilsynet — named responsible party per Matloven §16'}</div>
+            <div class="panel-title">Recall management</div>
+            <div class="panel-sub">${_orgRegion==='us'?'FDA 21 CFR 7.49 — named coordinator required · FSMA 204 record retention':'Mattilsynet §16 — named responsible party · EU 178/2002 retention'}</div>
           </div>
         </div>
         <div class="panel-body">
           <div id="coord-msg" style="display:none;"></div>
-          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:12px;">
+          <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:10px;">Recall coordinator</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-bottom:6px;">
             <div class="field">
               <label>Primary coordinator name</label>
-              <input id="coord-name" type="text" value="${coord.recall_coordinator_name||''}" placeholder="Full name" />
+              <input id="coord-name" type="text" value="${coord.recall_coordinator_name||''}" placeholder="Full name and title" />
             </div>
             <div class="field">
-              <label>24/7 contact (phone or email)</label>
+              <label>24/7 contact</label>
               <input id="coord-contact" type="text" value="${coord.recall_coordinator_contact||''}" placeholder="+47 xxx or name@co.com" />
             </div>
             <div class="field">
@@ -4960,15 +5121,27 @@ async function renderSettings() {
               <input id="coord-backup" type="text" value="${coord.recall_coordinator_backup||''}" placeholder="Name + contact" />
             </div>
           </div>
-          <div style="display:flex;align-items:center;gap:12px;">
-            <button class="btn-primary" onclick="saveCoordinatorSettings()" id="btn-save-coord">Save coordinator</button>
-            <div style="font-size:11px;color:var(--muted);">Named on all recall audit reports and regulatory submissions.</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:18px;">Named on all recall audit reports and regulatory submissions.</div>
+          <div style="border-top:1px solid var(--border);margin-bottom:18px;"></div>
+          <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:10px;">Scan history lookback window</div>
+          <div id="recall-sett-msg" style="display:none;font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;"></div>
+          <div style="display:grid;grid-template-columns:240px 1fr;gap:16px;align-items:start;margin-bottom:16px;">
+            <div class="field" style="margin:0;">
+              <select id="lookback-days-input">
+                <option value="90"  ${lookbackDays<=90?'selected':''}>90 days — 3 months</option>
+                <option value="180" ${lookbackDays>90&&lookbackDays<=180?'selected':''}>180 days — 6 months</option>
+                <option value="270" ${lookbackDays>180&&lookbackDays<=270?'selected':''}>270 days — 9 months</option>
+                <option value="365" ${lookbackDays>270?'selected':''}>365 days — 1 year ✓</option>
+              </select>
+            </div>
+            <div style="font-size:11px;color:var(--muted);line-height:1.7;">How far back Batch'd looks when cross-referencing recalls against your store scan records. 365 days covers all product types including frozen and long-life ambient goods.</div>
           </div>
+          <button class="btn-primary" onclick="saveCoordinatorSettings();saveRecallSettings();" id="btn-save-recall-mgmt">Save recall settings</button>
         </div>
-      </div></div>
+      </div>
 
-      <!-- Integrations -->
-      <div class="panel" style="grid-column:1/-1;margin-top:0;">
+      <!-- Row 3: Integrations -->
+      <div class="panel" style="margin:0;">
         <div class="panel-header">
           <div>
             <div class="panel-title">Integrations</div>
@@ -4982,31 +5155,19 @@ async function renderSettings() {
                 <div style="font-size:22px;flex-shrink:0;">🔌</div>
                 <div>
                   <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px;">ERP Webhook API</div>
-                  <div style="font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:12px;">
-                    Manufacturers can connect SAP, Oracle, or Dynamics to push recall events into Batch'd automatically — no manual entry needed. When a recall is logged in their ERP, all your stores are notified within 90 seconds.
-                  </div>
-                  <a href="/docs.html" target="_blank"
-                    style="display:inline-flex;align-items:center;gap:6px;font-family:'DM Mono',monospace;font-size:11px;font-weight:700;padding:7px 14px;border-radius:7px;background:rgba(52,211,153,0.08);border:1px solid rgba(52,211,153,0.25);color:var(--accent);text-decoration:none;transition:all 0.15s;"
-                    onmouseenter="this.style.background='rgba(52,211,153,0.15)'"
-                    onmouseleave="this.style.background='rgba(52,211,153,0.08)'">
+                  <div style="font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:12px;">Connect SAP, Oracle, or Dynamics to push recalls automatically. When a recall is logged in your manufacturer's ERP, every store is notified within 90 seconds.</div>
+                  <a href="/docs.html" target="_blank" style="display:inline-flex;align-items:center;gap:6px;font-family:'DM Mono',monospace;font-size:11px;font-weight:700;padding:7px 14px;border-radius:7px;background:rgba(52,211,153,0.08);border:1px solid rgba(52,211,153,0.25);color:var(--accent);text-decoration:none;" onmouseenter="this.style.background='rgba(52,211,153,0.15)'" onmouseleave="this.style.background='rgba(52,211,153,0.08)'">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                    View API documentation →
+                    View API docs →
                   </a>
                 </div>
               </div>
             </div>
             <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:16px;">
               <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px;">Share with your manufacturers</div>
-              <div style="font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:12px;">
-                Send this link to your manufacturer partners' IT or QA team to get them connected.
-              </div>
-              <div style="background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:9px 12px;font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);margin-bottom:10px;user-select:all;">
-                app.batchdapp.com/docs.html
-              </div>
-              <button onclick="navigator.clipboard.writeText('https://app.batchdapp.com/docs.html').then(()=>{this.textContent='Copied ✓';setTimeout(()=>this.textContent='Copy link',2000)})"
-                style="font-family:'DM Mono',monospace;font-size:11px;padding:6px 14px;border-radius:7px;border:1px solid var(--glass-border);background:var(--surface2);color:var(--muted);cursor:pointer;">
-                Copy link
-              </button>
+              <div style="font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:10px;">Send this link to your manufacturer partners' IT or QA team to get them connected.</div>
+              <div style="background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:9px 12px;font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);margin-bottom:10px;user-select:all;">app.batchdapp.com/docs.html</div>
+              <button onclick="navigator.clipboard.writeText('https://app.batchdapp.com/docs.html').then(()=>{this.textContent='Copied ✓';setTimeout(()=>this.textContent='Copy link',2000)})" style="font-family:'DM Mono',monospace;font-size:11px;padding:6px 14px;border-radius:7px;border:1px solid var(--glass-border);background:var(--surface2);color:var(--muted);cursor:pointer;">Copy link</button>
             </div>
           </div>
         </div>
@@ -5019,7 +5180,7 @@ async function renderSettings() {
 }
 
 async function saveRecallSettings() {
-  const days  = parseInt(document.getElementById('lookback-days-input')?.value || '180', 10);
+  const days  = parseInt(document.getElementById('lookback-days-input')?.value || '365', 10);
   const btn   = document.getElementById('btn-save-recall-sett');
   const msgEl = document.getElementById('recall-sett-msg');
   const setMsg = (txt, ok) => { if (msgEl) { msgEl.textContent=txt; msgEl.style.cssText='display:block;font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;background:'+( ok?'rgba(52,211,153,0.1)':'rgba(255,92,92,0.1)')+';border:1px solid '+(ok?'rgba(52,211,153,0.3)':'rgba(255,92,92,0.3)')+';color:'+(ok?'var(--accent)':'var(--danger)'); } };
