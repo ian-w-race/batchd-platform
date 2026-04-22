@@ -4638,13 +4638,15 @@ async function renderReports() {
     let distQ  = sb.from('recall_distributions').select('recall_event_id').eq('retailer_org_id', _orgId);
     let storesQ = sb.from('stores').select('id, name, active').eq('organisation_id', _orgId);
     let complaintsQ = sb.from('complaints').select('id, triage_level').eq('receiving_org_id', _orgId);
+    let srmQ   = sb.from('scan_recall_matches').select('recall_id, quantity, store_name').eq('organisation_id', _orgId);
     if (since) { scansQ = scansQ.gte('created_at', since); complaintsQ = complaintsQ.gte('created_at', since); }
 
-    const [scansRes, distRes, storesRes, complaintsRes] = await Promise.all([scansQ, distQ, storesQ, complaintsQ]);
+    const [scansRes, distRes, storesRes, complaintsRes, srmRes] = await Promise.all([scansQ, distQ, storesQ, complaintsQ, srmQ]);
     const scans      = scansRes.data  || [];
     const dists      = distRes.data   || [];
     const stores     = storesRes.data || [];
     const complaints = complaintsRes.data || [];
+    const srmAll     = srmRes.data || [];
 
     // Derive stats
     const lotCoverage  = scans.length > 0 ? Math.round(scans.filter(s => s.lot_number).length / scans.length * 100) : 0;
@@ -4705,13 +4707,12 @@ async function renderReports() {
         title: 'Exposure notice', icon: '📢', color: 'var(--danger)',
         desc: 'Customer-facing recall notification template — includes live unit exposure from scan history',
         stats: (() => {
-          const srmAll = (srmRes.data||[]);
-          const onShelf = srmAll.filter(m => !m.removed_at).reduce((s,m)=>s+(m.quantity||1),0);
-          const pulled  = srmAll.filter(m =>  m.removed_at).reduce((s,m)=>s+(m.quantity||1),0);
+          const onShelf = srmAll.reduce((s,m)=>s+(m.quantity||1),0);
+          const storesExposed = new Set(srmAll.map(m=>m.store_name).filter(Boolean)).size;
           return [
-            { val: recallCount, label: 'recalls to notify on' },
-            { val: onShelf > 0 ? onShelf : (pulled > 0 ? pulled + ' pulled' : '—'), label: onShelf > 0 ? 'units still on shelf' : 'units pulled' },
-            { val: new Set(srmAll.map(m=>m.store_name).filter(Boolean)).size || '—', label: 'stores exposed' },
+            { val: recallCount, label: 'recall events' },
+            { val: onShelf || '—', label: 'units in match history' },
+            { val: storesExposed || '—', label: 'stores exposed' },
           ];
         })(),
         reg: 'Consumer notification',
@@ -4956,163 +4957,224 @@ async function fetchReportData(key) {
 async function runReport(key) {
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading report…</div>`;
-  const data = await fetchReportData(key);
-  const isUS = _orgRegion === 'us';
-  const fmtDate = d => d ? new Date(d).toLocaleDateString('en-GB') : '—';
+  const data  = await fetchReportData(key);
+  const isUS  = _orgRegion === 'us';
+  const date  = new Date().toLocaleDateString('en-GB', {day:'numeric',month:'long',year:'numeric'});
+  const fmtDate = d => d ? new Date(d).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : '—';
   const fmtDT   = d => d ? new Date(d).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '—';
 
+  // Shared: stat tile
+  const statTile = (val, label, color='var(--text)') =>
+    `<div style="background:var(--surface2);border-radius:10px;padding:14px 16px;text-align:center;">
+      <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:22px;color:${color};line-height:1;">${val}</div>
+      <div style="font-size:10px;color:var(--muted);margin-top:4px;text-transform:uppercase;letter-spacing:0.06em;">${label}</div>
+    </div>`;
+
+  // ── Audit trail ──────────────────────────────────────────────
   if (key === 'audit') {
-    el.innerHTML = reportHeader('Audit trail', `${data.length} scan records · ${_orgName}`, 'audit') + `
-      <div class="panel">
-        <div class="panel-body" style="padding:0;">
-          <table class="store-table" style="width:100%;">
-            <thead><tr>
-              <th>Date & time</th><th>Product</th><th>Lot / Barcode</th>
-              <th>Store</th><th>Staff</th><th>Supplier</th><th>Status</th>
-            </tr></thead>
-            <tbody>
-              ${data.length === 0 ? `<tr><td colspan="7"><div class="empty">No scans in this date range.</div></td></tr>` :
-              data.map(s => `<tr>
-                <td style="white-space:nowrap;font-size:10px;color:var(--muted);">${fmtDT(s.created_at)}</td>
-                <td><div style="font-size:12px;font-weight:500;color:var(--text);">${s.product_name||'—'}</div></td>
-                <td style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${s.lot_number||'—'}${s.barcode_number?'<br>'+s.barcode_number:''}</td>
-                <td style="font-size:11px;color:var(--muted);">${s.store_name||'—'}</td>
-                <td style="font-size:11px;color:var(--muted);">${s.scanned_by||'—'}</td>
-                <td style="font-size:11px;color:var(--muted);">${s.supplier_name||'—'}</td>
-                <td>${s.recall_resolved
-                  ? `<span class="recall-status status-resolved">Resolved</span>`
-                  : s.removed_from_shelf_at
-                    ? `<span class="recall-status status-pending">Removed</span>`
-                    : `<span class="recall-status" style="background:rgba(106,175,158,0.1);color:var(--muted);">On shelf</span>`}
-                </td>
-              </tr>`).join('')}
-            </tbody>
-          </table>
-        </div>
-      </div>`;
+    const withLot  = data.filter(s => s.lot_number).length;
+    const lotPct   = data.length ? Math.round(withLot / data.length * 100) : 0;
+    const resolved = data.filter(s => s.recall_resolved).length;
+    const removed  = data.filter(s => s.removed_from_shelf_at && !s.recall_resolved).length;
+    const staff    = new Set(data.map(s => s.scanned_by).filter(Boolean)).size;
+    const stores   = new Set(data.map(s => s.store_name).filter(Boolean)).size;
+    el.innerHTML = reportHeader('Audit trail', `${data.length} records · ${_orgName}`, 'audit') +
+      `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:18px;">
+        ${statTile(data.length, 'Total scans')}
+        ${statTile(lotPct+'%', 'Lot code coverage', lotPct>=80?'var(--accent)':lotPct>=60?'var(--warn)':'var(--danger)')}
+        ${statTile(staff, 'Staff members')}
+        ${statTile(stores, 'Stores')}
+        ${statTile(resolved, 'Recalls resolved', resolved>0?'var(--accent)':'var(--muted)')}
+        ${statTile(removed, 'Items removed', removed>0?'var(--warn)':'var(--muted)')}
+      </div>
+      <div class="panel"><div class="panel-body" style="padding:0;">
+        <table class="store-table" style="width:100%;">
+          <thead><tr>
+            <th>Date & time</th><th>Product</th><th>${isUS?'TLC / Lot':'Partinummer'}</th>
+            <th>Store</th><th>Staff</th><th>Supplier</th><th>Status</th>
+          </tr></thead>
+          <tbody>
+            ${data.length === 0 ? `<tr><td colspan="7"><div class="empty">No scans in this date range.</div></td></tr>` :
+            data.map(s => `<tr>
+              <td style="white-space:nowrap;font-size:11px;color:var(--muted);">${fmtDT(s.created_at)}</td>
+              <td><div style="font-size:12px;font-weight:500;color:var(--text);">${s.product_name||'—'}</div></td>
+              <td style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">${s.lot_number||'—'}${s.barcode_number?'<br><span style="font-size:10px;">'+s.barcode_number+'</span>':''}</td>
+              <td style="font-size:11px;color:var(--muted);">${s.store_name||'—'}</td>
+              <td style="font-size:11px;color:var(--muted);">${(s.scanned_by||'—').split('@')[0]}</td>
+              <td style="font-size:11px;color:var(--muted);">${s.supplier_name||'—'}</td>
+              <td>${s.recall_resolved
+                ? `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(52,211,153,0.12);color:var(--accent);font-weight:600;">Resolved</span>`
+                : s.removed_from_shelf_at
+                  ? `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(245,166,35,0.12);color:var(--warn);font-weight:600;">Removed</span>`
+                  : `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(106,175,158,0.08);color:var(--muted);">On shelf</span>`}
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div></div>`;
   }
 
+  // ── Recall history ───────────────────────────────────────────
   else if (key === 'recalls') {
-    el.innerHTML = reportHeader('Recall history', `${data.length} recall events · ${_orgName}`, 'recalls') + `
-      <div class="panel">
-        <div class="panel-body" style="padding:0;">
-          <table class="store-table" style="width:100%;">
-            <thead><tr>
-              <th>Date</th><th>Product</th><th>Lot</th>
-              <th>Source</th><th>Severity · Reason</th><th>Status</th>
-            </tr></thead>
-            <tbody>
-              ${data.length === 0 ? `<tr><td colspan="6"><div class="empty">No recalls on record.</div></td></tr>` :
-              data.map(r => {
-                const isPushed = r._type === 'pushed';
-                const date = isPushed ? (r.published_at||r.created_at) : r.created_at;
-                return `<tr>
-                  <td style="white-space:nowrap;font-size:11px;color:var(--muted);">${fmtDate(date)}</td>
-                  <td style="font-size:12px;font-weight:500;color:var(--text);">${r.product_name||'—'}</td>
-                  <td style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${r.lot_number||'—'}</td>
-                  <td><span style="font-size:10px;padding:2px 8px;border-radius:10px;${isPushed?'background:rgba(56,189,248,0.1);color:var(--info);':'background:rgba(106,175,158,0.1);color:var(--muted);'}">
-                    ${isPushed?'Manufacturer':(r.source||'Manual')}</span></td>
-                  <td style="font-size:11px;color:var(--muted);">${isPushed?(r.severity||'—')+' · '+(r.reason||'—'):'—'}</td>
-                  <td><span class="recall-status ${(isPushed||r.active)?'status-active':'status-resolved'}">${(isPushed||r.active)?'Active':'Resolved'}</span></td>
-                </tr>`;}).join('')}
-            </tbody>
-          </table>
-        </div>
-      </div>`;
+    const live     = data.filter(r => r._type==='pushed' && !r.is_drill);
+    const drills   = data.filter(r => r.is_drill);
+    const internal = data.filter(r => r._type==='internal');
+    const resolved = internal.filter(r => !r.active).length;
+    el.innerHTML = reportHeader('Recall history', `${data.length} events · ${_orgName}`, 'recalls') +
+      `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:18px;">
+        ${statTile(live.length, 'Live recalls', live.length>0?'var(--danger)':'var(--text)')}
+        ${statTile(drills.length, 'Drills run', drills.length>0?'var(--accent)':'var(--muted)')}
+        ${statTile(internal.length, 'Internal recalls')}
+        ${statTile(resolved, 'Resolved', resolved>0?'var(--accent)':'var(--muted)')}
+      </div>
+      <div class="panel"><div class="panel-body" style="padding:0;">
+        <table class="store-table" style="width:100%;">
+          <thead><tr>
+            <th>Date</th><th>Product</th><th>${isUS?'TLC / Lot':'Partinummer'}</th>
+            <th>Source</th><th>Severity</th><th>Reason</th><th>Status</th>
+          </tr></thead>
+          <tbody>
+            ${data.length === 0 ? `<tr><td colspan="7"><div class="empty">No recalls on record.</div></td></tr>` :
+            data.map(r => {
+              const isPushed = r._type === 'pushed';
+              const d = isPushed ? (r.published_at||r.created_at) : r.created_at;
+              const sevColor = (r.severity||'').includes('class_i') && !(r.severity||'').includes('ii') && !(r.severity||'').includes('iii') ? 'var(--danger)' : (r.severity||'').includes('class_ii') ? 'var(--warn)' : 'var(--muted)';
+              return `<tr>
+                <td style="white-space:nowrap;font-size:11px;color:var(--muted);">${fmtDate(d)}</td>
+                <td style="font-size:12px;font-weight:600;color:var(--text);">${r.product_name||'—'}
+                  ${r.is_drill?`<div style="font-size:9px;color:var(--warn);">DRILL</div>`:''}
+                </td>
+                <td style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">${r.lot_number||'—'}</td>
+                <td><span style="font-size:10px;padding:2px 8px;border-radius:10px;${isPushed?'background:rgba(56,189,248,0.1);color:var(--info);':'background:rgba(106,175,158,0.1);color:var(--muted);'}">
+                  ${isPushed?'Manufacturer':(r.source||'Manual')}</span></td>
+                <td style="font-size:11px;color:${sevColor};">${(r.severity||'—').replace(/_/g,' ')}</td>
+                <td style="font-size:11px;color:var(--muted);max-width:180px;">${r.reason||'—'}</td>
+                <td><span style="font-size:10px;padding:2px 8px;border-radius:10px;background:${(isPushed||r.active)?'rgba(255,92,92,0.12)':'rgba(52,211,153,0.12)'};color:${(isPushed||r.active)?'var(--danger)':'var(--accent)'};">${(isPushed||r.active)?'Active':'Resolved'}</span></td>
+              </tr>`;}).join('')}
+          </tbody>
+        </table>
+      </div></div>`;
   }
 
+  // ── Staff activity ───────────────────────────────────────────
   else if (key === 'staff') {
     const byStaff = {};
     data.forEach(s => {
-      const name = s.scanned_by || 'Unknown';
+      const name = (s.scanned_by||'Unknown').split('@')[0];
       if (!byStaff[name]) byStaff[name] = { name, scans:[], resolved:0, escalated:0, removed:0 };
       byStaff[name].scans.push(s);
-      if (s.recall_resolved)      byStaff[name].resolved++;
-      if (s.manager_escalated)    byStaff[name].escalated++;
+      if (s.recall_resolved)       byStaff[name].resolved++;
+      if (s.manager_escalated)     byStaff[name].escalated++;
       if (s.removed_from_shelf_at) byStaff[name].removed++;
     });
     const staffRows = Object.values(byStaff).sort((a,b) => b.scans.length - a.scans.length);
     const lastScan  = s => s.scans.reduce((l,sc) => sc.created_at > l ? sc.created_at : l, '');
-    el.innerHTML = reportHeader('Staff activity', `${staffRows.length} team members · ${data.length} total scans`, 'staff') + `
-      <div class="panel">
-        <div class="panel-body" style="padding:0;">
-          <table class="store-table" style="width:100%;">
-            <thead><tr>
-              <th>Staff member</th><th>Total scans</th><th>Lot coverage</th>
-              <th>Recalls resolved</th><th>Items removed</th><th>Escalations</th><th>Last active</th>
-            </tr></thead>
-            <tbody>
-              ${staffRows.length === 0 ? `<tr><td colspan="7"><div class="empty">No staff activity in this date range.</div></td></tr>` :
-              staffRows.map(s => {
-                const lotPct = s.scans.length ? Math.round(s.scans.filter(sc=>sc.lot_number).length/s.scans.length*100) : 0;
-                return `<tr>
-                  <td style="font-size:12px;font-weight:600;color:var(--text);">${s.name}</td>
-                  <td style="font-size:14px;font-weight:700;color:var(--accent);">${s.scans.length}</td>
-                  <td>
-                    <div style="display:flex;align-items:center;gap:6px;">
-                      <div style="width:50px;height:3px;border-radius:2px;background:var(--border);overflow:hidden;"><div style="height:100%;width:${lotPct}%;background:${lotPct>=80?'var(--accent)':'var(--warn)'};border-radius:2px;"></div></div>
-                      <span style="font-size:10px;color:var(--muted);">${lotPct}%</span>
-                    </div>
-                  </td>
-                  <td style="color:${s.resolved>0?'var(--accent)':'var(--muted)'};">${s.resolved}</td>
-                  <td style="color:${s.removed>0?'var(--warn)':'var(--muted)'};">${s.removed}</td>
-                  <td style="color:${s.escalated>0?'var(--danger)':'var(--muted)'};">${s.escalated}</td>
-                  <td style="font-size:11px;color:var(--muted);">${fmtDate(lastScan(s))}</td>
-                </tr>`;}).join('')}
-            </tbody>
-          </table>
-        </div>
-      </div>`;
-  }
-
-  else if (key === 'stores') {
-    el.innerHTML = reportHeader('Store compliance', `${data.length} stores · based on all-time scan activity`, 'stores') + `
-      <div class="panel">
-        <div class="panel-body" style="padding:0;">
-          <table class="store-table" style="width:100%;">
-            <thead><tr>
-              <th>Store</th><th>Code</th><th>Status</th><th>Compliance</th>
-              <th>7d scans</th><th>30d scans</th><th>All-time</th><th>Recalls resolved</th>
-            </tr></thead>
-            <tbody>
-              ${data.length === 0 ? `<tr><td colspan="8"><div class="empty">No stores configured.</div></td></tr>` :
-              data.map(s => `<tr>
-                <td style="font-size:12px;font-weight:600;color:var(--text);">${s.name}</td>
-                <td style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${s.store_code||'—'}</td>
-                <td>${s.status==='active'?`<span class="recall-status status-resolved">Active</span>`:s.status==='slow'?`<span class="recall-status status-pending">Slow</span>`:`<span class="recall-status" style="background:rgba(255,92,92,0.1);color:var(--danger);">Dark</span>`}</td>
+    const topScanner = staffRows[0]?.name || '—';
+    const avgPerPerson = staffRows.length ? Math.round(data.length / staffRows.length) : 0;
+    el.innerHTML = reportHeader('Staff activity', `${staffRows.length} team members · ${data.length} total scans`, 'staff') +
+      `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:18px;">
+        ${statTile(staffRows.length, 'Team members')}
+        ${statTile(data.length, 'Total scans')}
+        ${statTile(avgPerPerson, 'Avg scans / person')}
+        ${statTile(data.filter(s=>s.recall_resolved).length, 'Recalls resolved', data.filter(s=>s.recall_resolved).length>0?'var(--accent)':'var(--muted)')}
+        ${statTile(data.filter(s=>s.manager_escalated).length, 'Escalations', data.filter(s=>s.manager_escalated).length>0?'var(--danger)':'var(--muted)')}
+      </div>
+      <div class="panel"><div class="panel-body" style="padding:0;">
+        <table class="store-table" style="width:100%;">
+          <thead><tr>
+            <th>Staff member</th><th>Scans</th><th>Lot coverage</th>
+            <th>Recalls resolved</th><th>Items removed</th><th>Escalations</th><th>Last active</th>
+          </tr></thead>
+          <tbody>
+            ${staffRows.length === 0 ? `<tr><td colspan="7"><div class="empty">No staff activity in this date range.</div></td></tr>` :
+            staffRows.map((s,i) => {
+              const lotPct = s.scans.length ? Math.round(s.scans.filter(sc=>sc.lot_number).length/s.scans.length*100) : 0;
+              const pctOfTotal = data.length ? Math.round(s.scans.length/data.length*100) : 0;
+              return `<tr>
+                <td>
+                  <div style="font-size:12px;font-weight:600;color:var(--text);">${s.name}</div>
+                  ${i===0?`<div style="font-size:9px;color:var(--accent);">top performer</div>`:''}
+                </td>
+                <td>
+                  <div style="font-size:14px;font-weight:700;color:var(--accent);">${s.scans.length}</div>
+                  <div style="width:60px;height:3px;background:var(--border);border-radius:2px;margin-top:4px;overflow:hidden;"><div style="height:100%;width:${pctOfTotal}%;background:var(--accent);border-radius:2px;"></div></div>
+                </td>
                 <td>
                   <div style="display:flex;align-items:center;gap:6px;">
-                    <div style="width:60px;height:4px;border-radius:2px;background:var(--border);overflow:hidden;">
-                      <div style="height:100%;width:${s.score}%;background:${s.score>=80?'var(--accent)':s.score>=60?'var(--warn)':'var(--danger)'};border-radius:2px;"></div>
-                    </div>
-                    <span style="font-size:11px;color:${s.score>=80?'var(--accent)':s.score>=60?'var(--warn)':'var(--danger)'};">${s.score}%</span>
+                    <div style="width:50px;height:3px;border-radius:2px;background:var(--border);overflow:hidden;"><div style="height:100%;width:${lotPct}%;background:${lotPct>=80?'var(--accent)':'var(--warn)'};border-radius:2px;"></div></div>
+                    <span style="font-size:11px;color:${lotPct>=80?'var(--accent)':lotPct>=60?'var(--warn)':'var(--danger)'};">${lotPct}%</span>
                   </div>
                 </td>
-                <td style="font-size:13px;font-weight:700;color:${s.recent7>0?'var(--text)':'var(--muted)'};">${s.recent7}</td>
-                <td style="color:var(--muted);">${s.recent30}</td>
-                <td style="color:var(--muted);">${s.totalScans}</td>
                 <td style="color:${s.resolved>0?'var(--accent)':'var(--muted)'};">${s.resolved}</td>
-              </tr>`).join('')}
-            </tbody>
-          </table>
-        </div>
-      </div>`;
+                <td style="color:${s.removed>0?'var(--warn)':'var(--muted)'};">${s.removed}</td>
+                <td style="color:${s.escalated>0?'var(--danger)':'var(--muted)'};">${s.escalated}</td>
+                <td style="font-size:11px;color:var(--muted);">${fmtDate(lastScan(s))}</td>
+              </tr>`;}).join('')}
+          </tbody>
+        </table>
+      </div></div>`;
   }
 
+  // ── Store compliance ─────────────────────────────────────────
+  else if (key === 'stores') {
+    const active  = data.filter(s => s.status==='active').length;
+    const dark    = data.filter(s => s.status==='dark').length;
+    const slow    = data.filter(s => s.status==='slow').length;
+    const avgScore = data.length ? Math.round(data.reduce((s,d)=>s+d.score,0)/data.length) : 0;
+    el.innerHTML = reportHeader('Store compliance', `${data.length} stores · ${_orgName}`, 'stores') +
+      `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:18px;">
+        ${statTile(data.length, 'Total stores')}
+        ${statTile(active, 'Active', active===data.length?'var(--accent)':'var(--text)')}
+        ${statTile(slow, 'Slow', slow>0?'var(--warn)':'var(--muted)')}
+        ${statTile(dark, 'Dark stores', dark>0?'var(--danger)':'var(--muted)')}
+        ${statTile(avgScore+'%', 'Avg compliance', avgScore>=80?'var(--accent)':avgScore>=60?'var(--warn)':'var(--danger)')}
+      </div>
+      ${dark > 0 ? `<div style="background:rgba(255,92,92,0.06);border:1px solid rgba(255,92,92,0.2);border-radius:10px;padding:12px 16px;margin-bottom:14px;font-size:12px;color:var(--danger);">
+        ⚠ ${dark} dark store${dark!==1?'s':''} detected — no scanning activity in the last 7 days: ${data.filter(s=>s.status==='dark').map(s=>s.name).join(', ')}
+      </div>` : ''}
+      <div class="panel"><div class="panel-body" style="padding:0;">
+        <table class="store-table" style="width:100%;">
+          <thead><tr>
+            <th>Store</th><th>Code</th><th>Status</th><th>Compliance</th>
+            <th>7d scans</th><th>30d scans</th><th>All-time</th><th>Recalls resolved</th>
+          </tr></thead>
+          <tbody>
+            ${data.length === 0 ? `<tr><td colspan="8"><div class="empty">No stores configured.</div></td></tr>` :
+            data.map(s => `<tr>
+              <td style="font-size:12px;font-weight:600;color:var(--text);">${s.name}</td>
+              <td style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${s.store_code||'—'}</td>
+              <td><span style="font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600;background:${s.status==='active'?'rgba(52,211,153,0.12)':s.status==='slow'?'rgba(245,166,35,0.12)':'rgba(255,92,92,0.12)'};color:${s.status==='active'?'var(--accent)':s.status==='slow'?'var(--warn)':'var(--danger)'};">${s.status.charAt(0).toUpperCase()+s.status.slice(1)}</span></td>
+              <td>
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <div style="width:60px;height:4px;border-radius:2px;background:var(--border);overflow:hidden;"><div style="height:100%;width:${s.score}%;background:${s.score>=80?'var(--accent)':s.score>=60?'var(--warn)':'var(--danger)'};border-radius:2px;"></div></div>
+                  <span style="font-size:11px;color:${s.score>=80?'var(--accent)':s.score>=60?'var(--warn)':'var(--danger)'};">${s.score}%</span>
+                </div>
+              </td>
+              <td style="font-size:13px;font-weight:700;color:${s.recent7>0?'var(--text)':'var(--danger)'};">${s.recent7}</td>
+              <td style="color:var(--muted);">${s.recent30}</td>
+              <td style="color:var(--muted);">${s.totalScans}</td>
+              <td style="color:${s.resolved>0?'var(--accent)':'var(--muted)'};">${s.resolved}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div></div>`;
+  }
+
+  // ── Exposure notice ──────────────────────────────────────────
   else if (key === 'exposure') {
     const recalls = data;
     if (recalls.length === 0) {
-      el.innerHTML = reportHeader('Exposure notice', 'Customer-facing recall notification', 'exposure') + `
-        <div class="panel"><div class="panel-body"><div class="empty">No manufacturer recalls on record.</div></div></div>`;
+      el.innerHTML = reportHeader('Exposure notice', 'Customer-facing recall notification', 'exposure') +
+        `<div class="panel"><div class="panel-body"><div class="empty">No manufacturer recalls on record. Exposure notices are generated from manufacturer-pushed recalls.</div></div></div>`;
       return;
     }
     const r = recalls[Math.min(_reportExposureIdx, recalls.length-1)];
     const noticeText = `PRODUCT RECALL NOTICE\n\n${_orgName} is notifying customers of a recall affecting the following product:\n\nProduct: ${r.product_name}\nLot number: ${r.lot_number||'See packaging'}\n${r.barcode?'Barcode: '+r.barcode+'\n':''}\nReason: ${r.reason||'See below'}\n${r.description?'\nDetails:\n'+r.description+'\n':''}\nWhat to do:\nIf you have purchased this product, do not consume it. Return it to the place of purchase for a full refund.\n\nFor questions, contact us at ${_orgName}.\n\nIssued: ${new Date().toLocaleDateString('en-GB')}`;
 
-    el.innerHTML = reportHeader('Exposure notice', 'Customer-facing recall notification template', 'exposure') + `
-      ${recalls.length > 1 ? `
+    el.innerHTML = reportHeader('Exposure notice', 'Customer-facing recall notification template', 'exposure') +
+      `${recalls.length > 1 ? `
       <div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;align-items:center;">
-        <div style="font-size:11px;color:var(--muted);margin-right:4px;">Recall:</div>
+        <div style="font-size:11px;color:var(--muted);margin-right:4px;">Select recall:</div>
         ${recalls.map((rc,i) => `
           <button onclick="_reportExposureIdx=${i};runReport('exposure')"
             style="font-family:'DM Mono',monospace;font-size:10px;padding:5px 10px;border-radius:6px;border:1px solid ${i===_reportExposureIdx?'var(--accent)':'var(--glass-border)'};background:${i===_reportExposureIdx?'rgba(52,211,153,0.08)':'none'};color:${i===_reportExposureIdx?'var(--accent)':'var(--muted)'};cursor:pointer;">
@@ -5123,83 +5185,73 @@ async function runReport(key) {
         <div class="panel-header" style="background:rgba(255,92,92,0.03);">
           <div>
             <div class="panel-title" style="color:var(--danger);">🚨 ${r.product_name}</div>
-            <div class="panel-sub">Lot: ${r.lot_number||'—'} · ${r.severity||'—'} · ${r.reason||'—'}</div>
+            <div class="panel-sub">${r.severity?.replace(/_/g,' ')||''}${r.lot_number?' · Lot: '+r.lot_number:''} · Published ${fmtDate(r.published_at)}</div>
           </div>
-          <span style="font-size:10px;color:var(--muted);">${fmtDate(r.published_at)}</span>
+          <button onclick="navigator.clipboard.writeText(document.getElementById('notice-text').value).then(()=>{this.textContent='Copied ✓';setTimeout(()=>this.textContent='Copy text',2000)})"
+            style="font-family:'DM Mono',monospace;font-size:11px;padding:6px 12px;border-radius:6px;border:1px solid var(--glass-border);background:none;color:var(--muted);cursor:pointer;flex-shrink:0;">Copy text</button>
         </div>
         <div class="panel-body">
-          <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">Notice text — copy and paste into customer communications, email, or in-store signage:</div>
-          <textarea id="notice-text" readonly
-            style="width:100%;min-height:220px;background:var(--input-bg);border:1px solid var(--glass-border);border-radius:8px;padding:14px;font-family:'DM Mono',monospace;font-size:11px;color:var(--text);line-height:1.7;resize:vertical;outline:none;">${noticeText}</textarea>
-          <button onclick="document.getElementById('notice-text').select();document.execCommand('copy');this.textContent='Copied ✓';setTimeout(()=>this.textContent='Copy text',2000);"
-            style="margin-top:10px;font-family:'DM Mono',monospace;font-size:11px;padding:7px 14px;border-radius:6px;border:1px solid var(--glass-border);background:var(--surface2);color:var(--text);cursor:pointer;">
-            Copy text
-          </button>
-        </div>
-      </div>
-
-      <!-- Consumer notification matching -->
-      <div class="panel" style="margin-top:16px;">
-        <div class="panel-header">
-          <div>
-            <div class="panel-title">📍 Match customers to this recall</div>
-            <div class="panel-sub">Upload a CSV of recent purchases — we'll identify customers who bought this product from affected stores</div>
-          </div>
-        </div>
-        <div class="panel-body">
-          <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6;">
-            CSV format: <span style="font-family:'DM Mono',monospace;color:var(--text);">customer_name, email, store_name, purchase_date</span><br>
-            Matches customers whose purchase store matches the recall and whose purchase date falls within the exposure window.
-          </div>
-          <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+          <textarea id="notice-text" rows="14"
+            style="width:100%;background:var(--surface2);border:1px solid var(--glass-border);border-radius:8px;padding:12px 14px;font-family:'DM Mono',monospace;font-size:12px;color:var(--text);resize:vertical;line-height:1.7;">${noticeText}</textarea>
+          <div id="customer-match-results" style="margin-top:14px;"></div>
+          <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:14px;">
+            <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:8px;">Match against customer purchase list</div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.6;">Upload a CSV with columns: <span style="font-family:'DM Mono',monospace;color:var(--text);">email, store_name, purchase_date</span> to identify which customers bought this product.</div>
             <input type="file" id="customer-csv-input" accept=".csv" onchange="matchCustomersToRecall()"
-              style="font-size:11px;color:var(--muted);background:var(--input-bg);border:1px solid var(--glass-border);border-radius:7px;padding:8px 10px;cursor:pointer;flex:1;min-width:200px;" />
+              style="font-size:11px;color:var(--muted);cursor:pointer;" />
           </div>
-          <div id="customer-match-results"></div>
         </div>
       </div>`;
   }
 
+  // ── FSMA 204 / EU traceability export ────────────────────────
   else if (key === 'fsma') {
-    const fsmaSubtitle = isUS ? 'Key Data Elements · ' + data.length + ' records' : 'One-step-back/forward · ' + data.length + ' scans';
+    const ftl     = data.filter(s => s.is_ftl).length;
+    const withLot = data.filter(s => s.lot_number).length;
+    const withSup = data.filter(s => s.supplier_name).length;
+    const lotPct  = data.length ? Math.round(withLot/data.length*100) : 0;
+    const supPct  = data.length ? Math.round(withSup/data.length*100) : 0;
     el.innerHTML = reportHeader(
       isUS ? 'FSMA 204 KDE export' : 'EU traceability export',
-      fsmaSubtitle,
-      'fsma'
-    ) + `
-      <div style="margin-bottom:14px;padding:12px 16px;background:rgba(56,189,248,0.05);border:1px solid rgba(56,189,248,0.15);border-radius:8px;font-size:11px;color:var(--muted);line-height:1.6;">
-        ${isUS ? "📋 These records satisfy FSMA 204 KDE requirements for CTEs. Download CSV for audit submission." : "📋 These records satisfy EU Reg. 178/2002 one-step-back/forward traceability requirements. Download CSV for Mattilsynet audit."}
+      `${data.length} records · ${isUS?'FSMA 204 §1.1330':'EU Reg. 178/2002 Art. 18'}`,
+      'fsma') +
+      `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:18px;">
+        ${statTile(data.length, 'Total records')}
+        ${statTile(lotPct+'%', isUS?'TLC capture rate':'Lot code coverage', lotPct>=80?'var(--accent)':lotPct>=60?'var(--warn)':'var(--danger)')}
+        ${statTile(supPct+'%', 'Supplier coverage', supPct>=80?'var(--accent)':supPct>=60?'var(--warn)':'var(--danger)')}
+        ${isUS ? statTile(ftl, 'FTL records', ftl>0?'var(--info)':'var(--muted)') : statTile(data.length - withLot, 'Missing lot codes', (data.length-withLot)>0?'var(--warn)':'var(--accent)')}
       </div>
-      <div class="panel">
-        <div class="panel-body" style="padding:0;">
-          <table class="store-table" style="width:100%;">
-            <thead><tr>
-              <th>Date</th><th>Product</th>
-              <th>${isUS?'TLC / Lot':'Partinummer'}</th>
-              <th>Barcode</th><th>Supplier</th>
-              <th>Store (CTE location)</th>
-              <th>Ref doc</th>
-              <th>${isUS?'FTL?':'Status'}</th>
-            </tr></thead>
-            <tbody>
-              ${data.length === 0 ? `<tr><td colspan="8"><div class="empty">No records in this date range.</div></td></tr>` :
-              data.map(s => `<tr>
-                <td style="white-space:nowrap;font-size:10px;color:var(--muted);">${fmtDate(s.created_at)}</td>
-                <td style="font-size:12px;font-weight:500;color:var(--text);">${s.product_name||'—'}</td>
-                <td style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${s.lot_number||'—'}</td>
-                <td style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${s.barcode_number||'—'}</td>
-                <td style="font-size:11px;color:var(--muted);">${s.supplier_name||'—'}</td>
-                <td style="font-size:11px;color:var(--muted);">${s.store_name||'—'}</td>
-                <td style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${s.reference_document||'—'}</td>
-                <td>${isUS
-                  ? (s.is_ftl ? `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(56,189,248,0.1);color:var(--info);">FTL ✓</span>` : `<span style="font-size:10px;color:var(--muted);">—</span>`)
-                  : (s.recall_resolved ? `<span class="recall-status status-resolved">Resolved</span>` : `<span class="recall-status" style="background:rgba(106,175,158,0.1);color:var(--muted);">On shelf</span>`)}
-                </td>
-              </tr>`).join('')}
-            </tbody>
-          </table>
-        </div>
-      </div>`;
+      ${lotPct < 80 ? `<div style="background:rgba(245,166,35,0.06);border:1px solid rgba(245,166,35,0.2);border-radius:10px;padding:12px 16px;margin-bottom:14px;font-size:12px;color:var(--warn);">
+        ⚠ ${isUS?'FSMA 204 requires Key Data Elements including TLC for all FDA Food Traceability List items. Current TLC capture rate is '+lotPct+'% — target 100%.':'EU Reg. 178/2002 Art. 18 requires one-step-back traceability for all food products. Current lot code coverage is '+lotPct+'% — target 100%.'}
+      </div>` : ''}
+      <div class="panel"><div class="panel-body" style="padding:0;">
+        <table class="store-table" style="width:100%;">
+          <thead><tr>
+            <th>Date</th><th>Product</th>
+            <th>${isUS?'TLC / Lot':'Partinummer'}</th>
+            <th>Barcode</th><th>Supplier</th>
+            <th>Store</th>
+            <th>Ref doc</th>
+            <th>${isUS?'FTL':'Status'}</th>
+          </tr></thead>
+          <tbody>
+            ${data.length === 0 ? `<tr><td colspan="8"><div class="empty">No records in this date range.</div></td></tr>` :
+            data.map(s => `<tr>
+              <td style="white-space:nowrap;font-size:11px;color:var(--muted);">${fmtDate(s.created_at)}</td>
+              <td style="font-size:12px;font-weight:500;color:var(--text);">${s.product_name||'—'}</td>
+              <td style="font-size:11px;color:${s.lot_number?'var(--text)':'var(--danger)'};font-family:'DM Mono',monospace;">${s.lot_number||'⚠ missing'}</td>
+              <td style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${s.barcode_number||'—'}</td>
+              <td style="font-size:11px;color:${s.supplier_name?'var(--muted)':'var(--warn)'};">${s.supplier_name||'—'}</td>
+              <td style="font-size:11px;color:var(--muted);">${s.store_name||'—'}</td>
+              <td style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${s.reference_document||'—'}</td>
+              <td>${isUS
+                ? (s.is_ftl ? `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(56,189,248,0.1);color:var(--info);font-weight:600;">FTL ✓</span>` : `<span style="font-size:10px;color:var(--muted);">—</span>`)
+                : (s.recall_resolved ? `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(52,211,153,0.12);color:var(--accent);font-weight:600;">Resolved</span>` : `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(106,175,158,0.08);color:var(--muted);">On shelf</span>`)}
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div></div>`;
   }
 }
 
