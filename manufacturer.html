@@ -596,6 +596,39 @@ let _isDrill = false;
 let _pushDraft = { product: '', lot: '', barcode: '', reason: '', description: '', authority: '' };
 let _pushStep = 1;
 
+// ── Regional terminology helpers ─────────────────────────────
+function regionTermMfr(key) {
+  const us = (_orgRegion||'no') === 'us';
+  const terms = {
+    lot:       us ? 'Lot / TLC'         : 'Partinummer',
+    lot_short: us ? 'Lot'               : 'Parti',
+    lot_label: us ? 'Lot / TLC'         : 'Partinummer',
+    authority: us ? 'FDA'               : 'Mattilsynet',
+    regulation:us ? 'FSMA 204'          : 'EU 178/2002',
+    withdrawal:us ? 'Market withdrawal' : 'Tilbaketrekking',
+  };
+  return terms[key] || key;
+}
+
+function formatSeverityMfr(sev) {
+  const us = (_orgRegion||'no') === 'us';
+  const map = {
+    class_i:           { label: us ? 'Class I'    : 'Klasse I',   color: 'var(--danger)', bg: 'rgba(255,92,92,0.12)' },
+    class_ii:          { label: us ? 'Class II'   : 'Klasse II',  color: 'var(--warn)',   bg: 'rgba(245,166,35,0.12)' },
+    class_iii:         { label: us ? 'Class III'  : 'Klasse III', color: 'var(--muted)',  bg: 'rgba(106,175,158,0.1)' },
+    market_withdrawal: { label: us ? 'Market withdrawal' : 'Tilbaketrekking', color: 'var(--info)', bg: 'rgba(56,189,248,0.1)' },
+    unknown:           { label: 'Under investigation', color: 'var(--muted)', bg: 'rgba(106,175,158,0.1)' },
+  };
+  const s = (sev || '').toLowerCase().replace(/ /g, '_');
+  return map[s] || { label: sev ? sev.replace(/_/g,' ').replace(/\w/g, c => c.toUpperCase()) : '—', color: 'var(--muted)', bg: 'rgba(106,175,158,0.1)' };
+}
+
+const _mfrDashLocale = () => (_orgRegion||'no') === 'us' ? 'en-US' : 'en-GB';
+const _mfrDateOpts   = { day: 'numeric', month: 'short', year: 'numeric' };
+const _mfrDTOpts     = { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' };
+function fmtMfr(d)   { return d ? new Date(d).toLocaleDateString(_mfrDashLocale(), _mfrDateOpts) : '—'; }
+function fmtMfrDT(d) { return d ? new Date(d).toLocaleString(_mfrDashLocale(), _mfrDTOpts) : '—'; }
+
 // ── Auth ───────────────────────────────────────────────────────
 
 function toggleTheme(){var h=document.documentElement,c=h.getAttribute('data-theme')||'dark',n=c==='dark'?'light':'dark';h.setAttribute('data-theme',n);localStorage.setItem('batchd-theme',n);var m=document.getElementById('ti-moon'),s=document.getElementById('ti-sun');if(m&&s){m.style.display=n==='light'?'none':'block';s.style.display=n==='light'?'block':'none';}}
@@ -810,9 +843,9 @@ async function renderOverview() {
                 <div class="recall-name">${e.product_name}</div>
                 <div class="recall-meta">
                   ${e.lot_number ? `Lot: ${e.lot_number} · ` : ''}
-                  ${e.severity?.replace('_',' ').replace('class','Class')} · 
+                  ${formatSeverityMfr(e.severity).label} · 
                   ${e.reason} · 
-                  ${new Date(e.created_at).toLocaleDateString('en-GB')}
+                  ${fmtMfr(e.created_at)}
                 </div>
               </div>
               <span class="recall-badge ${e.is_drill?'badge-drill':'badge-live'}">${e.is_drill?'Drill':'Live'}</span>
@@ -1022,7 +1055,7 @@ async function calculateImpactPreviewStep3() {
   const storeCount = Object.keys(byStore).length;
   const totalQty   = hits.reduce((s,h)=>s+h.quantity,0);
   const unit       = hits[0]?.unit||'units';
-  const breakdown  = Object.entries(byStore).map(([store,d])=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(22,61,55,0.4);"><div><div style="font-size:11px;color:var(--text);font-weight:500;">${store}</div><div style="font-size:10px;color:var(--muted);">${d.retailer} · shipped ${new Date(d.latest).toLocaleDateString('en-GB')}</div></div><div style="font-size:11px;font-weight:600;color:var(--warn);">${d.qty} ${d.unit}</div></div>`).join('');
+  const breakdown  = Object.entries(byStore).map(([store,d])=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(22,61,55,0.4);"><div><div style="font-size:11px;color:var(--text);font-weight:500;">${store}</div><div style="font-size:10px;color:var(--muted);">${d.retailer} · shipped ${fmtMfr(d.latest) || '—'}</div></div><div style="font-size:11px;font-weight:600;color:var(--warn);">${d.qty} ${d.unit}</div></div>`).join('');
   preview.innerHTML = `<div style="background:rgba(245,166,35,0.06);border:1px solid rgba(245,166,35,0.3);border-radius:8px;overflow:hidden;"><div style="padding:12px 14px;border-bottom:1px solid rgba(245,166,35,0.2);display:flex;align-items:center;justify-content:space-between;"><div style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span style="font-size:12px;font-weight:700;color:var(--warn);">Shelf impact: ${totalQty} ${unit} across ${storeCount} store${storeCount!==1?'s':''}</span></div><span style="font-size:10px;color:var(--muted);">From shipment records</span></div><div style="padding:4px 14px 8px;">${breakdown}</div></div>`;
 }
 
@@ -1392,8 +1425,8 @@ async function renderMfrRecalls() {
                     ${allDone?`<span style="font-size:10px;background:rgba(52,211,153,0.12);color:var(--accent);padding:2px 8px;border-radius:10px;font-weight:600;">✓ ALL CONFIRMED</span>`:''}
                   </div>
                   <div style="font-size:12px;color:var(--muted);">
-                    ${ev.lot_number?`Lot: <span style="font-family:'DM Mono',monospace;color:var(--text);">${ev.lot_number}</span> · `:''}
-                    ${ev.severity?.replace('_',' ')||'—'} · ${ev.reason||'—'}
+                    ${ev.lot_number?`${regionTermMfr('lot_short')}: <span style="font-family:'DM Mono',monospace;color:var(--text);">${ev.lot_number}</span> · `:''}
+                    ${ev.severity?formatSeverityMfr(ev.severity).label:'—'} · ${ev.reason||'—'}
                     <br><span style="font-size:11px;">Pushed ${new Date(ev.published_at||ev.created_at).toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</span>
                   </div>
                 </div>
@@ -1432,7 +1465,7 @@ async function renderMfrRecalls() {
                   ${confirmed>0?`<span style="font-size:10px;color:var(--accent);">✓ ${confirmed}/${evAcks.length} confirmed</span>`:''}
                 </div>
                 <div style="font-size:14px;font-weight:600;color:var(--text);">${ev.product_name||'—'}</div>
-                <div style="font-size:12px;color:var(--muted);margin-top:3px;">${ev.severity?.replace('_',' ')||''}${ev.lot_number?' · Lot: '+ev.lot_number:''}${ev.reason?' · '+ev.reason:''}</div>
+                <div style="font-size:12px;color:var(--muted);margin-top:3px;">${ev.severity?formatSeverityMfr(ev.severity).label:''}${ev.lot_number?' · Lot: '+ev.lot_number:''}${ev.reason?' · '+ev.reason:''}</div>
               </div>
               <div style="display:flex;gap:7px;flex-wrap:wrap;flex-shrink:0;">
                 <button onclick="setTimelineContext('${ev.id}',this)" data-product="${(ev.product_name||'').replace(/"/g,'&quot;')}" style="background:rgba(52,211,153,0.1);border:1px solid rgba(52,211,153,0.3);color:var(--accent);border-radius:7px;padding:6px 11px;font-size:11px;font-weight:600;cursor:pointer;">📅 Timeline</button>
@@ -1479,11 +1512,11 @@ async function renderHistory() {
               <div style="flex:1;min-width:0;">
                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap;">
                   <span class="recall-badge ${e.is_drill?'badge-drill':'badge-live'}">${e.is_drill?'Drill':'Live'}</span>
-                  <span style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);">${new Date(e.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}</span>
+                  <span style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);">${fmtMfr(e.created_at)}</span>
                 </div>
                 <div style="font-size:14px;font-weight:600;color:var(--text);">${e.product_name}</div>
                 <div style="font-size:12px;color:var(--muted);margin-top:3px;">
-                  ${e.severity?.replace('_',' ')||''} · ${e.reason||''}
+                  ${e.severity?formatSeverityMfr(e.severity).label:''} · ${e.reason||''}
                   ${e.lot_number ? ' · Lot: ' + e.lot_number : ''}
                 </div>
               </div>
@@ -1559,7 +1592,7 @@ async function renderAcknowledgements() {
                   <span class="status-pill s-${a.status}">${a.status.charAt(0).toUpperCase() + a.status.slice(1)}</span>
                 </td>
                 <td style="padding:9px 18px;color:var(--muted)">${a.units_pulled ?? '—'}</td>
-                <td style="padding:9px 18px;color:var(--muted)">${a.acknowledged_at ? new Date(a.acknowledged_at).toLocaleDateString('en-GB') : '—'}</td>
+                <td style="padding:9px 18px;color:var(--muted)">${a.acknowledged_at ? fmtMfr(a.acknowledged_at) : '—'}</td>
               </tr>`;}).join('')}
           </tbody>
         </table>
@@ -1582,6 +1615,9 @@ async function renderPartners() {
 
   const confirmed = list.filter(p => p.status === 'active');
   const pending   = list.filter(p => p.status === 'pending');
+
+  // Load scan intelligence data async for retailers who've opted in
+  setTimeout(() => loadScanIntelligenceData(confirmed.filter(p => p.share_scan_intelligence)), 100);
 
   el.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
@@ -1621,7 +1657,7 @@ async function renderPartners() {
             <div class="sev-indicator" style="background:var(--warn)"></div>
             <div class="recall-info">
               <div class="recall-name">${p.organisations?.name||'—'}</div>
-              <div class="recall-meta">${p.organisations?.contact_email||'No email'} · Request sent ${new Date(p.created_at).toLocaleDateString('en-GB')}</div>
+              <div class="recall-meta">${p.organisations?.contact_email||'No email'} · Request sent ${fmtMfr(p.created_at)}</div>
             </div>
             <span class="status-pill s-notified">Pending</span>
           </div>`).join('')}
@@ -1641,17 +1677,116 @@ async function renderPartners() {
               <div class="sev-indicator" style="background:var(--accent)"></div>
               <div class="recall-info">
                 <div class="recall-name">${p.organisations?.name||'—'}</div>
-                <div class="recall-meta">${p.organisations?.contact_email||'No email'} · Connected ${new Date(p.created_at).toLocaleDateString('en-GB')}</div>
+                <div class="recall-meta">${p.organisations?.contact_email||'No email'} · Connected ${fmtMfr(p.created_at)}</div>
               </div>
-              <span class="status-pill s-confirmed">Active</span>
+              <div style="display:flex;align-items:center;gap:8px;">
+                ${p.share_scan_intelligence
+                  ? `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(52,211,153,0.1);color:var(--accent);font-weight:600;white-space:nowrap;">📊 Sharing scan data</span>`
+                  : `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:var(--surface2);color:var(--muted);white-space:nowrap;">Scan data: off</span>`}
+                <span class="status-pill s-confirmed">Active</span>
+              </div>
             </div>`).join('')}
       </div>
-    </div>`;
+    </div>
+
+    <!-- Scan intelligence — only shown for retailers who have opted in -->
+    ${confirmed.filter(p => p.share_scan_intelligence).length > 0 ? `
+    <div class="panel" style="margin-top:14px;">
+      <div class="panel-header">
+        <div>
+          <div class="panel-title">📊 Scan intelligence</div>
+          <div class="panel-sub">Aggregate scan data from retailers who've opted in to share — your lots, their stores</div>
+        </div>
+      </div>
+      <div class="panel-body">
+        <div id="scan-intel-data" style="color:var(--muted);font-size:12px;">Loading…</div>
+      </div>
+    </div>` : ''}
+    `;
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading partners: ${e.message}</div>`;
   }
 }
 
+
+async function loadScanIntelligenceData(sharingPartners) {
+  const el = document.getElementById('scan-intel-data');
+  if (!el || !sharingPartners.length) return;
+  try {
+    // Fetch our registered lot numbers
+    const { data: lots } = await sb.from('product_lots').select('lot_number, products(name)').eq('manufacturer_id', _orgId);
+    const lotNums = (lots||[]).map(l => l.lot_number).filter(Boolean);
+    if (!lotNums.length) { el.innerHTML = '<div style="font-size:11px;color:var(--muted);">No lot codes registered — add lots to see scan intelligence.</div>'; return; }
+
+    // Fetch scans for our lots from consenting retailers (RLS policy handles the filter)
+    const { data: scans } = await sb.from('scans')
+      .select('lot_number, store_name, organisation_id, created_at, removed_from_shelf_at')
+      .in('lot_number', lotNums.slice(0, 100));
+
+    const scanList = scans || [];
+    if (!scanList.length) { el.innerHTML = '<div style="font-size:11px;color:var(--muted);">No scan records found yet — retailers may not have scanned these lots in yet.</div>'; return; }
+
+    // Build lot-level summary
+    const byLot = {};
+    scanList.forEach(s => {
+      const lot = s.lot_number;
+      if (!byLot[lot]) byLot[lot] = { lot, scans: 0, stores: new Set(), lastScan: null, pulled: 0 };
+      byLot[lot].scans++;
+      if (s.store_name) byLot[lot].stores.add(s.store_name);
+      if (s.removed_from_shelf_at) byLot[lot].pulled++;
+      if (!byLot[lot].lastScan || s.created_at > byLot[lot].lastScan) byLot[lot].lastScan = s.created_at;
+    });
+
+    const totalScans  = scanList.length;
+    const totalStores = new Set(scanList.map(s => s.store_name).filter(Boolean)).size;
+    const totalLots   = Object.keys(byLot).length;
+
+    el.innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;margin-bottom:16px;">
+        <div style="background:var(--surface2);border-radius:8px;padding:12px;text-align:center;">
+          <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:20px;color:var(--accent);">${totalScans}</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:3px;text-transform:uppercase;letter-spacing:0.06em;">Total scans</div>
+        </div>
+        <div style="background:var(--surface2);border-radius:8px;padding:12px;text-align:center;">
+          <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:20px;color:var(--text);">${totalLots}</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:3px;text-transform:uppercase;letter-spacing:0.06em;">Lots scanned</div>
+        </div>
+        <div style="background:var(--surface2);border-radius:8px;padding:12px;text-align:center;">
+          <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:20px;color:var(--text);">${totalStores}</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:3px;text-transform:uppercase;letter-spacing:0.06em;">Stores</div>
+        </div>
+        <div style="background:var(--surface2);border-radius:8px;padding:12px;text-align:center;">
+          <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:20px;color:${lotNums.length-totalLots>0?'var(--warn)':'var(--muted)'};">${lotNums.length - totalLots}</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:3px;text-transform:uppercase;letter-spacing:0.06em;">Not yet scanned</div>
+        </div>
+      </div>
+      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">Per lot</div>
+      <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+        <table style="width:100%;border-collapse:collapse;font-size:11px;">
+          <thead><tr style="background:var(--surface2);">
+            <th style="padding:8px 12px;text-align:left;color:var(--muted);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.06em;">${regionTermMfr('lot_short')}</th>
+            <th style="padding:8px 12px;text-align:left;color:var(--muted);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.06em;">Scans</th>
+            <th style="padding:8px 12px;text-align:left;color:var(--muted);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.06em;">Stores</th>
+            <th style="padding:8px 12px;text-align:left;color:var(--muted);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.06em;">Pulled</th>
+            <th style="padding:8px 12px;text-align:left;color:var(--muted);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.06em;">Last scan</th>
+          </tr></thead>
+          <tbody>
+            ${Object.values(byLot).sort((a,b) => b.scans - a.scans).map((l,i) => `
+              <tr style="border-top:1px solid var(--border);${i%2?'':'background:rgba(0,0,0,0.06)'};">
+                <td style="padding:8px 12px;font-family:'DM Mono',monospace;color:var(--text);">${l.lot}</td>
+                <td style="padding:8px 12px;font-weight:700;color:var(--accent);">${l.scans}</td>
+                <td style="padding:8px 12px;color:var(--muted);">${l.stores.size}</td>
+                <td style="padding:8px 12px;color:${l.pulled>0?'var(--warn)':'var(--muted)'};">${l.pulled}</td>
+                <td style="padding:8px 12px;color:var(--muted);">${l.lastScan?fmtMfr(l.lastScan):'—'}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div style="font-size:10px;color:var(--muted);margin-top:8px;">Aggregate only — no individual scan records or consumer data. Shared by ${sharingPartners.map(p=>p.organisations?.name||'Retailer').join(', ')}.</div>`;
+  } catch(e) {
+    if (el) el.innerHTML = `<div style="font-size:11px;color:var(--muted);">Could not load scan data: ${e.message}</div>`;
+  }
+}
 
 function openPartnerWizard() {
   document.getElementById('partner-wizard-modal')?.remove();
@@ -1962,7 +2097,7 @@ async function renderShipments() {
                       <div style="font-size:10px;color:var(--muted);margin-top:2px;">${s.stores?.name||'—'}</div>
                     </td>
                     <td style="padding:10px 8px;border-bottom:1px solid rgba(22,61,55,0.5);font-size:11px;color:var(--text);">${s.quantity} ${s.unit}</td>
-                    <td style="padding:10px 8px;border-bottom:1px solid rgba(22,61,55,0.5);font-size:11px;color:var(--muted);">${s.shipped_at ? new Date(s.shipped_at).toLocaleDateString('en-GB') : '—'}</td>
+                    <td style="padding:10px 8px;border-bottom:1px solid rgba(22,61,55,0.5);font-size:11px;color:var(--muted);">${s.shipped_at ? fmtMfr(s.shipped_at) : '—'}</td>
                     <td style="padding:10px 8px;border-bottom:1px solid rgba(22,61,55,0.5);font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${s.reference_document||'—'}</td>
                   </tr>`).join('')}
               </tbody>
@@ -2026,7 +2161,7 @@ async function loadLotsForProduct() {
     return;
   }
   lotEl.innerHTML = '<option value="">— Select lot —</option>' +
-    lots.map(l => `<option value="${l.lot_number}">${l.lot_number}${l.expiry_date ? ' (exp ' + new Date(l.expiry_date).toLocaleDateString('en-GB') + ')' : ''}</option>`).join('');
+    lots.map(l => `<option value="${l.lot_number}">${l.lot_number}${l.expiry_date ? ' (exp ' + fmtMfr(l.expiry_date) || '—' + ')' : ''}</option>`).join('');
   lotEl.disabled = false;
 }
 
@@ -2093,11 +2228,128 @@ let _triageView = 'list'; // 'list' | 'new' | 'detail'
 let _triageComplaint = null;
 let _triageFilter = 'all';
 
+let _mfrTriageTab = 'complaints'; // 'complaints' | 'escalations'
+
 async function renderTriage() {
   const el = document.getElementById('main-content');
   if (_triageView === 'new') { renderTriageForm(el); return; }
   if (_triageView === 'detail' && _triageComplaint) { await renderTriageDetail(el); return; }
+  if (_mfrTriageTab === 'escalations') { await renderIncomingEscalations(el); return; }
   await renderTriageList(el);
+}
+
+async function renderIncomingEscalations(el) {
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading escalations…</div>`;
+  try {
+    const { data: escs } = await sb.from('complaint_escalations')
+      .select('*, organisations!complaint_escalations_from_org_id_fkey(name, contact_email, recall_coordinator_name, recall_coordinator_contact)')
+      .eq('to_org_id', _orgId)
+      .order('escalated_at', { ascending: false });
+    const list = escs || [];
+    const pending = list.filter(e => e.status === 'pending').length;
+
+    const statusPillE = s => {
+      const map = { pending:{c:'var(--warn)',bg:'rgba(245,166,35,0.1)',l:'Pending'}, acknowledged:{c:'var(--info)',bg:'rgba(56,189,248,0.1)',l:'Acknowledged'}, investigating:{c:'var(--accent)',bg:'rgba(52,211,153,0.1)',l:'Investigating'}, resolved:{c:'var(--accent)',bg:'rgba(52,211,153,0.12)',l:'Resolved'} };
+      const d = map[s]||{c:'var(--muted)',bg:'var(--surface2)',l:s};
+      return `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:${d.bg};color:${d.c};font-weight:600;">${d.l}</span>`;
+    };
+
+    el.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:20px;flex-wrap:wrap;">
+        <div>
+          <div style="font-size:15px;font-weight:600;color:var(--text);">Complaint Triage</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:2px;">Complaints about your products escalated by retail partners.</div>
+        </div>
+      </div>
+      ${mfrTriageTabBar('escalations', list.length)}
+      ${list.length === 0 ? `
+        <div style="background:var(--surface);border:1px solid var(--glass-border);border-radius:14px;padding:48px 24px;text-align:center;">
+          <div style="font-size:32px;margin-bottom:12px;">📋</div>
+          <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:6px;">No incoming escalations</div>
+          <div style="font-size:12px;color:var(--muted);">When a retailer escalates a consumer complaint about your products, it will appear here for your response.</div>
+        </div>` :
+      `<div style="display:flex;flex-direction:column;gap:10px;">
+        ${list.map(e => `
+          <div style="background:var(--surface);border:1px solid ${e.status==='pending'?'rgba(245,166,35,0.3)':'var(--glass-border)'};border-radius:12px;padding:16px 18px;">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px;">
+              <div>
+                <div style="font-size:13px;font-weight:700;color:var(--text);">From: ${e.organisations?.name||'Retailer'} ${statusPillE(e.status)}</div>
+                <div style="font-size:11px;color:var(--muted);margin-top:2px;">Escalated ${fmtMfrDT(e.escalated_at)}</div>
+                ${e.organisations?.recall_coordinator_name ? `<div style="font-size:11px;color:var(--muted);">Contact: ${e.organisations.recall_coordinator_name}${e.organisations.recall_coordinator_contact?' · '+e.organisations.recall_coordinator_contact:''}</div>` : ''}
+              </div>
+              <div style="display:flex;gap:7px;flex-wrap:wrap;">
+                ${e.status === 'pending' ? `<button onclick="updateEscalationStatus('${e.id}','acknowledged')" style="font-family:'DM Mono',monospace;font-size:11px;padding:6px 12px;border-radius:6px;border:none;background:var(--info);color:#fff;cursor:pointer;font-weight:600;">Acknowledge</button>` : ''}
+                ${e.status === 'acknowledged' ? `<button onclick="updateEscalationStatus('${e.id}','investigating')" style="font-family:'DM Mono',monospace;font-size:11px;padding:6px 12px;border-radius:6px;border:none;background:var(--accent);color:#065f46;cursor:pointer;font-weight:600;">Start investigating</button>` : ''}
+                ${e.status === 'investigating' ? `<button onclick="openEscalationResponseModal('${e.id}')" style="font-family:'DM Mono',monospace;font-size:11px;padding:6px 12px;border-radius:6px;border:none;background:var(--accent);color:#065f46;cursor:pointer;font-weight:600;">Send response</button>` : ''}
+              </div>
+            </div>
+            ${e.message ? `<div style="background:rgba(245,166,35,0.06);border:1px solid rgba(245,166,35,0.15);border-radius:8px;padding:10px 13px;font-size:12px;color:var(--text);margin-bottom:8px;line-height:1.6;"><span style="font-size:10px;text-transform:uppercase;letter-spacing:0.07em;color:var(--warn);font-weight:600;display:block;margin-bottom:4px;">Retailer message</span>"${e.message}"</div>` : ''}
+            ${e.manufacturer_notes ? `<div style="background:rgba(52,211,153,0.05);border:1px solid rgba(52,211,153,0.15);border-radius:8px;padding:10px 13px;font-size:12px;color:var(--accent);line-height:1.6;"><span style="font-size:10px;text-transform:uppercase;letter-spacing:0.07em;color:var(--accent);font-weight:600;display:block;margin-bottom:4px;">Your response</span>"${e.manufacturer_notes}"</div>` : ''}
+          </div>`).join('')}
+      </div>`}`;
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error: ${e.message}</div>`;
+  }
+}
+
+function mfrTriageTabBar(active, escCount) {
+  return `<div style="display:flex;gap:2px;margin-bottom:18px;border-bottom:1px solid var(--border);padding-bottom:0;">
+    ${[
+      { id:'complaints', label:'Complaints' },
+      { id:'escalations', label:`Incoming escalations${escCount>0?' ('+escCount+')':''}`, warn: escCount > 0 },
+    ].map(t => `<button onclick="_mfrTriageTab='${t.id}';renderTriage()"
+      style="font-family:'DM Mono',monospace;font-size:11px;padding:8px 14px;border:none;background:none;cursor:pointer;
+        border-bottom:2px solid ${active===t.id?(t.warn?'var(--warn)':'var(--accent)'):'transparent'};
+        color:${active===t.id?(t.warn?'var(--warn)':'var(--accent)'):'var(--muted)'};
+        margin-bottom:-1px;font-weight:${active===t.id?'700':'400'};">${t.label}</button>`).join('')}
+  </div>`;
+}
+
+async function updateEscalationStatus(escId, newStatus) {
+  const { error } = await sb.from('complaint_escalations').update({ status: newStatus }).eq('id', escId);
+  if (error) { showToast('Error: ' + error.message, 'error', 3500); return; }
+  renderTriage();
+}
+
+function openEscalationResponseModal(escId) {
+  document.getElementById('esc-response-modal')?.remove();
+  const m = document.createElement('div');
+  m.id = 'esc-response-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(4,12,14,0.92);z-index:9500;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(4px);';
+  m.innerHTML = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:20px;width:100%;max-width:480px;">
+      <div style="padding:20px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
+        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:15px;">Send response to retailer</div>
+        <button onclick="document.getElementById('esc-response-modal').remove()" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;">✕</button>
+      </div>
+      <div style="padding:20px 24px;">
+        <div id="esc-resp-msg" style="display:none;"></div>
+        <div class="field">
+          <label>Your response</label>
+          <textarea id="esc-resp-notes" rows="4" placeholder="Describe your findings, corrective action taken, or next steps…" style="width:100%;background:var(--surface2);border:1px solid var(--glass-border);border-radius:8px;padding:9px 11px;color:var(--text);font-family:'Figtree',sans-serif;font-size:13px;resize:vertical;"></textarea>
+        </div>
+        <div style="display:flex;gap:10px;">
+          <button onclick="submitEscalationResponse('${escId}')" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:10px 20px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">Send & resolve →</button>
+          <button onclick="document.getElementById('esc-response-modal').remove()" style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:10px 16px;font-size:13px;cursor:pointer;font-family:inherit;">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+}
+
+async function submitEscalationResponse(escId) {
+  const notes = document.getElementById('esc-resp-notes')?.value?.trim();
+  const msgEl = document.getElementById('esc-resp-msg');
+  const setMsg = (t, ok) => { if (msgEl) { msgEl.textContent=t; msgEl.style.cssText='display:block;padding:9px 12px;border-radius:6px;margin-bottom:12px;font-size:12px;background:'+(ok?'rgba(52,211,153,0.1)':'rgba(255,92,92,0.1)')+';color:'+(ok?'var(--accent)':'var(--danger)'); } };
+  if (!notes) { setMsg('Please add a response note', false); return; }
+  const btn = document.querySelector('#esc-response-modal button[onclick^="submitEscalationResponse"]');
+  if (btn) { btn.disabled=true; btn.textContent='Sending…'; }
+  const { error } = await sb.from('complaint_escalations').update({
+    manufacturer_notes: notes, status: 'resolved', resolved_at: new Date().toISOString(),
+  }).eq('id', escId);
+  if (error) { setMsg('Error: ' + error.message, false); if (btn) { btn.disabled=false; btn.textContent='Send & resolve →'; } return; }
+  setMsg('✓ Response sent', true);
+  setTimeout(() => { document.getElementById('esc-response-modal')?.remove(); renderTriage(); }, 1000);
 }
 
 
@@ -2249,6 +2501,7 @@ async function renderTriageList(el) {
           <button onclick="triageShowNew()" style="background:var(--accent);color:#065f46;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;">+ Log Phone Complaint</button>
         </div>
       </div>
+      ${mfrTriageTabBar('complaints', 0)}
 
       ${patterns.length > 0 ? `
         <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:20px;">
@@ -2723,7 +2976,7 @@ async function updateTriageStatus(id, newStatus) {
     });
     renderTriageDetail(document.getElementById('main-content'));
   } catch(e) {
-    alert('Error updating status: ' + e.message);
+    showToast('Error updating status: ' + e.message, 'error', 4000);
   }
 }
 
@@ -3035,7 +3288,7 @@ async function deleteMfrPattern(id, btn) {
   if (!confirm('Delete this learned pattern? The scanning app will re-learn it from future scans.')) return;
   btn.disabled = true; btn.textContent = '…';
   const { error } = await sb.from('code_patterns').delete().eq('id', id);
-  if (error) { btn.disabled = false; btn.textContent = 'Delete'; alert('Error: ' + error.message); return; }
+  if (error) { btn.disabled = false; btn.textContent = 'Delete'; showToast('Error: ' + error.message, 'error', 4000); return; }
   renderPatterns();
 }
 
@@ -3307,9 +3560,9 @@ async function renderLots() {
                   <tr>
                     <td style="padding:10px 0;border-bottom:1px solid rgba(22,61,55,0.5);font-family:'DM Mono',monospace;font-size:12px;font-weight:600;color:var(--text);">${l.lot_number}</td>
                     <td style="padding:10px 0;border-bottom:1px solid rgba(22,61,55,0.5);font-size:11px;color:var(--muted);">${l.products?.name||'—'}</td>
-                    <td style="padding:10px 0;border-bottom:1px solid rgba(22,61,55,0.5);font-size:11px;color:var(--muted);">${l.production_date?new Date(l.production_date).toLocaleDateString('en-GB'):'—'}</td>
+                    <td style="padding:10px 0;border-bottom:1px solid rgba(22,61,55,0.5);font-size:11px;color:var(--muted);">${l.production_date?fmtMfr(l.production_date) || '—':'—'}</td>
                     <td style="padding:10px 0;border-bottom:1px solid rgba(22,61,55,0.5);font-size:11px;color:${l.expiry_date&&new Date(l.expiry_date)<new Date()?'var(--danger)':'var(--muted)'};">
-                      ${l.expiry_date?new Date(l.expiry_date).toLocaleDateString('en-GB'):'—'}
+                      ${l.expiry_date?fmtMfr(l.expiry_date) || '—':'—'}
                       ${l.expiry_date&&new Date(l.expiry_date)<new Date()?` <span style="font-size:9px;">EXPIRED</span>`:''}
                     </td>
                     <td style="padding:10px 0;border-bottom:1px solid rgba(22,61,55,0.5);text-align:right;">
@@ -3476,7 +3729,7 @@ async function renderInvestigationList(el) {
                   <span style="font-size:10px;font-family:'DM Mono',monospace;color:${urg.color};padding:1px 7px;border-radius:4px;background:${urg.color.replace('var(','rgba(').replace('--danger)','255,92,92,0.1)').replace('--warn)','245,166,35,0.1)').replace('--muted)','106,175,158,0.1)')};">${urg.label}</span>
                 </div>
                 <div style="font-size:14px;font-weight:600;color:var(--text);">${inv.product_name || 'Unknown product'}</div>
-                <div style="font-size:11px;color:var(--muted);margin-top:3px;">${inv.lot_number ? 'Lot: ' + inv.lot_number + ' · ' : ''}${new Date(inv.created_at).toLocaleDateString('en-GB')}</div>
+                <div style="font-size:11px;color:var(--muted);margin-top:3px;">${inv.lot_number ? regionTermMfr('lot_short') + ': ' + inv.lot_number + ' · ' : ''}${fmtMfr(inv.created_at)}</div>
               </div>
               <div style="text-align:right;flex-shrink:0;">
                 <div style="font-size:20px;font-weight:700;color:${statusColor};">${responses.length}</div>
@@ -3767,7 +4020,7 @@ async function renderInvestigationDetail(el, id) {
       <!-- Investigation details -->
       <div style="background:var(--surface);border:1px solid var(--glass-border);border-radius:12px;padding:18px;margin-bottom:16px;">
         <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px;">Investigation Details</div>
-        ${inv.lot_number ? `<div style="font-size:12px;color:var(--muted);margin-bottom:4px;">Lot: <span style="color:var(--text);font-family:'DM Mono',monospace;">${inv.lot_number}</span></div>` : ''}
+        ${inv.lot_number ? `<div style="font-size:12px;color:var(--muted);margin-bottom:4px;">${regionTermMfr('lot_short')}: <span style="color:var(--text);font-family:'DM Mono',monospace;">${inv.lot_number}</span></div>` : ''}
         <div style="font-size:13px;color:var(--text);margin-bottom:8px;line-height:1.6;">${inv.issue_description}</div>
         ${inv.instructions ? `<div style="background:var(--surface2);border-left:3px solid var(--accent);padding:10px 14px;border-radius:4px;font-size:12px;color:var(--muted);line-height:1.6;margin-top:8px;"><strong style="color:var(--text);">Inspection instructions:</strong><br>${inv.instructions}</div>` : ''}
       </div>
@@ -3800,7 +4053,7 @@ async function renderInvestigationDetail(el, id) {
               <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:10px;">
                 <div>
                   <div style="font-size:13px;font-weight:600;color:var(--text);">${r.store_name || 'Unknown store'}</div>
-                  <div style="font-size:11px;color:var(--muted);">${r.responder_name || ''} · ${new Date(r.submitted_at).toLocaleDateString('en-GB')}</div>
+                  <div style="font-size:11px;color:var(--muted);">${r.responder_name || ''} · ${fmtMfr(r.submitted_at) || '—'}</div>
                 </div>
                 <span style="font-size:11px;font-weight:700;font-family:'DM Mono',monospace;padding:3px 10px;border-radius:6px;
                   background:${r.issue_found?'rgba(255,92,92,0.1)':'rgba(52,211,153,0.1)'};
@@ -5317,7 +5570,7 @@ const AUDIT_CHECKS = [
       const recent = drills.filter(r => new Date(r.created_at) > new Date(Date.now() - 365*86400000));
       return { pass: recent.length > 0, partial: drills.length > 0 && recent.length === 0,
         detail: recent.length > 0 ? `✓ ${recent.length} drill${recent.length!==1?'s':''} in last 12 months`
-        : drills.length > 0 ? `⚠ Drills on record but none in last 12 months (last: ${new Date(drills[0].created_at).toLocaleDateString('en-GB')})`
+        : drills.length > 0 ? `⚠ Drills on record but none in last 12 months (last: ${fmtMfr(drills[0].created_at) || '—'})`
         : 'No mock recall drills on record. Run a drill from the scanning app Manager → Mock Recall Drill.' };
     }
   },
@@ -6139,7 +6392,7 @@ async function renderMySuppliers() {
                       <td style="padding:7px 0;font-size:12px;color:var(--text);">${r.ingredient_name||'—'}</td>
                       <td style="padding:7px 0;font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">${r.lot_number||'—'}</td>
                       <td style="padding:7px 0;font-size:11px;color:var(--muted);">${r.quantity||''} ${r.unit||''}</td>
-                      <td style="padding:7px 0;font-size:11px;color:var(--muted);">${r.shipped_at ? new Date(r.shipped_at).toLocaleDateString('en-GB') : '—'}</td>
+                      <td style="padding:7px 0;font-size:11px;color:var(--muted);">${r.shipped_at ? fmtMfr(r.shipped_at) : '—'}</td>
                     </tr>`).join('')}
                   </tbody>
                 </table>
@@ -6162,7 +6415,7 @@ async function renderMySuppliers() {
               <td style="padding:8px 0;font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">${r.lot_number||'—'}</td>
               <td style="padding:8px 0;font-size:11px;color:var(--muted);">${r.supplier_name||'—'}</td>
               <td style="padding:8px 0;font-size:11px;color:var(--muted);">${r.quantity||''} ${r.unit||''}</td>
-              <td style="padding:8px 0;font-size:11px;color:var(--muted);">${r.shipped_at ? new Date(r.shipped_at).toLocaleDateString('en-GB') : '—'}</td>
+              <td style="padding:8px 0;font-size:11px;color:var(--muted);">${r.shipped_at ? fmtMfr(r.shipped_at) : '—'}</td>
               <td style="padding:8px 0;font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${r.reference_document||'—'}</td>
             </tr>`).join('')}
           </tbody>
@@ -7282,4 +7535,48 @@ function importProducts() {
     }
   });
 })();
+
+// ── Toast notification ───────────────────────────────────────
+(function() {
+  if (!document.getElementById('mfr-toast')) {
+    const div = document.createElement('div');
+    div.id = 'mfr-toast';
+    div.style.cssText = [
+      'position:fixed', 'bottom:24px', 'right:24px', 'z-index:99999',
+      'font-family:\'DM Mono\',monospace', 'font-size:12px',
+      'padding:10px 18px', 'border-radius:10px', 'max-width:360px',
+      'box-shadow:0 4px 24px rgba(0,0,0,0.4)', 'opacity:0',
+      'transform:translateY(8px)', 'transition:opacity 0.2s,transform 0.2s',
+      'pointer-events:none', 'display:none',
+    ].join(';');
+    document.body.appendChild(div);
+  }
+})();
+
+let _mfrToastTimer = null;
+function showToast(msg, type, duration) {
+  duration = duration || 3000;
+  const el = document.getElementById('mfr-toast');
+  if (!el) return;
+  if (_mfrToastTimer) { clearTimeout(_mfrToastTimer); _mfrToastTimer = null; }
+  const styles = {
+    ok:    { bg: 'rgba(52,211,153,0.95)',  color: '#065f46',  border: 'rgba(52,211,153,0.6)' },
+    error: { bg: 'rgba(255,92,92,0.95)',   color: '#fff',     border: 'rgba(255,92,92,0.6)' },
+    warn:  { bg: 'rgba(245,166,35,0.95)',  color: '#1a0f00',  border: 'rgba(245,166,35,0.6)' },
+    info:  { bg: 'rgba(56,189,248,0.95)',  color: '#0c2a3a',  border: 'rgba(56,189,248,0.6)' },
+  };
+  const s = styles[type] || styles.info;
+  el.textContent = msg;
+  el.style.background = s.bg;
+  el.style.color = s.color;
+  el.style.border = '1px solid ' + s.border;
+  el.style.display = 'block';
+  requestAnimationFrame(() => { el.style.opacity = '1'; el.style.transform = 'translateY(0)'; });
+  _mfrToastTimer = setTimeout(() => {
+    el.style.opacity = '0'; el.style.transform = 'translateY(8px)';
+    setTimeout(() => { el.style.display = 'none'; }, 220);
+    _mfrToastTimer = null;
+  }, duration);
+}
+
 </script>
