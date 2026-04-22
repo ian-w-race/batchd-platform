@@ -698,7 +698,7 @@ async function renderOverview() {
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
   try {
-  const [eventsRes, acksRes, productsRes, partnersRes, shipmentsRes] = await Promise.all([
+  const [eventsRes, acksRes, productsRes, partnersRes, shipmentsRes, lotsRes, orgRes] = await Promise.all([
     sb.from('recall_events').select('*').eq('source_org_id', _orgId).order('created_at', { ascending: false }),
     sb.from('recall_acknowledgements').select('status, recall_event_id').in('recall_event_id',
       (await sb.from('recall_events').select('id').eq('source_org_id', _orgId)).data?.map(e => e.id) || []
@@ -706,6 +706,8 @@ async function renderOverview() {
     sb.from('products').select('id').eq('manufacturer_id', _orgId),
     sb.from('trading_partners').select('status').eq('manufacturer_id', _orgId),
     sb.from('shipments').select('id').eq('manufacturer_id', _orgId),
+    sb.from('product_lots').select('id').eq('manufacturer_id', _orgId).limit(1),
+    sb.from('organisations').select('recall_coordinator_name, recall_coordinator_contact').eq('id', _orgId).single(),
   ]);
 
   const events = eventsRes.data || [];
@@ -717,6 +719,49 @@ async function renderOverview() {
   const productCount  = (productsRes.data || []).length;
   const partnerCount  = (partnersRes.data || []).filter(p => p.status === 'active').length;
   const shipmentCount = (shipmentsRes.data || []).length;
+  const hasLots       = (lotsRes.data || []).length > 0;
+  const org           = orgRes.data || {};
+  const hasCoord      = !!(org.recall_coordinator_name && org.recall_coordinator_contact);
+
+  // ── Onboarding checklist ────────────────────────────────────
+  const steps = [
+    { done: productCount > 0,  label: 'Register your first product',         sub: 'Add the products you manufacture so lot codes can be tracked', panel: 'products', icon: '📦' },
+    { done: hasLots,           label: 'Add lot codes',                        sub: 'Register lot codes for each product batch you produce',        panel: 'lots',     icon: '🏷' },
+    { done: shipmentCount > 0, label: 'Log a shipment',                       sub: 'Record which lots were delivered to which retail stores',      panel: 'shipments',icon: '🚚' },
+    { done: partnerCount > 0,  label: 'Connect a retail trading partner',     sub: 'Your recall notifications go to all confirmed partners',       panel: 'partners', icon: '🤝' },
+    { done: hasCoord,          label: 'Assign a recall coordinator',          sub: 'Required by FDA 21 CFR 7.49 and Mattilsynet §16',             panel: 'settings', icon: '👤' },
+  ];
+  const stepsComplete = steps.filter(s => s.done).length;
+  const allDone = stepsComplete === steps.length;
+
+  const onboardingHTML = allDone ? '' : `
+    <div style="background:var(--surface);border:1px solid var(--glass-border);border-radius:14px;padding:20px 22px;margin-bottom:20px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+        <div>
+          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:14px;color:var(--text);">Getting started</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">Complete these steps to activate your recall network · ${stepsComplete} of ${steps.length} done</div>
+        </div>
+        <div style="display:flex;gap:3px;">
+          ${steps.map(s => `<div style="width:28px;height:4px;border-radius:2px;background:${s.done?'var(--accent)':'var(--border)'};transition:background 0.3s;"></div>`).join('')}
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        ${steps.map((s, i) => `
+          <div onclick="${s.done?'':(`showPanel('${s.panel}')`+';')}" style="display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:10px;border:1px solid ${s.done?'rgba(52,211,153,0.2)':'var(--glass-border)'};background:${s.done?'rgba(52,211,153,0.04)':'var(--surface2)'};cursor:${s.done?'default':'pointer'};transition:all 0.15s;"
+            ${!s.done?`onmouseover="this.style.borderColor='rgba(52,211,153,0.3)'" onmouseout="this.style.borderColor='var(--glass-border)'"`:''}>
+            <div style="width:32px;height:32px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;${s.done?'background:rgba(52,211,153,0.15);border:1.5px solid rgba(52,211,153,0.4);':'background:var(--surface);border:1.5px solid var(--border);'}">
+              ${s.done
+                ? `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>`
+                : `<span style="font-size:14px;">${s.icon}</span>`}
+            </div>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:12px;font-weight:600;color:${s.done?'var(--muted)':'var(--text)'};${s.done?'text-decoration:line-through;':''}">${s.label}</div>
+              ${!s.done?`<div style="font-size:11px;color:var(--muted);margin-top:1px;line-height:1.4;">${s.sub}</div>`:''}
+            </div>
+            ${!s.done?`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2" style="flex-shrink:0;"><polyline points="9 18 15 12 9 6"/></svg>`:''}
+          </div>`).join('')}
+      </div>
+    </div>`;
 
   // Network effect banner
   el.innerHTML = `
@@ -724,6 +769,7 @@ async function renderOverview() {
       <div style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);letter-spacing:0.06em;text-transform:uppercase;margin-bottom:4px;">Dashboard</div>
       ${partnerCount > 0 ? `<div style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;"><div style="width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 6px rgba(52,211,153,0.7);flex-shrink:0;"></div>If you push a recall now, it reaches <strong style="color:var(--text);">${partnerCount} retail partner${partnerCount!==1?'s':''}</strong> in under 60 seconds.</div>` : `<div style="font-size:12px;color:var(--muted);">Connect retail trading partners to start tracking recall exposure.</div>`}
     </div>
+    ${onboardingHTML}
     <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);">
       <div class="kpi-card ${liveRecalls>0?'red':'green'}">
         <div class="kpi-label">Live recalls issued</div>

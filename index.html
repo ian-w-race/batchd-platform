@@ -13777,7 +13777,7 @@ async function refreshManagerDashboard() {
 async function loadMgrData() {
   try {
     // Always filter by org. If the user is a store_manager with a store_id assigned,
-    // also filter by store_id (UUID) with store_name as a fallback for legacy scans.
+    // filter server-side by store_id OR store_name (for legacy scans without store_id).
     const mgrStoreId   = window._managerStoreId   || null;
     const mgrStoreName = window._managerStoreName  || null;
 
@@ -13785,10 +13785,15 @@ async function loadMgrData() {
     if (_currentOrgId) scansQuery = scansQuery.eq('organisation_id', _currentOrgId);
 
     // Corp admins see all stores. Store managers see only their store.
+    // Use server-side OR filter when store_id is known — avoids loading the full org scan set.
     if (mgrStoreId && _currentUserRole === 'store_manager') {
-      // Primary: match by UUID. Also fetch legacy name-matched scans via OR.
-      // Supabase JS doesn't support OR across columns natively, so we filter client-side
-      // after fetching the org's scans — still org-filtered so RLS is satisfied.
+      if (mgrStoreName) {
+        // Exact server-side OR: match UUID or legacy name
+        scansQuery = scansQuery.or(`store_id.eq.${mgrStoreId},store_name.eq."${mgrStoreName}"`);
+      } else {
+        // Only UUID known (name not yet resolved) — filter by UUID server-side
+        scansQuery = scansQuery.eq('store_id', mgrStoreId);
+      }
     }
 
     let recallsQuery = sb.from('recalls').select('*').order('created_at', { ascending: false });
@@ -13797,8 +13802,10 @@ async function loadMgrData() {
     const [scansRes, recallsRes] = await Promise.all([scansQuery, recallsQuery]);
     let allScans = scansRes.data || [];
 
-    // Client-side store filter for store_managers — matches both UUID and legacy name
-    if (mgrStoreId && _currentUserRole === 'store_manager') {
+    // Safety net: client-side dedup for corp admins viewing cross-store data.
+    // Store managers are already server-filtered above.
+    if (mgrStoreId && _currentUserRole === 'store_manager' && !mgrStoreName) {
+      // Name not yet resolved — also catch any legacy name-matched rows
       allScans = allScans.filter(s =>
         s.store_id === mgrStoreId ||
         (mgrStoreName && s.store_name === mgrStoreName)
@@ -14038,30 +14045,34 @@ function renderMgrStores() {
   }
   const stores = {};
   for (const r of _mgrAllScans) {
-    const s = r.store_name || t('store.noStore');
-    if (!stores[s]) stores[s] = { scans: 0, onShelf: 0, pulled: 0, staff: new Set(), lastScan: null, recallMatches: 0 };
-    stores[s].scans++;
-    if (!r.removed_from_shelf_at) stores[s].onShelf++;
-    else stores[s].pulled++;
-    if (r.scanned_by) stores[s].staff.add(r.scanned_by);
-    if (!stores[s].lastScan || r.created_at > stores[s].lastScan) stores[s].lastScan = r.created_at;
+    // Key by store_id when available — prevents same-named stores from merging.
+    // Fall back to store_name for legacy scans that predate store_id tracking.
+    const storeKey  = r.store_id || ('name:' + (r.store_name || t('store.noStore')));
+    const storeName = r.store_name || t('store.noStore');
+    if (!stores[storeKey]) stores[storeKey] = { name: storeName, scans: 0, onShelf: 0, pulled: 0, staff: new Set(), lastScan: null, recallMatches: 0, storeId: r.store_id || null };
+    stores[storeKey].scans++;
+    if (!r.removed_from_shelf_at) stores[storeKey].onShelf++;
+    else stores[storeKey].pulled++;
+    if (r.scanned_by) stores[storeKey].staff.add(r.scanned_by);
+    if (!stores[storeKey].lastScan || r.created_at > stores[storeKey].lastScan) stores[storeKey].lastScan = r.created_at;
   }
   // Check recall matches per store
   // Exclude FDA/RASFF bulk data — only show operationally relevant recalls
   const activeRecalls = _mgrAllRecalls.filter(r => r.active && !['fda','rasff','FDA','RASFF'].includes(r.source));
   for (const r of _mgrAllScans) {
-    const s = r.store_name || t('store.noStore');
+    const storeKey = r.store_id || ('name:' + (r.store_name || t('store.noStore')));
     const hit = activeRecalls.some(rec =>
       (rec.lot_number && (r.lot_number||'').toLowerCase().includes(rec.lot_number.toLowerCase())) ||
       (rec.product_name && (r.product_name||'').toLowerCase().includes(rec.product_name.toLowerCase())) ||
       (rec.barcode_number && (r.barcode_number||'').toLowerCase().includes(rec.barcode_number.toLowerCase()))
     );
-    if (hit && stores[s]) stores[s].recallMatches++;
+    if (hit && stores[storeKey]) stores[storeKey].recallMatches++;
   }
 
   el.innerHTML = Object.entries(stores)
     .sort((a,b) => b[1].scans - a[1].scans)
-    .map(([name, d]) => {
+    .map(([key, d]) => {
+      const name = d.name;
       const lastScanStr = d.lastScan ? fmtRegionDate(d.lastScan, false) : '—';
       const recallWarn = d.recallMatches > 0
         ? `<span style="color:var(--danger);font-size:11px;font-weight:600;">⚠ ${d.recallMatches} ${d.recallMatches!==1?t('store.recallMatches'):t('store.recallMatch')}</span>`
