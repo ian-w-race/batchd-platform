@@ -7192,7 +7192,6 @@ async function lookupProductName(barcode) {
       .order('scan_count', { ascending: false })
       .limit(1);
     if (cp && cp[0] && cp[0].product_name && cp[0].product_name.length > 1) {
-      console.log('[Barcode] Found in pattern DB:', cp[0].product_name);
       return cp[0].product_name;
     }
   } catch(e) { /* continue */ }
@@ -7208,7 +7207,6 @@ async function lookupProductName(barcode) {
         .order('created_at', { ascending: false })
         .limit(1);
       if (sc && sc[0] && sc[0].product_name && sc[0].product_name.length > 1) {
-        console.log('[Barcode] Found in scan history:', sc[0].product_name);
         return sc[0].product_name;
       }
     } catch(e) { /* continue */ }
@@ -8121,6 +8119,21 @@ async function initRecallSystem() {
     recallSource = data?.recall_source || 'both';
     if (data?.region) { _userRegion = data.region; applyRegion(); }
     if (data?.recall_lookback_days) recallLookbackDays = data.recall_lookback_days;
+
+    // Blocker 2: For staff and store managers, org-level lookback set by
+    // the corp_admin overrides personal settings — compliance decisions
+    // belong at org level, not individual level.
+    if (_currentUserRole === 'staff' || _currentUserRole === 'store_manager') {
+      try {
+        const { data: orgData } = await sb.from('organisations')
+          .select('recall_lookback_days')
+          .eq('id', _currentOrgId)
+          .maybeSingle();
+        if (orgData?.recall_lookback_days) {
+          recallLookbackDays = orgData.recall_lookback_days;
+        }
+      } catch(e) { /* fall back to user setting silently */ }
+    }
   } catch(e) { recallSource = 'both'; }
 
   // Step 2: fire recall fetch in the BACKGROUND — never block login on external APIs
@@ -11563,14 +11576,14 @@ function decodeFdaJulianDate(code) {
     const year = parseInt(code.slice(0,4)), doy = parseInt(code.slice(4));
     if (year >= 2000 && year <= 2035 && doy >= 1 && doy <= 366) {
       const d = new Date(year, 0, doy);
-      return `${year}, day ${doy} of year (≈ ${d.toLocaleDateString('en-US',{month:'short',day:'numeric'})})`;
+      return `${year}, day ${doy} of year (≈ ${(_userRegion==='us'?d.toLocaleDateString('en-US',{month:'short',day:'numeric'}):d.toLocaleDateString('en-GB',{day:'numeric',month:'short'}))})`;
     }
   }
   if (/^\d{5}$/.test(code)) {
     const year = 2000 + parseInt(code.slice(0,2)), doy = parseInt(code.slice(2));
     if (doy >= 1 && doy <= 366) {
       const d = new Date(year, 0, doy);
-      return `${year}, day ${doy} (≈ ${d.toLocaleDateString('en-US',{month:'short',day:'numeric'})})`;
+      return `${year}, day ${doy} (≈ ${(_userRegion==='us'?d.toLocaleDateString('en-US',{month:'short',day:'numeric'}):d.toLocaleDateString('en-GB',{day:'numeric',month:'short'}))})`;
     }
   }
   return null;
@@ -12317,7 +12330,6 @@ OCR CONFUSION PAIRS: 0↔O, 1↔I↔l↔7, 8↔B, 5↔S, 2↔Z, 6↔G, 9↔q`;
         isUSRegion
           ? `Re-examine this US food packaging independently. A prior read found no lot code. Your job: find what was missed.\n\nFocus on:\n- Faint inkjet dot-matrix codes near the use-by or best-by date\n- Codes on seams, flaps, or base edges\n- Any "LOT", "L#", "BATCH", "PACK DATE" followed by alphanumerics\n- Julian dates: YYYYDDD or YYDDD (7 or 5 digits)\n- GS1-128 AI(10) in a barcode string\n${contextHint}${jsonSchema}`
           : `Re-examine this Norwegian/EU food packaging independently. A prior read found no lot code. Your job: find what was missed.\n\nFocus on:\n- Faint inkjet dot-matrix codes near the expiry date\n- Codes on seams, flaps, or base edges\n- Any "L" or "Parti" followed by alphanumerics\n- TINE: code right of "GOD ETTER"\n- Fish/meat trays: code near "Siste forbruksdag"\n${contextHint}${jsonSchema}`);
-      console.log('[Pass 2] adversarial:', pass2);
     }
 
     // ── RECONCILE ────────────────────────────────────────────
@@ -12327,7 +12339,6 @@ OCR CONFUSION PAIRS: 0↔O, 1↔I↔l↔7, 8↔B, 5↔S, 2↔Z, 6↔G, 9↔q`;
     const validLots    = allLots.filter(c => validateLotCode(c).valid);
     const validBatches = allBatches.filter(c => validateLotCode(c).valid);
 
-    console.log('Valid lot candidates:', validLots);
 
     let finalLot = null, finalBatch = null, finalConfidence = 'low', reconcileNote = '';
 
@@ -12384,7 +12395,6 @@ OCR CONFUSION PAIRS: 0↔O, 1↔I↔l↔7, 8↔B, 5↔S, 2↔Z, 6↔G, 9↔q`;
       const b64Inv = await blobToBase64(inverted);
       const passInv = await callOcrApi(b64Inv,
         `This image has been converted to inverted grayscale to reveal laser-etched or very low-contrast codes. Look for any alphanumeric sequence that could be a production/lot code on ${isUSRegion ? 'US' : 'Norwegian/EU'} food packaging.${contextHint}${jsonSchema}`);
-      console.log('[Inverted]:', passInv);
       if (passInv.lot && validateLotCode(passInv.lot).valid) {
         finalLot = passInv.lot;
         finalBatch = finalBatch || passInv.batch || null;
@@ -13659,7 +13669,6 @@ async function fetchUserProfile() {
       return;
     }
     const isManager = data?.is_manager === true;
-    console.log('[fetchUserProfile] isManager:', isManager);
     currentUser.isManager = isManager;
     applyManagerUI(isManager);
     renderSettingsForRole();
@@ -14763,7 +14772,7 @@ async function deleteMgrPattern(id, btn) {
   if (!confirm('Delete this learned pattern? The scanning app will re-learn it from future scans.')) return;
   btn.disabled = true; btn.textContent = '…';
   const { error } = await sb.from('code_patterns').delete().eq('id', id);
-  if (error) { btn.disabled = false; btn.textContent = 'Delete'; alert('Error: ' + error.message); return; }
+  if (error) { btn.disabled = false; btn.textContent = 'Delete'; showToast('Error: ' + error.message, 'error', 4000); return; }
   loadMgrPatterns();
 }
 
@@ -15830,7 +15839,6 @@ async function _advanceLinkedAck(targetStatus) {
     if (error) throw error;
     _recallLinkedAck = data;
     _renderAckStrip(_recallLinkedAck);
-    console.log('[ack-sync] advanced to', targetStatus);
   } catch(e) {
     console.warn('[ack-sync] advance failed:', e.message);
   }
@@ -17054,7 +17062,7 @@ function generateTraceabilityPlan() {
     const cat = r.ftl_category || detectFtlCategory(r.product_name||'').category;
     return cat ? (FTL_CATEGORIES[cat]?.label || cat) : null;
   }).filter(Boolean))];
-  const today     = new Date().toLocaleDateString('en-GB', { day:'2-digit', month:'long', year:'numeric' });
+  const today     = fmtRegionDate(new Date().toISOString());
   const stores    = [...new Set(allScans.map(r => r.store_name).filter(Boolean))];
 
   const notesSection = notes ? 'Additional notes:\n' + notes : '';
@@ -17065,7 +17073,7 @@ Prepared by: ${storeName}
 Address: ${storeAddr || 'See store records'}
 Country: ${country}
 Date: ${today}
-Review date: ${new Date(Date.now() + 365*86400000).toLocaleDateString('en-GB', { day:'2-digit', month:'long', year:'numeric' })}
+Review date: ${fmtRegionDate(new Date(Date.now() + 365*86400000).toISOString())}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -17345,7 +17353,7 @@ async function loadRecallsView() {
         ? 'MANUFACTURER PUSH'
         : (r.source || '').toLowerCase().includes('fda') ? 'FDA' : (r.source || 'MANUAL').toUpperCase();
       const dateStr = (r.published_at || r.created_at)
-        ? new Date(r.published_at || r.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+        ? fmtRegionDate(r.published_at || r.created_at) : '';
 
       // ── Exposure summary from scan_recall_matches ──
       const rows       = exposureByRecall[r.id] || [];
@@ -17373,7 +17381,7 @@ async function loadRecallsView() {
         exposureHtml += '<div style="text-align:center;"><div style="font-family:Figtree,sans-serif;font-weight:800;font-size:20px;color:var(--text);">' + stores.length + '</div><div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;">Store' + (stores.length !== 1 ? 's' : '') + '</div></div>';
         exposureHtml += '</div>';
         if (stores.length) exposureHtml += '<div style="font-size:11px;color:var(--muted);font-family:DM Mono,monospace;margin-bottom:4px;">Stores: <span style="color:var(--text);">' + stores.map(s => esc(s)).join(' · ') + '</span></div>';
-        if (firstPlaced) exposureHtml += '<div style="font-size:11px;color:var(--muted);font-family:DM Mono,monospace;margin-bottom:4px;">First placed: <span style="color:var(--text);">' + new Date(firstPlaced).toLocaleDateString('en-GB', {day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) + '</span></div>';
+        if (firstPlaced) exposureHtml += '<div style="font-size:11px;color:var(--muted);font-family:DM Mono,monospace;margin-bottom:4px;">First placed: <span style="color:var(--text);">' + fmtRegionDate(firstPlaced, true) + '</span></div>';
         if (maxExposure !== null) exposureHtml += '<div style="font-size:11px;color:' + (unitsOnShelf > 0 ? 'var(--danger)' : 'var(--muted)') + ';font-family:DM Mono,monospace;">Max exposure window: <strong>' + (maxExposure < 1 ? '<1h' : Math.round(maxExposure) + 'h') + '</strong></div>';
         exposureHtml += '</div>';
       } else {
