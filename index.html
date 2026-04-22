@@ -4401,6 +4401,12 @@
       <!-- Exposure window banner + 2-hour removal tracker -->
       <div id="recall-sheet-exposure" style="display:none;margin-top:10px;background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.3);border-radius:8px;padding:8px 12px;font-size:12px;color:var(--danger);font-family:'DM Mono',monospace;"></div>
       <div id="recall-sheet-timer" style="display:none;margin-top:6px;padding:8px 12px;border-radius:8px;font-size:12px;font-family:'DM Mono',monospace;font-weight:600;"></div>
+      <!-- Dashboard sync strip — shown when this recall is linked to a manufacturer push ack chain -->
+      <div id="recall-sheet-ack-strip" style="display:none;margin-top:8px;background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.2);border-radius:8px;padding:9px 12px;">
+        <div style="font-size:10px;font-weight:700;letter-spacing:0.07em;text-transform:uppercase;color:var(--accent);margin-bottom:5px;">📊 Linked to manager dashboard</div>
+        <div id="recall-sheet-ack-chain" style="display:flex;align-items:center;gap:0;"></div>
+        <div style="font-size:10px;color:var(--muted);margin-top:5px;">Your actions below automatically update the recall response chain visible to your manager.</div>
+      </div>
     </div>
 
     <!-- Steps -->
@@ -15725,6 +15731,50 @@ function mgrExportCSV() {
 
 let _recallActionId = null;
 let _recallActionRecord = null;
+let _recallLinkedAck = null; // recall_acknowledgements row linked to this scan via manufacturer push
+
+// ── Dashboard ack chain sync helpers ──────────────────────────
+const ACK_STEPS = ['notified','acknowledged','pulled','disposed','confirmed'];
+const ACK_LABELS = { notified:'Notified', acknowledged:'Acknowledged', pulled:'Pulled', disposed:'Disposed', confirmed:'Confirmed' };
+
+function _renderAckStrip(ack) {
+  const strip = document.getElementById('recall-sheet-ack-strip');
+  const chain = document.getElementById('recall-sheet-ack-chain');
+  if (!strip || !chain || !ack) return;
+  const idx = ACK_STEPS.indexOf(ack.status);
+  chain.innerHTML = ACK_STEPS.map((s, i) => {
+    const done = i <= idx;
+    const dot = `<div style="width:18px;height:18px;border-radius:50%;flex-shrink:0;background:${done?'rgba(52,211,153,0.2)':'rgba(22,61,55,0.5)'};border:1.5px solid ${done?'var(--accent)':'var(--border)'};display:flex;align-items:center;justify-content:center;font-size:9px;color:${done?'var(--accent)':'var(--muted)'};">${done?'✓':i+1}</div>`;
+    const label = `<div style="font-size:9px;color:${done?'var(--accent)':'var(--muted)'};margin-top:3px;white-space:nowrap;">${ACK_LABELS[s]}</div>`;
+    const line = i < ACK_STEPS.length - 1 ? `<div style="flex:1;height:1px;background:${done&&i<idx?'var(--accent)':'var(--border)'};margin-bottom:11px;min-width:8px;"></div>` : '';
+    return `<div style="display:flex;flex-direction:column;align-items:center;">${dot}${label}</div>${line}`;
+  }).join('');
+  strip.style.display = 'block';
+}
+
+async function _advanceLinkedAck(targetStatus) {
+  if (!_recallLinkedAck) return;
+  const current = ACK_STEPS.indexOf(_recallLinkedAck.status);
+  const target  = ACK_STEPS.indexOf(targetStatus);
+  if (target <= current) return; // already at or past this step
+  try {
+    const update = {
+      status: targetStatus,
+      acknowledged_at: new Date().toISOString(),
+      acknowledged_by: currentUser?.id || null,
+    };
+    const { data, error } = await sb.from('recall_acknowledgements')
+      .update(update)
+      .eq('id', _recallLinkedAck.id)
+      .select().single();
+    if (error) throw error;
+    _recallLinkedAck = data;
+    _renderAckStrip(_recallLinkedAck);
+    console.log('[ack-sync] advanced to', targetStatus);
+  } catch(e) {
+    console.warn('[ack-sync] advance failed:', e.message);
+  }
+}
 
 function openRecallActionSheet(scanId) {
   const r = allRecords.find(rec => rec.id === scanId)
@@ -15807,6 +15857,32 @@ function openRecallActionSheet(scanId) {
 
   // P1.3: Start 2-hour removal timer
   startRemovalTimer(r);
+
+  // ── Link to recall_acknowledgements if this is a manufacturer push ──
+  _recallLinkedAck = null;
+  document.getElementById('recall-sheet-ack-strip').style.display = 'none';
+  (async () => {
+    try {
+      // Find if this scan has a match against a manufacturer-pushed recall
+      const { data: matchRows } = await sb.from('scan_recall_matches')
+        .select('recall_id, recall_source')
+        .eq('scan_id', _recallActionId)
+        .eq('recall_source', 'manufacturer_push')
+        .limit(1);
+      if (!matchRows?.length) return;
+      const recallEventId = matchRows[0].recall_id;
+
+      // Find the ack row for this org + this recall event
+      const { data: acks } = await sb.from('recall_acknowledgements')
+        .select('*')
+        .eq('recall_event_id', recallEventId)
+        .eq('organisation_id', _currentOrgId)
+        .limit(1);
+      if (!acks?.length) return;
+      _recallLinkedAck = acks[0];
+      _renderAckStrip(_recallLinkedAck);
+    } catch(e) { console.warn('[ack-sync] lookup failed:', e.message); }
+  })();
 
   // Show sheet
   const sheet = document.getElementById('recall-action-sheet');
@@ -16697,6 +16773,8 @@ async function recallActionPull() {
     _resetRecallStep1(_recallActionRecord);
     applyFilters();
     stopRemovalTimer();
+    // ── Advance dashboard ack chain ────────────────────────────
+    await _advanceLinkedAck('acknowledged');
     showToast((currentLang === 'no' ? 'Trukket fra hylla — eksponeringsvinduet er lukket.' : 'Pulled from shelf — exposure window closed.'), 'ok', 3000);
   } catch(e) {
     btn.disabled = false;
@@ -16805,6 +16883,12 @@ async function recallActionResolve() {
     }
 
     applyFilters();
+    // ── Advance dashboard ack chain to confirmed ───────────────
+    if (_recallLinkedAck) {
+      await _advanceLinkedAck('pulled');
+      await _advanceLinkedAck('disposed');
+      await _advanceLinkedAck('confirmed');
+    }
     showToast('Recall incident marked as resolved.', 'ok', 3500);
   } catch(e) {
     btn.disabled = false;

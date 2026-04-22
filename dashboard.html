@@ -2324,13 +2324,22 @@ async function renderRecalls() {
     const storeName  = a.stores?.name || 'Unknown store';
     const nextStep   = STEPS[idx + 1];
     const elapsed    = a.acknowledged_at ? Math.round((Date.now() - new Date(a.acknowledged_at).getTime()) / 60000) : null;
+    // Detect app-advanced: if the ack was set by a user UUID (not a manager session),
+    // or if multiple steps were advanced within seconds of each other (batch advance from resolve)
+    const appAdvanced = a.status === 'confirmed' && a.confirmed_at && a.pulled_at &&
+      Math.abs(new Date(a.confirmed_at) - new Date(a.pulled_at)) < 5000;
+    const appBadge = appAdvanced
+      ? `<span style="font-size:9px;padding:1px 6px;border-radius:4px;background:rgba(52,211,153,0.1);color:var(--accent);font-family:'DM Mono',monospace;margin-left:4px;" title="Completed via Batch'd scanning app">via app</span>`
+      : '';
     if (isComplete) {
       return `<div style="border:1px solid rgba(52,211,153,0.3);border-radius:12px;padding:16px 18px;background:rgba(52,211,153,0.04);margin-bottom:10px;">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
           <div style="display:flex;align-items:center;gap:10px;">
             <div style="width:28px;height:28px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#065f46" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></div>
-            <div><div style="font-size:13px;font-weight:700;color:var(--text);">${storeName}</div>
-            <div style="font-size:11px;color:var(--accent);margin-top:1px;">All 5 steps complete${a.units_pulled?' · '+a.units_pulled+' units removed':''}${a.acknowledged_at?' · '+new Date(a.acknowledged_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):''}</div></div>
+            <div>
+              <div style="font-size:13px;font-weight:700;color:var(--text);">${storeName}${appBadge}</div>
+              <div style="font-size:11px;color:var(--accent);margin-top:1px;">All 5 steps complete${a.units_pulled?' · '+a.units_pulled+' units removed':''}${a.acknowledged_at?' · '+new Date(a.acknowledged_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):''}</div>
+            </div>
           </div>
           <div style="display:flex;gap:8px;">
             <button onclick="showStoreTimeline('${a.id}')" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;">Timeline</button>
@@ -2432,7 +2441,7 @@ async function renderRecalls() {
         <div style="flex:1;"><div style="font-size:13px;font-weight:700;color:var(--accent);">Recall response complete</div><div style="font-size:11px;color:var(--muted);margin-top:1px;">All ${evAcks.length} store${evAcks.length!==1?'s':''} confirmed · ${ev.product_name} · Audit trail locked</div></div>
         ${isDrill
           ? `<button onclick="generateDrillCertificate('${p.recall_event_id}')" style="font-size:11px;padding:7px 14px;border-radius:7px;border:1px solid rgba(52,211,153,0.35);background:rgba(52,211,153,0.07);color:var(--accent);cursor:pointer;font-weight:600;">🏅 Download certificate</button>`
-          : `<button onclick="generateRecallAuditReport('${p.recall_event_id}','${(ev.product_name||'').replace(/'/g,"\\'")}' )" style="font-size:11px;padding:7px 14px;border-radius:7px;border:1px solid rgba(52,211,153,0.35);background:none;color:var(--accent);cursor:pointer;font-weight:600;">Full audit report</button>`}
+          : `<button onclick="generateJointRecallReport('${p.recall_event_id}','${(ev.product_name||'').replace(/'/g,"\\'")}' )" style="font-size:11px;padding:7px 14px;border-radius:7px;border:1px solid rgba(52,211,153,0.35);background:rgba(52,211,153,0.08);color:var(--accent);cursor:pointer;font-weight:600;">📄 Joint completion report</button>`}
       </div>` : ''}
       <div style="border:1px solid ${isDrill?'rgba(245,166,35,0.3)':anyAction?'rgba(255,92,92,0.3)':'var(--border)'};border-radius:12px ${evAcks.length>0?'12px 0 0':'12px 12px 12px'};overflow:hidden;">
         <div style="padding:16px 18px;background:${isDrill?'rgba(245,166,35,0.04)':'var(--surface)'};">
@@ -4209,6 +4218,323 @@ function renderComplianceResults(el) {
       </div>` : ''}
     </div>`;
 }
+
+async function generateJointRecallReport(recallEventId, productName) {
+  const btn = event?.target;
+  const origText = btn?.textContent;
+  if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+
+  try {
+    // ── Fetch all data in parallel ─────────────────────────────
+    const [evRes, distRes, acksRes, orgRes] = await Promise.all([
+      sb.from('recall_events').select('*').eq('id', recallEventId).single(),
+      sb.from('recall_distributions').select('retailer_org_id, distributed_at, est_affected_units').eq('recall_event_id', recallEventId),
+      sb.from('recall_acknowledgements').select('*, stores(name)').eq('recall_event_id', recallEventId).order('created_at'),
+      sb.from('organisations').select('id, name, contact_email, recall_coordinator_name, recall_coordinator_contact').eq('id', _orgId).single(),
+    ]);
+
+    const ev   = evRes.data || {};
+    const acks = acksRes.data || [];
+    const org  = orgRes.data || {};
+    const dist = distRes.data || [];
+
+    // Fetch manufacturer org
+    let mfrOrg = {};
+    if (ev.source_org_id) {
+      const { data: mfr } = await sb.from('organisations')
+        .select('name, contact_email, recall_coordinator_name, recall_coordinator_contact')
+        .eq('id', ev.source_org_id).single();
+      mfrOrg = mfr || {};
+    }
+
+    // Fetch matched scans via scan_recall_matches
+    const { data: matchRows } = await sb.from('scan_recall_matches')
+      .select('scan_id, store_name, scanned_by, placed_at, quantity, match_type')
+      .eq('recall_id', recallEventId)
+      .eq('organisation_id', _orgId);
+
+    const scanIds = (matchRows || []).map(m => m.scan_id).filter(Boolean);
+    let scanDetails = [];
+    if (scanIds.length > 0) {
+      const { data: scans } = await sb.from('scans')
+        .select('id, product_name, lot_number, barcode_number, store_name, shelf_location, scanned_by, created_at, removed_from_shelf_at, removed_from_shelf_by, recall_resolved_at')
+        .in('id', scanIds);
+      scanDetails = scans || [];
+    }
+
+    const fmtDt = d => d ? new Date(d).toLocaleString('en-GB', {weekday:'short',day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+    const fmtD  = d => d ? new Date(d).toLocaleDateString('en-GB', {day:'numeric',month:'long',year:'numeric'}) : '—';
+    const confirmed = acks.filter(a => a.status === 'confirmed');
+    const allDone   = confirmed.length === acks.length && acks.length > 0;
+    const totalUnits = acks.reduce((s, a) => s + (a.units_pulled || 0), 0);
+    const isUS = _orgRegion === 'us';
+    const refReg = isUS ? 'FDA 21 CFR Part 7 · FSMA 204' : 'EU Regulation 178/2002 · Mattilsynet';
+    const docRef = `RECALL-${recallEventId.slice(0,8).toUpperCase()}-${new Date().getFullYear()}`;
+
+    // ── Build timeline ─────────────────────────────────────────
+    const timelineRows = [];
+    timelineRows.push({ t: ev.published_at || ev.created_at, actor: mfrOrg.name || 'Manufacturer', event: 'Recall event published and distributed to retail partner', type: 'push' });
+    if (dist[0]?.distributed_at) timelineRows.push({ t: dist[0].distributed_at, actor: org.name, event: 'Recall received and logged in Batch\'d', type: 'received' });
+    acks.forEach(a => {
+      if (a.created_at)        timelineRows.push({ t: a.created_at,        actor: a.stores?.name || org.name, event: 'Store notified', type: 'notified' });
+      if (a.acknowledged_at)   timelineRows.push({ t: a.acknowledged_at,   actor: a.stores?.name || org.name, event: 'Acknowledgement confirmed', type: 'ack' });
+      if (a.pulled_at)         timelineRows.push({ t: a.pulled_at,         actor: a.stores?.name || org.name, event: 'Product confirmed pulled from shelf', type: 'pulled' });
+      if (a.disposed_at)       timelineRows.push({ t: a.disposed_at,       actor: a.stores?.name || org.name, event: 'Disposal confirmed', type: 'disposed' });
+      if (a.confirmed_at)      timelineRows.push({ t: a.confirmed_at,      actor: a.stores?.name || org.name, event: 'Full recall response confirmed', type: 'confirmed' });
+    });
+    scanDetails.forEach(s => {
+      if (s.removed_from_shelf_at) timelineRows.push({ t: s.removed_from_shelf_at, actor: (s.removed_from_shelf_by||'').split('@')[0]||'Staff', event: `Product physically removed — ${s.store_name||'store'} — via Batch\u2019d scanning app`, type: 'app' });
+    });
+    timelineRows.sort((a, b) => new Date(a.t) - new Date(b.t));
+
+    const typeColor = { push:'#ff5c5c', received:'#38bdf8', notified:'#f5a623', ack:'#f5a623', pulled:'#34d399', disposed:'#34d399', confirmed:'#34d399', app:'#a78bfa' };
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Joint Recall Completion Report — ${ev.product_name || productName}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 13px; color: #1a2e2a; background: #fff; padding: 40px; max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 22px; font-weight: 800; color: #065f46; margin-bottom: 4px; }
+  h2 { font-size: 14px; font-weight: 700; color: #065f46; margin: 24px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #d1fae5; text-transform: uppercase; letter-spacing: 0.06em; }
+  h3 { font-size: 12px; font-weight: 700; color: #374151; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .doc-ref { font-family: monospace; font-size: 11px; color: #6b7280; margin-bottom: 20px; }
+  .status-complete { display: inline-block; background: #d1fae5; color: #065f46; font-weight: 700; font-size: 11px; padding: 3px 10px; border-radius: 12px; border: 1px solid #6ee7b7; }
+  .status-incomplete { display: inline-block; background: #fef3c7; color: #92400e; font-weight: 700; font-size: 11px; padding: 3px 10px; border-radius: 12px; border: 1px solid #fcd34d; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 12px; }
+  th { background: #f0fdf4; color: #065f46; text-align: left; padding: 8px 12px; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 2px solid #d1fae5; }
+  td { padding: 8px 12px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+  .meta-box { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px 16px; }
+  .meta-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em; color: #6b7280; font-weight: 600; margin-bottom: 4px; }
+  .meta-val { font-size: 13px; color: #111827; font-weight: 600; }
+  .meta-sub { font-size: 11px; color: #6b7280; margin-top: 2px; }
+  .timeline-row { display: flex; gap: 12px; padding: 8px 0; border-bottom: 1px solid #f3f4f6; align-items: flex-start; }
+  .timeline-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; margin-top: 3px; }
+  .timeline-time { font-family: monospace; font-size: 11px; color: #6b7280; width: 160px; flex-shrink: 0; }
+  .timeline-actor { font-weight: 600; font-size: 12px; color: #374151; }
+  .timeline-event { font-size: 12px; color: #6b7280; }
+  .sig-box { border: 1px solid #d1fae5; border-radius: 8px; padding: 16px 20px; margin-top: 8px; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .sig-line { border-top: 1px solid #9ca3af; margin-top: 40px; padding-top: 6px; font-size: 11px; color: #6b7280; }
+  .footer { margin-top: 40px; padding-top: 16px; border-top: 2px solid #d1fae5; font-size: 11px; color: #6b7280; display: flex; justify-content: space-between; }
+  .chip { display: inline-block; font-size: 10px; padding: 1px 8px; border-radius: 10px; font-weight: 700; }
+  .chip-red { background: #fee2e2; color: #991b1b; }
+  .chip-amber { background: #fef3c7; color: #92400e; }
+  .chip-green { background: #d1fae5; color: #065f46; }
+  @media print { body { padding: 20px; } }
+</style>
+</head>
+<body>
+
+<div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px;">
+  <div>
+    <h1>Joint Recall Completion Report</h1>
+    <div class="doc-ref">Reference: ${docRef} · Generated ${fmtDt(new Date())} · ${refReg}</div>
+  </div>
+  <div>${allDone ? '<span class="status-complete">✓ RECALL COMPLETE</span>' : '<span class="status-incomplete">⏳ IN PROGRESS</span>'}</div>
+</div>
+
+<h2>Recall event</h2>
+<div class="meta-grid">
+  <div class="meta-box">
+    <div class="meta-label">Product</div>
+    <div class="meta-val">${ev.product_name || '—'}</div>
+    ${ev.lot_number ? `<div class="meta-sub">Lot: <span style="font-family:monospace;">${ev.lot_number}</span></div>` : ''}
+  </div>
+  <div class="meta-box">
+    <div class="meta-label">Severity</div>
+    <div class="meta-val">${ev.severity?.replace(/_/g,' ')?.replace(/class/i,'Class')||'—'}</div>
+    ${ev.reason ? `<div class="meta-sub">${ev.reason}</div>` : ''}
+  </div>
+  <div class="meta-box">
+    <div class="meta-label">Recall published</div>
+    <div class="meta-val">${fmtDt(ev.published_at || ev.created_at)}</div>
+  </div>
+  <div class="meta-box">
+    <div class="meta-label">Authority reference</div>
+    <div class="meta-val">${ev.authority_reference || docRef}</div>
+  </div>
+</div>
+${ev.description ? `<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:10px 14px;font-size:12px;color:#374151;line-height:1.6;margin-bottom:16px;">${ev.description}</div>` : ''}
+
+<h2>Parties</h2>
+<div class="meta-grid">
+  <div class="meta-box">
+    <div class="meta-label">Manufacturer (recall initiator)</div>
+    <div class="meta-val">${mfrOrg.name || ev.source_org_id || '—'}</div>
+    ${mfrOrg.recall_coordinator_name ? `<div class="meta-sub">Coordinator: ${mfrOrg.recall_coordinator_name}</div>` : ''}
+    ${mfrOrg.recall_coordinator_contact || mfrOrg.contact_email ? `<div class="meta-sub">${mfrOrg.recall_coordinator_contact || mfrOrg.contact_email}</div>` : ''}
+  </div>
+  <div class="meta-box">
+    <div class="meta-label">Retailer (this organisation)</div>
+    <div class="meta-val">${org.name || '—'}</div>
+    ${org.recall_coordinator_name ? `<div class="meta-sub">Coordinator: ${org.recall_coordinator_name}</div>` : ''}
+    ${org.contact_email ? `<div class="meta-sub">${org.contact_email}</div>` : ''}
+  </div>
+</div>
+
+<h2>Store response chain</h2>
+<table>
+  <thead><tr>
+    <th>Store</th><th>Status</th><th>Notified</th><th>Acknowledged</th><th>Pulled</th><th>Confirmed</th><th>Units removed</th>
+  </tr></thead>
+  <tbody>
+    ${acks.map(a => `<tr>
+      <td style="font-weight:600;">${a.stores?.name||'—'}</td>
+      <td><span class="chip ${a.status==='confirmed'?'chip-green':a.status==='notified'?'chip-red':'chip-amber'}">${a.status.toUpperCase()}</span></td>
+      <td style="font-family:monospace;font-size:11px;">${a.created_at?new Date(a.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'—'}</td>
+      <td style="font-family:monospace;font-size:11px;">${a.acknowledged_at?new Date(a.acknowledged_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'—'}</td>
+      <td style="font-family:monospace;font-size:11px;">${a.pulled_at?new Date(a.pulled_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'—'}</td>
+      <td style="font-family:monospace;font-size:11px;">${a.confirmed_at?new Date(a.confirmed_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'—'}</td>
+      <td style="font-family:monospace;">${a.units_pulled ?? '—'}</td>
+    </tr>`).join('')}
+    <tr style="background:#f0fdf4;font-weight:700;">
+      <td colspan="6">Total units removed from shelves</td>
+      <td style="font-family:monospace;">${totalUnits || '—'}</td>
+    </tr>
+  </tbody>
+</table>
+
+${scanDetails.length > 0 ? `
+<h2>Physical product records (Batch'd scanning app)</h2>
+<p style="font-size:11px;color:#6b7280;margin-bottom:10px;">The following records were captured by store staff using the Batch'd scanning app and are directly linked to this recall event.</p>
+<table>
+  <thead><tr><th>Product</th><th>Lot</th><th>Store</th><th>Placed on shelf</th><th>Pulled from shelf</th><th>Scanned by</th></tr></thead>
+  <tbody>
+    ${scanDetails.map(s => `<tr>
+      <td style="font-weight:600;">${s.product_name||'—'}</td>
+      <td style="font-family:monospace;font-size:11px;">${s.lot_number||'—'}</td>
+      <td>${s.store_name||'—'}</td>
+      <td style="font-family:monospace;font-size:11px;">${s.created_at?new Date(s.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'—'}</td>
+      <td style="font-family:monospace;font-size:11px;">${s.removed_from_shelf_at?new Date(s.removed_from_shelf_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'Not yet pulled'}</td>
+      <td style="font-size:11px;">${(s.scanned_by||'—').split('@')[0]}</td>
+    </tr>`).join('')}
+  </tbody>
+</table>` : ''}
+
+<h2>Full audit timeline</h2>
+${timelineRows.map(row => `
+<div class="timeline-row">
+  <div class="timeline-dot" style="background:${typeColor[row.type]||'#9ca3af'};"></div>
+  <div class="timeline-time">${fmtDt(row.t)}</div>
+  <div><div class="timeline-actor">${row.actor}</div><div class="timeline-event">${row.event}</div></div>
+</div>`).join('')}
+
+<h2>Regulatory compliance</h2>
+<table>
+  <tbody>
+    <tr><td style="font-weight:600;width:220px;">Framework</td><td>${refReg}</td></tr>
+    <tr><td style="font-weight:600;">Record retention required</td><td>${isUS ? 'Minimum 2 years — FDA 21 CFR 1.337' : 'Shelf life + 6 months minimum — EU Reg. 178/2002 Art. 17'}</td></tr>
+    <tr><td style="font-weight:600;">Notification obligation</td><td>${isUS ? 'FDA Reportable Food Registry — Class I: within 24 hours' : 'Mattilsynet — immediate notification required (umiddelbart)'}</td></tr>
+    <tr><td style="font-weight:600;">Response chain verified</td><td>${allDone ? '✓ All stores confirmed — complete' : `${confirmed.length} of ${acks.length} stores confirmed`}</td></tr>
+    <tr><td style="font-weight:600;">Document reference</td><td style="font-family:monospace;">${docRef}</td></tr>
+  </tbody>
+</table>
+
+${allDone ? `
+<h2>Authorisation</h2>
+<div class="sig-box">
+  <div>
+    <h3>Manufacturer — ${mfrOrg.name || '—'}</h3>
+    <div class="sig-line">Recall coordinator signature &amp; date</div>
+    ${mfrOrg.recall_coordinator_name ? `<div style="font-size:11px;color:#6b7280;margin-top:6px;">${mfrOrg.recall_coordinator_name}${mfrOrg.recall_coordinator_contact?' · '+mfrOrg.recall_coordinator_contact:''}</div>` : ''}
+  </div>
+  <div>
+    <h3>Retailer — ${org.name || '—'}</h3>
+    <div class="sig-line">Recall coordinator signature &amp; date</div>
+    ${org.recall_coordinator_name ? `<div style="font-size:11px;color:#6b7280;margin-top:6px;">${org.recall_coordinator_name}${org.contact_email?' · '+org.contact_email:''}</div>` : ''}
+  </div>
+</div>` : ''}
+
+<div class="footer">
+  <span>Generated by Batch'd · app.batchdapp.com · ${fmtDt(new Date())}</span>
+  <span>${docRef}</span>
+</div>
+
+</body>
+</html>`;
+
+    // Download
+    const blob = new Blob([html], { type: 'text/html' });
+    const url  = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `batch'd-joint-recall-report-${(ev.product_name||'recall').replace(/\s+/g,'-').toLowerCase()}-${new Date().toISOString().split('T')[0]}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Joint recall report downloaded ✓', 'ok', 3000);
+  } catch(e) {
+    showToast('Report generation failed: ' + e.message, 'error', 4000);
+    console.error('[joint-report]', e);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = origText; }
+  }
+}
+
+async function generateStoreAuditReport(ackId, storeName) {
+  const btn = event?.target;
+  if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+  try {
+    const { data: a } = await sb.from('recall_acknowledgements')
+      .select('*, recall_events(*), stores(name), organisations(name, recall_coordinator_name, contact_email)')
+      .eq('id', ackId).single();
+    if (!a) throw new Error('Acknowledgement not found');
+    const ev  = a.recall_events || {};
+    const org = a.organisations || {};
+    const fmtDt = d => d ? new Date(d).toLocaleString('en-GB',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+    const docRef = `STORE-${ackId.slice(0,8).toUpperCase()}`;
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Store Audit Record — ${storeName}</title>
+    <style>body{font-family:Arial,sans-serif;font-size:13px;color:#1a2e2a;padding:40px;max-width:600px;margin:0 auto;}
+    h1{font-size:18px;font-weight:800;color:#065f46;margin-bottom:4px;}h2{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:#065f46;margin:20px 0 8px;padding-bottom:4px;border-bottom:2px solid #d1fae5;}
+    .row{display:flex;gap:12px;padding:7px 0;border-bottom:1px solid #f3f4f6;font-size:12px;}
+    .lbl{width:160px;flex-shrink:0;color:#6b7280;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;}
+    .val{color:#111827;}
+    .footer{margin-top:32px;font-size:11px;color:#9ca3af;border-top:1px solid #e5e7eb;padding-top:12px;}</style></head>
+    <body>
+    <h1>Store Recall Audit Record</h1>
+    <div style="font-size:11px;color:#6b7280;margin-bottom:16px;">Ref: ${docRef} · Generated ${fmtDt(new Date())}</div>
+    <h2>Product</h2>
+    <div class="row"><span class="lbl">Product</span><span class="val">${ev.product_name||'—'}</span></div>
+    <div class="row"><span class="lbl">Lot number</span><span class="val" style="font-family:monospace;">${ev.lot_number||'—'}</span></div>
+    <div class="row"><span class="lbl">Reason</span><span class="val">${ev.reason||'—'}</span></div>
+    <div class="row"><span class="lbl">Severity</span><span class="val">${ev.severity?.replace(/_/g,' ')||'—'}</span></div>
+    <h2>Response — ${storeName}</h2>
+    <div class="row"><span class="lbl">Notified</span><span class="val">${fmtDt(a.created_at)}</span></div>
+    <div class="row"><span class="lbl">Acknowledged</span><span class="val">${fmtDt(a.acknowledged_at)}</span></div>
+    <div class="row"><span class="lbl">Pulled from shelf</span><span class="val">${fmtDt(a.pulled_at)}</span></div>
+    <div class="row"><span class="lbl">Disposed</span><span class="val">${fmtDt(a.disposed_at)}</span></div>
+    <div class="row"><span class="lbl">Confirmed</span><span class="val">${fmtDt(a.confirmed_at)}</span></div>
+    <div class="row"><span class="lbl">Units removed</span><span class="val">${a.units_pulled ?? '—'}</span></div>
+    <h2>Retailer</h2>
+    <div class="row"><span class="lbl">Organisation</span><span class="val">${org.name||'—'}</span></div>
+    <div class="row"><span class="lbl">Coordinator</span><span class="val">${org.recall_coordinator_name||'—'}</span></div>
+    <div class="row"><span class="lbl">Contact</span><span class="val">${org.contact_email||'—'}</span></div>
+    <div style="margin-top:32px;border-top:1px solid #d1fae5;padding-top:16px;">
+      <div style="font-size:11px;color:#6b7280;margin-bottom:36px;">Recall coordinator signature &amp; date: __________________________________</div>
+    </div>
+    <div class="footer">Generated by Batch'd · ${docRef} · ${fmtDt(new Date())}</div>
+    </body></html>`;
+    const blob = new Blob([html], {type:'text/html'});
+    const url  = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url; link.download = `batch'd-store-audit-${(storeName||'store').replace(/\s+/g,'-').toLowerCase()}-${new Date().toISOString().split('T')[0]}.html`;
+    link.click(); URL.revokeObjectURL(url);
+    showToast('Store audit record downloaded ✓', 'ok', 3000);
+  } catch(e) {
+    showToast('Could not generate report: ' + e.message, 'error', 4000);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Audit record'; }
+  }
+}
+
+async function generateRecallAuditReport(recallEventId, productName) {
+  // Alias — full joint report covers everything the single-event audit did
+  return generateJointRecallReport(recallEventId, productName);
+}
+
 
 async function generateComplianceReport() {
   const btn = event?.target;
