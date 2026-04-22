@@ -1125,7 +1125,8 @@ async function initDashboard(user) {
     });
   }
 
-  showPanel('overview');
+  // Handle deep-links — read URL params and navigate to the right panel/record
+  handleDeepLink();
   loadDashboardTriageBadge();
   setTimeout(checkOnboardingStatus, 1500);
 }
@@ -1623,6 +1624,23 @@ async function renderOnboarding() {
 
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error: ${e.message}</div>`;
+  }
+}
+
+// ── Deep-link handler ────────────────────────────────────────
+let _deepLinkHighlight = null;
+
+function handleDeepLink() {
+  const params = new URLSearchParams(window.location.search);
+  const panel  = params.get('panel');
+  const highlight = params.get('highlight') || params.get('recall_event_id');
+  const lot    = params.get('lot');
+  if (highlight) _deepLinkHighlight = highlight;
+  if (lot)       _deepLinkHighlight = lot;
+  const target = (panel && panel !== 'overview') ? panel : 'overview';
+  setTimeout(() => showPanel(target), 200);
+  if (params.toString()) {
+    window.history.replaceState({}, '', window.location.pathname);
   }
 }
 
@@ -2442,6 +2460,7 @@ async function renderRecalls() {
         ${isDrill
           ? `<button onclick="generateDrillCertificate('${p.recall_event_id}')" style="font-size:11px;padding:7px 14px;border-radius:7px;border:1px solid rgba(52,211,153,0.35);background:rgba(52,211,153,0.07);color:var(--accent);cursor:pointer;font-weight:600;">🏅 Download certificate</button>`
           : `<button onclick="generateJointRecallReport('${p.recall_event_id}','${(ev.product_name||'').replace(/'/g,"\\'")}' )" style="font-size:11px;padding:7px 14px;border-radius:7px;border:1px solid rgba(52,211,153,0.35);background:rgba(52,211,153,0.08);color:var(--accent);cursor:pointer;font-weight:600;">📄 Joint completion report</button>`}
+        ${ev.lot_number ? `<a href="https://batchd-app.netlify.app?view=history&lot=${encodeURIComponent(ev.lot_number||'')}" target="_blank" style="font-size:11px;padding:7px 14px;border-radius:7px;border:1px solid var(--glass-border);background:none;color:var(--muted);text-decoration:none;display:inline-flex;align-items:center;gap:5px;font-family:'DM Mono',monospace;" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--muted)'">📱 Scanning app</a>` : ''}
       </div>` : ''}
       <div style="border:1px solid ${isDrill?'rgba(245,166,35,0.3)':anyAction?'rgba(255,92,92,0.3)':'var(--border)'};border-radius:12px ${evAcks.length>0?'12px 0 0':'12px 12px 12px'};overflow:hidden;">
         <div style="padding:16px 18px;background:${isDrill?'rgba(245,166,35,0.04)':'var(--surface)'};">
@@ -3016,6 +3035,7 @@ async function renderTraceability(tab) {
               <th style="padding:12px 18px;">Scanned by</th>
               <th style="padding:12px 18px;">Date</th>
               <th style="padding:12px 18px;">Status</th>
+              <th style="padding:12px 18px;"></th>
             </tr></thead>
             <tbody id="trace-tbody">
               ${renderTraceRows(list)}
@@ -3148,12 +3168,17 @@ function renderTraceRows(list) {
       <td style="padding:10px 18px;"><div class="store-name">${s.product_name||'—'}</div></td>
       <td style="padding:10px 18px;color:var(--muted);font-size:10px;">${s.lot_number||'—'}${s.barcode_number?'<br>'+s.barcode_number:''}</td>
       <td style="padding:10px 18px;color:var(--muted)">${s.store_name||'—'}</td>
-      <td style="padding:10px 18px;color:var(--muted)">${s.scanned_by||'—'}</td>
+      <td style="padding:10px 18px;color:var(--muted)">${(s.scanned_by||'—').split('@')[0]}</td>
       <td style="padding:10px 18px;color:var(--muted)">${s.created_at ? new Date(s.created_at).toLocaleDateString('en-GB') : '—'}</td>
       <td style="padding:10px 18px;">
         ${s.recall_resolved ? '<span class="recall-status status-resolved">Resolved</span>'
         : s.removed_from_shelf_at ? '<span class="recall-status status-pending">Removed</span>'
         : '<span class="recall-status" style="background:rgba(106,175,158,0.1);color:var(--muted)">On shelf</span>'}
+      </td>
+      <td style="padding:10px 18px;">
+        ${s.lot_number ? `<a href="https://batchd-app.netlify.app?view=history&lot=${encodeURIComponent(s.lot_number)}" target="_blank"
+          style="font-size:10px;color:var(--muted);text-decoration:none;font-family:'DM Mono',monospace;white-space:nowrap;"
+          title="Open in scanning app" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--muted)'">📱 App</a>` : ''}
       </td>
     </tr>`).join('');
 }

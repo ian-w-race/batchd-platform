@@ -4394,6 +4394,11 @@
             <div style="font-size:10px;font-weight:700;letter-spacing:0.07em;text-transform:uppercase;color:var(--warn);margin-bottom:5px;" id="recall-sheet-info-source"></div>
             <div style="font-size:12px;color:var(--text);font-weight:600;margin-bottom:3px;" id="recall-sheet-info-reason"></div>
             <div style="font-size:11px;color:var(--muted);line-height:1.5;" id="recall-sheet-info-desc"></div>
+          <a href="https://app.batchdapp.com/dashboard.html?panel=recalls" target="_blank"
+            style="display:inline-flex;align-items:center;gap:5px;margin-top:8px;font-size:11px;color:var(--warn);text-decoration:none;font-family:'DM Mono',monospace;font-weight:600;"
+            onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--warn)'">
+            View full recall details on dashboard →
+          </a>
           </div>
         </div>
         <button onclick="closeRecallActionSheet()" style="background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;padding:0;line-height:1;flex-shrink:0;">✕</button>
@@ -4948,6 +4953,10 @@
     <div style="display:flex;gap:10px;flex-wrap:wrap;">
       <button class="btn btn-primary" onclick="goToRecallsFromLogin()" style="flex:1;justify-content:center;background:var(--danger);border-color:var(--danger);">⚠ Review affected scans</button>
       <button class="btn btn-ghost" onclick="dismissLoginRecall()" style="flex:1;justify-content:center;">Dismiss</button>
+      <a href="https://app.batchdapp.com/dashboard.html?panel=recalls" target="_blank" class="btn btn-ghost" style="flex:1;justify-content:center;text-decoration:none;font-size:12px;display:flex;align-items:center;gap:5px;">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        View on dashboard
+      </a>
     </div>
   </div>
 </div>
@@ -5103,9 +5112,49 @@ async function showApp(user) {
     initPersistentShelfQty();
     setTimeout(maybeShowOnboarding, 800);
     initRealtimeSync();
+    // Handle deep-links (must run after app is fully initialised)
+    handleAppDeepLink();
   } catch(e) {
     console.error('showApp error:', e);
     // App is already visible — just log the error, don't block the user
+  }
+}
+
+// ── Deep-link handler ────────────────────────────────────────
+// Called after login completes — reads URL params and navigates to the right view
+function handleAppDeepLink() {
+  const params = new URLSearchParams(window.location.search);
+  const view   = params.get('view');
+  const lot    = params.get('lot');
+  const search = params.get('search');
+
+  if (!view && !lot && !search) return;
+
+  // Small delay so the app finishes rendering before navigating
+  setTimeout(() => {
+    if (view === 'history' || lot || search) {
+      showView('history');
+      if (lot || search) {
+        const searchEl = document.getElementById('search-input');
+        if (searchEl) {
+          searchEl.value = lot || search;
+          applyFilters();
+          // Scroll to search box to confirm navigation worked
+          searchEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          searchEl.style.borderColor = 'var(--accent)';
+          setTimeout(() => { searchEl.style.borderColor = ''; }, 2000);
+        }
+      }
+    } else if (view === 'recalls') {
+      showView('recalls');
+    } else if (view === 'manager') {
+      showView('manager');
+    }
+  }, 600);
+
+  // Clean URL so refresh doesn't re-trigger
+  if (params.toString()) {
+    window.history.replaceState({}, '', window.location.pathname);
   }
 }
 
