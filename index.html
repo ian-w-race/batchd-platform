@@ -11,7 +11,7 @@
 </script>
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
 <meta http-equiv="Pragma" content="no-cache" />
 <meta http-equiv="Expires" content="0" />
@@ -237,6 +237,10 @@
     font-family: 'DM Mono', monospace;
     min-height: 100vh;
     overflow-x: hidden;
+    /* Fixed header compensation + iPhone safe areas */
+    padding-top: 54px;
+    padding-top: calc(54px + env(safe-area-inset-top, 0px));
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
 
   /* noise overlay */
@@ -257,9 +261,11 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    position: sticky;
+    position: fixed;
     top: 0;
-    z-index: 600;
+    top: env(safe-area-inset-top, 0);
+    left: 0; right: 0;
+    z-index: 700;
     background: var(--header-bg);
     backdrop-filter: blur(12px);
   }
@@ -384,7 +390,7 @@
     border-radius: 10px;
     overflow: hidden;
     aspect-ratio: 4/3;
-    max-height: 340px;
+    max-height: 260px;
     width: 100%;
   }
 
@@ -1588,6 +1594,7 @@
   @media (max-width: 600px) {
     /* ── HEADER ── */
     header { padding: 0 16px; height: 52px; gap: 10px; }
+    body { padding-top: 52px; padding-top: calc(52px + env(safe-area-inset-top, 0px)); }
     .tagline { display: none; }
     .user-email { display: none; }
     .logo { font-size: 18px; }
@@ -1595,26 +1602,27 @@
     nav button { padding: 7px 14px; font-size: 11px; }
 
     /* ── MAIN ── */
-    main { padding: 16px 14px; }
-    .scan-view { gap: 20px; }
+    main { padding: 12px 12px; }
+    .scan-view { gap: 14px; }
 
     /* ── SCAN TOP BAR (mobile) — pills auto-adapt ── */
 
-    /* ── CAMERA ── */
-    .camera-wrap { aspect-ratio: 4/3; max-height: 280px; }
+    /* ── CAMERA — compact for fit-on-screen ── */
+    .camera-wrap { aspect-ratio: 4/3; max-height: 200px; }
 
     /* ── BUTTONS ── */
     .btn { padding: 13px 18px; font-size: 13px; min-height: 48px; }
     .btn-row { gap: 8px; flex-wrap: wrap; }
     .btn-row .btn { flex: 1; justify-content: center; min-width: 0; }
 
-    /* ── FIELDS ── */
-    .field input { padding: 13px 14px; font-size: 14px; min-height: 48px; }
-    .field label { font-size: 11px; margin-bottom: 5px; }
-    .field-group { gap: 12px; }
+    /* ── FIELDS — compact for fit-on-screen ── */
+    .field input { padding: 10px 12px; font-size: 13px; min-height: 44px; }
+    .field select { padding: 10px 12px; font-size: 13px; min-height: 44px; }
+    .field label { font-size: 10px; margin-bottom: 4px; letter-spacing: 0.06em; }
+    .field-group { gap: 8px; }
 
     /* ── LOT/BATCH GRID ── */
-    #field-lot, #field-batch { min-height: 48px; }
+    #field-lot, #field-batch { min-height: 44px; }
     div[style*="grid-template-columns:1fr 1fr"] {
       grid-template-columns: 1fr !important;
     }
@@ -1625,11 +1633,11 @@
     .step-badge { width: 28px; height: 28px; font-size: 13px; }
 
     /* ── MODE TOGGLE ── */
-    .mode-btn { padding: 11px 10px; font-size: 11px; min-height: 44px; }
+    .mode-btn { padding: 9px 10px; font-size: 11px; min-height: 40px; }
 
     /* ── OCR RESULT ── */
     .ocr-fields { grid-template-columns: 1fr; }
-    .ocr-field { padding: 12px; }
+    .ocr-field { padding: 10px; }
     .ocr-val { font-size: 15px; }
     .swap-row { flex-direction: column; align-items: stretch; gap: 10px; }
     .btn-swap { width: 100%; justify-content: center; padding: 12px; min-height: 44px; }
@@ -1796,10 +1804,10 @@
   }
 
   .flow-phase-body {
-    padding: 16px 24px 24px;
+    padding: 12px 16px 16px;
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 10px;
   }
 
   /* Next button */
@@ -1822,19 +1830,45 @@
     min-height: 48px;
   }
 
+  /* Phase navigation bar — sticky bottom row for Step 2 back/forward */
+  .phase-nav-bar {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+    margin-top: 4px;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .phase-nav-back {
+    flex-shrink: 0;
+    padding: 0 18px;
+    border-radius: 10px;
+    background: var(--surface);
+    color: var(--muted);
+    border: 1px solid var(--border);
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+    min-height: 48px;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .phase-nav-back:hover { color: var(--text); border-color: var(--accent); }
+  .phase-nav-next { flex: 1; border-radius: 10px; }
+
   .btn-next:hover { background: #6ee7b7; }
   .btn-next:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; }
 
   /* Review phase */
   .review-grid {
     display: grid;
-    grid-template-columns: 80px 1fr;
-    gap: 14px;
+    grid-template-columns: 60px 1fr;
+    gap: 10px;
     align-items: start;
   }
 
   .review-thumb {
-    width: 80px; height: 80px;
+    width: 60px; height: 60px;
     border-radius: 8px;
     overflow: hidden;
     background: var(--surface2);
@@ -2181,7 +2215,7 @@
     .history-filter-item select { font-size: 14px; min-height: 44px; padding: 10px 10px; }
     .history-action-row .btn { min-height: 48px; font-size: 14px; }
     .flow-stepper { padding: 14px 16px 0; }
-    .flow-phase-header { padding: 14px 16px 0; }
+    .flow-phase-header { padding: 10px 12px 0; margin-top: 10px; }
     .flow-phase-body { padding: 14px 16px 20px; }
     .flow-step-label { font-size: 9px; }
     .review-grid { grid-template-columns: 64px 1fr; }
@@ -3267,7 +3301,7 @@
 
           <!-- Editable fields -->
           <div style="display:flex;flex-direction:column;gap:10px;">
-            <div class="field" id="field-barcode-wrap">
+            <div class="field" id="field-barcode-wrap" style="display:none;">
               <label><span data-i18n="field.barcodeNumber">Barcode Number</span> <span style="color:var(--muted);font-size:10px;" data-i18n="label.optional">optional</span></label>
               <input type="text" id="field-barcode" placeholder="Detected automatically…" />
             </div>
@@ -3292,7 +3326,7 @@
               </div>
 
               <!-- LOT UNAVAILABLE toggle -->
-              <div id="lot-unavailable-section" style="background:rgba(245,166,35,0.06);border:1px solid rgba(245,166,35,0.25);border-radius:10px;padding:10px 12px;display:flex;align-items:center;gap:12px;cursor:pointer;" onclick="toggleLotUnavailable()">
+              <div id="lot-unavailable-section" style="background:rgba(245,166,35,0.06);border:1px solid rgba(245,166,35,0.25);border-radius:10px;padding:8px 12px;display:flex;align-items:center;gap:10px;cursor:pointer;" onclick="toggleLotUnavailable()">
                 <div style="position:relative;flex-shrink:0;">
                   <input type="checkbox" id="lot-unavailable-toggle" style="opacity:0;position:absolute;width:0;height:0;pointer-events:none;" />
                   <div id="lot-unavail-track" style="width:40px;height:22px;border-radius:11px;background:rgba(245,166,35,0.2);border:1px solid rgba(245,166,35,0.4);transition:all 0.2s;position:relative;">
@@ -3307,11 +3341,11 @@
             </div>
           </div>
 
-          <div style="display:flex;gap:8px;align-items:stretch;">
-            <button onclick="goToPhase(1)" data-i18n="p2.backBtn" style="flex-shrink:0;padding:14px 18px;border-radius:14px;background:var(--surface);color:var(--text);border:1px solid var(--border);font-family:'DM Mono',monospace;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;min-height:50px;">
+          <div class="phase-nav-bar">
+            <button onclick="goToPhase(1)" data-i18n="p2.backBtn" class="phase-nav-back">
               ← Step 1
             </button>
-            <button class="btn-next" id="btn-next-2" onclick="goToPhase(3)" style="flex:1;">
+            <button class="btn-next phase-nav-next" id="btn-next-2" onclick="goToPhase(3)">
               <span data-i18n="p2.confirm">Confirm & Review →</span>
             </button>
           </div>
@@ -3385,14 +3419,13 @@
           <!-- Units placed — mandatory -->
           <div class="field" id="field-quantity-wrap">
             <label style="display:flex;align-items:center;justify-content:space-between;">
-              <span>Units placed on shelf <span id="qty-required-badge" style="color:var(--danger);font-size:10px;margin-left:4px;">*required</span></span>
+              <span>Units on shelf <span id="qty-required-badge" style="color:var(--danger);font-size:10px;margin-left:4px;">*required</span></span>
             </label>
             <input type="number" id="field-quantity" value="" min="1" max="999"
-              placeholder="How many units are you placing on the shelf?"
+              placeholder="How many units?"
               inputmode="numeric" pattern="[0-9]*"
               oninput="onQtyInput()"
               style="border-color:rgba(255,92,92,0.5);background:rgba(255,92,92,0.03);" />
-            <div style="font-size:11px;color:var(--muted);margin-top:4px;">Enter the number of units of this product being placed.</div>
           </div>
 
           <div class="field">
@@ -3402,7 +3435,7 @@
 
           <!-- Supplier field: hidden on mobile, available on desktop for EU Art.18 traceability -->
           <div class="field" id="field-supplier-wrap">
-            <label>Supplier / Delivered by <span id="supplier-field-label" style="color:var(--muted);font-size:10px;">optional — EU Art. 18 / Mattilsynet traceability</span></label>
+            <label>Supplier <span id="supplier-field-label" style="color:var(--muted);font-size:10px;">optional — FSMA 204 / EU Art. 18</span></label>
             <input type="text" id="field-supplier" placeholder="e.g. ASKO, Norgesgruppen, Tine…" autocorrect="off" onfocus="showSupplierSuggestions()" onblur="setTimeout(hideSupplierSuggestions,200)" />
           </div>
 
@@ -6900,13 +6933,15 @@ async function snapProduct() {
     document.getElementById('product-frame').style.display = 'none';
     document.getElementById('btn-snap-product').style.display = 'none';
     document.getElementById('btn-retake-product').style.display = 'flex';
-    // Stream stays alive — retake is instant
 
     document.getElementById('product-analyzing').style.display = 'flex';
-    const name = await identifyProduct(blob);
+    // Resize to 600px max before API call — full resolution is wasteful for
+    // product identification and adds ~1-2s of transfer + processing time.
+    const smallBlob = await preprocessImage(blob, 600);
+    const name = await identifyProduct(smallBlob);
     document.getElementById('product-analyzing').style.display = 'none';
     setProductNameFilled(name);
-  }, 'image/jpeg', 0.92);
+  }, 'image/jpeg', 0.85);
 }
 
 function retakeProduct() {
@@ -12088,6 +12123,12 @@ function getPackagingTip(productName) {
 // - EU/US "date as lot" detection (no explicit lot = use best-before/pack date)
 
 async function extractCodesFromImage(blob, learnedContext) {
+  const _pipelineStart = Date.now();
+  const _elapsed = () => Date.now() - _pipelineStart;
+  // If the whole pipeline exceeds 12s, return early with whatever we have.
+  // Users shouldn't wait more than ~10s — better to let them enter manually.
+  const PIPELINE_TIMEOUT_MS = 12000;
+
   try {
     const productName = document.getElementById('field-product-name').value.trim();
     const isUSRegion = _userRegion === 'us'; // hoist — used throughout all passes
@@ -12321,9 +12362,10 @@ OCR CONFUSION PAIRS: 0↔O, 1↔I↔l↔7, 8↔B, 5↔S, 2↔Z, 6↔G, 9↔q`;
     // ── PASS 2: ADVERSARIAL (sonnet, conditional) ────────────
     // Only runs when Pass 1 found nothing at all.
     // Avoids wasting a call when Pass 1 has any result, even low confidence.
+    // Also skipped if we're already close to the pipeline timeout.
     let pass2 = { lot: null, batch: null, lot_confidence: 'low', lot_is_date: false, raw: '' };
 
-    if (!pass1.lot) {
+    if (!pass1.lot && _elapsed() < PIPELINE_TIMEOUT_MS - 4000) {
       // Need the full image for adversarial — re-process if we only have a crop
       const b64Full = localisedCrop ? await blobToBase64(await preprocessImage(blob, 2000)) : await blobToBase64(await preprocessImage(blob, 2000));
       pass2 = await callOcrApi(b64Full,
@@ -12389,8 +12431,9 @@ OCR CONFUSION PAIRS: 0↔O, 1↔I↔l↔7, 8↔B, 5↔S, 2↔Z, 6↔G, 9↔q`;
 
     // ── INVERTED GRAYSCALE FALLBACK ──────────────────────────
     // Only for laser-etched / very low contrast codes. Rare but important.
+    // Skipped if we're over the pipeline timeout — user can enter manually.
     let lassoNote = '';
-    if (!finalLot) {
+    if (!finalLot && _elapsed() < PIPELINE_TIMEOUT_MS) {
       const inverted = await invertGrayscaleBlob(blob, 2000);
       const b64Inv = await blobToBase64(inverted);
       const passInv = await callOcrApi(b64Inv,
