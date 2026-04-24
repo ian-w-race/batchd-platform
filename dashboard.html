@@ -2503,50 +2503,57 @@ async function renderRecalls() {
         </div>
       </div>`;
 
-    return `<div style="margin-bottom:24px;">
-      ${allDone ? `<div style="background:rgba(52,211,153,0.07);border:1px solid rgba(52,211,153,0.25);border-radius:12px;padding:14px 18px;margin-bottom:12px;display:flex;align-items:center;gap:12px;">
-        <div style="width:32px;height:32px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#065f46" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></div>
-        <div style="flex:1;"><div style="font-size:13px;font-weight:700;color:var(--accent);">Recall response complete</div><div style="font-size:11px;color:var(--muted);margin-top:1px;">All ${evAcks.length} store${evAcks.length!==1?'s':''} confirmed · ${ev.product_name} · Audit trail locked</div></div>
-        ${isDrill
-          ? `<button onclick="generateDrillCertificate('${p.recall_event_id}')" style="font-size:11px;padding:7px 14px;border-radius:7px;border:1px solid rgba(52,211,153,0.35);background:rgba(52,211,153,0.07);color:var(--accent);cursor:pointer;font-weight:600;">🏅 Download certificate</button>`
-          : `<button onclick="generateJointRecallReport('${p.recall_event_id}','${(ev.product_name||'').replace(/'/g,"\\'")}' )" style="font-size:11px;padding:7px 14px;border-radius:7px;border:1px solid rgba(52,211,153,0.35);background:rgba(52,211,153,0.08);color:var(--accent);cursor:pointer;font-weight:600;">📄 Joint completion report</button>`}
-        ${ev.lot_number ? `<a href="https://batchd-app.netlify.app?view=history&lot=${encodeURIComponent(ev.lot_number||'')}" target="_blank" style="font-size:11px;padding:7px 14px;border-radius:7px;border:1px solid var(--glass-border);background:none;color:var(--muted);text-decoration:none;display:inline-flex;align-items:center;gap:5px;font-family:'DM Mono',monospace;" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--muted)'">📱 Scanning app</a>` : ''}
-      </div>` : ''}
-      <div style="border:1px solid ${isDrill?'rgba(245,166,35,0.3)':anyAction?'rgba(255,92,92,0.3)':'var(--border)'};border-radius:12px ${evAcks.length>0?'12px 0 0':'12px 12px 12px'};overflow:hidden;">
-        <div style="padding:16px 18px;background:${isDrill?'rgba(245,166,35,0.04)':'var(--surface)'};">
-          <div style="display:flex;align-items:flex-start;gap:12px;">
-            <div style="width:9px;height:9px;border-radius:50%;flex-shrink:0;margin-top:5px;background:${isDrill?'var(--warn)':sevColor};${sevNum==='1'&&!isDrill?'box-shadow:0 0 8px rgba(255,92,92,0.5);':''}"></div>
-            <div style="flex:1;">
-              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:5px;">
-                <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:15px;color:var(--text);">${ev.product_name||'—'}</div>
-                ${isDrill?`<span style="font-size:10px;background:rgba(245,166,35,0.12);color:var(--warn);padding:2px 8px;border-radius:10px;font-weight:600;">MOCK DRILL</span>`:''}
-                ${!isDrill&&anyAction?`<span style="font-size:10px;background:rgba(255,92,92,0.12);color:var(--danger);padding:2px 8px;border-radius:10px;font-weight:600;">ACTION REQUIRED</span>`:''}
-                ${allDone?`<span style="font-size:10px;background:rgba(52,211,153,0.12);color:var(--accent);padding:2px 8px;border-radius:10px;font-weight:600;">✓ COMPLETE</span>`:''}
-              </div>
-              <div style="font-size:12px;color:var(--muted);line-height:1.7;">
-                From <strong style="color:var(--text);">${mfrName}</strong>
-                ${ev.lot_number?` · ${regionTerm('lot_short')}: <span style="font-family:'DM Mono',monospace;color:var(--text);">${ev.lot_number}</span>`:''}
-                ${ev.severity?` · <span style="font-size:11px;font-family:'DM Mono',monospace;padding:1px 5px;border-radius:3px;background:${formatSeverity(ev.severity).bg};color:${formatSeverity(ev.severity).color};">${formatSeverity(ev.severity).label}</span>`:''}
-                ${ev.reason?` · ${ev.reason}`:''}
-                <br><span style="font-size:11px;">Pushed ${ev.published_at?new Date(ev.published_at).toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):''}</span>
-              </div>
-              ${ev.description?`<div style="margin-top:8px;font-size:11px;color:var(--muted);background:var(--surface2);border-radius:6px;padding:8px 10px;line-height:1.6;">${ev.description}</div>`:''}
-              ${collabSection}
+    const borderColor = isDrill ? 'rgba(245,166,35,0.4)' : allDone ? 'rgba(52,211,153,0.3)' : anyAction ? 'rgba(255,92,92,0.4)' : 'rgba(22,61,55,0.9)';
+    const headerBg    = isDrill ? 'rgba(245,166,35,0.05)' : allDone ? 'rgba(52,211,153,0.04)' : anyAction ? 'rgba(255,92,92,0.04)' : 'var(--surface)';
+    return `<div style="margin-bottom:20px;border:1.5px solid ${borderColor};border-radius:14px;overflow:hidden;background:var(--surface);">
+
+      <!-- Recall header -->
+      <div style="padding:16px 18px;background:${headerBg};border-bottom:1px solid ${borderColor};">
+        <div style="display:flex;align-items:flex-start;gap:12px;">
+          <div style="width:9px;height:9px;border-radius:50%;flex-shrink:0;margin-top:6px;background:${isDrill?'var(--warn)':sevColor};${sevNum==='1'&&!isDrill?'box-shadow:0 0 8px rgba(255,92,92,0.5);':''}"></div>
+          <div style="flex:1;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+              <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:15px;color:var(--text);">${ev.product_name||'—'}</div>
+              ${isDrill?`<span style="font-size:10px;background:rgba(245,166,35,0.12);color:var(--warn);padding:2px 8px;border-radius:10px;font-weight:600;">MOCK DRILL</span>`:''}
+              ${!isDrill&&anyAction?`<span style="font-size:10px;background:rgba(255,92,92,0.12);color:var(--danger);padding:2px 8px;border-radius:10px;font-weight:600;">ACTION REQUIRED</span>`:''}
+              ${allDone?`<span style="font-size:10px;background:rgba(52,211,153,0.12);color:var(--accent);padding:2px 8px;border-radius:10px;font-weight:600;">✓ COMPLETE</span>`:''}
             </div>
+            <div style="font-size:12px;color:var(--muted);line-height:1.7;">
+              From <strong style="color:var(--text);">${mfrName}</strong>
+              ${ev.lot_number?` · ${regionTerm('lot_short')}: <span style="font-family:'DM Mono',monospace;color:var(--text);">${ev.lot_number}</span>`:''}
+              ${ev.severity?` · <span style="font-size:11px;font-family:'DM Mono',monospace;padding:1px 5px;border-radius:3px;background:${formatSeverity(ev.severity).bg};color:${formatSeverity(ev.severity).color};">${formatSeverity(ev.severity).label}</span>`:''}
+              ${ev.reason?` · ${ev.reason}`:''}
+              <br><span style="font-size:11px;">Pushed ${ev.published_at?fmtDashDT(ev.published_at):''}</span>
+            </div>
+            ${ev.description?`<div style="margin-top:8px;font-size:11px;color:var(--muted);background:var(--surface2);border-radius:6px;padding:8px 10px;line-height:1.6;">${ev.description}</div>`:''}
           </div>
         </div>
       </div>
-      ${evAcks.length > 0 ? `
-      <div style="border:1px solid ${isDrill?'rgba(245,166,35,0.3)':anyAction?'rgba(255,92,92,0.3)':'var(--border)'};border-top:none;border-radius:0 0 12px 12px;padding:16px 18px;background:var(--bg);">
+
+      <!-- Completion banner -->
+      ${allDone ? `<div style="padding:11px 18px;background:rgba(52,211,153,0.06);border-bottom:1px solid rgba(52,211,153,0.15);display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <div style="width:26px;height:26px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#065f46" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></div>
+        <div style="flex:1;font-size:12px;font-weight:600;color:var(--accent);">All ${evAcks.length} store${evAcks.length!==1?'s':''} confirmed — audit trail locked</div>
+        ${isDrill
+          ? `<button onclick="generateDrillCertificate('${p.recall_event_id}')" style="font-size:11px;padding:6px 12px;border-radius:7px;border:1px solid rgba(52,211,153,0.35);background:rgba(52,211,153,0.07);color:var(--accent);cursor:pointer;font-weight:600;">🏅 Certificate</button>`
+          : `<button onclick="generateJointRecallReport('${p.recall_event_id}','${(ev.product_name||'').replace(/'/g,"\\'")}' )" style="font-size:11px;padding:6px 12px;border-radius:7px;border:1px solid rgba(52,211,153,0.35);background:rgba(52,211,153,0.08);color:var(--accent);cursor:pointer;font-weight:600;">📄 Joint report</button>`}
+        ${ev.lot_number ? `<a href="https://batchd-app.netlify.app?view=history&lot=${encodeURIComponent(ev.lot_number||'')}" target="_blank" style="font-size:11px;padding:6px 12px;border-radius:7px;border:1px solid var(--glass-border);background:none;color:var(--muted);text-decoration:none;display:inline-flex;align-items:center;gap:5px;" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--muted)'">📱 App</a>` : ''}
+      </div>` : ''}
+
+      <!-- Manufacturer contact + collab log -->
+      <div style="padding:12px 18px;border-bottom:${evAcks.length>0?'1px solid var(--border)':'none'};">
+        ${collabSection.replace('<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px;">', '<div>')}
+      </div>
+
+      <!-- Store response chain -->
+      ${evAcks.length > 0 ? `<div style="padding:14px 18px;">
         <div style="font-size:10px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);margin-bottom:12px;">Store response chain — ${evAcks.filter(a=>a.status==='confirmed').length} of ${evAcks.length} complete</div>
         ${evAcks.map(a => recallProcessCard(a, p.recall_event_id, ev.product_name)).join('')}
-      </div>` : `
-      <div style="border:1px solid var(--border);border-top:none;border-radius:0 0 12px 12px;padding:14px 18px;background:var(--bg);">
+      </div>` : `<div style="padding:12px 18px;">
         <div style="font-size:11px;color:var(--muted);">No stores have scanned this product yet.</div>
       </div>`}
     </div>`;
   }
-
   // ── Tab bar HTML ───────────────────────────────────────────
   const tabBar = (activeTab) => `
     <div style="display:flex;align-items:center;gap:2px;margin-bottom:20px;border-bottom:1px solid var(--border);padding-bottom:0;flex-wrap:wrap;">
@@ -4619,6 +4626,40 @@ function renderComplianceResults(el) {
     </div>`;
 }
 
+// ── Report print helper ──────────────────────────────────────
+function injectPrintButton(html) {
+  const printCSS = `
+    <style>
+      @media print {
+        .no-print { display: none !important; }
+        body { background: #fff !important; color: #000 !important; }
+        * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+      }
+      .print-btn-fixed {
+        position: fixed; bottom: 24px; right: 24px; z-index: 9999;
+        display: flex; align-items: center; gap: 8px;
+        background: #34d399; color: #065f46; border: none; border-radius: 10px;
+        padding: 12px 22px; font-family: 'Figtree', sans-serif; font-weight: 700;
+        font-size: 14px; cursor: pointer; box-shadow: 0 4px 20px rgba(52,211,153,0.35);
+      }
+    </style>`;
+  const printBtn = `
+    <div class="no-print" style="position:fixed;bottom:24px;right:24px;z-index:9999;">
+      <button class="print-btn-fixed" onclick="window.print()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <polyline points="6 9 6 2 18 2 18 9"/>
+          <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+          <rect x="6" y="14" width="12" height="8"/>
+        </svg>
+        Download as PDF
+      </button>
+    </div>`;
+  // Insert print CSS in <head> and button just before </body>
+  return html
+    .replace('</head>', printCSS + '</head>')
+    .replace('</body>', printBtn + '</body>');
+}
+
 async function generateJointRecallReport(recallEventId, productName) {
   const btn = event?.target;
   const origText = btn?.textContent;
@@ -5010,7 +5051,7 @@ async function generateComplianceReport() {
     </body></html>`;
 
     const win = window.open('','_blank');
-    win.document.write(html);
+    win.document.write(injectPrintButton(html));
     win.document.close();
   } catch(e) {
     showToast('Error generating report: '+e.message,'error',4000);
@@ -7972,7 +8013,7 @@ async function generateDrillReport(drillId) {
 
     // Open in new window for print/save
     const win = window.open('', '_blank');
-    win.document.write(html);
+    win.document.write(injectPrintButton(html));
     win.document.close();
 
   } catch(e) {
@@ -8561,7 +8602,7 @@ async function generateDrillCertificate(recallEventId) {
 </html>`;
 
     const win = window.open('', '_blank');
-    win.document.write(html);
+    win.document.write(injectPrintButton(html));
     win.document.close();
 
   } catch(e) {
