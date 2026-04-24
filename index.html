@@ -256,14 +256,16 @@
 
   header {
     padding: 0 14px 0 18px;
+    padding-top: env(safe-area-inset-top, 0px);
     height: 54px;
+    height: calc(54px + env(safe-area-inset-top, 0px));
     border-bottom: 1px solid var(--border);
     display: flex;
-    align-items: center;
+    align-items: flex-end;
+    padding-bottom: 0;
     justify-content: space-between;
     position: fixed;
     top: 0;
-    top: env(safe-area-inset-top, 0);
     left: 0; right: 0;
     z-index: 700;
     background: var(--header-bg);
@@ -2336,11 +2338,9 @@
     /* ── SCAN VIEW — fixed panel below header ── */
     body.scan-active #view-scan {
       position: fixed !important;
-      top: 52px !important;
+      top: calc(54px + env(safe-area-inset-top, 0px)) !important;
       left: 0 !important; right: 0 !important; bottom: 0 !important;
-      height: calc(100vh - 52px) !important;
-      height: calc(100svh - 52px) !important;
-      height: calc(100dvh - 52px) !important;
+      height: calc(100dvh - 54px - env(safe-area-inset-top, 0px)) !important;
       display: flex !important;
       flex-direction: column !important;
       overflow: hidden !important;
@@ -2563,12 +2563,55 @@
     body.scan-active #lot-location-hint { display: none !important; }
     body.scan-active #gs1-full-capture-banner { display: none !important; }
 
-    /* Phase 2 body scrollable column */
+    /* Phase 2 body — NO scroll, everything must fit */
     body.scan-active #phase-2 .flow-phase-body {
-      overflow-y: auto !important;
+      overflow: hidden !important;
       flex: 1 1 0 !important;
       gap: 0 !important;
       padding: 0 !important;
+    }
+
+    /* Phase nav bar — Step 2 back/forward buttons */
+    body.scan-active .phase-nav-bar {
+      display: flex !important;
+      gap: 8px !important;
+      padding: 0 10px 10px !important;
+      padding-bottom: max(10px, env(safe-area-inset-bottom, 10px)) !important;
+      flex-shrink: 0 !important;
+    }
+    body.scan-active .phase-nav-back {
+      flex-shrink: 0 !important;
+      padding: 0 16px !important;
+      min-height: 46px !important;
+      border-radius: 12px !important;
+      background: var(--surface) !important;
+      color: var(--muted) !important;
+      border: 1px solid var(--border) !important;
+      font-family: 'DM Mono', monospace !important;
+      font-size: 12px !important;
+      font-weight: 700 !important;
+      cursor: pointer !important;
+      white-space: nowrap !important;
+    }
+    body.scan-active .phase-nav-next {
+      flex: 1 !important;
+      min-height: 46px !important;
+      border-radius: 12px !important;
+      background: var(--accent) !important;
+      color: #04120e !important;
+      border: none !important;
+      font-family: 'DM Mono', monospace !important;
+      font-size: 13px !important;
+      font-weight: 700 !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      cursor: pointer !important;
+    }
+    body.scan-active .phase-nav-next:disabled {
+      background: var(--surface) !important;
+      color: var(--muted) !important;
+      border: 1px solid var(--border) !important;
     }
 
     /* Mode toggle — same controls-row treatment as Phase 1 */
@@ -2628,14 +2671,14 @@
     body.scan-active #phase-2 .mode-toggle .mode-btn > span[style*="rgba(245"] { display: none !important; }
     body.scan-active #phase-2 .mode-toggle .mode-btn svg { width: 13px !important; height: 13px !important; }
 
-    /* Camera — fixed height with green border, not fullscreen */
+    /* Camera — reduced height so all fields fit without scrolling */
     body.scan-active #barcode-cam-wrap {
       flex-shrink: 0 !important;
       flex: none !important;
-      height: clamp(220px, 38vh, 320px) !important;
+      height: clamp(140px, 24vh, 200px) !important;
       width: calc(100% - 20px) !important;
       max-height: none !important;
-      margin: 10px !important;
+      margin: 8px 10px !important;
       border: 2.5px solid var(--accent) !important;
       border-radius: 16px !important;
       overflow: hidden !important;
@@ -2651,7 +2694,7 @@
       display: flex !important;
       position: static !important;
       transform: none !important;
-      padding: 0 10px 10px !important;
+      padding: 0 10px 6px !important;
       gap: 8px !important;
       flex-shrink: 0 !important;
     }
@@ -2659,8 +2702,8 @@
     body.scan-active #phase-2 .btn-row .btn-ghost {
       width: auto !important;
       height: auto !important;
-      min-height: 46px !important;
-      padding: 0 18px !important;
+      min-height: 42px !important;
+      padding: 0 16px !important;
       border-radius: 12px !important;
       font-size: 13px !important;
       font-weight: 700 !important;
@@ -2676,16 +2719,30 @@
       color: var(--muted) !important;
       border: 1px solid var(--border) !important;
       flex: 0 0 auto !important;
-      padding: 0 16px !important;
+      padding: 0 14px !important;
     }
     body.scan-active #phase-2 .btn-row .btn-primary svg { display: inline-block !important; }
 
-    /* Form fields below camera — spaced with padding */
+    /* Form fields below camera — compact padding */
     body.scan-active #phase-2 .flow-phase-body > div:not(.mode-toggle):not(.btn-row),
     body.scan-active #phase-2 .flow-phase-body > .field {
       padding: 0 10px !important;
       flex-shrink: 0 !important;
       position: static !important;
+    }
+    /* Tighten field inputs specifically in Step 2 scan-active */
+    body.scan-active #phase-2 .field input,
+    body.scan-active #phase-2 .field select {
+      min-height: 40px !important;
+      padding: 8px 10px !important;
+      font-size: 13px !important;
+    }
+    body.scan-active #phase-2 .field label {
+      font-size: 9px !important;
+      margin-bottom: 3px !important;
+    }
+    body.scan-active #phase-2 > .flow-phase-body > .field {
+      margin-bottom: 0 !important;
     }
 
     /* OCR result panel — inside camera area */
@@ -2982,7 +3039,7 @@
       <div id="drawer-avatar" style="width:34px;height:34px;border-radius:50%;background:rgba(52,211,153,0.12);border:1px solid rgba(52,211,153,0.25);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:13px;font-weight:700;color:var(--accent);font-family:'Figtree',sans-serif;">?</div>
       <div style="min-width:0;">
         <div id="drawer-email" style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">—</div>
-        <div id="drawer-region-label" style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:1px;opacity:0.7;">Norway / EU</div>
+        <div id="drawer-region-label" style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:1px;opacity:0.7;">Norway</div>
       </div>
     </div>
   </div>
@@ -3718,8 +3775,8 @@
           <button id="settings-region-no" onclick="saveRegion('no')" class="ob-choice-btn active" style="flex:1;padding:12px;gap:10px;">
             <span style="font-size:20px;">🇳🇴</span>
             <div style="text-align:left;">
-              <div style="font-weight:700;font-size:13px;">Norway / EU</div>
-              <div style="font-size:11px;color:var(--muted);">Mattilsynet · EU Reg. 178/2002 · RASFF</div>
+              <div style="font-weight:700;font-size:13px;">Norway</div>
+              <div style="font-size:11px;color:var(--muted);">Mattilsynet · Matloven</div>
             </div>
           </button>
           <button id="settings-region-us" onclick="saveRegion('us')" class="ob-choice-btn" style="flex:1;padding:12px;gap:10px;">
@@ -3731,7 +3788,7 @@
           </button>
         </div>
         <div id="settings-retention-notice" style="font-size:11px;color:var(--muted);line-height:1.6;padding:8px 10px;background:var(--surface2);border-radius:6px;">
-          🇳🇴 <strong>EU Reg. 178/2002 / Mattilsynet:</strong> Shelf-life + 6 months for perishables; 5 years for general products.
+          🇳🇴 <strong>Mattilsynet / Matloven:</strong> Shelf-life + 6 months for perishables; 5 years for general products.
         </div>
       </div>
     </div>
@@ -3966,7 +4023,7 @@
           <!-- Notified by -->
           <div class="field">
             <label><span data-i18n="recall.fieldNotifiedBy">Notified by</span> <span style="font-size:10px;color:var(--muted);" data-i18n="lbl.optional">optional</span></label>
-            <input type="text" id="mgr-recall-notifiedby" placeholder="e.g. Supplier call, Mattilsynet letter, internal inspection, RASFF alert" />
+            <input type="text" id="mgr-recall-notifiedby" placeholder="e.g. Supplier call, Mattilsynet letter, internal inspection, supplier notification" />
           </div>
 
           <div id="mgr-recall-msg" style="font-size:12px;min-height:16px;font-family:'DM Mono',monospace;"></div>
@@ -4028,7 +4085,7 @@
       <div class="settings-section-body">
         <div class="source-toggle">
           <button class="source-pill" id="mgr-pill-fda" onclick="setRecallSource('fda')">FDA (USA)</button>
-          <button class="source-pill" id="mgr-pill-rasff" onclick="setRecallSource('rasff')">RASFF + Mattilsynet (EUR/NOR)</button>
+          <button class="source-pill" id="mgr-pill-rasff" onclick="setRecallSource('rasff')">Mattilsynet (NOR)</button>
           <button class="source-pill" id="mgr-pill-both" onclick="setRecallSource('both')">Both</button>
           <button class="source-pill" id="mgr-pill-manual" onclick="setRecallSource('manual')">Manual only</button>
         </div>
@@ -4513,7 +4570,7 @@
           <span id="recall-step-2b-done" style="display:none;margin-left:auto;font-size:11px;color:var(--accent);font-family:'DM Mono',monospace;">✓ Logged</span>
         </div>
         <div id="recall-step-2b-body" style="display:flex;flex-direction:column;gap:8px;">
-          <div style="font-size:12px;color:var(--muted);margin-bottom:2px;">Log which supplier delivered this lot. Required under EU Reg. 178/2002 Art. 18 — "one step back" traceability.</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:2px;">Log which supplier delivered this lot. Required under Matloven §14 — "one step back" traceability.</div>
           <input type="text" id="recall-supplier-name" placeholder="Supplier / distributor name (e.g. ASKO, Norgesgruppen, direct from Tine)"
             style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-family:'DM Mono',monospace;font-size:12px;color:var(--text);outline:none;box-sizing:border-box;" />
           <input type="text" id="recall-supplier-contact" placeholder="Contact name / phone / email (optional)"
@@ -4581,7 +4638,7 @@
         </div>
         <div id="recall-step-5b-body" style="font-size:12px;color:var(--muted);line-height:1.6;">
           <div id="recall-authority-no" style="display:none;">
-            <div style="margin-bottom:8px;">Under EU Reg. 178/2002 Art. 19, businesses must notify Mattilsynet when unsafe food has been placed on the market. For withdrawals, notification is still strongly recommended.</div>
+            <div style="margin-bottom:8px;">Under Matloven §16, businesses must notify Mattilsynet when unsafe food has been placed on the market. For withdrawals, notification is still strongly recommended.</div>
             <div style="display:flex;flex-direction:column;gap:6px;">
               <a href="https://www.mattilsynet.no/skjemaer/meldeskjema-for-virksomhetene" target="_blank"
                  style="display:inline-flex;align-items:center;gap:6px;padding:7px 12px;background:rgba(52,211,153,0.08);border:1px solid rgba(52,211,153,0.25);border-radius:7px;color:var(--accent);font-family:'DM Mono',monospace;font-size:11px;font-weight:700;text-decoration:none;">
@@ -4696,7 +4753,7 @@
       <button class="modal-close" onclick="closeAuditModal()">✕ Close</button>
     </div>
     <div class="modal-body">
-      <div style="font-size:12px;color:var(--muted);line-height:1.6;" id="audit-modal-desc">Generate a compliance report accepted by Mattilsynet as proof of traceability checks under Matinformasjonsforskriften / EU Reg. 1169/2011.</div>
+      <div style="font-size:12px;color:var(--muted);line-height:1.6;" id="audit-modal-desc">Generate a compliance report accepted by Mattilsynet as proof of traceability checks under Matloven and Matinformasjonsforskriften.</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
         <div class="history-filter-item"><label data-i18n="lbl.from">From</label><input type="date" id="audit-from" /></div>
         <div class="history-filter-item"><label data-i18n="lbl.to">To</label><input type="date" id="audit-to" /></div>
@@ -4869,7 +4926,7 @@
             <span style="font-size:18px;">🇳🇴</span>
             <div>
               <div style="font-weight:700;font-size:14px;">Norway</div>
-              <div style="font-size:11px;color:var(--muted);">Recommended: RASFF + Mattilsynet</div>
+              <div style="font-size:11px;color:var(--muted);">Recommended: Mattilsynet</div>
             </div>
           </button>
         </div>
@@ -4890,7 +4947,7 @@
             <div style="display:flex;align-items:center;gap:10px;flex:1;">
               <div id="ob-src-rasff-check" class="ob-src-check"></div>
               <div style="text-align:left;">
-                <div style="font-weight:700;font-size:13px;">RASFF + Mattilsynet <span id="ob-rasff-rec" class="ob-rec-badge" style="display:none;">Recommended</span></div>
+                <div style="font-weight:700;font-size:13px;">Mattilsynet <span id="ob-rasff-rec" class="ob-rec-badge" style="display:none;">Recommended</span></div>
                 <div style="font-size:11px;color:var(--muted);margin-top:2px;">EU food safety alerts + Norwegian Food Safety Authority</div>
               </div>
             </div>
@@ -5594,7 +5651,7 @@ function updateFtlBadge(name) {
 // Single source of truth for all date display throughout Batch'd.
 // All display-facing dates go through these — never hardcode dd/mm or mm/dd elsewhere.
 
-/** Returns the locale date separator: '.' for Norway/EU, '/' for USA */
+/** Returns the locale date separator: '.' for Norway, '/' for USA */
 function dateSep() { return _userRegion === 'us' ? '/' : '.'; }
 
 /** Returns the empty-state placeholder string for date pickers */
@@ -5715,7 +5772,7 @@ async function saveRegion(region) {
   } catch(e) { console.warn('Region save:', e); }
   applyRegion();
   renderSourcePills();
-  showToast(region === 'us' ? '🇺🇸 Region set to United States — FSMA 204 (USA) features enabled' : '🇳🇴 Region set to Norway / EU — Mattilsynet features active', 'ok', 3500);
+  showToast(region === 'us' ? '🇺🇸 Region set to United States — FSMA 204 (USA) features enabled' : '🇳🇴 Region set to Norway — Mattilsynet features active', 'ok', 3500);
 }
 
 function applyRegion() {
@@ -5741,7 +5798,7 @@ function applyRegion() {
   }
   // Update drawer region label
   const drawerReg = document.getElementById('drawer-region-label');
-  if (drawerReg) drawerReg.textContent = isUS ? 'United States' : 'Norway / EU';
+  if (drawerReg) drawerReg.textContent = isUS ? 'United States' : 'Norway';
   // Severity dropdown
   const sevEl = document.getElementById('mgr-recall-severity');
   if (sevEl) sevEl.innerHTML = isUS
@@ -5751,8 +5808,8 @@ function applyRegion() {
        <option value='Class III — Unlikely to cause harm'>Class III — Unlikely to cause harm (FDA) — labelling or regulatory violation</option>
        <option value='Market withdrawal'>Market withdrawal — not a public health hazard</option>`
     : `<option value=''>Unknown / not yet classified</option>
-       <option value='Serious — EU/RASFF Class I'>Serious — EU/RASFF Class I — may cause death or serious injury</option>
-       <option value='Less serious — EU/RASFF Class II'>Less serious — EU/RASFF Class II — unlikely to cause lasting harm</option>
+       <option value='Serious — Class I'>Serious — Class I — may cause death or serious injury</option>
+       <option value='Less serious — Class II'>Less serious — Class II — unlikely to cause lasting harm</option>
        <option value='Not serious — regulatory only'>Not serious — regulatory/labelling violation only</option>
        <option value='Tilbaketrekking — Market withdrawal'>Tilbaketrekking — product removed before consumer purchase</option>`;
   // Supplier label
@@ -5762,7 +5819,7 @@ function applyRegion() {
   const rr = document.getElementById('settings-retention-notice');
   if (rr) rr.innerHTML = isUS
     ? '🇺🇸 <strong>FDA FSMA:</strong> Records kept for a minimum of <strong>2 years</strong> from date created (21 CFR Part 1 Subpart S).'
-    : '🇳🇴 <strong>EU Reg. 178/2002 / Mattilsynet:</strong> Shelf-life + 6 months for perishables; 5 years for general products.';
+    : '🇳🇴 <strong>Mattilsynet / Matloven:</strong> Shelf-life + 6 months for perishables; 5 years for general products.';
   // Hazard type dropdown allergens
   const hzEl = document.getElementById('mgr-recall-hazard');
   if (hzEl) hzEl.innerHTML = `<option value=''>Select hazard type…</option>
@@ -6310,7 +6367,7 @@ function _obRenderSources() {
     note.textContent = currentLang==='no'?'Kun manuelt deaktiverer automatiske feeds — fjern andre for kun manuelle tilbakekallinger.':'Manual only disables automatic feeds — deselect others to use only manual recalls.';
     note.style.color = 'var(--warn)';
   } else {
-    const labels = { fda: 'FDA', rasff: 'RASFF + Mattilsynet', manual: 'Manual only' };
+    const labels = { fda: 'FDA', rasff: 'Mattilsynet', manual: 'Manual only' };
     note.textContent = (currentLang==='no'?'Valgt: ':'Selected: ') + [..._obSources].map(s => labels[s]).join(' + ');
     note.style.color = 'var(--accent)';
   }
@@ -7761,7 +7818,7 @@ async function saveRecord() {
   const expiryVal   = document.getElementById('field-expiry')?.value.trim() || null;
   const lotUnavailSave = document.getElementById('lot-unavailable-toggle')?.checked || false;
   // Compute retain_until based on region:
-  // Norway/EU (EU Reg. 178/2002): 2 years (conservative general-products floor)
+  // Norway (Matloven): 2 years (conservative general-products floor)
   // USA (FSMA 21 CFR): 2 years minimum
   // Both use 2 years — specific product-type extensions tracked separately.
   const _retainYears = 2;
@@ -8117,7 +8174,7 @@ let recallSource = 'both'; // default until loaded from DB
 
 const SOURCE_DESCS = {
   fda:    'Pulls active food recalls from the US FDA enforcement database. Useful for imported American products.',
-  rasff:  'Pulls alerts from the EU RASFF feed AND Mattilsynet (Norwegian Food Safety Authority) recall notices — the most relevant combination for Norwegian grocery stores.',
+  rasff:  'Pulls alerts from Mattilsynet (Norwegian Food Safety Authority) and manual recall records — the most complete combination for Norwegian grocery stores.',
   both:   'Pulls from all three sources: FDA (USA), RASFF (EU/EEA), and Mattilsynet (Norway). Maximum coverage.',
   manual: 'Only recalls you enter manually below. No automatic feed.'
 };
@@ -12796,7 +12853,7 @@ const TRANSLATIONS = {
     'audit.generateBtn': 'Generate Report',
     'audit.printBtn': 'Print Report',
     'audit.newReport': '← New report',
-    'audit.modalDesc': 'Generate a compliance report accepted by Mattilsynet as proof of traceability checks under Matinformasjonsforskriften / EU Reg. 1169/2011.',
+    'audit.modalDesc': 'Generate a compliance report accepted by Mattilsynet as proof of traceability checks under Matloven and Matinformasjonsforskriften.',
     'audit.modalDescUs': 'Generate an FDA FSMA Food Traceability Rule compliance report. Demonstrates your store\'s receiving records and traceability practices under 21 CFR Part 1 Subpart S (FSMA Section 204).',
     'audit.modalTitleUs': 'FDA Traceability Compliance Report',
     'audit.modalTitleEu': 'Compliance Audit Report',
@@ -12896,7 +12953,7 @@ const TRANSLATIONS = {
     'store.recallMatch': 'recall match', 'store.recallMatches': 'recall matches',
     'settings.region': 'Region / Jurisdiction',
     'settings.regionSub': 'Changes which regulations, recall databases, and compliance features are active. Instant effect.',
-    'settings.regionNo': 'Norway / EU', 'settings.regionUs': 'United States',
+    'settings.regionNo': 'Norway', 'settings.regionUs': 'United States',
     'settings.loadOverview': 'Load Overview',
     'staff.loadBtn': 'Load Staff Activity',
     'staff.selectRange': 'Select a date range to view staff activity.',
@@ -17289,7 +17346,7 @@ function updateDrawerAccount(email, region) {
   const regionEl = document.getElementById('drawer-region-label');
   if (emailEl && email) emailEl.textContent = email;
   if (avatarEl && email) avatarEl.textContent = email[0].toUpperCase();
-  if (regionEl) regionEl.textContent = region === 'us' ? 'United States' : 'Norway / EU';
+  if (regionEl) regionEl.textContent = region === 'us' ? 'United States' : 'Norway';
 }
 
 // ── Recalls view ─────────────────────────────────────────────
