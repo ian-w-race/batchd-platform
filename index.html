@@ -7225,20 +7225,32 @@ async function handleP1BarcodeDetected(barcode) {
     document.getElementById('field-lot').value = gs1.lot;
     document.getElementById('field-lot').classList.add('auto-filled');
 
-    const expiryRaw = dl?.expiry || gs1.all['17'] || null;
+    // Use the parsed bestDate (expiry > best-before) or fall back to raw AI
+    const expiryRaw = gs1.bestDate || gs1.all['17'] || dl?.expiry || null;
     if (expiryRaw) {
       const ef = document.getElementById('field-expiry');
       if (ef) {
-        ef.value = formatGS1Expiry(expiryRaw);
+        // bestDate is already ISO YYYY-MM-DD; formatGS1Expiry handles YYMMDD raw
+        ef.value = expiryRaw.includes('-') ? expiryRaw : formatGS1Expiry(expiryRaw);
         ef.classList.add('auto-filled');
       }
     }
 
+    // Auto-populate quantity if GS1 AI(37) present
+    if (gs1.quantity) {
+      const qf = document.getElementById('field-quantity');
+      if (qf && !qf.value) { qf.value = gs1.quantity; qf.classList.add('auto-filled'); }
+    }
+
     // Show a "full TLC" banner in Phase 2 so staff know it's pre-filled
     _gs1FullCapture = {
-      lot: gs1.lot,
-      expiry: expiryRaw ? formatGS1Expiry(expiryRaw) : null,
-      gtin: dl?.gtin || gs1.all['01'] || null,
+      lot:           gs1.lot,
+      expiry:        expiryRaw ? (expiryRaw.includes('-') ? expiryRaw : formatGS1Expiry(expiryRaw)) : null,
+      productionDate:gs1.productionDate || null,
+      bestBefore:    gs1.bestBefore || null,
+      serial:        gs1.serial || null,
+      quantity:      gs1.quantity || null,
+      gtin:          gs1.gtin || dl?.gtin || null,
       isDigitalLink: !!dl,
     };
 
@@ -7944,12 +7956,14 @@ async function saveRecord() {
     // Correction feedback loop — if employee edited lot/batch, record it as high-confidence
     await maybeRecordCorrection(productName, barcodeNum || null);
 
-    // Save learned pattern with confidence level and barcode
+    // Save learned pattern with confidence level, barcode, and anchor tokens
     if (ocrState && ocrState.codeA) {
+      // Merge locationHint with anchor hint for richer label description
+      const combinedHint = [ocrState.anchorHint, ocrState.locationHint].filter(Boolean).join(' · ') || ocrState.locationHint;
       await saveLearnedPattern(
         productName, barcodeNum || null,
         ocrState.codeA, ocrState.codeB,
-        ocrState.lotIsFirst, ocrState.raw, ocrState.locationHint,
+        ocrState.lotIsFirst, ocrState.raw, combinedHint,
         ocrState.confidence, ocrState.localisedCrop || null
       );
     }
@@ -11048,102 +11062,178 @@ async function assessPhotoQuality(canvas) {
 }
 
 async function snapOcr() {
+  // ── MULTI-FRAME TEMPORAL CONSENSUS ───────────────────────────
+  // Captures 2 frames 250ms apart then runs OCR on both in parallel.
+  // Total added time: ~250ms for frame collection (imperceptible vs 1.5-3s OCR).
+  // Consensus rules:
+  //   Both agree (normalised) → high confidence
+  //   One empty + one result  → use the result, keep original confidence
+  //   Both disagree           → use the higher-confidence result, flag as low
+  //
+  // This eliminates false readings from motion blur and partial occlusion,
+  // and produces an agreement-rate confidence signal independent of AI output.
+
   const vid = document.getElementById('barcode-video');
-  const canvas = document.createElement('canvas');
-  canvas.width = vid.videoWidth;
-  canvas.height = vid.videoHeight;
-  canvas.getContext('2d').drawImage(vid, 0, 0);
 
-  canvas.toBlob(async (blob) => {
-    barcodeBlob = blob;
-    const url = URL.createObjectURL(blob);
-    const img = document.getElementById('barcode-captured');
-    img.src = url;
-    img.style.display = 'block';
-    document.getElementById('barcode-video-wrap').style.display = 'none';
-    document.getElementById('barcode-frame').style.display = 'none';
-    document.getElementById('btn-snap-ocr').style.display = 'none';
+  // Frame 1 — immediate
+  const c1 = document.createElement('canvas');
+  c1.width = vid.videoWidth; c1.height = vid.videoHeight;
+  c1.getContext('2d').drawImage(vid, 0, 0);
 
-    // ── Photo quality check — warn before burning an API call ────
-    const quality = await assessPhotoQuality(canvas);
-    if (quality.issue) {
-      showToast(quality.message, 'warn', 4000);
-      // Show retake button but continue anyway — employee may still want to try
-      document.getElementById('btn-retake-barcode').style.display = 'flex';
-    }
+  // Freeze the preview immediately so UI feels responsive
+  const blob1 = await new Promise(res => c1.toBlob(res, 'image/jpeg', 0.85));
+  barcodeBlob = blob1;
+  const url1 = URL.createObjectURL(blob1);
+  const img = document.getElementById('barcode-captured');
+  img.src = url1; img.style.display = 'block';
+  document.getElementById('barcode-video-wrap').style.display = 'none';
+  document.getElementById('barcode-frame').style.display = 'none';
+  document.getElementById('btn-snap-ocr').style.display = 'none';
 
-    document.getElementById('ocr-analyzing').style.display = 'flex';
+  // Quality check on first frame
+  const quality = await assessPhotoQuality(c1);
+  if (quality.issue) showToast(quality.message, 'warn', 4000);
+  document.getElementById('btn-retake-barcode').style.display = 'flex';
 
-    // 1. Look up any learned pattern for this product first
-    const productName = document.getElementById('field-product-name').value.trim();
-    const barcodeNum  = document.getElementById('field-barcode').value.trim();
-    const preLearn = await lookupLearnedPattern(productName, barcodeNum || null, null, null);
+  // Frame 2 — 250ms later (video is still streaming in background)
+  await new Promise(r => setTimeout(r, 250));
+  const c2 = document.createElement('canvas');
+  c2.width = vid.videoWidth; c2.height = vid.videoHeight;
+  c2.getContext('2d').drawImage(vid, 0, 0);
+  const blob2 = await new Promise(res => c2.toBlob(res, 'image/jpeg', 0.85));
 
-    // 2. Extract codes — pass learned context so AI prompt is informed
-    const aiResult = await extractCodesFromImage(blob, preLearn);
-    const codeA = aiResult.code_a;
-    const codeB = aiResult.code_b;
+  document.getElementById('ocr-analyzing').style.display = 'flex';
 
-    // 3. Now do a proper pattern lookup with actual codes
-    const learned = codeA
-      ? await lookupLearnedPattern(productName, barcodeNum || null, codeA, codeB)
-      : preLearn;
+  // Shared learned context — fetch once, use for both OCR calls
+  const productName = document.getElementById('field-product-name').value.trim();
+  const barcodeNum  = document.getElementById('field-barcode').value.trim();
+  const preLearn = await lookupLearnedPattern(productName, barcodeNum || null, null, null);
 
-    // 4. Score heuristically if no learned pattern
-    let assignment, confidence, source;
-    if (learned && learned.lotIsFirst !== undefined) {
-      assignment = learned.lotIsFirst
-        ? { lot: codeA, batch: codeB }
-        : { lot: codeB, batch: codeA };
-      confidence = 'learned';
-      const sourceLabel = learned.source === 'brand'
-        ? `Brand pattern (${extractBrand(productName)})`
-        : `Learned from ${learned.scanCount} previous scan${learned.scanCount !== 1 ? 's' : ''} of "${productName}"`;
-      source = sourceLabel;
-    } else {
-      const scored = scoreCodesHeuristically(codeA, codeB);
-      assignment = scored.assignment;
-      // Merge AI confidence with heuristic confidence — take the better of the two
-      const aiConf = aiResult.confidence || 'low';
-      const confRank = { high: 3, medium: 2, low: 1 };
-      confidence = confRank[aiConf] >= confRank[scored.confidence] ? aiConf : scored.confidence;
-      source = aiResult.reconcileNote || scored.reason;
-    }
+  // Run OCR on both frames in parallel — total time ≈ max(t1, t2), not t1+t2
+  const [r1, r2] = await Promise.all([
+    extractCodesFromImage(blob1, preLearn).catch(() => null),
+    extractCodesFromImage(blob2, preLearn).catch(() => null),
+  ]);
 
-    document.getElementById('ocr-analyzing').style.display = 'none';
+  // ── CONSENSUS RESOLUTION ──────────────────────────────────
+  const norm = r => normaliseForFuzzy(r?.code_a || '');
+  const n1 = norm(r1), n2 = norm(r2);
+  const confRank = { high: 3, learned: 3, medium: 2, low: 1 };
 
-    ocrState = {
-      codeA,
-      codeB,
-      lotIsFirst: assignment.lot === codeA,
-      swapped: false,
-      confidence,
-      source,
-      raw: aiResult.raw,
-      locationHint: aiResult.locationHint || '',
-      expiry: aiResult.expiry || null,
-      // Crop region from localisation pass — persisted to enable learned-crop shortcut
-      localisedCrop: aiResult.localisedCrop || null
+  let aiResult;
+
+  if (r1?.code_a && r2?.code_a && n1 === n2) {
+    // Both frames produced the same code — highest possible confidence
+    aiResult = r1;
+    aiResult.lot_confidence = 'high';
+    const wasAlreadyHigh = r1.lot_confidence === 'high';
+    aiResult.reconcileNote = wasAlreadyHigh
+      ? '2/2 frames agree — confirmed'
+      : '2/2 frames agree — confidence upgraded';
+
+  } else if (r1?.code_a && r2?.code_a) {
+    // Both found something but disagree — pick the higher-confidence result
+    const rank1 = confRank[r1.lot_confidence] || 1;
+    const rank2 = confRank[r2.lot_confidence] || 1;
+    aiResult = rank1 >= rank2 ? r1 : r2;
+    // Disagreement between frames downgrades confidence to medium at best
+    if ((confRank[aiResult.lot_confidence] || 1) > 2) aiResult.lot_confidence = 'medium';
+    aiResult.reconcileNote = 'Frames disagreed — used higher-confidence result. Please verify.';
+
+  } else {
+    // One or both frames empty — use whichever has a result
+    aiResult = (r1?.code_a ? r1 : r2) || r1 || { code_a: null, code_b: null, raw: '', confidence: 'low', reconcileNote: '', locationHint: '' };
+  }
+
+  const codeA = aiResult.code_a;
+  const codeB = aiResult.code_b;
+
+  // Store the better blob (frame 1 was quality-checked, use it for the record)
+  // barcodeBlob is already set to blob1 above
+
+  // ── RECALL-AWARE CONFIDENCE BOOST ────────────────────────
+  let _recallBoostAlert = null;
+  if (codeA && _cachedActiveRecalls?.length) {
+    const syntheticScan = {
+      lot_number:    codeA,
+      product_name:  productName,
+      barcode_number: barcodeNum || null,
     };
-
-    // Auto-populate expiry field if AI found one
-    if (aiResult.expiry) {
-      const expiryField = document.getElementById('field-expiry');
-      if (expiryField && !expiryField.value) {
-        expiryField.value = aiResult.expiry;
-        expiryField.style.borderColor = 'rgba(52,211,153,0.4)';
+    for (const recall of _cachedActiveRecalls) {
+      const { level } = recallMatchLevel(syntheticScan, recall);
+      if (level) {
+        _recallBoostAlert = { level, recall };
+        if (level === 'exact') {
+          aiResult.lot_confidence = 'high';
+          aiResult.reconcileNote = (aiResult.reconcileNote ? aiResult.reconcileNote + ' · ' : '') + '⚠ Exact recall match — confidence boosted';
+        } else if (level === 'possible' && aiResult.lot_confidence !== 'high') {
+          aiResult.lot_confidence = 'medium';
+          aiResult.reconcileNote = (aiResult.reconcileNote ? aiResult.reconcileNote + ' · ' : '') + '⚠ Possible recall match';
+        }
+        break;
       }
     }
+  }
 
-    // Feature 2: Show format hint from pattern if available
-    const formatHint = learned?.lotFormat || preLearn?.lotFormat || null;
-    showLotFormatHint(formatHint);
+  // 3. Final pattern lookup with actual codes
+  const learned = codeA
+    ? await lookupLearnedPattern(productName, barcodeNum || null, codeA, codeB)
+    : preLearn;
 
-    // Feature 1: Show region confirmation overlay for medium/low confidence
-    showRegionConfirmation(blob, aiResult.localisedCrop || null, assignment, confidence, source, aiResult.raw);
-    
-    
-  }, 'image/jpeg', 0.95);
+  // 4. Score heuristically if no learned pattern
+  let assignment, confidence, source;
+  if (learned && learned.lotIsFirst !== undefined) {
+    assignment = learned.lotIsFirst
+      ? { lot: codeA, batch: codeB }
+      : { lot: codeB, batch: codeA };
+    confidence = 'learned';
+    const sourceLabel = learned.source === 'brand'
+      ? `Brand pattern (${extractBrand(productName)})`
+      : `Learned from ${learned.scanCount} previous scan${learned.scanCount !== 1 ? 's' : ''} of "${productName}"`;
+    source = sourceLabel;
+  } else {
+    const scored = scoreCodesHeuristically(codeA, codeB);
+    assignment = scored.assignment;
+    const aiConf = aiResult.lot_confidence || 'low';
+    const confRankMap = { high: 3, medium: 2, low: 1 };
+    confidence = confRankMap[aiConf] >= confRankMap[scored.confidence] ? aiConf : scored.confidence;
+    source = aiResult.reconcileNote || scored.reason;
+  }
+
+  document.getElementById('ocr-analyzing').style.display = 'none';
+
+  ocrState = {
+    codeA,
+    codeB,
+    lotIsFirst: assignment.lot === codeA,
+    swapped: false,
+    confidence,
+    source,
+    raw: aiResult.raw,
+    locationHint: aiResult.locationHint || '',
+    expiry: aiResult.expiry || null,
+    recallAlert: _recallBoostAlert,
+    anchorBefore: aiResult.anchorBefore || null,
+    anchorAfter:  aiResult.anchorAfter  || null,
+    anchorHint:   aiResult.anchorHint   || null,
+    localisedCrop: aiResult.localisedCrop || null
+  };
+
+  // Auto-populate expiry field if AI found one
+  if (aiResult.expiry) {
+    const expiryField = document.getElementById('field-expiry');
+    if (expiryField && !expiryField.value) {
+      expiryField.value = aiResult.expiry;
+      expiryField.style.borderColor = 'rgba(52,211,153,0.4)';
+    }
+  }
+
+  // Show format hint from learned pattern if available
+  const formatHint = learned?.lotFormat || preLearn?.lotFormat || null;
+  showLotFormatHint(formatHint);
+
+  // Show region confirmation overlay for medium/low confidence
+  showRegionConfirmation(blob1, aiResult.localisedCrop || null, assignment, confidence, source, aiResult.raw);
 }
 
 // ── MANUAL CORRECTION TRACKING ───────────────────────────────
@@ -11319,6 +11409,38 @@ function renderOcrResult(assignment, confidence, source, raw) {
       guidanceEl.style.display = 'none';
     }
   }
+
+  // ── RECALL ALERT BANNER ───────────────────────────────────
+  // Show immediately if OCR found a code matching an active recall.
+  // This gives staff a heads-up BEFORE they confirm placement.
+  const recallAlert = ocrState?.recallAlert;
+  let recallBanner = document.getElementById('ocr-recall-alert');
+  if (!recallBanner) {
+    recallBanner = document.createElement('div');
+    recallBanner.id = 'ocr-recall-alert';
+    recallBanner.style.cssText = 'margin-top:8px;border-radius:9px;padding:10px 13px;font-size:12px;line-height:1.55;display:none;';
+    panel.appendChild(recallBanner);
+  }
+  if (recallAlert) {
+    const ra = recallAlert.recall;
+    const isExact = recallAlert.level === 'exact';
+    recallBanner.style.cssText = `margin-top:8px;border-radius:9px;padding:10px 13px;font-size:12px;line-height:1.55;
+      background:${isExact?'rgba(255,92,92,0.1)':'rgba(245,166,35,0.08)'};
+      border:1px solid ${isExact?'rgba(255,92,92,0.4)':'rgba(245,166,35,0.35)'};`;
+    recallBanner.innerHTML = `<strong style="color:${isExact?'var(--danger)':'var(--warn)'};">
+      ${isExact ? '⚠ ACTIVE RECALL MATCH' : '~ Possible recall match'}
+    </strong><br>
+    <span style="color:var(--muted);">
+      ${ra.product_name || ''}${ra.lot_number ? ` · Lot ${ra.lot_number}` : ''}
+      ${ra.reason ? ` · ${ra.reason}` : ''}
+    </span><br>
+    <span style="color:${isExact?'var(--danger)':'var(--warn)'};font-weight:600;">
+      ${isExact ? 'Do NOT place on shelf — initiate recall response in History.' : 'Verify lot code carefully before placing.'}
+    </span>`;
+    recallBanner.style.display = 'block';
+  } else {
+    recallBanner.style.display = 'none';
+  }
 }
 
 function swapLotBatch() {
@@ -11408,6 +11530,44 @@ function scoreCodesHeuristically(codeA, codeB) {
 //   4. Brand-level pattern inheritance for unknown products
 //   5. Manual correction feedback loop
 //   6. Fuzzy product name normalisation
+
+// ── REGEX PATTERN INFERENCE ───────────────────────────────────
+// Derives a regex pattern from a confirmed lot code string.
+// E.g. "L2026-03-14A" → "^L\d{4}-\d{2}-\d{2}[A-Z]$"
+// Stored in lot_format when it starts with '^' (distinguishes it
+// from human-readable format strings like "YYMMDD").
+function inferLotPattern(code) {
+  if (!code || code.length < 3) return null;
+  let pattern = '^';
+  let i = 0;
+  while (i < code.length) {
+    const c = code[i];
+    if (c >= '0' && c <= '9') {
+      let j = i; while (j < code.length && code[j] >= '0' && code[j] <= '9') j++;
+      pattern += `\\d{${j - i}}`; i = j;
+    } else if (c >= 'A' && c <= 'Z') {
+      let j = i; while (j < code.length && code[j] >= 'A' && code[j] <= 'Z') j++;
+      const n = j - i; pattern += n === 1 ? '[A-Z]' : `[A-Z]{${n}}`; i = j;
+    } else if (c >= 'a' && c <= 'z') {
+      let j = i; while (j < code.length && code[j] >= 'a' && code[j] <= 'z') j++;
+      const n = j - i; pattern += n === 1 ? '[a-z]' : `[a-z]{${n}}`; i = j;
+    } else if (c === '.') {
+      pattern += '\\.'; i++;
+    } else if ('- /'.includes(c)) {
+      pattern += c; i++;
+    } else {
+      pattern += c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); i++;
+    }
+  }
+  pattern += '$';
+  return pattern;
+}
+
+/** Returns true if a lot code string matches a stored regex pattern */
+function lotMatchesPattern(code, patternStr) {
+  if (!patternStr || !patternStr.startsWith('^')) return false;
+  try { return new RegExp(patternStr).test(code); } catch { return false; }
+}
 
 // ── BRAND KNOWLEDGE BASE ──────────────────────────────────────
 // Known Norwegian/Nordic brand packaging patterns.
@@ -11812,7 +11972,11 @@ async function saveLearnedPattern(productName, barcodeNumber, codeA, codeB, lotI
         code_a:             codeA,
         code_b:             codeB || null,
         lot_is_first:       lotIsFirst,
-        lot_format:         lotFormat,
+        // Infer regex from confirmed code — stored as "^..." to distinguish
+        // from human-readable format strings like "YYMMDD"
+        lot_format:         (codeA && incomingRank >= CONF_RANK.medium)
+                              ? (inferLotPattern(codeA) || lotFormat)
+                              : lotFormat,
         batch_format:       batchFormat,
         label_hint:         labelHint || existing.label_hint,
         location_frequency: JSON.stringify(freq),
@@ -11837,7 +12001,9 @@ async function saveLearnedPattern(productName, barcodeNumber, codeA, codeB, lotI
         code_a:             codeA,
         code_b:             codeB || null,
         lot_is_first:       lotIsFirst,
-        lot_format:         lotFormat,
+        lot_format:         (codeA && newConfidence !== 'low')
+                              ? (inferLotPattern(codeA) || lotFormat)
+                              : lotFormat,
         batch_format:       batchFormat,
         label_hint:         labelHint,
         location_frequency: JSON.stringify(freq),
@@ -12277,8 +12443,10 @@ async function extractCodesFromImage(blob, learnedContext) {
       const cropDesc = _hasLearnedCrop
         ? `The lot code region is in the ${localisedCrop.yStart < 0.5 ? 'upper' : 'lower'} portion of this cropped image.`
         : '';
+      const isRegex = learnedContext.lotFormat.startsWith('^');
       contextHint = `\n\nHIGH CONFIDENCE PATTERN FOR "${productName}" (${_scanCount} confirmed scans):\n`
         + `Lot code format: ${learnedContext.lotFormat}\n`
+        + (isRegex ? `Regex validation: only accept codes matching ${learnedContext.lotFormat}\n` : '')
         + (learnedContext.batchFormat ? `Batch format: ${learnedContext.batchFormat}\n` : '')
         + (learnedContext.labelHint ? `Location: ${learnedContext.labelHint}\n` : '')
         + `${cropDesc}\n`
@@ -12415,7 +12583,7 @@ STRICTLY IGNORE:
 
 OCR CONFUSION PAIRS: 0↔O, 1↔I↔l↔7, 8↔B, 5↔S, 2↔Z, 6↔G, 9↔q`;
 
-    const jsonSchema = `\nRespond ONLY with valid JSON, no markdown:\n{"lot": "exact code or null", "batch": "exact code or null", "expiry": "best-before or expiry date as printed or null", "lot_confidence": "high|medium|low", "batch_confidence": "high|medium|low|na", "lot_is_date": false, "location_hint": "where on pack", "raw": "all visible text (max 200 chars)"}`;
+    const jsonSchema = `\nRespond ONLY with valid JSON, no markdown:\n{"lot": "exact code or null", "batch": "exact code or null", "expiry": "best-before or expiry date as printed or null", "lot_confidence": "high|medium|low", "batch_confidence": "high|medium|low|na", "lot_is_date": false, "location_hint": "where on pack (e.g. bottom-right tray sticker, gable flap)", "anchor_before": "text printed immediately before the lot code on the label (e.g. 'L.nr:', 'Lot:', 'Parti:') or null", "anchor_after": "text or separator immediately after the lot code or null", "raw": "all visible text (max 200 chars)"}`;
 
     // ── PASS 1: PRIMARY EXTRACTION (sonnet) ──────────────────
     // Single focused pass on the best available image.
@@ -12526,15 +12694,29 @@ OCR CONFUSION PAIRS: 0↔O, 1↔I↔l↔7, 8↔B, 5↔S, 2↔Z, 6↔G, 9↔q`;
     // Collect expiry date — take first non-null expiry from either pass
     const finalExpiry = [pass1.expiry, pass2.expiry].find(e => e && e.length > 3) || null;
 
+    // ── ANCHOR TOKEN COLLECTION ───────────────────────────────
+    // Contextual text immediately surrounding the lot code on the label.
+    // Stored in code_patterns to improve future extraction prompts.
+    // E.g. anchor_before: "L.nr:" means we can prime the model to look
+    // for this token first, then read what follows it.
+    const anchorBefore = [pass1.anchor_before, pass2.anchor_before].find(a => a && a.length > 0) || null;
+    const anchorAfter  = [pass1.anchor_after,  pass2.anchor_after ].find(a => a && a.length > 0) || null;
+    const anchorHint   = anchorBefore
+      ? `Look for "${anchorBefore}" on the label — the lot code follows immediately after.`
+      : null;
+
     return {
-      code_a: finalLot,
-      code_b: finalBatch,
-      expiry: finalExpiry,
-      raw: rawText,
-      confidence: finalConfidence,
-      reconcileNote: lassoNote || reconcileNote,
+      code_a:       finalLot,
+      code_b:       finalBatch,
+      expiry:       finalExpiry,
+      raw:          rawText,
+      confidence:   finalConfidence,
+      reconcileNote:lassoNote || reconcileNote,
       locationHint,
-      localisedCrop
+      localisedCrop,
+      anchorBefore,   // ← new: label token before lot code
+      anchorAfter,    // ← new: label token after lot code
+      anchorHint,     // ← new: human-readable hint derived from anchors
     };
 
   } catch(e) {
@@ -12642,6 +12824,33 @@ function formatGS1Expiry(yymmdd) {
 // Parses GS1-128 / GS1 DataBar Application Identifiers from a raw barcode string.
 // Handles both human-readable "(AI)value" format and raw concatenated format.
 // Also handles GS1 Digital Link URLs via parseGS1DigitalLink().
+
+/** Parse a 6-digit GS1 date (YYMMDD) into ISO YYYY-MM-DD string */
+function _gs1ParseDate(yymmdd) {
+  if (!yymmdd || yymmdd.length < 6) return null;
+  const yy = yymmdd.slice(0, 2);
+  const mm = yymmdd.slice(2, 4);
+  const dd = yymmdd.slice(4, 6);
+  if (mm === '00' || dd === '00') return null; // GS1 spec: 00 = last day of month
+  const year = parseInt(yy) >= 50 ? `19${yy}` : `20${yy}`;
+  return `${year}-${mm}-${dd}`;
+}
+
+/** Derives semantic helper fields from the raw AI map after parsing */
+function _deriveGS1SemanticFields(gs1) {
+  const a = gs1.all;
+  // Dates: production AI(11/13), best-before AI(15), expiry AI(17)
+  gs1.productionDate = _gs1ParseDate(a['11'] || a['13']) || null;
+  gs1.bestBefore     = _gs1ParseDate(a['15']) || null;
+  gs1.expiry         = _gs1ParseDate(a['17']) || null;
+  // The most relevant date for the expiry field (expiry > best-before > production)
+  gs1.bestDate       = gs1.expiry || gs1.bestBefore || null;
+  // Other useful AIs
+  gs1.serial         = a['21'] || null;
+  gs1.quantity       = a['37'] ? parseInt(a['37'], 10) : null;
+  gs1.gtin           = a['01'] || a['02'] || null;
+  gs1.packDate       = _gs1ParseDate(a['13']) || null;
+}
 function parseGS1(raw) {
   const result = { lot: null, batch: null, all: {} };
   if (!raw) return result;
@@ -12653,21 +12862,16 @@ function parseGS1(raw) {
       result.lot   = dl.lot;
       result.batch = dl.lot;
       result.all   = dl.all;
-      result._digitalLink = dl; // attach full DL result for upstream callers
+      result._digitalLink = dl;
+      _deriveGS1SemanticFields(result);
       return result;
     }
   }
 
-  // GS1 AI definitions: AI -> fixed length of value (null = variable, terminated by FNC1/next AI)
   const AI_LENGTHS = {
     '00': 18, '01': 14, '02': 14,
-    '10': null, // Lot/Batch — variable
-    '11': 6, '12': 6, '13': 6, '15': 6, '16': 6, '17': 6,
-    '20': 2,
-    '21': null, // Serial number — variable
-    '22': null,
-    '30': null,
-    '37': null,
+    '10': null, '11': 6, '12': 6, '13': 6, '15': 6, '16': 6, '17': 6,
+    '20': 2, '21': null, '22': null, '30': null, '37': null,
     '240': null, '241': null, '242': null, '243': null,
     '250': null, '251': null, '253': null, '254': null, '255': null,
     '310': 6, '311': 6, '312': 6, '313': 6, '314': 6, '315': 6, '316': 6,
@@ -12685,10 +12889,9 @@ function parseGS1(raw) {
     '96': null, '97': null, '98': null, '99': null,
   };
 
-  // FNC1 character (used as separator in some encoders)
   const FNC1 = String.fromCharCode(29);
 
-  // Try human-readable format: (10)LOT123(17)260101
+  // Human-readable format: (10)LOT123(17)260101
   const humanRe = /\((\d{2,4})\)([^(]*)/g;
   let humanMatch;
   let foundHuman = false;
@@ -12699,61 +12902,51 @@ function parseGS1(raw) {
     result.all[ai] = val;
     if (ai === '10') { result.lot = val; result.batch = val; }
   }
-  if (foundHuman) return result;
+  if (foundHuman) { _deriveGS1SemanticFields(result); return result; }
 
-  // Try raw concatenated format — strip leading ]C1 or ]d2 symbology identifiers
+  // Raw concatenated format
   let s = raw.replace(/^\]C1|^\]d2|^\]e0/i, '');
-
-  let i = 0;
-  let safetyLimit = 0;
+  let i = 0, safetyLimit = 0;
   while (i < s.length && safetyLimit++ < 30) {
-    // skip FNC1 separators
     if (s[i] === FNC1) { i++; continue; }
-
-    // Try to match AI (check 4-digit first, then 3, then 2)
     let ai = null, aiLen = 0;
     for (const len of [4, 3, 2]) {
       const candidate = s.substr(i, len);
-      if (AI_LENGTHS.hasOwnProperty(candidate)) {
+      if (Object.prototype.hasOwnProperty.call(AI_LENGTHS, candidate)) {
         ai = candidate; aiLen = len; break;
       }
     }
-    if (!ai) { i++; continue; } // unrecognised, advance
-
+    if (!ai) { i++; continue; }
     i += aiLen;
     const fixedLen = AI_LENGTHS[ai];
     let val = '';
-
     if (fixedLen !== null) {
-      val = s.substr(i, fixedLen);
-      i += fixedLen;
+      val = s.substr(i, fixedLen); i += fixedLen;
     } else {
-      // Variable length: read until FNC1, next recognised AI, or end
       let end = i;
       while (end < s.length && s[end] !== FNC1) {
-        // peek ahead — if next 2-4 chars look like a known AI, stop
         let foundAI = false;
         for (const len of [4, 3, 2]) {
-          if (AI_LENGTHS.hasOwnProperty(s.substr(end, len))) {
+          if (Object.prototype.hasOwnProperty.call(AI_LENGTHS, s.substr(end, len))) {
             foundAI = true; break;
           }
         }
         if (foundAI && end > i) break;
         end++;
       }
-      val = s.substring(i, end);
-      i = end;
-      if (s[i] === FNC1) i++; // consume FNC1
+      val = s.substring(i, end); i = end;
+      if (s[i] === FNC1) i++;
     }
-
     if (val) {
       result.all[ai] = val;
       if (ai === '10') { result.lot = val; result.batch = val; }
     }
   }
 
+  _deriveGS1SemanticFields(result);
   return result;
 }
+
 
 function blobToBase64(blob) {
   return new Promise((res, rej) => {
