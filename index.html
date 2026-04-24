@@ -235,10 +235,21 @@
     background: var(--bg);
     color: var(--text);
     font-family: 'DM Mono', monospace;
-    min-height: 100vh;
-    overflow-x: hidden;
-    /* Fixed header compensation */
-    padding-top: 54px;
+    overflow: hidden;
+    height: 100dvh;
+  }
+
+  /* ── APP SHELL — full-viewport flex column ───────────
+     Header is a flex child above the scroll container.
+     Content cannot scroll over the header — no z-index
+     fighting, no position:fixed quirks on iOS PWA. */
+  #app-shell {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    overflow: hidden;
+    background: var(--bg);
+    padding-top: env(safe-area-inset-top, 0px);
     padding-bottom: env(safe-area-inset-bottom, 0px);
   }
 
@@ -260,9 +271,8 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    position: fixed;
-    top: 0;
-    left: 0; right: 0;
+    flex-shrink: 0;
+    position: relative;
     z-index: 700;
     background: var(--header-bg);
     backdrop-filter: blur(12px);
@@ -331,11 +341,19 @@
   nav button:not(.active):hover { color: var(--text); background: var(--surface2); }
 
   main {
-    max-width: 900px;
-    margin: 0 auto;
-    padding: 40px 24px;
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
     position: relative;
     z-index: 1;
+  }
+  /* Inner content constraint — keeps max-width but inside the scroll container */
+  main > *:not(#view-scan) {
+    max-width: 900px;
+    margin-left: auto;
+    margin-right: auto;
   }
 
   /* ── SCAN VIEW ── */
@@ -1593,7 +1611,6 @@
   @media (max-width: 600px) {
     /* ── HEADER ── */
     header { padding: 0 16px; height: 52px; gap: 10px; }
-    body { padding-top: 52px; }
     .tagline { display: none; }
     .user-email { display: none; }
     .logo { font-size: 18px; }
@@ -2313,13 +2330,10 @@
     /* ── FULLSCREEN LOCK ── */
     body.scan-active {
       overflow: hidden !important;
-      position: fixed !important;
-      top: 0; left: 0; right: 0; bottom: 0;
-      width: 100% !important;
-      height: 100vh !important;
-      height: 100svh !important;
-      height: 100dvh !important;
-      margin: 0 !important;
+    }
+    /* In scan-active, prevent the main scroll container from scrolling */
+    body.scan-active main {
+      overflow: hidden !important;
     }
     body.scan-active #view-history,
     body.scan-active #view-settings,
@@ -2332,12 +2346,16 @@
       height: 100% !important;
     }
 
-    /* ── SCAN VIEW — fixed panel below header ── */
+    /* ── SCAN VIEW — fixed below the flex header ── */
+    /* The header is 54px in the flex column. The scan view
+       sits fixed below it — top: 54px accounts for the header.
+       The safe-area-inset-top is already handled by #app-shell
+       padding, so we don't double-count it here. */
     body.scan-active #view-scan {
       position: fixed !important;
-      top: 54px !important;
+      top: calc(54px + env(safe-area-inset-top, 0px)) !important;
       left: 0 !important; right: 0 !important; bottom: 0 !important;
-      height: calc(100dvh - 54px) !important;
+      height: calc(100dvh - 54px - env(safe-area-inset-top, 0px)) !important;
       display: flex !important;
       flex-direction: column !important;
       overflow: hidden !important;
@@ -2929,6 +2947,7 @@
 </style>
 </head>
 <body>
+<div id="app-shell">
 
 <!-- LOGIN SCREEN -->
 <div class="login-screen" id="login-screen">
@@ -17594,5 +17613,6 @@ async function loadRecallsView() {
 
 </main>
 
+</div> <!-- /app-shell -->
 </body>
 </html>
