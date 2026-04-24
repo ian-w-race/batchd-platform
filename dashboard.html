@@ -3958,7 +3958,8 @@ function renderComplianceDashboard(el) {
   if (d.confirmedPartners === 0)                                         gaps.push({ cat:'Traceability',       msg:'No manufacturer partners connected — one-step-back traceability is incomplete', link:"showPanel('partners')" });
   if (d.supplierScans === 0 && d.scans.length > 0)                      gaps.push({ cat:'Traceability',       msg:'Supplier names not recorded on any scans — ask staff to enter supplier during scanning', link:null });
   if (!d.drillInYear)                                                    gaps.push({ cat:'Recall readiness',   msg:'No mock recall drill in the last 12 months — run one now to test your response chain', link:"showPanel('recalls')" });
-  if (d.acks.length > 0 && d.acksProgressed === 0)                      gaps.push({ cat:'Recall readiness',   msg:'Recalls received but none acknowledged — open the Recalls panel and progress your response', link:"showPanel('recalls')" });
+  if (!d.coordinator)                                                      gaps.push({ cat:'Recall readiness',   msg:`No recall coordinator assigned — required by ${isUS?'FDA 21 CFR 7.49':'Mattilsynet guidance'}`, link:"showPanel('settings')" });
+  if (d.acks.length > 0 && d.acksProgressed === 0)                       gaps.push({ cat:'Recall readiness',   msg:'Recalls received but none acknowledged — open the Recalls panel and progress your response', link:"showPanel('recalls')" });
   if (d.activeStores.length === 0)                                       gaps.push({ cat:'Store coverage',     msg:'No active stores registered — add stores in the Store Network panel', link:"showPanel('stores')" });
   else if (d.activeStores.length - d.storesActiveRecent > 0)            gaps.push({ cat:'Store coverage',     msg:`${d.activeStores.length - d.storesActiveRecent} dark store${d.activeStores.length-d.storesActiveRecent!==1?'s':''} detected — no recent scanning activity`, link:"showPanel('stores')" });
 
@@ -3979,11 +3980,11 @@ function renderComplianceDashboard(el) {
 
   // Authority contacts
   const authority = isUS ? [
-    { name:'FDA RFR Portal', detail:'Class I recall — notify within 24 hours', url:'https://www.accessdata.fda.gov/scripts/rfr/index.cfm', phone:'1-888-INFO-FDA', color:'var(--info)' },
-    { name:'USDA FSIS', detail:'Meat/poultry/eggs — mandatory recall authority', url:'https://www.fsis.usda.gov/recalls', phone:'1-888-674-6854', color:'var(--warn)' },
+    { name:'FDA RFR Portal', detail:'Class I recall: notify within 24 hours (21 CFR 7.46)', url:'https://www.accessdata.fda.gov/scripts/rfr/index.cfm', phone:'1-888-INFO-FDA (1-888-463-6332)', color:'var(--info)' },
+    { name:'USDA FSIS', detail:'Meat, poultry, and eggs: mandatory recall authority', url:'https://www.fsis.usda.gov/recalls', phone:'1-888-674-6854', color:'var(--warn)' },
   ] : [
-    { name:'Mattilsynet', detail:'Recall notification — "umiddelbart" (immediately)', url:'https://www.mattilsynet.no/skjemaer/meldeskjema-for-virksomhetene', phone:'22 40 00 00 · 03008', color:'var(--accent)' },
-    { name:'RASFF portal', detail:'For cross-border food safety alerts', url:'https://webgate.ec.europa.eu/rasff-window/consumer', phone:'Via Mattilsynet', color:'var(--info)' },
+    { name:'Mattilsynet', detail:'Varsle umiddelbart ved fare for forbruker (Matloven §16)', url:'https://www.mattilsynet.no/skjemaer/meldeskjema-for-virksomhetene', phone:'22 40 00 00 · Alarmtelefon: 03008', color:'var(--accent)' },
+    { name:'Lokal Mattilsynet-region', detail:'Finn din regionale kontakt for lokale tilsynsbesøk', url:'https://www.mattilsynet.no/om-mattilsynet/kontakt-oss', phone:'22 40 00 00', color:'var(--muted)' },
   ];
 
   el.innerHTML = `
@@ -3993,7 +3994,7 @@ function renderComplianceDashboard(el) {
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:20px;flex-wrap:wrap;">
         <div>
           <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Compliance Centre</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:2px;">${isUS?'FDA · FSMA 204 · USDA FSIS':'EU Regulation 178/2002 · Mattilsynet · RASFF'} · Last checked ${fmtDate(d.assessedAt)}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">${isUS?'FDA · FSMA 204 · USDA FSIS':'Matloven · Mattilsynet'} · Last checked ${fmtDate(d.assessedAt)}</div>
         </div>
         <div style="display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 20px;">
           <div style="width:54px;height:54px;border-radius:50%;background:conic-gradient(${scoreColor(sc.overallScore)} ${sc.overallScore*3.6}deg,var(--border) 0deg);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
@@ -4114,6 +4115,51 @@ function renderComplianceDashboard(el) {
         </div>
       </div>
 
+      <!-- Record retention + coordinator status -->
+      <div class="panel" style="margin:0 0 14px;">
+        <div style="padding:13px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
+          <div style="font-size:12px;font-weight:700;color:var(--text);">📅 Record retention &amp; coordinator</div>
+          <div style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);">${isUS?'FSMA 204 §1.1345 · 2 year minimum':'Matloven §14 · shelf-life + 6 months'}</div>
+        </div>
+        <div style="padding:14px 18px;display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div style="background:var(--surface2);border-radius:8px;padding:12px 14px;">
+            <div style="font-size:11px;font-weight:700;color:var(--text);margin-bottom:4px;">Retention window</div>
+            <div style="font-size:18px;font-weight:800;color:var(--accent);font-family:'Figtree',sans-serif;letter-spacing:-0.03em;">${d.lookbackDays || 365} days</div>
+            <div style="font-size:10px;color:var(--muted);margin-top:3px;line-height:1.5;">${isUS?'FSMA 204 minimum: 730 days. Adjust in Settings.':'Matloven minimum varies by shelf-life. Adjust in Settings.'}</div>
+            <button onclick="showPanel('settings')" style="margin-top:8px;font-family:'DM Mono',monospace;font-size:10px;padding:4px 10px;border-radius:5px;border:1px solid var(--glass-border);background:none;color:var(--muted);cursor:pointer;">Adjust →</button>
+          </div>
+          <div style="background:var(--surface2);border-radius:8px;padding:12px 14px;">
+            <div style="font-size:11px;font-weight:700;color:var(--text);margin-bottom:4px;">Recall coordinator</div>
+            ${d.coordinator?.name
+              ? `<div style="font-size:13px;font-weight:600;color:var(--accent);">${d.coordinator.name}</div>
+                 <div style="font-size:10px;color:var(--muted);margin-top:2px;">${d.coordinator.contact || 'No contact on file'}</div>`
+              : `<div style="font-size:12px;color:var(--danger);font-weight:600;">Not assigned</div>
+                 <div style="font-size:10px;color:var(--muted);margin-top:2px;">${isUS?'Required under FDA 21 CFR 7.49':'Required by Mattilsynet guidance'}</div>
+                 <button onclick="showPanel('settings')" style="margin-top:8px;font-family:'DM Mono',monospace;font-size:10px;padding:4px 10px;border-radius:5px;border:1px solid rgba(255,92,92,0.3);background:none;color:var(--danger);cursor:pointer;">Assign →</button>`}
+          </div>
+        </div>
+      </div>
+
+      <!-- Regulator-ready documents -->
+      <div class="panel" style="margin:0 0 14px;">
+        <div style="padding:13px 18px;border-bottom:1px solid var(--border);">
+          <div style="font-size:12px;font-weight:700;color:var(--text);">📥 Regulator-ready documents</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">Generate and download in one click — no manual preparation required</div>
+        </div>
+        <div style="padding:14px 18px;display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;">
+          ${[
+            { icon:'📋', name:'Joint recall completion report', desc:'Both parties, per-store chain, full audit timeline', fn:`generateJointRecallReport && d.acks.length > 0 ? showPanel('recalls') : showToast('No active recalls — push a recall first','warn',3000)` },
+            { icon:'🔍', name:isUS?'FSMA 204 KDE export':'Traceability export (CSV)', desc:isUS?'FDA-format CSV with all KDEs per FSMA 204 §1.1330':'Lot codes, stores, timestamps, suppliers', fn:`showPanel('reports')` },
+            { icon:'📊', name:'Compliance report', desc:'Overall score, category breakdown, priority actions', fn:`generateComplianceReport()` },
+            { icon:'🗂', name:'Audit trail export', desc:'Full scan history filterable by store, date, product', fn:`showPanel('reports')` },
+          ].map(doc => `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:9px;padding:13px 14px;cursor:pointer;transition:border-color 0.2s;" onclick="${doc.fn}" onmouseover="this.style.borderColor='rgba(52,211,153,0.3)'" onmouseout="this.style.borderColor='var(--border)'">
+            <div style="font-size:1.1rem;margin-bottom:7px;">${doc.icon}</div>
+            <div style="font-size:11px;font-weight:700;color:var(--text);margin-bottom:3px;line-height:1.3;">${doc.name}</div>
+            <div style="font-size:10px;color:var(--muted);line-height:1.5;">${doc.desc}</div>
+          </div>`).join('')}
+        </div>
+      </div>
+
       <!-- Actions row: full assessment + download report -->
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
         <button onclick="_complianceStep=1;renderCompliance()" style="font-family:'DM Mono',monospace;font-size:11px;padding:8px 16px;border-radius:8px;border:1px solid var(--glass-border);background:var(--surface2);color:var(--text);cursor:pointer;display:flex;align-items:center;gap:6px;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--glass-border)'">
@@ -4184,12 +4230,13 @@ async function loadComplianceData(el) {
   const days365 = new Date(now - 365 * 86400000).toISOString();
   const isUS = _orgRegion === 'us';
 
-  const [scansRes, storesRes, acksRes, drillsRes, partnersRes] = await Promise.all([
+  const [scansRes, storesRes, acksRes, drillsRes, partnersRes, orgRes] = await Promise.all([
     sb.from('scans').select('lot_number, supplier_name, is_ftl, created_at, store_id, store_name').eq('organisation_id', _orgId),
     sb.from('stores').select('id, name, active').eq('organisation_id', _orgId),
     sb.from('recall_acknowledgements').select('status, acknowledged_at, created_at, recall_event_id').eq('organisation_id', _orgId),
     sb.from('mock_recall_drills').select('id, created_at, recall_event_id').eq('retailer_org_id', _orgId).gte('created_at', days365).order('created_at', {ascending:false}),
     sb.from('trading_partners').select('status').eq('retailer_id', _orgId),
+    sb.from('organisations').select('recall_coordinator_name, recall_coordinator_contact, recall_lookback_days').eq('id', _orgId).single(),
   ]);
 
   const scans   = scansRes.data   || [];
@@ -4197,6 +4244,7 @@ async function loadComplianceData(el) {
   const acks    = acksRes.data    || [];
   const drills  = drillsRes.data  || [];
   const partners= partnersRes.data|| [];
+  const org     = orgRes.data     || {};
 
   // Enrich drills
   if (drills.length > 0) {
@@ -4223,11 +4271,14 @@ async function loadComplianceData(el) {
   // Scores
   const docScore      = scans.length === 0 ? 0 : Math.round((lotScans / scans.length) * 100);
   const traceScore    = scans.length === 0 ? 0 : Math.round((supplierScans / scans.length) * 100);
+  // Coordinator adds to recall readiness score
+  const hasCoordinator = !!(org.recall_coordinator_name && org.recall_coordinator_contact);
   let recallScore     = 20;
-  if (confirmedPartners > 0)  recallScore += 25;
-  if (acks.length > 0)        recallScore += 20;
+  if (confirmedPartners > 0)  recallScore += 20;
+  if (acks.length > 0)        recallScore += 15;
   if (acksProgressed > 0)     recallScore += 20;
   if (drillInYear)            recallScore += 15;
+  if (hasCoordinator)         recallScore += 10;
   recallScore = Math.min(100, recallScore);
   const coverageScore = activeStores.length === 0 ? 0 : Math.round((storesActiveRecent / activeStores.length) * 100);
   const overallScore  = Math.round((docScore + traceScore + recallScore + coverageScore) / 4);
@@ -4236,6 +4287,8 @@ async function loadComplianceData(el) {
     scans, stores, acks, drills, partners, activeStores, confirmedPartners,
     recentScans, lotScans, supplierScans, ftlScans, acksProgressed, acksConfirmed,
     drillInYear, storesActiveRecent, isUS,
+    coordinator: org.recall_coordinator_name ? { name: org.recall_coordinator_name, contact: org.recall_coordinator_contact } : null,
+    lookbackDays: org.recall_lookback_days || 365,
     scores: { docScore, traceScore, recallScore, coverageScore, overallScore },
     assessedAt: new Date().toISOString(),
   };
