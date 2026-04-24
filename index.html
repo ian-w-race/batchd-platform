@@ -12668,130 +12668,33 @@ async function extractCodesFromImage(blob, learnedContext) {
       contextHint = `\n\nPRODUCT: "${productName}" — use any knowledge of where this type of product typically stamps its lot code.`;
     }
 
-    const coreInstructions = isUSRegion
-      ? `You are a food safety expert extracting FDA Traceability Lot Codes (TLCs) from food packaging for a US grocery store recall-tracking system (Batch'd) under FSMA Section 204. Scan the ENTIRE image with extreme care.${contextHint}
+    // ── BUILD EXTRACTION PROMPT ──────────────────────────────
+    // Short and direct — Sonnet already knows food packaging traceability inside out.
+    // We tried 1000-token prompts with exhaustive rules. Claude didn't need them.
+    // Fewer tokens = faster response. Trust the model's existing knowledge.
+    // Only add specifics that the model genuinely can't know without context:
+    // the product name (for brand-specific patterns) and any learned format.
 
-THIS IS A US GROCERY CONTEXT — FDA Food Traceability Rule (21 CFR Part 1 Subpart S).
-Label language priority: English → Spanish → French → Other
+    const regionHint = isUSRegion
+      ? 'US grocery context. Lot code is the TLC (Traceability Lot Code) under FSMA 204 — look for LOT, L#, BATCH, PACK DATE, Julian date code. Ignore UPC/EAN barcodes, zip codes, plant numbers (EST. ####).'
+      : 'Norwegian grocery context. Lot code is "partinummer" — look for L., Parti, LOT, or the alphanumeric code adjacent to "Holdbar til" / "Best før" / "Siste forbruksdag". Ignore "NO #### EF" (EU plant approval), plain dates, EAN barcodes.';
 
-US LOT CODE / TLC LABELS — look for ALL of these:
-• "LOT", "Lot No.", "Lot #", "LOT:", "L:", "L#"
-• "BATCH", "Batch No.", "Batch #", "B:"
-• "TLC", "Traceability Lot Code"
-• "PACK DATE", "PROD DATE", "MFG DATE" (production date used as TLC when no explicit lot)
-• "JULIAN", "JD", "JUL" (Julian date codes)
-• GS1 Application Identifier (10) in GS1-128 barcodes — written as (10) followed by the code
-
-FDA TLC FORMAT EXAMPLES (from FDA Food Traceability Rule guidance):
-• GS1-128: (01)04502155765193 (17)140704 (10)DE-456 — AI(10) IS the TLC
-• 6-digit + letter: 475123C — 6-digit code + letter = grower/manufacturing location
-• Compound code: BFCA179A152023213 — Company(BFCA) + Location(179) + Product(A) + Grower(15) + JulianDate(2023213)
-• Product + Facility + Julian: 1147M2023213 — product code + facility letter + YYYYDDD date
-• Randomized alphanumeric: 134AD5607 — firm's own traceability system code
-
-JULIAN DATE CODES — very common in US TLCs:
-• YYYYDDD format: 2023213 = year 2023, day 213 (Aug 1, 2023)
-• YYDDD format: 25213 = year 2025, day 213
-• Look for 7-digit codes starting with 20XX — very likely YYYYDDD Julian
-
-GS1-128 BARCODE STRUCTURE:
-• Application Identifier (AI) codes in parentheses: (01)=GTIN, (10)=Lot/Batch, (17)=Expiry, (11)=Production date
-• If you see (10) followed by characters, that IS the TLC — extract exactly what follows (10)
-
-US LOT CODE FORMATS:
-• Julian YYYYDDD: 2023213 | Julian YYDDD: 25213
-• 6-digit + letter: 475123C (grower code)
-• Compound: BFCA179A152023213, 1147M2023213
-• GS1 AI(10): DE-456, L2024-0581, 1120-F-10:58
-• Randomized: 134AD5607, B-441, P-0028
-
-WHERE TO LOOK (US packaging):
-• Produce bags/clamshells: printed on label near pack date
-• Cans: embossed on BOTTOM BASE or TOP LID rim
-• Bottles: BOTTOM BASE or NECK shoulder
-• Cartons/boxes: SHORT END FLAP or bottom panel
-• Bags: BACK PANEL BOTTOM near heat seal
-• Deli/seafood: FILM LID STICKER near use-by date
-
-US DATE-AS-TLC RULE: If NO explicit TLC found but a PACK DATE or PRODUCTION DATE is visible in MM/DD/YYYY or YYYYMMDD format, use it (set lot_is_date: true).
-DATE FORMAT NOTE: US packaging prints dates as MM/DD/YYYY (e.g. 06/15/2026 = June 15). In 6-digit YYMMDD codes: YY=year, MM=month, DD=day (e.g. 250615 = June 15, 2025).
-
-STRICTLY IGNORE:
-• UPC barcodes (12-digit pure digits starting with 0)
-• EAN-13 barcodes (13-digit pure digits)
-• US zip codes (5-digit: 10001-99999)
-• Times (HH:MM), weights (oz, lbs), prices
-• E-numbers (E220, E471)
-• Plant establishment numbers like EST. 1234 (USDA mark of inspection)
-• "USE BY", "BEST BY", "SELL BY" dates alone (MM/DD/YYYY) unless no TLC found
-`
-      : `You are a food safety expert extracting lot and batch tracking codes from food packaging for a Norwegian grocery store recall-tracking system (Batch'd). You are scanning products sold in Norwegian supermarkets (Kiwi, Rema 1000, Meny, Coop, Spar, Bunnpris). Scan the ENTIRE image with extreme care.${contextHint}
-
-THIS IS A NORWEGIAN GROCERY CONTEXT — label language priority:
-Norwegian → Swedish → Danish → English → German → French
-Key Norwegian terms: "Holdbar til" = best before, "Siste forbruksdag" = use by, "Produsert" / "Prod.dato" = production date, "Fryst" / "Frystedato" = frozen/freeze date, "Pakket" / "Pakkingsdato" = packed date
-
-NORWEGIAN/SCANDINAVIAN LOT CODE LABELS — look for ALL of these:
-• Norwegian: "Parti", "Partinr", "Parti nr", "Partinummer", "Parti-nr", "L:", "L.", "LOT", "Lot nr", "Lotnr", "Losnummer", "Produktionsnummer"
-• Swedish: "Partinummer", "Lotnummer", "Lot", "Sats nr", "Tillverkningsnummer"
-• Danish: "Parti nr", "Partinummer", "Lot", "Lotnummer"
-• English/International: "LOT", "Lot No.", "L:", "BATCH", "Batch No.", "B:", "Charge"
-• German: "Chargennr", "Charge", "Losnummer"
-
-MAJOR NORWEGIAN MANUFACTURER PATTERNS:
-• TINE (dairy): Gable-top cartons — "OFTE GOD ETTER" stamp. Code RIGHT of "GOD" → lot, RIGHT of "ETTER" → batch.
-• NORTURA / GILDE (meat): Tray stickers. Format: GILD-YYYYMMDD-LN## or date-based. "NO XXXX EF" = plant approval (NOT lot).
-• ORKLA (Grandiosa, Stabburet, TORO, Felix, KiMs): Grandiosa end flap, Stabburet/Kavli tube crimp end, TORO bag seam.
-• KAVLI (tubes): Lot on FLAT CRIMPED END of the tube.
-• LERØY / SALMAR / LOFOTEN (fish): Film lid sticker near "Siste forbruksdag". "NO XXXX EF" is plant approval, NOT lot.
-
-WHERE TO LOOK (by packaging type):
-• Gable-top dairy cartons: TOP GABLE FLAP near "Holdbar til" / "Best før"
-• Tube products: FLAT CRIMPED END
-• Vacuum-packed fish/meat: FILM LID STICKER near use-by date
-• Frozen bags: BOTTOM HEAT SEAL
-• Bottles: BOTTOM BASE or SHOULDER NECK
-• Cans: BOTTOM RIM or TOP LID EDGE
-• Boxes/cartons: SHORT SIDE FLAP or bottom
-• Bags/pouches: BACK PANEL BOTTOM or heat-sealed seam
-
-LOT CODE FORMATS:
-• YYMMDD: 250415 | YYYYMMDD: 20250415 | Julian: 25105
-• L + date: L250415 | Plant + date: T250415-2, GILD250415K2
-• Short alphanumeric: B-441, P-0028, 4F6A1, KM-26
-
-WHAT TO LOOK FOR (priority order):
-1. Any text matching lot labels above in any Scandinavian/European language
-2. Norwegian dairy "OFTE GOD ETTER": code right of "GOD" → lot; right of "ETTER" → batch
-3. Any alphanumeric code ADJACENT TO "Holdbar til", "Best før", "Siste forbruksdag", "Prod.dato", "Produsert"
-4. Standalone production codes: 4–20 chars, mixed letters/numbers
-5. EU DATE-AS-LOT RULE: If NO explicit lot code found but full DD.MM.YYYY "Holdbar til" date visible, use it (set lot_is_date: true)
-DATE FORMAT NOTE: Norwegian/EU packaging prints dates as DD.MM.YYYY (e.g. 15.06.2026 = June 15). In 6-digit YYMMDD codes: YY=year, MM=month, DD=day (e.g. 250615 = 15 June 2025).
-
-STRICTLY IGNORE:
-• "NO XXXX EF" / "SE XXXX EG" — EU plant approval numbers (NOT lot codes)
-• Plain dates alone (DD.MM.YY, MM/YYYY) UNLESS no other lot code found
-• Times (HH:MM), weights/volumes, prices, EAN barcodes (8/12/13/14 pure digits)
-• E-numbers (E220, E471 etc.), Norwegian postal codes (4 digits)
-• Nøkkelhullet, Ø-label, nutritional values
-
-OCR CONFUSION PAIRS: 0↔O, 1↔I↔l↔7, 8↔B, 5↔S, 2↔Z, 6↔G, 9↔q`;
-
-    const jsonSchema = `\nRespond ONLY with valid JSON, no markdown:\n{"lot": "exact code or null", "batch": "exact code or null", "expiry": "best-before or expiry date as printed or null", "lot_confidence": "high|medium|low", "batch_confidence": "high|medium|low|na", "lot_is_date": false, "location_hint": "where on pack (e.g. bottom-right tray sticker, gable flap)", "anchor_before": "text printed immediately before the lot code on the label (e.g. 'L.nr:', 'Lot:', 'Parti:') or null", "anchor_after": "text or separator immediately after the lot code or null", "raw": "all visible text (max 200 chars)"}`;
+    const coreInstructions =
+      `Find the lot/batch code (production traceability identifier) on this food packaging photo.\n` +
+      `${regionHint}\n` +
+      (productName ? `Product: "${productName}"\n` : '') +
+      (contextHint ? `${contextHint}\n` : '') +
+      `Return ONLY valid JSON, no markdown:\n` +
+      `{"lot":"code or null","expiry":"date as printed or null","lot_confidence":"high|medium|low","lot_is_date":false,"location_hint":"where on pack","anchor_before":"label text before code or null","anchor_after":"text after code or null","raw":"visible text max 100 chars"}`;
 
     // ── PASS 1: PRIMARY EXTRACTION (sonnet) ──────────────────
-    // Single focused pass on the best available image.
-    // Localised crop when haiku found the region; full image otherwise.
     const cropNote = localisedCrop
-      ? (isUSRegion
-          ? `This is a TIGHT CROP of US food packaging, focused on the region most likely to contain the Traceability Lot Code (TLC). Extract the lot/batch/TLC code with high precision.`
-          : `This is a TIGHT CROP of Norwegian/EU food packaging, focused on the region most likely to contain the lot or batch number. Extract the lot/batch code with high precision.`)
+      ? (isUSRegion ? 'This is a tight crop of US food packaging focused on the TLC region. '
+                    : 'This is a tight crop of Norwegian/EU food packaging focused on the lot code region. ')
       : '';
-    const pass1Prompt = cropNote
-      ? `${cropNote}${contextHint}\n\n${coreInstructions}${jsonSchema}`
-      : `${coreInstructions}${jsonSchema}`;
+    const pass1Prompt = cropNote ? `${cropNote}${coreInstructions}` : coreInstructions;
 
-    const pass1 = await callOcrApi(b64Primary, pass1Prompt, true); // haiku — fast
+    const pass1 = await callOcrApi(b64Primary, pass1Prompt, false); // Sonnet — capable
     console.log(`[Pass 1] ${localisedCrop ? 'localised crop' : 'full image'}:`, pass1);
 
     // ── PASS 2: REMOVED for speed ─────────────────────────
@@ -12915,15 +12818,17 @@ async function callOcrApi(b64, promptText, useHaiku = false) {
       const get = (key) => { const m = text.match(new RegExp(`"${key}"\\s*:\\s*"([^"]+)"`)); return m ? m[1] : null; };
       const getBool = (key) => { const m = text.match(new RegExp(`"${key}"\\s*:\\s*(true|false)`)); return m ? m[1] === 'true' : false; };
       return {
-        lot: get('lot'), batch: get('batch'),
+        lot: get('lot'), batch: get('batch') || null,
         lot_confidence: get('lot_confidence') || 'low',
         lot_is_date: getBool('lot_is_date'),
         raw: get('raw') || text,
-        location_hint: get('location_hint') || ''
+        location_hint: get('location_hint') || '',
+        anchor_before: get('anchor_before') || null,
+        anchor_after:  get('anchor_after')  || null,
       };
     }
   } catch(e) {
-    return { lot: null, batch: null, lot_confidence: 'low', lot_is_date: false, raw: '' };
+    return { lot: null, batch: null, lot_confidence: 'low', lot_is_date: false, raw: '', anchor_before: null, anchor_after: null };
   }
 }
 
