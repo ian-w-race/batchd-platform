@@ -677,6 +677,10 @@
         <span id="onboarding-badge" style="margin-left:auto;background:var(--accent);color:#065f46;font-size:9px;padding:1px 6px;border-radius:10px;font-weight:700;display:none;"></span>
       </button>
       <div class="nav-section">Account</div>
+      <button class="nav-item" onclick="showPanel('terminology')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+        Terminology & Help
+      </button>
       <button class="nav-item" onclick="showPanel('settings')">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         Settings
@@ -1190,12 +1194,12 @@ function showPanel(name) {
     document.getElementById('mobile-overlay')?.classList.remove('active');
   }
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-  const panels = { overview:'Dashboard', onboarding:'Getting started', recalls:'Recalls', stores:'Stores', traceability:'Traceability', shipments:'Incoming Shipments', staff:'Staff', compliance:'Compliance', reports:'Reports', settings:'Settings', partners:'Manufacturers', triage:'Complaint Triage', 'consumer-notify':'Consumer Notifications', investigations:'Investigations' };
+  const panels = { overview:'Dashboard', onboarding:'Getting started', recalls:'Recalls', stores:'Stores', traceability:'Traceability', shipments:'Incoming Shipments', staff:'Staff', compliance:'Compliance', reports:'Reports', settings:'Settings', partners:'Manufacturers', triage:'Complaint Triage', 'consumer-notify':'Consumer Notifications', investigations:'Investigations', terminology:'Terminology & Help' };
   document.getElementById('topbar-title').textContent = panels[name] || name;
   document.querySelectorAll('.nav-item').forEach(el => {
     if (el.getAttribute('onclick')?.includes(`'${name}'`)) el.classList.add('active');
   });
-  const fns = { overview: renderOverview, onboarding: renderOnboarding, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, shipments: renderShipments, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, partners: renderPartners, triage: renderDashboardTriage, investigations: renderDashInvestigations, 'consumer-notify': renderConsumerNotification };
+  const fns = { overview: renderOverview, onboarding: renderOnboarding, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, shipments: renderShipments, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, partners: renderPartners, triage: renderDashboardTriage, investigations: renderDashInvestigations, 'consumer-notify': renderConsumerNotification, terminology: renderTerminology };
   (fns[name] || renderComingSoon)(name);
 }
 
@@ -5891,6 +5895,196 @@ async function downloadReport(key) {
 }
 
 // ── Settings ───────────────────────────────────────────────────
+// ── TERMINOLOGY & HELP ────────────────────────────────────────
+function renderTerminology() {
+  const el = document.getElementById('main-content');
+  const isUS = _orgRegion === 'us';
+
+  const term = (name, def, detail = '', reg = '') => `
+    <div style="padding:16px 0;border-bottom:1px solid var(--border);">
+      <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+        <div style="min-width:180px;flex-shrink:0;">
+          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:13px;color:var(--text);">${name}</div>
+          ${reg ? `<div style="font-size:10px;font-family:'DM Mono',monospace;color:var(--accent);margin-top:2px;opacity:0.8;">${reg}</div>` : ''}
+        </div>
+        <div style="flex:1;min-width:220px;">
+          <div style="font-size:13px;color:var(--text);line-height:1.6;margin-bottom:${detail?'6px':'0'};">${def}</div>
+          ${detail ? `<div style="font-size:11px;color:var(--muted);line-height:1.7;">${detail}</div>` : ''}
+        </div>
+      </div>
+    </div>`;
+
+  const section = (title, subtitle = '') => `
+    <div style="margin-top:28px;margin-bottom:4px;">
+      <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--accent);text-transform:uppercase;letter-spacing:0.1em;font-weight:700;">${title}</div>
+      ${subtitle ? `<div style="font-size:11px;color:var(--muted);margin-top:3px;">${subtitle}</div>` : ''}
+    </div>`;
+
+  el.innerHTML = `
+    <div style="max-width:820px;">
+
+      <div style="margin-bottom:20px;">
+        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;margin-bottom:6px;">Terminology & Help</div>
+        <div style="font-size:12px;color:var(--muted);line-height:1.7;">
+          Precise definitions of every term used in the Batch'd platform. These definitions are intended to
+          support compliance documentation, regulatory submissions, and legal review. Where a term has a
+          specific meaning under ${isUS ? 'FDA, USDA FSIS, or FSMA 204' : 'Matloven, Mattilsynet, or FSMA 204'},
+          that meaning is referenced. All timestamps in Batch'd are recorded in UTC and displayed in your local timezone.
+        </div>
+        <button onclick="window.print()" style="margin-top:12px;font-family:'DM Mono',monospace;font-size:11px;padding:8px 16px;border-radius:8px;border:1px solid var(--glass-border);background:var(--surface2);color:var(--text);cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+          Print / Download as PDF
+        </button>
+      </div>
+
+      ${section('Recall response chain', 'The five mandatory steps each store completes when a recall is active. Every step is timestamped and attributed to a named staff member.')}
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:0 18px;margin-top:8px;">
+        ${term('Notified',
+          'The store has received the recall alert. This status is set automatically the moment a manufacturer pushes a recall and the store is included in the distribution list.',
+          'Notified does <strong>not</strong> mean any staff member has seen the alert. It confirms only that the alert was delivered to the store\'s Batch\'d account. The timestamp of this step is the legal record of when the store was informed.',
+          isUS ? 'FDA 21 CFR 7.46' : 'Matloven §16')}
+        ${term('Acknowledged',
+          'A staff member or manager at the store has opened the recall alert and confirmed they have read and understood it.',
+          'This is the first step that requires a human action. The name of the person who acknowledged, and the exact timestamp, are recorded. In a regulatory inspection, this step demonstrates that staff were made aware of the recall.',
+          isUS ? 'FDA 21 CFR 7.46' : 'Matloven §16')}
+        ${term('Pulled from shelf',
+          'Staff have physically located and removed all units of the affected product from every shelf, display area, and accessible back-of-store location.',
+          'The number of units removed and the shelf location are recorded if provided. This step does not cover stock in the warehouse or receiving area — those should be noted in the Notes field. "Pulled from shelf" creates the legal record that the product was removed from public access.',
+          isUS ? 'FDA 21 CFR Part 7' : 'Matloven §16')}
+        ${term('Disposed',
+          'The removed product has been physically quarantined, returned to the manufacturer, destroyed, or otherwise handled in accordance with the recall instructions.',
+          'The method of disposal is at the discretion of the recall issuer unless instructions specify otherwise. This step does not require the product to be destroyed — quarantine and return to manufacturer both qualify. The timestamp is the legal record that the product was taken out of the supply chain.',
+          '')}
+        ${term('Confirmed',
+          'The store manager or designated recall coordinator has reviewed all previous steps and confirmed the recall response is complete for this store.',
+          'This is the final step in the chain. Once confirmed, the store\'s response record is locked. Batch\'d records the confirming staff member\'s name, their role, and the exact timestamp. A store that reaches Confirmed status has a complete, legally defensible recall response record.',
+          isUS ? 'FDA 21 CFR 7.55' : 'Matloven §16')}
+      </div>
+
+      ${section('Recall status indicators')}
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:0 18px;margin-top:8px;">
+        ${term('Action required',
+          'One or more stores have received a recall alert but have not yet completed all five response steps.',
+          'Appears as a red indicator on recall cards and in the sidebar. The ops team should investigate which stores are outstanding and follow up directly.',
+          '')}
+        ${term('Audit trail locked',
+          'All stores connected to this recall have reached the Confirmed step. The recall record is now read-only.',
+          'No further edits can be made to the response record. This creates an immutable compliance record. Batch\'d automatically locks the audit trail when the last store confirms. The joint completion report can be generated and downloaded at this point.',
+          '')}
+        ${term('Mock drill / MOCK DRILL',
+          'A simulated recall exercise initiated for training or preparedness testing purposes. No real product is affected.',
+          'Drill records are clearly labelled throughout the platform. A drill exercises the same workflow as a real recall — stores receive the alert, work through the five-step chain, and all steps are timestamped. The drill certificate documents the exercise for regulatory submissions. Drill records are excluded from real recall reporting.',
+          isUS ? 'FDA 21 CFR 7.49 — preparedness documentation' : 'Mattilsynet beredskapsplan')}
+        ${term('Recall coordinator',
+          'The named individual in your organisation responsible for managing recall responses.',
+          `Required by ${isUS ? 'FDA 21 CFR 7.49' : 'Mattilsynet guidance'}. The coordinator\'s name and contact information appear on all generated compliance documents and audit reports. Assign the coordinator in Settings. Batch\'d deducts points from the compliance score when no coordinator is assigned.`,
+          isUS ? 'FDA 21 CFR 7.49' : 'Mattilsynet')}
+      </div>
+
+      ${section('Recall severity classes')}
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:0 18px;margin-top:8px;">
+        ${isUS ? `
+        ${term('Class I', 'Reasonable probability that use of or exposure to the product will cause serious adverse health consequences or death.', 'Highest severity. FDA requires notification within 24 hours via the Rapid Response (RFR) portal. Batch\'d surfaces the RFR portal link and a countdown timer automatically on Class I recalls.', 'FDA 21 CFR 7.3(m)(1)')}
+        ${term('Class II', 'Remote probability of adverse health consequences, or where the probability of serious adverse health consequences is remote.', 'Standard recall. No specific notification deadline, but prompt action is expected.', 'FDA 21 CFR 7.3(m)(2)')}
+        ${term('Class III', 'Use of or exposure to the product is not likely to cause any adverse health consequences.', 'Lowest severity. Includes label errors and minor violations.', 'FDA 21 CFR 7.3(m)(3)')}
+        ${term('Market withdrawal', 'A firm\'s removal or correction of a product that has not violated FDA regulations but involves a minor violation or is being done for commercial reasons.', 'Not classified as a recall. No regulatory notification required, but documentation of the action is recommended.', 'FDA 21 CFR 7.3(j)')}
+        ` : `
+        ${term('Klasse I / Class I', 'Alvorlig fare — produktet kan forårsake alvorlig helseskade eller død. / Serious hazard — the product may cause serious health harm or death.', 'Highest severity under Mattilsynet. Notification is required umiddelbart (immediately). Batch\'d surfaces the Mattilsynet reporting form and phone number automatically.', 'Matloven §16 / Mattilsynet')}
+        ${term('Klasse II / Class II', 'Mulig helsefare — produktet kan forårsake helseskade, men fare er ikke alvorlig. / Possible health risk — the product may cause harm but the risk is not serious.', 'Standard recall class. Prompt notification recommended.', 'Matloven §16')}
+        ${term('Tilbaketrekking / Withdrawal', 'Frivillig tilbaketrekking av et produkt som ikke nødvendigvis er farlig, men der virksomheten ønsker å trekke tilbake produktet av andre årsaker.', 'Voluntary withdrawal. Lower urgency than a recall. Notification to Mattilsynet is still strongly recommended under Matloven §16.', 'Matloven §16')}
+        `}
+      </div>
+
+      ${section('Traceability & lot codes', 'Terms used in the scanning app and traceability records.')}
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:0 18px;margin-top:8px;">
+        ${term(isUS ? 'TLC (Traceability Lot Code)' : 'Partinummer (Lot code)',
+          isUS
+            ? 'The unique alphanumeric identifier assigned to a specific batch of food product at the point of production.'
+            : 'Unik alfanumerisk identifikator tildelt en spesifikk produksjonsbatch. Offisiell Mattilsynet-terminologi er "partinummer" — ikke "lotnummer".',
+          isUS
+            ? 'Under FSMA 204, a TLC must be recorded at every Critical Tracking Event (CTE). Batch\'d captures the TLC during shelf placement via AI OCR or barcode scan. The TLC links every scan record to the specific production batch, enabling instant traceability when a recall is issued.'
+            : 'Batch\'d bruker "partinummer" gjennomgående i alle norske visninger og rapporter i samsvar med Mattilsynets offisielle terminologi og EU-forordning 178/2002 art. 3.',
+          isUS ? 'FSMA 204 / 21 CFR Part 1 Subpart S' : 'Matloven §14')}
+        ${term('Lot code (batch number)',
+          'The identifier printed on food product packaging by the manufacturer to identify the specific production run.',
+          'Lot codes vary significantly by manufacturer — they may include dates, plant codes, shift codes, or random alphanumeric sequences. Batch\'d\'s AI OCR pipeline is trained to identify lot codes across 20+ Norwegian and US product formats and can learn new formats over time.',
+          '')}
+        ${term('One step back / One step forward',
+          '"One step back" means you can identify the supplier or manufacturer you received the product from. "One step forward" means you can identify where you supplied the product to.',
+          `${isUS ? 'FSMA 204 requires food businesses to maintain records sufficient to identify the immediate previous source and immediate subsequent recipient of a food.' : 'Matloven §14 requires food businesses to have a system that can identify all businesses from which a product was received (one step back) and to which it was supplied (one step forward).'} Batch\'d satisfies "one step back" through the manufacturer trading partner connection and incoming shipment records. "One step forward" is automatically satisfied when products are scanned at shelf placement — each scan creates a traceable record of the product at the retail location.`,
+          isUS ? 'FSMA 204 §1.1330' : 'Matloven §14')}
+        ${term('GS1-128 / GS1 Application Identifier',
+          'A standardised barcode format that encodes multiple data elements (lot number, expiry date, production date, quantity, serial number) within a single barcode.',
+          'GS1 Application Identifiers (AIs) are two-to-four digit codes that identify each data element. AI(10) = lot/batch number. AI(17) = expiry date. AI(15) = best-before date. AI(11) = production date. AI(21) = serial number. AI(37) = quantity. When Batch\'d scans a GS1-128 barcode, it extracts all encoded AIs simultaneously — a single scan can capture lot, expiry, and quantity at once.',
+          'GS1 Global Specification')}
+        ${term('Shelf placement',
+          'The act of a staff member placing a product onto a store shelf. In Batch\'d, shelf placement is the trigger for creating a traceability scan record.',
+          'Each scan record captures: product name, lot code, expiry date (if available), store location, shelf location (optional), number of units, the staff member\'s name, and the exact timestamp. This is the primary record-creation event in the Batch\'d traceability system.',
+          isUS ? 'FSMA 204 CTE — Receiving' : 'Matloven §14')}
+        ${term('Scan record',
+          'A single entry in the Batch\'d traceability database created when a staff member completes a shelf placement scan.',
+          'Scan records are stored with a unique ID, organisation ID, store ID, and all captured lot and product data. Records are retained according to your configured retention window (visible in Settings). All scan records are instantly queryable — response time for a Mattilsynet or FDA records request is seconds, not hours.',
+          '')}
+      </div>
+
+      ${section('Compliance & documents')}
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:0 18px;margin-top:8px;">
+        ${term('Joint completion report',
+          'A formal document generated by Batch\'d when all stores have reached Confirmed status on a recall. It names both the manufacturer and the retailer organisation.',
+          'The report contains: recall details (product, lot, severity, reason), manufacturer contact, date pushed, per-store response table with timestamps and unit counts, audit timeline, and signature blocks for both parties. It is formatted for regulatory submission and can be downloaded as a PDF. Batch\'d generates this automatically — no manual preparation is required.',
+          '')}
+        ${term('Audit record',
+          'A per-store document containing the complete response record for a single store on a specific recall.',
+          'Includes all five response chain steps with timestamps, the name of the staff member who completed each step, and any notes recorded. Generated on demand from the Recalls panel.',
+          '')}
+        ${term('Compliance score',
+          'A percentage (0-100%) representing how well your organisation\'s current practices meet the traceability and recall readiness requirements tracked by Batch\'d.',
+          `Calculated across four categories: Record keeping (lot code coverage), Traceability chain (manufacturer connections and supplier documentation), Recall readiness (coordinator assigned, drills run, responses completed), and Store coverage (proportion of stores actively scanning). The score is a Batch\'d internal readiness indicator — it does not constitute regulatory certification and should not be presented as such.`,
+          '')}
+        ${term('Audit trail',
+          'The automatically maintained, timestamped log of every action taken in Batch\'d related to a recall event.',
+          'Includes: when the recall was pushed, when each store was notified, each step completed by each store with timestamp and staff name, and when the record was locked. The audit trail cannot be edited once the recall is closed. It is the primary evidence document for demonstrating compliance with recall notification and response obligations.',
+          '')}
+        ${term('Drill certificate',
+          'A document generated at the conclusion of a mock recall drill, recording that a preparedness exercise was completed.',
+          'Contains: the date of the drill, the participating stores, average response time per store, confirmation rate, and the time from alert to final confirmation. Presented to regulators as evidence of preparedness planning.',
+          isUS ? 'FDA 21 CFR 7.49' : 'Mattilsynet beredskapsplan')}
+        ${term('Shelf impact score',
+          'A figure calculated by Batch\'d before a manufacturer pushes a recall, showing how many stores have the affected lot on shelf and in what estimated quantities.',
+          'Calculated by cross-referencing the manufacturer\'s shipment records (which stores received the lot and when) with the retailer\'s scan records (which of those stores scanned that lot onto a shelf and how many units). The score is shown to the manufacturer before the recall is pushed, so the impact is understood before any store is notified.',
+          '')}
+        ${term('Record retention',
+          'The length of time Batch\'d stores your traceability scan records.',
+          `${isUS ? 'FSMA 204 requires a minimum of 2 years (730 days). Batch\'d defaults to 365 days. Adjust your retention window in Settings to meet FSMA 204 requirements.' : 'Matloven requires records to be kept for at minimum the product\'s shelf life plus 6 months, or up to 5 years for general products. Batch\'d defaults to 365 days. Adjust your retention window in Settings.'} Records beyond the retention window may not be retrievable.`,
+          isUS ? 'FSMA 204 §1.1345' : 'Matloven §14')}
+      </div>
+
+      ${section('Platform roles')}
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:0 18px;margin-top:8px;">
+        ${term('Corp admin',
+          'Full access to the corporate dashboard including all stores, recall management, staff management, compliance, and reports.',
+          'The corp admin role is the highest access level in Batch\'d for a retailer organisation. Corp admins can add and remove staff, manage stores, and download all compliance documentation.',
+          '')}
+        ${term('Store manager',
+          'Access to the manager dashboard within the Batch\'d scanning app. Can view scan history across their store, run exports, initiate the recall response chain, and access FSMA 204 readiness tools.',
+          'Store managers do not have access to the corporate dashboard. Their recall response actions (acknowledging, pulling, disposing, confirming) feed directly into the corporate dashboard\'s real-time store response view.',
+          '')}
+        ${term('Staff',
+          'Access to the Batch\'d scanning app only. Can perform shelf placement scans, view their own scan history, and receive recall alerts.',
+          'Staff members cannot access management or compliance functions. Their scans are attributed to them by name in all traceability records.',
+          '')}
+        ${term('Trading partner',
+          'A confirmed connection between a manufacturer organisation and a retailer organisation in the Batch\'d network.',
+          'Once a trading partner connection is active, the manufacturer can push recalls directly to the retailer\'s stores, log shipment lot codes that feed into the retailer\'s incoming shipments view, and view the retailer\'s response chain progress on active recalls. The retailer can see incoming shipments from the manufacturer and receives recall alerts automatically.',
+          '')}
+      </div>
+
+      <div style="margin-top:24px;padding:14px 18px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;font-size:11px;color:var(--muted);line-height:1.7;">
+        <strong style="color:var(--text);">Legal note:</strong> These definitions describe how terms are used within the Batch\'d platform. They are provided to support understanding of platform records in compliance and legal contexts. Batch\'d stores traceability data and guides recall response workflows. Legal obligations under ${isUS ? 'FDA, USDA FSIS, and FSMA 204' : 'Matloven, Mattilsynet, and applicable EU regulations'} — including notification deadlines, documentation requirements, and enforcement responsibilities — remain with your organisation. This document should be reviewed by qualified food safety and legal counsel before being used in regulatory submissions.
+      </div>
+    </div>`;
+}
+
 async function renderSettings() {
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
