@@ -84,10 +84,13 @@ exports.handler = async (event) => {
       }
 
       case 'extract_codes': {
-        const useHaiku = extra.useHaiku !== false;
+        // Always use Sonnet for main extraction — lot code ID needs proper visual reasoning.
+        // Haiku is fast but misses ambiguous codes on Norwegian/EU packaging.
+        // Sonnet with a short prompt is faster AND more accurate than Haiku with a long one.
+        const useHaiku = extra.useHaiku === true; // only use haiku if explicitly requested
         model = useHaiku ? MODEL_HAIKU : MODEL_SONNET;
-        maxTokens = useHaiku ? 300 : 500;
-        prompt = extra.prompt || 'Extract lot codes from this food packaging. Return JSON with lot, batch, expiry, lot_confidence fields.';
+        maxTokens = useHaiku ? 300 : 400;
+        prompt = extra.prompt || 'Extract lot codes from this food packaging. Return JSON with lot, expiry, lot_confidence fields.';
         break;
       }
 
