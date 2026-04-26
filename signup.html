@@ -1,0 +1,980 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Get started — Batch'd</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #080f12;
+      --surface:  rgba(9,25,24,0.7);
+      --surface2: rgba(14,38,34,0.6);
+      --border:   rgba(52,211,153,0.12);
+      --accent:   #34d399;
+      --text:     #f4fefb;
+      --muted:    #90ccbc;
+      --danger:   #ff5c5c;
+      --warn:     #f5a623;
+      --radius:   14px;
+    }
+
+    html, body {
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'DM Mono', monospace;
+      overflow-x: hidden;
+    }
+
+    /* ── Animated background ── */
+    body::before {
+      content: '';
+      position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background:
+        radial-gradient(ellipse 60% 40% at 15% 20%, rgba(52,211,153,0.08) 0%, transparent 60%),
+        radial-gradient(ellipse 50% 35% at 85% 75%, rgba(5,150,105,0.06) 0%, transparent 55%),
+        radial-gradient(ellipse 40% 50% at 60% 10%, rgba(52,211,153,0.04) 0%, transparent 50%);
+    }
+
+    /* ── Layout ── */
+    .page {
+      position: relative; z-index: 1;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Top bar ── */
+    .topbar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 20px 32px;
+      flex-shrink: 0;
+    }
+    .logo {
+      display: flex; align-items: center; gap: 10px;
+      text-decoration: none;
+    }
+    .logo-text {
+      font-family: 'Figtree', sans-serif;
+      font-weight: 800; font-size: 20px;
+      color: var(--accent); letter-spacing: -0.04em;
+    }
+    .topbar-link {
+      font-size: 12px; color: var(--muted); text-decoration: none;
+      transition: color 0.15s;
+    }
+    .topbar-link:hover { color: var(--text); }
+
+    /* ── Main content area ── */
+    .main {
+      flex: 1;
+      display: flex; align-items: center; justify-content: center;
+      padding: 20px 16px 48px;
+    }
+
+    /* ── Card ── */
+    .card {
+      width: 100%; max-width: 480px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      box-shadow: 0 16px 48px rgba(0,0,0,0.5), 0 4px 16px rgba(0,0,0,0.35);
+      overflow: hidden;
+    }
+
+    /* ── Progress bar ── */
+    .progress-wrap {
+      height: 3px;
+      background: rgba(52,211,153,0.1);
+    }
+    .progress-fill {
+      height: 100%;
+      background: var(--accent);
+      transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    /* ── Step content ── */
+    .step {
+      padding: 36px 36px 32px;
+      display: none;
+      animation: fadeSlide 0.3s ease;
+    }
+    .step.active { display: block; }
+
+    @keyframes fadeSlide {
+      from { opacity: 0; transform: translateX(12px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+
+    .step-label {
+      font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--accent);
+      margin-bottom: 10px;
+    }
+    .step-title {
+      font-family: 'Figtree', sans-serif;
+      font-weight: 800; font-size: 24px;
+      color: var(--text); line-height: 1.2;
+      margin-bottom: 6px; letter-spacing: -0.02em;
+    }
+    .step-sub {
+      font-size: 13px; color: var(--muted);
+      line-height: 1.6; margin-bottom: 28px;
+    }
+
+    /* ── Type selector (retailer / manufacturer) ── */
+    .type-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+      margin-bottom: 24px;
+    }
+    .type-card {
+      background: var(--surface2);
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 16px;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-align: center;
+      user-select: none;
+    }
+    .type-card:hover {
+      border-color: rgba(52,211,153,0.35);
+      background: rgba(52,211,153,0.04);
+    }
+    .type-card.selected {
+      border-color: var(--accent);
+      background: rgba(52,211,153,0.08);
+      box-shadow: 0 0 0 1px rgba(52,211,153,0.2);
+    }
+    .type-icon { font-size: 28px; margin-bottom: 10px; }
+    .type-name {
+      font-family: 'Figtree', sans-serif;
+      font-weight: 700; font-size: 14px;
+      color: var(--text); margin-bottom: 4px;
+    }
+    .type-desc { font-size: 11px; color: var(--muted); line-height: 1.5; }
+
+    /* ── Region selector ── */
+    .region-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+      margin-bottom: 24px;
+    }
+    .region-btn {
+      background: var(--surface2);
+      border: 1.5px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 16px;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex; align-items: center; gap: 10px;
+      font-family: 'DM Mono', monospace;
+      font-size: 13px; color: var(--text);
+    }
+    .region-btn:hover { border-color: rgba(52,211,153,0.35); }
+    .region-btn.selected {
+      border-color: var(--accent);
+      background: rgba(52,211,153,0.07);
+    }
+    .region-flag { font-size: 22px; }
+
+    /* ── Form fields ── */
+    .field { margin-bottom: 16px; }
+    .field label {
+      display: block;
+      font-size: 11px; font-weight: 700;
+      letter-spacing: 0.06em; text-transform: uppercase;
+      color: var(--muted); margin-bottom: 7px;
+    }
+    .field input, .field select {
+      width: 100%;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 13px 14px;
+      color: var(--text);
+      font-family: 'DM Mono', monospace;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      -webkit-appearance: none;
+    }
+    .field input::placeholder { color: rgba(144,204,188,0.3); }
+    .field input:focus, .field select:focus {
+      border-color: rgba(52,211,153,0.45);
+      box-shadow: 0 0 0 3px rgba(52,211,153,0.1);
+    }
+    .field input.error { border-color: rgba(255,92,92,0.5); }
+    .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+    /* ── Password strength ── */
+    .pw-strength {
+      margin-top: 6px;
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;
+    }
+    .pw-bar {
+      height: 3px; border-radius: 2px;
+      background: rgba(52,211,153,0.1);
+      transition: background 0.25s;
+    }
+    .pw-bar.active-0 { background: var(--danger); }
+    .pw-bar.active-1 { background: var(--warn); }
+    .pw-bar.active-2 { background: #a3e635; }
+    .pw-bar.active-3 { background: var(--accent); }
+    .pw-hint { font-size: 10px; color: var(--muted); margin-top: 5px; }
+
+    /* ── Buttons ── */
+    .btn-primary {
+      width: 100%;
+      background: var(--accent);
+      color: #052e16;
+      border: none;
+      border-radius: 12px;
+      padding: 15px;
+      font-family: 'Figtree', sans-serif;
+      font-size: 15px; font-weight: 800;
+      cursor: pointer;
+      transition: all 0.15s;
+      box-shadow: 0 2px 12px rgba(52,211,153,0.3), 0 1px 4px rgba(0,0,0,0.2);
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+    }
+    .btn-primary:hover:not(:disabled) {
+      background: #6ee7b7;
+      box-shadow: 0 4px 20px rgba(52,211,153,0.4);
+      transform: translateY(-1px);
+    }
+    .btn-primary:active { transform: translateY(0); }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+    .btn-back {
+      background: none; border: none;
+      color: var(--muted); font-family: 'DM Mono', monospace;
+      font-size: 12px; cursor: pointer;
+      padding: 0; margin-bottom: 20px;
+      display: flex; align-items: center; gap: 6px;
+      transition: color 0.15s;
+    }
+    .btn-back:hover { color: var(--text); }
+
+    /* ── Store rows ── */
+    .store-list { margin-bottom: 16px; }
+    .store-row {
+      display: flex; gap: 8px; margin-bottom: 8px; align-items: center;
+    }
+    .store-row input {
+      flex: 1;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 11px 13px;
+      color: var(--text);
+      font-family: 'DM Mono', monospace;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .store-row input:focus { border-color: rgba(52,211,153,0.4); }
+    .store-row input::placeholder { color: rgba(144,204,188,0.3); }
+    .store-remove {
+      width: 34px; height: 34px;
+      background: none; border: 1px solid var(--border);
+      border-radius: 8px; color: var(--muted);
+      cursor: pointer; font-size: 16px;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.15s; flex-shrink: 0;
+    }
+    .store-remove:hover { border-color: var(--danger); color: var(--danger); }
+    .btn-add-store {
+      background: none;
+      border: 1px dashed rgba(52,211,153,0.25);
+      border-radius: 10px;
+      color: var(--accent);
+      font-family: 'DM Mono', monospace;
+      font-size: 12px; cursor: pointer;
+      padding: 10px; width: 100%;
+      transition: all 0.15s;
+    }
+    .btn-add-store:hover {
+      border-color: rgba(52,211,153,0.5);
+      background: rgba(52,211,153,0.04);
+    }
+
+    /* ── Status / error messages ── */
+    .msg {
+      font-size: 12px; border-radius: 8px;
+      padding: 10px 13px; margin-bottom: 16px;
+      display: none; line-height: 1.55;
+    }
+    .msg.error { background: rgba(255,92,92,0.1); border: 1px solid rgba(255,92,92,0.3); color: var(--danger); display: block; }
+    .msg.info  { background: rgba(52,211,153,0.08); border: 1px solid rgba(52,211,153,0.25); color: var(--accent); display: block; }
+
+    /* ── Success screen ── */
+    .success-icon {
+      width: 64px; height: 64px; border-radius: 50%;
+      background: rgba(52,211,153,0.12);
+      border: 1.5px solid rgba(52,211,153,0.3);
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 20px;
+      font-size: 28px;
+    }
+
+    /* ── Divider ── */
+    .divider {
+      display: flex; align-items: center; gap: 12px;
+      margin: 20px 0; color: var(--muted); font-size: 11px;
+    }
+    .divider::before, .divider::after {
+      content: ''; flex: 1; height: 1px;
+      background: var(--border);
+    }
+
+    /* ── Legal ── */
+    .legal {
+      font-size: 11px; color: var(--muted);
+      text-align: center; line-height: 1.6;
+      margin-top: 16px;
+    }
+    .legal a { color: var(--accent); text-decoration: none; }
+
+    /* ── Spinner ── */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner {
+      width: 16px; height: 16px;
+      border: 2px solid rgba(5,46,22,0.3);
+      border-top-color: #052e16;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      display: none;
+    }
+
+    @media (max-width: 520px) {
+      .topbar { padding: 16px 20px; }
+      .step { padding: 28px 24px 24px; }
+      .type-grid { grid-template-columns: 1fr; }
+      .field-row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Top bar -->
+  <div class="topbar">
+    <a href="https://batchd.no" class="logo">
+      <svg width="22" height="22" viewBox="0 0 512 512" fill="none">
+        <rect width="512" height="512" rx="113" fill="#34D399"/>
+        <rect x="172" y="75" width="167" height="167" rx="24" fill="#055A46"/>
+        <rect x="75" y="270" width="167" height="167" rx="24" fill="#055A46"/>
+        <rect x="270" y="270" width="167" height="167" rx="24" fill="#055A46"/>
+      </svg>
+      <span class="logo-text">Batch'd</span>
+    </a>
+    <a href="https://app.batchdapp.com" class="topbar-link">Already have an account? Log in →</a>
+  </div>
+
+  <!-- Card -->
+  <div class="main">
+    <div class="card">
+
+      <!-- Progress bar -->
+      <div class="progress-wrap">
+        <div class="progress-fill" id="progress-fill" style="width:0%"></div>
+      </div>
+
+      <!-- ── Step 0: Type selection ── -->
+      <div class="step active" id="step-type">
+        <div class="step-label">Get started for free</div>
+        <div class="step-title">What best describes you?</div>
+        <div class="step-sub">Batch'd works for both sides of the food supply chain. We'll tailor your setup accordingly.</div>
+
+        <div class="type-grid">
+          <div class="type-card" id="type-retailer" onclick="selectType('retailer')">
+            <div class="type-icon">🏪</div>
+            <div class="type-name">Retailer</div>
+            <div class="type-desc">Grocery stores, supermarkets, food retail chains</div>
+          </div>
+          <div class="type-card" id="type-manufacturer" onclick="selectType('manufacturer')">
+            <div class="type-icon">🏭</div>
+            <div class="type-name">Manufacturer</div>
+            <div class="type-desc">Food producers, brands, processors, distributors</div>
+          </div>
+        </div>
+
+        <button class="btn-primary" id="btn-type-next" onclick="goToStep('account')" disabled>
+          Continue <span>→</span>
+        </button>
+
+        <div class="legal">
+          By continuing you agree to Batch'd's <a href="https://batchd.no/terms" target="_blank">Terms of Service</a> and <a href="https://batchd.no/privacy" target="_blank">Privacy Policy</a>.
+        </div>
+      </div>
+
+      <!-- ── Step 1: Account details ── -->
+      <div class="step" id="step-account">
+        <button class="btn-back" onclick="goToStep('type')">← Back</button>
+        <div class="step-label">Step 1 of 3 — Your account</div>
+        <div class="step-title">Create your account</div>
+        <div class="step-sub">You'll use these to log in to Batch'd.</div>
+
+        <div id="msg-account" class="msg"></div>
+
+        <div class="field-row">
+          <div class="field">
+            <label>First name</label>
+            <input type="text" id="first-name" placeholder="Kari" autocomplete="given-name" />
+          </div>
+          <div class="field">
+            <label>Last name</label>
+            <input type="text" id="last-name" placeholder="Nordmann" autocomplete="family-name" />
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Work email</label>
+          <input type="email" id="email" placeholder="kari@bedrift.no" autocomplete="email" />
+        </div>
+
+        <div class="field">
+          <label>Password</label>
+          <input type="password" id="password" placeholder="At least 8 characters" autocomplete="new-password"
+            oninput="checkPasswordStrength(this.value)" />
+          <div class="pw-strength">
+            <div class="pw-bar" id="pw-bar-0"></div>
+            <div class="pw-bar" id="pw-bar-1"></div>
+            <div class="pw-bar" id="pw-bar-2"></div>
+            <div class="pw-bar" id="pw-bar-3"></div>
+          </div>
+          <div class="pw-hint" id="pw-hint"></div>
+        </div>
+
+        <button class="btn-primary" id="btn-account-next" onclick="submitAccount()">
+          <div class="spinner" id="spinner-account"></div>
+          <span id="btn-account-label">Continue →</span>
+        </button>
+      </div>
+
+      <!-- ── Step 2: Organisation ── -->
+      <div class="step" id="step-org">
+        <button class="btn-back" onclick="goToStep('account')">← Back</button>
+        <div class="step-label" id="org-step-label">Step 2 of 3 — Your organisation</div>
+        <div class="step-title" id="org-step-title">Tell us about your organisation</div>
+        <div class="step-sub" id="org-step-sub">This is how you'll appear to trading partners on the Batch'd network.</div>
+
+        <div id="msg-org" class="msg"></div>
+
+        <div class="field">
+          <label id="org-name-label">Organisation name</label>
+          <input type="text" id="org-name" placeholder="e.g. Norges Gruppen AS" autocomplete="organization" />
+        </div>
+
+        <div class="field">
+          <label>Country / region</label>
+          <div class="region-grid">
+            <button class="region-btn selected" id="region-no" onclick="selectRegion('no')">
+              <span class="region-flag">🇳🇴</span>
+              <span>Norway</span>
+            </button>
+            <button class="region-btn" id="region-us" onclick="selectRegion('us')">
+              <span class="region-flag">🇺🇸</span>
+              <span>United States</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Contact email <span style="color:var(--muted);font-size:9px;font-weight:400;margin-left:4px;">for recall alerts</span></label>
+          <input type="email" id="org-email" placeholder="operations@bedrift.no" />
+        </div>
+
+        <!-- Stores section — only for retailers -->
+        <div id="stores-section">
+          <div class="field" style="margin-bottom:0;">
+            <label>Your stores <span style="color:var(--muted);font-size:9px;font-weight:400;margin-left:4px;">add at least one</span></label>
+          </div>
+          <div class="store-list" id="store-list">
+            <div class="store-row" id="store-row-0">
+              <input type="text" placeholder="Store name, e.g. Oslo - Grünerløkka" data-store-index="0" />
+              <button class="store-remove" onclick="removeStore(0)" style="display:none">×</button>
+            </div>
+          </div>
+          <button class="btn-add-store" onclick="addStore()">+ Add another store</button>
+          <div style="font-size:11px;color:var(--muted);margin-top:8px;margin-bottom:20px;">
+            You can add more stores after signing up — just start with your first one.
+          </div>
+        </div>
+
+        <button class="btn-primary" id="btn-org-next" onclick="submitOrg()">
+          <div class="spinner" id="spinner-org"></div>
+          <span id="btn-org-label">Continue →</span>
+        </button>
+      </div>
+
+      <!-- ── Step 3: Final setup ── -->
+      <div class="step" id="step-final">
+        <div class="step-label">Step 3 of 3 — Almost there</div>
+        <div class="step-title" id="final-title">You're almost ready</div>
+        <div class="step-sub" id="final-sub">Last couple of details.</div>
+
+        <div id="msg-final" class="msg"></div>
+
+        <!-- Role (retailer) -->
+        <div id="role-section">
+          <div class="field">
+            <label>Your role</label>
+            <select id="user-role">
+              <option value="corp_admin">Corporate / Regional Admin</option>
+              <option value="store_manager">Store Manager</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Recall coordinator (retailer) -->
+        <div id="coordinator-section">
+          <div class="field">
+            <label>Recall coordinator name <span style="color:var(--muted);font-size:9px;font-weight:400;margin-left:4px;">optional — required by Mattilsynet/FDA</span></label>
+            <input type="text" id="coordinator-name" placeholder="Full name of recall contact" />
+          </div>
+          <div class="field">
+            <label>Coordinator phone / email <span style="color:var(--muted);font-size:9px;font-weight:400;margin-left:4px;">optional</span></label>
+            <input type="text" id="coordinator-contact" placeholder="+47 xxx xx xxx" />
+          </div>
+        </div>
+
+        <!-- Manufacturer type -->
+        <div id="mfr-type-section" style="display:none;">
+          <div class="field">
+            <label>What does your company produce?</label>
+            <select id="mfr-type">
+              <option value="">Select a category</option>
+              <option value="dairy">Dairy &amp; eggs</option>
+              <option value="meat">Meat &amp; poultry</option>
+              <option value="seafood">Seafood &amp; fish</option>
+              <option value="produce">Fresh produce &amp; vegetables</option>
+              <option value="bakery">Bakery &amp; bread</option>
+              <option value="frozen">Frozen foods</option>
+              <option value="grocery">Grocery / ambient</option>
+              <option value="beverages">Beverages</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+        </div>
+
+        <button class="btn-primary" id="btn-final" onclick="submitFinal()">
+          <div class="spinner" id="spinner-final"></div>
+          <span id="btn-final-label">Create my account →</span>
+        </button>
+      </div>
+
+      <!-- ── Success screen ── -->
+      <div class="step" id="step-success">
+        <div style="text-align:center;padding:12px 0 4px;">
+          <div class="success-icon">✓</div>
+          <div class="step-title" id="success-title">You're in.</div>
+          <div class="step-sub" id="success-sub" style="margin-bottom:28px;"></div>
+        </div>
+
+        <div id="success-checklist" style="margin-bottom:28px;"></div>
+
+        <button class="btn-primary" id="btn-launch" onclick="launchApp()">
+          <span id="btn-launch-label">Open Batch'd →</span>
+        </button>
+
+        <div class="legal" style="margin-top:16px;">
+          <a href="mailto:hello@batchd.no">hello@batchd.no</a> · <a href="https://batchd.no">batchd.no</a>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+const SUPABASE_URL = 'https://lurxucdmrugikdlvvebc.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1cnh1Y2RtcnVnaWtkbHZ2ZWJjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTU5NTQsImV4cCI6MjA4OTgzMTk1NH0.ewNhBbF8nUzpF9Ve822D9t8VLwB_hjk27KuFFEXct0A';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// ── State ──────────────────────────────────────────────────────
+let _type    = null;  // 'retailer' | 'manufacturer'
+let _region  = 'no';
+let _userId  = null;
+let _orgId   = null;
+let _stores  = 1;     // current store row count
+
+// ── Step navigation ───────────────────────────────────────────
+const STEPS = ['type', 'account', 'org', 'final', 'success'];
+const PROGRESS = { type: 0, account: 25, org: 55, final: 80, success: 100 };
+
+function goToStep(name) {
+  STEPS.forEach(s => {
+    document.getElementById(`step-${s}`)?.classList.toggle('active', s === name);
+  });
+  document.getElementById('progress-fill').style.width = (PROGRESS[name] || 0) + '%';
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ── Type selection ─────────────────────────────────────────────
+function selectType(type) {
+  _type = type;
+  document.getElementById('type-retailer').classList.toggle('selected', type === 'retailer');
+  document.getElementById('type-manufacturer').classList.toggle('selected', type === 'manufacturer');
+  document.getElementById('btn-type-next').disabled = false;
+
+  // Adapt org step for manufacturer
+  if (type === 'manufacturer') {
+    document.getElementById('org-step-label').textContent = 'Step 2 of 3 — Your company';
+    document.getElementById('org-step-title').textContent = 'Tell us about your company';
+    document.getElementById('org-step-sub').textContent = 'This is how retailers will see you on the Batch\'d network.';
+    document.getElementById('org-name-label').textContent = 'Company name';
+    document.getElementById('org-name').placeholder = 'e.g. Nortura AS';
+    document.getElementById('stores-section').style.display = 'none';
+    document.getElementById('final-title').textContent = 'One last thing';
+    document.getElementById('final-sub').textContent = 'Tell us what you produce so retailers can find you.';
+    document.getElementById('role-section').style.display = 'none';
+    document.getElementById('coordinator-section').style.display = 'none';
+    document.getElementById('mfr-type-section').style.display = 'block';
+  } else {
+    document.getElementById('org-step-label').textContent = 'Step 2 of 3 — Your organisation';
+    document.getElementById('org-step-title').textContent = 'Tell us about your organisation';
+    document.getElementById('org-step-sub').textContent = 'This is how you\'ll appear to trading partners on the Batch\'d network.';
+    document.getElementById('org-name-label').textContent = 'Organisation name';
+    document.getElementById('org-name').placeholder = 'e.g. Norges Gruppen AS';
+    document.getElementById('stores-section').style.display = 'block';
+    document.getElementById('final-title').textContent = 'You\'re almost ready';
+    document.getElementById('final-sub').textContent = 'Last couple of details.';
+    document.getElementById('role-section').style.display = 'block';
+    document.getElementById('coordinator-section').style.display = 'block';
+    document.getElementById('mfr-type-section').style.display = 'none';
+  }
+}
+
+// ── Region selection ───────────────────────────────────────────
+function selectRegion(region) {
+  _region = region;
+  document.getElementById('region-no').classList.toggle('selected', region === 'no');
+  document.getElementById('region-us').classList.toggle('selected', region === 'us');
+}
+
+// ── Password strength ──────────────────────────────────────────
+function checkPasswordStrength(pw) {
+  const bars  = [0,1,2,3].map(i => document.getElementById(`pw-bar-${i}`));
+  const hint  = document.getElementById('pw-hint');
+  bars.forEach(b => { b.className = 'pw-bar'; });
+
+  if (!pw) { hint.textContent = ''; return; }
+
+  let score = 0;
+  if (pw.length >= 8)  score++;
+  if (pw.length >= 12) score++;
+  if (/[A-Z]/.test(pw) && /[a-z]/.test(pw)) score++;
+  if (/[0-9]/.test(pw) || /[^A-Za-z0-9]/.test(pw)) score++;
+  score = Math.min(score, 4);
+
+  for (let i = 0; i < score; i++) {
+    bars[i].classList.add(`active-${Math.min(score-1, 3)}`);
+  }
+  const labels = ['', 'Weak', 'Fair', 'Good', 'Strong'];
+  hint.textContent = score > 0 ? labels[score] : '';
+  hint.style.color = score <= 1 ? 'var(--danger)' : score === 2 ? 'var(--warn)' : score === 3 ? '#a3e635' : 'var(--accent)';
+}
+
+// ── Store management ───────────────────────────────────────────
+function addStore() {
+  const list  = document.getElementById('store-list');
+  const index = _stores++;
+  const row   = document.createElement('div');
+  row.className = 'store-row';
+  row.id = `store-row-${index}`;
+  row.innerHTML = `
+    <input type="text" placeholder="Store name, e.g. Bergen - Sentrum" data-store-index="${index}" />
+    <button class="store-remove" onclick="removeStore(${index})">×</button>`;
+  list.appendChild(row);
+  // Show remove button on first row if more than one exists
+  updateStoreRemoveButtons();
+  row.querySelector('input')?.focus();
+}
+
+function removeStore(index) {
+  document.getElementById(`store-row-${index}`)?.remove();
+  updateStoreRemoveButtons();
+}
+
+function updateStoreRemoveButtons() {
+  const rows = document.querySelectorAll('.store-row');
+  rows.forEach(row => {
+    const btn = row.querySelector('.store-remove');
+    if (btn) btn.style.display = rows.length > 1 ? 'flex' : 'none';
+  });
+}
+
+function getStoreNames() {
+  return Array.from(document.querySelectorAll('.store-row input'))
+    .map(i => i.value.trim())
+    .filter(Boolean);
+}
+
+// ── Msg helpers ────────────────────────────────────────────────
+function setMsg(step, txt, type = 'error') {
+  const el = document.getElementById(`msg-${step}`);
+  if (!el) return;
+  el.textContent = txt;
+  el.className = `msg ${type}`;
+}
+function clearMsg(step) {
+  const el = document.getElementById(`msg-${step}`);
+  if (el) el.className = 'msg';
+}
+
+function setLoading(id, loading) {
+  const btn    = document.getElementById(id);
+  const spinner= document.getElementById(`spinner-${id.replace('btn-','').replace('-next','')}`);
+  const label  = document.getElementById(`btn-${id.replace('btn-','').replace('-next','')}-label`);
+  if (btn) btn.disabled = loading;
+  if (spinner) spinner.style.display = loading ? 'block' : 'none';
+  if (label) label.style.opacity = loading ? 0 : 1;
+}
+
+// ── Step 1: Create Supabase auth account ──────────────────────
+async function submitAccount() {
+  clearMsg('account');
+  const firstName = document.getElementById('first-name').value.trim();
+  const lastName  = document.getElementById('last-name').value.trim();
+  const email     = document.getElementById('email').value.trim();
+  const password  = document.getElementById('password').value;
+
+  if (!firstName) return setMsg('account', 'Please enter your first name.');
+  if (!lastName)  return setMsg('account', 'Please enter your last name.');
+  if (!email || !email.includes('@')) return setMsg('account', 'Please enter a valid email address.');
+  if (password.length < 8) return setMsg('account', 'Password must be at least 8 characters.');
+
+  setLoading('btn-account-next', true);
+
+  const { data, error } = await sb.auth.signUp({
+    email,
+    password,
+    options: {
+      data: {
+        full_name:  `${firstName} ${lastName}`,
+        first_name: firstName,
+        last_name:  lastName,
+        user_type:  _type,
+      }
+    }
+  });
+
+  setLoading('btn-account-next', false);
+
+  if (error) {
+    if (error.message.includes('already registered')) {
+      return setMsg('account', 'An account with this email already exists. Try logging in instead.');
+    }
+    return setMsg('account', error.message);
+  }
+
+  _userId = data.user?.id;
+
+  // Pre-fill org email with account email
+  document.getElementById('org-email').value = email;
+
+  goToStep('org');
+}
+
+// ── Step 2: Create org + stores ────────────────────────────────
+async function submitOrg() {
+  clearMsg('org');
+  const orgName  = document.getElementById('org-name').value.trim();
+  const orgEmail = document.getElementById('org-email').value.trim();
+
+  if (!orgName) return setMsg('org', `Please enter your ${_type === 'manufacturer' ? 'company' : 'organisation'} name.`);
+  if (!orgEmail || !orgEmail.includes('@')) return setMsg('org', 'Please enter a valid contact email.');
+
+  if (_type === 'retailer') {
+    const stores = getStoreNames();
+    if (!stores.length) return setMsg('org', 'Please add at least one store.');
+  }
+
+  setLoading('btn-org-next', true);
+
+  // Get the current user session
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) {
+    setLoading('btn-org-next', false);
+    return setMsg('org', 'Session expired — please go back and try again.');
+  }
+  _userId = user.id;
+
+  // Create organisation
+  const { data: org, error: orgErr } = await sb.from('organisations').insert({
+    name:          orgName,
+    type:          _type === 'manufacturer' ? 'manufacturer' : 'retailer',
+    contact_email: orgEmail,
+    region:        _region,
+  }).select().single();
+
+  if (orgErr) {
+    setLoading('btn-org-next', false);
+    return setMsg('org', 'Could not create organisation: ' + orgErr.message);
+  }
+
+  _orgId = org.id;
+
+  // Create org membership
+  const role = _type === 'manufacturer' ? 'mfr_admin' : 'corp_admin';
+  const { error: memErr } = await sb.from('organisation_members').insert({
+    user_id:         _userId,
+    organisation_id: _orgId,
+    role,
+  });
+
+  if (memErr) {
+    setLoading('btn-org-next', false);
+    return setMsg('org', 'Could not create membership: ' + memErr.message);
+  }
+
+  // Create stores (retailer only)
+  if (_type === 'retailer') {
+    const storeNames = getStoreNames();
+    const storeRows  = storeNames.map((name, i) => ({
+      name,
+      organisation_id: _orgId,
+      store_code:      `STORE-${String(i+1).padStart(3,'0')}`,
+      active:          true,
+    }));
+    const { error: storeErr } = await sb.from('stores').insert(storeRows);
+    if (storeErr) console.warn('Store creation warning:', storeErr.message);
+  }
+
+  // Create user_settings
+  await sb.from('user_settings').upsert({
+    user_id:             _userId,
+    region:              _region,
+    recall_source:       'both',
+    recall_lookback_days: 180,
+  }, { onConflict: 'user_id' });
+
+  setLoading('btn-org-next', false);
+  goToStep('final');
+}
+
+// ── Step 3: Final details ──────────────────────────────────────
+async function submitFinal() {
+  clearMsg('final');
+  setLoading('btn-final', true);
+
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) {
+    setLoading('btn-final', false);
+    return setMsg('final', 'Session expired — please refresh and try again.');
+  }
+
+  if (_type === 'retailer') {
+    const coordName    = document.getElementById('coordinator-name')?.value.trim() || null;
+    const coordContact = document.getElementById('coordinator-contact')?.value.trim() || null;
+    const role         = document.getElementById('user-role')?.value || 'corp_admin';
+
+    // Update org with coordinator info if provided
+    if (coordName || coordContact) {
+      await sb.from('organisations').update({
+        recall_coordinator_name:    coordName,
+        recall_coordinator_contact: coordContact,
+      }).eq('id', _orgId);
+    }
+
+    // Update membership role if store_manager was chosen
+    if (role !== 'corp_admin') {
+      await sb.from('organisation_members')
+        .update({ role })
+        .eq('user_id', _userId)
+        .eq('organisation_id', _orgId);
+    }
+  }
+
+  // Show success
+  const orgName  = document.getElementById('org-name').value.trim();
+  const stores   = _type === 'retailer' ? getStoreNames() : [];
+
+  document.getElementById('success-title').textContent = 'Welcome to Batch\'d.';
+  document.getElementById('success-sub').textContent =
+    _type === 'retailer'
+      ? `${orgName} is set up and ready. Your stores are active and your scan history will build from your first placement.`
+      : `${orgName} is on the Batch\'d network. Connect to your retail partners to start pushing recall alerts.`;
+
+  // Checklist
+  const items = _type === 'retailer'
+    ? [
+        '✓  Organisation created',
+        `✓  ${stores.length} store${stores.length !== 1 ? 's' : ''} added`,
+        '✓  Scanning app ready — share with your team',
+        '→  Next: invite staff and run your first scan',
+      ]
+    : [
+        '✓  Company created',
+        '✓  Account active',
+        '→  Next: connect to retail trading partners',
+        '→  Then: register your products and lot codes',
+      ];
+
+  document.getElementById('success-checklist').innerHTML = items.map(item =>
+    `<div style="padding:10px 14px;background:var(--surface2);border-radius:8px;margin-bottom:8px;font-size:13px;color:${item.startsWith('✓')?'var(--accent)':'var(--muted)'};">${item}</div>`
+  ).join('');
+
+  setLoading('btn-final', false);
+  goToStep('success');
+}
+
+// ── Launch ─────────────────────────────────────────────────────
+function launchApp() {
+  if (_type === 'manufacturer') {
+    window.location.href = 'https://app.batchdapp.com/manufacturer.html';
+  } else {
+    window.location.href = 'https://app.batchdapp.com';
+  }
+}
+
+// ── Handle existing session (already logged in) ───────────────
+// If someone lands here while already logged in, check if they
+// have an org — if not, skip to the org step.
+async function checkExistingSession() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) return;
+
+  const { data: member } = await sb.from('organisation_members')
+    .select('organisation_id, role')
+    .eq('user_id', session.user.id)
+    .maybeSingle();
+
+  if (member) {
+    // Has an org — send to the right place
+    const role = member.role;
+    if (role === 'mfr_admin' || role === 'mfr_qa') {
+      window.location.href = 'https://app.batchdapp.com/manufacturer.html';
+    } else if (role === 'staff') {
+      window.location.href = 'https://batchd-app.netlify.app';
+    } else {
+      window.location.href = 'https://app.batchdapp.com';
+    }
+    return;
+  }
+
+  // Logged in but no org — detect type from email domain and jump to org step
+  _userId = session.user.id;
+  const email = session.user.email || '';
+  // Pre-fill email on account step even though we'll skip it
+  document.getElementById('email').value = email;
+  document.getElementById('org-email').value = email;
+
+  // Show a message and let them pick type
+  setMsg('account', 'Your account exists but needs an organisation. Please select your type below and we\'ll set you up.', 'info');
+}
+
+checkExistingSession();
+</script>
+</body>
+</html>
