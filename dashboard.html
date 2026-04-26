@@ -670,6 +670,10 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
         Staff Activity
       </button>
+      <button class="nav-item" onclick="showPanel('lotcheck')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        Lot Lookup
+      </button>
       <button class="nav-item" onclick="showPanel('traceability')">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
         Scan History
@@ -1217,12 +1221,12 @@ function showPanel(name) {
     document.getElementById('mobile-overlay')?.classList.remove('active');
   }
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-  const panels = { overview:'Dashboard', onboarding:'Getting started', recalls:'Recalls', stores:'Stores', traceability:'Traceability', shipments:'Incoming Shipments', staff:'Staff', compliance:'Compliance', reports:'Reports', settings:'Settings', partners:'Manufacturers', triage:'Complaint Triage', 'consumer-notify':'Consumer Notifications', investigations:'Investigations', terminology:'Terminology & Help' };
+  const panels = { overview:'Dashboard', onboarding:'Getting started', recalls:'Recalls', stores:'Stores', traceability:'Traceability', shipments:'Incoming Shipments', staff:'Staff', compliance:'Compliance', reports:'Reports', settings:'Settings', partners:'Manufacturers', triage:'Complaint Triage', 'consumer-notify':'Consumer Notifications', investigations:'Investigations', terminology:'Terminology & Help', lotcheck:'Lot Lookup' };
   document.getElementById('topbar-title').textContent = panels[name] || name;
   document.querySelectorAll('.nav-item').forEach(el => {
     if (el.getAttribute('onclick')?.includes(`'${name}'`)) el.classList.add('active');
   });
-  const fns = { overview: renderOverview, onboarding: renderOnboarding, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, shipments: renderShipments, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, partners: renderPartners, triage: renderDashboardTriage, investigations: renderDashInvestigations, 'consumer-notify': renderConsumerNotification, terminology: renderTerminology };
+  const fns = { overview: renderOverview, onboarding: renderOnboarding, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, shipments: renderShipments, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, partners: renderPartners, triage: renderDashboardTriage, investigations: renderDashInvestigations, 'consumer-notify': renderConsumerNotification, terminology: renderTerminology, lotcheck: renderLotCheck };
   (fns[name] || renderComingSoon)(name);
 }
 
@@ -5926,6 +5930,192 @@ async function downloadReport(key) {
 
 // ── Settings ───────────────────────────────────────────────────
 // ── TERMINOLOGY & HELP ────────────────────────────────────────
+// ── LOT LOOKUP PANEL ─────────────────────────────────────────────
+// Answers the primary operational question: "Is lot X on shelf right now?"
+// Checks scan history + active recalls simultaneously.
+function renderLotCheck() {
+  const el = document.getElementById('main-content');
+  el.innerHTML = `
+    <div style="max-width:700px;">
+      <div style="margin-bottom:20px;">
+        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;margin-bottom:4px;">Lot Lookup</div>
+        <div style="font-size:12px;color:var(--muted);">Enter a lot code, barcode, or product name to see shelf status and recall matches across all stores.</div>
+      </div>
+
+      <div style="display:flex;gap:10px;margin-bottom:20px;">
+        <input type="text" id="lc-input" placeholder="e.g. L2026-03-14A · 7020034 · Grandiosa"
+          style="flex:1;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:13px 16px;color:var(--text);font-family:'DM Mono',monospace;font-size:14px;outline:none;"
+          oninput="runLotCheck()" onkeydown="if(event.key==='Enter')runLotCheck(true)" />
+        <button onclick="runLotCheck(true)"
+          style="background:var(--accent);color:#052e16;border:none;border-radius:10px;padding:12px 20px;font-weight:700;font-size:13px;cursor:pointer;white-space:nowrap;font-family:'Figtree',sans-serif;box-shadow:0 2px 8px rgba(52,211,153,0.25);">
+          Search
+        </button>
+      </div>
+
+      <div id="lc-result" style="min-height:120px;"></div>
+    </div>`;
+
+  // Auto-focus the input
+  setTimeout(() => document.getElementById('lc-input')?.focus(), 100);
+}
+
+let _lcDebounce = null;
+async function runLotCheck(immediate = false) {
+  const input = document.getElementById('lc-input');
+  const el    = document.getElementById('lc-result');
+  if (!input || !el) return;
+  const q = input.value.trim();
+  if (q.length < 2) { el.innerHTML = ''; return; }
+
+  clearTimeout(_lcDebounce);
+  if (!immediate) {
+    _lcDebounce = setTimeout(() => runLotCheck(true), 400);
+    return;
+  }
+
+  el.innerHTML = `<div style="color:var(--muted);font-size:12px;padding:12px 0;">Searching…</div>`;
+  const qLow = q.toLowerCase();
+
+  try {
+    const cutoff = new Date(Date.now() - 180 * 86400000).toISOString();
+    const [scansRes, recallsRes, distRes] = await Promise.all([
+      sb.from('scans')
+        .select('id,product_name,lot_number,barcode_number,store_name,store_id,quantity,created_at,removed_from_shelf_at,recall_resolved,scanned_by,label_text')
+        .eq('organisation_id', _orgId)
+        .gte('created_at', cutoff)
+        .order('created_at', { ascending: false })
+        .limit(1000),
+      sb.from('recalls').select('*').eq('active', true).eq('organisation_id', _orgId),
+      sb.from('recall_distributions')
+        .select('recall_event_id, recall_events!inner(id,product_name,lot_number,reason,severity,is_drill)')
+        .eq('retailer_org_id', _orgId)
+        .eq('recall_events.is_drill', false),
+    ]);
+
+    const allScans = scansRes.data || [];
+    const recalls  = [
+      ...(recallsRes.data || []),
+      ...(distRes.data || []).map(d => ({
+        id: d.recall_events.id, product_name: d.recall_events.product_name,
+        lot_number: d.recall_events.lot_number, description: d.recall_events.reason,
+        severity: d.recall_events.severity, source: 'manufacturer_push', active: true,
+      })),
+    ];
+
+    // Match scans
+    const matched = allScans.filter(s => {
+      const lot  = (s.lot_number     || '').toLowerCase();
+      const brc  = (s.barcode_number || '').toLowerCase();
+      const prod = (s.product_name   || '').toLowerCase();
+      const lbl  = (s.label_text     || '').toLowerCase();
+      return (lot && (lot.includes(qLow) || qLow.includes(lot))) ||
+             (brc && (brc.includes(qLow) || qLow.includes(brc))) ||
+             (q.length >= 4 && prod.includes(qLow)) ||
+             (q.length >= 4 && lbl.includes(qLow));
+    });
+
+    // Match recalls
+    const synth = { lot_number: q, product_name: q, barcode_number: q, label_text: q };
+    const exactR    = recalls.filter(r => recallMatchLevel(synth, r).level === 'exact');
+    const possibleR = recalls.filter(r => recallMatchLevel(synth, r).level === 'possible');
+
+    if (!matched.length && !exactR.length && !possibleR.length) {
+      el.innerHTML = `
+        <div style="padding:32px;text-align:center;background:var(--surface);border:1px solid var(--border);border-radius:12px;">
+          <div style="font-size:28px;margin-bottom:10px;">🔍</div>
+          <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:6px;">No records found</div>
+          <div style="font-size:12px;color:var(--muted);">No scans or active recalls matched "<strong>${esc(q)}</strong>" in the last 180 days.</div>
+        </div>`;
+      return;
+    }
+
+    let html = '';
+
+    // Recall alerts
+    if (exactR.length) {
+      html += exactR.map(r => `
+        <div style="margin-bottom:12px;padding:14px 16px;background:rgba(255,92,92,0.07);border:1.5px solid rgba(255,92,92,0.4);border-radius:12px;box-shadow:var(--shadow-glow-danger);">
+          <div style="font-size:10px;font-weight:700;color:var(--danger);letter-spacing:0.08em;margin-bottom:6px;">⚠ ACTIVE RECALL</div>
+          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:14px;color:var(--text);">${esc(r.product_name||'—')}</div>
+          ${r.lot_number?`<div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--danger);margin-top:3px;">Lot: ${esc(r.lot_number)}</div>`:''}
+          ${r.description?`<div style="font-size:12px;color:var(--muted);margin-top:4px;">${esc(r.description.slice(0,200))}</div>`:''}
+          ${r.severity?`<div style="margin-top:8px;">${sevPill(r.severity)}</div>`:''}
+          <button onclick="showPanel('recalls')" style="margin-top:10px;font-size:11px;padding:6px 14px;border-radius:7px;border:1px solid rgba(255,92,92,0.4);background:rgba(255,92,92,0.08);color:var(--danger);cursor:pointer;font-weight:600;">
+            View recall response chain →
+          </button>
+        </div>`).join('');
+    }
+
+    if (possibleR.length) {
+      html += possibleR.map(r => `
+        <div style="margin-bottom:12px;padding:12px 16px;background:rgba(245,166,35,0.06);border:1px solid rgba(245,166,35,0.35);border-radius:12px;">
+          <div style="font-size:10px;font-weight:700;color:var(--warn);letter-spacing:0.08em;margin-bottom:6px;">~ POSSIBLE RECALL MATCH</div>
+          <div style="font-weight:600;color:var(--text);">${esc(r.product_name||'—')}</div>
+          ${r.lot_number?`<div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--warn);margin-top:3px;">Recalled lot: ${esc(r.lot_number)}</div>`:''}
+          <div style="font-size:11px;color:var(--warn);margin-top:5px;">Verify the exact lot code against the physical product.</div>
+        </div>`).join('');
+    }
+
+    // Shelf status
+    if (matched.length) {
+      const onShelf  = matched.filter(s => !s.removed_from_shelf_at && !s.recall_resolved);
+      const removed  = matched.filter(s => s.removed_from_shelf_at || s.recall_resolved);
+
+      // Group by store
+      const storeMap = {};
+      onShelf.forEach(s => {
+        const key = s.store_name || 'Unknown store';
+        if (!storeMap[key]) storeMap[key] = { scans: [], units: 0 };
+        storeMap[key].scans.push(s);
+        storeMap[key].units += (s.quantity || 1);
+      });
+
+      const hasOnShelf = onShelf.length > 0;
+      const statusColor = exactR.length ? 'var(--danger)' : hasOnShelf ? 'var(--accent)' : 'var(--muted)';
+      const statusText  = !hasOnShelf ? 'Not currently on shelf'
+                        : exactR.length ? `⚠ ${onShelf.length} scan${onShelf.length!==1?'s':''} on shelf — RECALL ACTIVE`
+                        : `${onShelf.length} scan${onShelf.length!==1?'s':''} on shelf`;
+
+      html += `
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow-sm);">
+          <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;">
+            <div style="width:9px;height:9px;border-radius:50%;background:${statusColor};${exactR.length&&hasOnShelf?'box-shadow:0 0 8px rgba(255,92,92,0.5);':''}"></div>
+            <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:14px;color:${statusColor};">${statusText}</div>
+          </div>
+
+          ${hasOnShelf ? `
+          <div style="padding:14px 18px;">
+            <div style="font-size:10px;font-weight:700;color:var(--muted);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:12px;">Current shelf location${Object.keys(storeMap).length!==1?'s':''}</div>
+            ${Object.entries(storeMap).map(([store, info]) => `
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--surface2);border-radius:8px;margin-bottom:8px;">
+                <div>
+                  <div style="font-weight:600;font-size:13px;color:var(--text);">${esc(store)}</div>
+                  <div style="font-size:11px;color:var(--muted);margin-top:2px;">
+                    ${info.units} unit${info.units!==1?'s':''} · Last placed ${fmtDashDT(info.scans[0].created_at)}
+                    ${info.scans[0].scanned_by ? ` · ${esc(info.scans[0].scanned_by)}` : ''}
+                  </div>
+                </div>
+                <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:20px;color:${exactR.length?'var(--danger)':'var(--accent)'};">${info.units}</div>
+              </div>`).join('')}
+          </div>` : ''}
+
+          ${removed.length ? `
+          <div style="padding:12px 18px;${hasOnShelf?'border-top:1px solid var(--border);':''}">
+            <div style="font-size:11px;color:var(--muted);">
+              ${removed.length} record${removed.length!==1?'s':''} previously removed or resolved ·
+              <button onclick="showPanel('traceability')" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:11px;font-family:inherit;padding:0;">View in Traceability →</button>
+            </div>
+          </div>` : ''}
+        </div>`;
+    }
+
+    el.innerHTML = html;
+
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);padding:12px;">${e.message}</div>`;
+  }
+}
+
 function renderTerminology() {
   const el = document.getElementById('main-content');
   const isUS = _orgRegion === 'us';

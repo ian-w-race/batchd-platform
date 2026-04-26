@@ -3097,6 +3097,7 @@
   <div style="display:flex;align-items:center;gap:8px;">
     <span id="region-header-badge" onclick="openDrawer()" style="font-size:10px;font-family:'DM Mono',monospace;font-weight:700;padding:2px 9px;border-radius:5px;border:1px solid rgba(52,211,153,0.3);background:rgba(52,211,153,0.09);color:var(--accent);cursor:pointer;letter-spacing:0.06em;" title="Menu">🇳🇴 NOR</span>
     <span id="offline-badge" style="display:none;font-size:10px;font-family:'DM Mono',monospace;font-weight:700;padding:2px 8px;border-radius:4px;border:1px solid rgba(245,166,35,0.4);background:rgba(245,166,35,0.1);color:var(--warn);letter-spacing:0.06em;">⚡ Offline</span>
+    <span id="queue-badge" style="display:none;font-size:10px;font-family:'DM Mono',monospace;font-weight:700;padding:2px 8px;border-radius:4px;border:1px solid rgba(245,166,35,0.4);background:rgba(245,166,35,0.12);color:var(--warn);letter-spacing:0.06em;cursor:pointer;" onclick="showQueueStatus()" title="Scans queued offline — tap to sync"></span>
     <span id="user-email" style="display:none;"></span>
     <nav style="display:none;">
       <button class="active" onclick="showView('scan')" data-i18n="nav.scan">Scan</button>
@@ -8137,6 +8138,7 @@ async function saveRecord() {
       const barcodeB64 = await blobToBase64(barcodeBlob);
       offlineQueue.push({ payload, productB64, barcodeB64, ts: Date.now() });
       localStorage.setItem('batched_offline_queue', JSON.stringify(offlineQueue));
+      updateQueueBadge();
       setMsg(t('js.savedOffline'), 'info');
       btn.textContent = '✓ Queued';
       todayScanCount++;
@@ -8194,7 +8196,8 @@ async function saveRecord() {
         const { data: inserted } = await sb.from('scans')
           .select('id').eq('organisation_id', _currentOrgId)
           .eq('product_name', productName)
-          .eq('store_name', storeName || '')
+          // Prefer store_id (UUID) match — more reliable than store_name text
+          .eq(_currentStoreId ? 'store_id' : 'store_name', _currentStoreId || storeName || '')
           .order('created_at', { ascending: false }).limit(1);
         if (inserted?.[0]?.id) {
           await matchScanAgainstRecalls(inserted[0].id, {
@@ -8227,6 +8230,33 @@ async function saveRecord() {
 
     todayScanCount++;
     updateScanCounter();
+
+    // ── POST-SCAN RECALL FEEDBACK ─────────────────────────────────
+    // After saving, immediately check if this specific scan matches any active recall.
+    // Gives staff confirmation that the item is safe, or an immediate warning if not.
+    // This runs AFTER save so it never blocks the scan flow.
+    if (lotNum && _cachedActiveRecalls?.length) {
+      const savedScan = { lot_number: lotNum, product_name: productName, barcode_number: barcodeNum, label_text: ocrState?.raw || '' };
+      const recallHit = _cachedActiveRecalls.reduce((best, recall) => {
+        if (best?.level === 'exact') return best;
+        const { level } = recallMatchLevel(savedScan, recall);
+        if (!level) return best;
+        if (!best || (level === 'exact') || (level === 'possible' && best.level !== 'exact')) return { level, recall };
+        return best;
+      }, null);
+      if (recallHit) {
+        const isExact = recallHit.level === 'exact';
+        const ra = recallHit.recall;
+        setTimeout(() => {
+          showToast(
+            `⚠ ${isExact ? (currentLang==='no'?'TILBAKEKALL MATCH':'RECALL MATCH') : (currentLang==='no'?'Mulig tilbakekall':'Possible recall')}: ${ra.product_name||''}${ra.lot_number?' · '+ra.lot_number:''}`,
+            isExact ? 'danger' : 'warn',
+            6000
+          );
+        }, 800);
+      }
+    }
+
     setMsg(t('js.placementRecorded'), 'success');
     btn.textContent = t('js.placedOnShelf');
 
@@ -8258,6 +8288,36 @@ async function checkDuplicate(productName, lotNum, storeName) {
     return data && data.length > 0;
   } catch(e) { return false; }
 }
+
+function updateQueueBadge() {
+  const badge = document.getElementById('queue-badge');
+  if (!badge) return;
+  const count = offlineQueue.length;
+  if (count > 0) {
+    badge.textContent = `⏳ ${count} queued`;
+    badge.style.display = 'inline';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+function showQueueStatus() {
+  const count = offlineQueue.length;
+  if (count === 0) return;
+  const oldest = offlineQueue[0];
+  const age = oldest?.ts ? Math.round((Date.now() - oldest.ts) / 60000) : null;
+  const msg = navigator.onLine
+    ? `${count} scan${count !== 1 ? 's' : ''} queued. Tap OK to attempt sync now.`
+    : `${count} scan${count !== 1 ? 's' : ''} saved offline${age ? ` (oldest: ${age} min ago)` : ''}.\n\nScans will sync automatically when your connection returns.`;
+  if (navigator.onLine && confirm(msg)) {
+    syncOfflineQueue();
+  } else if (!navigator.onLine) {
+    showToast(msg, 'warn', 4000);
+  }
+}
+
+window.addEventListener('online',  updateQueueBadge);
+window.addEventListener('offline', updateQueueBadge);
 
 // ── OFFLINE SYNC ──────────────────────────────────────────────
 async function syncOfflineQueue() {
@@ -8304,6 +8364,7 @@ async function syncOfflineQueue() {
 
   offlineQueue = remaining;
   localStorage.setItem('batched_offline_queue', JSON.stringify(offlineQueue));
+  updateQueueBadge();
 
   if (synced > 0) {
     todayScanCount += synced;
@@ -8570,6 +8631,10 @@ async function runAutoFetch() {
 let loginRecallMatches = [];
 
 async function checkRecallsOnLogin(silent = false) {
+  // Guard: if a non-silent check is already running or has already shown the overlay,
+  // skip to prevent duplicate alerts when called multiple times at login.
+  if (!silent && checkRecallsOnLogin._running) return;
+  if (!silent) checkRecallsOnLogin._running = true;
   try {
     // Load both recall sources in parallel:
     // 1. recalls table — FDA/RASFF/manual recalls
@@ -8670,6 +8735,16 @@ async function checkRecallsOnLogin(silent = false) {
     }
     loginRecallMatches = Array.from(_matchDedupeMap.values());
 
+    // Final safety dedup by recall id — catches any residual duplicates from
+    // multiple recall sources resolving to the same event
+    const seenIds = new Set();
+    loginRecallMatches = loginRecallMatches.filter(m => {
+      const id = m.recall.id;
+      if (id && seenIds.has(id)) return false;
+      if (id) seenIds.add(id);
+      return true;
+    });
+
     // ── #2: Manufacturer push → cross-reference engine ──────────
     // recall_events don't trigger the DB sweep (only recalls table does).
     // For any pushed recall that matched scans, persist those matches now.
@@ -8743,8 +8818,11 @@ async function checkRecallsOnLogin(silent = false) {
     }
   } catch(e) {
     console.warn('checkRecallsOnLogin error:', e);
+  } finally {
+    if (!silent) checkRecallsOnLogin._running = false;
   }
 }
+checkRecallsOnLogin._running = false;
 
 function goToRecallsFromLogin() {
   dismissLoginRecall();
@@ -9947,46 +10025,152 @@ function closeQuickCheck() {
 }
 
 async function runQuickCheck() {
-  const q = document.getElementById('quick-check-input').value.trim().toLowerCase();
-  const el = document.getElementById('quick-check-result');
-  if (!q) { el.innerHTML = ''; return; }
+  const q   = document.getElementById('quick-check-input').value.trim();
+  const el  = document.getElementById('quick-check-result');
+  const isNO = currentLang === 'no';
+  if (q.length < 2) { el.innerHTML = ''; return; }
+  const qLow = q.toLowerCase();
+
+  el.innerHTML = `<div style="color:var(--muted);font-size:12px;">Checking…</div>`;
 
   try {
-    const { data: recalls } = await sb.from('recalls').select('*').eq('active', true).eq('organisation_id', _currentOrgId);
-    if (!recalls || !recalls.length) {
-      el.innerHTML = '<span style="color:var(--accent);">✓ No active recalls in system.</span>';
-      return;
-    }
-    // Use a synthetic scan record to run fuzzy matching
-    const syntheticScan = { lot_number: q, product_name: q, barcode_number: q, batch_number: '' };
+    // Run both queries in parallel — scan history + active recalls
+    const cutoff = new Date(Date.now() - 180 * 86400000).toISOString();
+    const [scansRes, recallsRes, eventRecallsRes] = await Promise.all([
+      sb.from('scans')
+        .select('id,product_name,lot_number,barcode_number,store_name,store_id,quantity,created_at,removed_from_shelf_at,recall_resolved,scanned_by,label_text')
+        .eq('organisation_id', _currentOrgId)
+        .gte('created_at', cutoff)
+        .order('created_at', { ascending: false })
+        .limit(500),
+      sb.from('recalls').select('*').eq('active', true).eq('organisation_id', _currentOrgId),
+      _currentOrgId
+        ? sb.from('recall_distributions')
+            .select('recall_event_id, recall_events!inner(id, product_name, lot_number, reason, severity, is_drill)')
+            .eq('retailer_org_id', _currentOrgId)
+            .eq('recall_events.is_drill', false)
+        : Promise.resolve({ data: [] }),
+    ]);
+
+    const allScans = scansRes.data || [];
+    const recalls  = [
+      ...(recallsRes.data || []),
+      ...(eventRecallsRes.data || []).map(d => ({
+        id: d.recall_events.id, product_name: d.recall_events.product_name,
+        lot_number: d.recall_events.lot_number, description: d.recall_events.reason,
+        source: 'manufacturer_push', active: true,
+      })),
+    ];
+
+    // ── MATCH SCANS ──────────────────────────────────────────────
+    // A scan matches the query if the lot, barcode, product name, or label_text contains it
+    const matchedScans = allScans.filter(s => {
+      const lot     = (s.lot_number      || '').toLowerCase();
+      const barcode = (s.barcode_number  || '').toLowerCase();
+      const product = (s.product_name    || '').toLowerCase();
+      const label   = (s.label_text      || '').toLowerCase();
+      if (lot     && (lot.includes(qLow) || qLow.includes(lot)))     return true;
+      if (barcode && (barcode.includes(qLow) || qLow.includes(barcode))) return true;
+      if (product.includes(qLow) && q.length >= 4)                   return true;
+      if (label   && label.includes(qLow) && q.length >= 4)          return true;
+      return false;
+    });
+
+    // ── MATCH RECALLS ────────────────────────────────────────────
+    const syntheticScan = { lot_number: q, product_name: q, barcode_number: q, label_text: q };
     const exactRecalls    = recalls.filter(r => recallMatchLevel(syntheticScan, r).level === 'exact');
     const possibleRecalls = recalls.filter(r => recallMatchLevel(syntheticScan, r).level === 'possible');
+    const rawRecalls      = recalls.filter(r => recallMatchLevel(syntheticScan, r).level === 'raw');
+    const hasRecallMatch  = exactRecalls.length + possibleRecalls.length + rawRecalls.length > 0;
 
-    if (exactRecalls.length || possibleRecalls.length) {
-      let html = '';
-      if (exactRecalls.length) {
-        html += `<div style="color:var(--danger);font-weight:600;margin-bottom:8px;">${exactRecalls.length===1?t('hist.exactMatches',{n:1}):t('hist.exactMatchesPlural',{n:exactRecalls.length})}</div>`;
-        html += exactRecalls.map(m =>
-          `<div style="padding:8px 10px;background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.3);border-radius:6px;margin-bottom:6px;">
-            <strong>${esc(m.product_name || '—')}</strong>${m.lot_number ? ` · ${t('card.lotLabel')} <code style="color:var(--danger)">${esc(m.lot_number)}</code>` : ''}
-            ${m.description ? `<br><span style="font-size:11px;color:var(--muted);">${esc(m.description.slice(0,120))}</span>` : ''}
-          </div>`).join('');
-      }
-      if (possibleRecalls.length) {
-        html += `<div style="color:var(--warn);font-weight:600;margin-bottom:8px;margin-top:${exactRecalls.length?'10px':'0'};">${possibleRecalls.length===1?t('hist.possibleMatches',{n:1}):t('hist.possibleMatchesPlural',{n:possibleRecalls.length})}</div>`;
-        html += `<div style="font-size:11px;color:var(--muted);margin-bottom:8px;">${currentLang==='no'?'Partinummeret du skrev er likt men ikke identisk med et tilbakekalt parti. Dette kan skyldes OCR-feil — verifiser mot det fysiske produktet.':'The lot number you entered is similar but not identical to a recalled lot. This may be an OCR or transcription error — verify the physical product.'}</div>`;
-        html += possibleRecalls.map(m =>
-          `<div style="padding:8px 10px;background:rgba(245,166,35,0.08);border:1px solid rgba(245,166,35,0.35);border-radius:6px;margin-bottom:6px;">
-            <strong>${esc(m.product_name || '—')}</strong> · ${t('card.lotLabel')} <code style="color:var(--warn)">${esc(m.lot_number || '—')}</code>
-            ${m.description ? `<br><span style="font-size:11px;color:var(--muted);">${esc(m.description.slice(0,120))}</span>` : ''}
-          </div>`).join('');
-      }
-      el.innerHTML = html;
-    } else {
-      el.innerHTML = `<span style="color:var(--accent);">✓ ${currentLang==='no'?`Ingen tilbakekallingsttreff funnet for «<strong>${esc(q)}</strong>»`:`No recall matches found for "<strong>${esc(q)}</strong>"`}</span>`;
+    if (!matchedScans.length && !hasRecallMatch) {
+      el.innerHTML = `
+        <div style="padding:14px 0;text-align:center;">
+          <div style="font-size:22px;margin-bottom:8px;">🔍</div>
+          <div style="font-size:13px;color:var(--muted);">
+            ${isNO ? `Ingen poster funnet for «${esc(q)}»` : `No records found for "${esc(q)}"`}
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px;opacity:0.7;">
+            ${isNO ? 'Ingen aktive tilbakekall og ingen skanning i de siste 180 dagene.' : 'No active recalls and no scans in the last 180 days.'}
+          </div>
+        </div>`;
+      return;
     }
+
+    // ── RECALL ALERT (always first) ──────────────────────────────
+    let html = '';
+    if (exactRecalls.length) {
+      html += exactRecalls.map(r => `
+        <div style="padding:12px 14px;background:rgba(255,92,92,0.1);border:1.5px solid rgba(255,92,92,0.5);border-radius:10px;margin-bottom:10px;">
+          <div style="font-size:11px;font-weight:700;color:var(--danger);letter-spacing:0.07em;margin-bottom:4px;">⚠ ${isNO ? 'AKTIVT TILBAKEKALL' : 'ACTIVE RECALL'}</div>
+          <div style="font-weight:700;color:var(--text);font-size:13px;">${esc(r.product_name||'—')}</div>
+          ${r.lot_number ? `<div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--danger);margin-top:2px;">${isNO?'Partinummer':'Lot'}: ${esc(r.lot_number)}</div>` : ''}
+          ${r.description ? `<div style="font-size:11px;color:var(--muted);margin-top:4px;">${esc(r.description.slice(0,120))}</div>` : ''}
+          <div style="font-size:11px;color:var(--danger);font-weight:600;margin-top:6px;">
+            ${isNO ? 'Fjern produktet fra hylla umiddelbart. Åpne Historikk for å fullføre tilbaketrekkingsresponsen.' : 'Remove product from shelf immediately. Open History to complete the recall response.'}
+          </div>
+        </div>`).join('');
+    }
+
+    if (possibleRecalls.length) {
+      html += possibleRecalls.map(r => `
+        <div style="padding:10px 14px;background:rgba(245,166,35,0.08);border:1px solid rgba(245,166,35,0.4);border-radius:10px;margin-bottom:10px;">
+          <div style="font-size:11px;font-weight:700;color:var(--warn);letter-spacing:0.07em;margin-bottom:4px;">~ ${isNO ? 'MULIG TILBAKEKALL' : 'POSSIBLE RECALL'}</div>
+          <div style="font-weight:700;color:var(--text);font-size:13px;">${esc(r.product_name||'—')}</div>
+          ${r.lot_number ? `<div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--warn);margin-top:2px;">${isNO?'Tilbakekalt parti':'Recalled lot'}: ${esc(r.lot_number)}</div>` : ''}
+          <div style="font-size:11px;color:var(--warn);margin-top:5px;">${isNO ? 'Verifiser partinummeret mot det fysiske produktet.' : 'Verify the lot code against the physical product.'}</div>
+        </div>`).join('');
+    }
+
+    // ── SHELF STATUS ─────────────────────────────────────────────
+    if (matchedScans.length) {
+      const onShelf  = matchedScans.filter(s => !s.removed_from_shelf_at && !s.recall_resolved);
+      const removed  = matchedScans.filter(s => s.removed_from_shelf_at || s.recall_resolved);
+      const byStore  = {};
+      onShelf.forEach(s => {
+        const key = s.store_name || (isNO ? 'Ukjent butikk' : 'Unknown store');
+        if (!byStore[key]) byStore[key] = { units: 0, date: s.created_at, by: s.scanned_by };
+        byStore[key].units += (s.quantity || 1);
+        if (s.created_at > byStore[key].date) byStore[key].date = s.created_at;
+      });
+      const storeEntries = Object.entries(byStore);
+
+      if (onShelf.length > 0) {
+        const urgentStyle = exactRecalls.length
+          ? 'background:rgba(255,92,92,0.07);border-color:rgba(255,92,92,0.3);'
+          : 'background:rgba(52,211,153,0.05);border-color:rgba(52,211,153,0.2);';
+        html += `
+          <div style="padding:12px 14px;border:1px solid;border-radius:10px;margin-bottom:10px;${urgentStyle}">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+              <div style="width:8px;height:8px;border-radius:50%;background:${exactRecalls.length?'var(--danger)':'var(--accent)'};">&nbsp;</div>
+              <div style="font-size:12px;font-weight:700;color:${exactRecalls.length?'var(--danger)':'var(--accent)'};">
+                ${isNO ? `${onShelf.length} post${onShelf.length!==1?'er':''} på hylla` : `${onShelf.length} record${onShelf.length!==1?'s':''} on shelf`}
+              </div>
+            </div>
+            ${storeEntries.map(([store, info]) => `
+              <div style="padding:7px 10px;background:var(--surface2);border-radius:7px;margin-bottom:6px;font-size:12px;">
+                <div style="font-weight:600;color:var(--text);">${esc(store)}</div>
+                <div style="color:var(--muted);font-size:11px;margin-top:2px;">
+                  ${info.units} unit${info.units!==1?'s':''} · ${fmtDate(info.date)}${info.by?' · '+esc(info.by):''}
+                </div>
+              </div>`).join('')}
+          </div>`;
+      }
+
+      if (removed.length > 0) {
+        html += `
+          <div style="padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:10px;margin-bottom:10px;">
+            <div style="font-size:11px;color:var(--muted);">
+              ${isNO ? `${removed.length} post${removed.length!==1?'er':''} fjernet / bekreftet` : `${removed.length} record${removed.length!==1?'s':''} removed / resolved`}
+            </div>
+          </div>`;
+      }
+    }
+
+    el.innerHTML = html || `<div style="color:var(--muted);font-size:12px;">${isNO?'Ingen resultater.':'No results.'}</div>`;
+
   } catch(e) {
-    el.innerHTML = `<span style="color:var(--muted);">Error checking recalls: ${e.message}</span>`;
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;">Error: ${e.message}</div>`;
   }
 }
 
