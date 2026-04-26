@@ -5495,81 +5495,148 @@ async function signUp() {
 }
 
 // ── TERMINOLOGY OVERLAY ───────────────────────────────────────
-function openTerminologyOverlay() {
-  const isUS = _userRegion === 'us';
-  const isNO = !isUS;
+function openTerminologyOverlay(regionOverride) {
+  // Language follows the user's current language setting (currentLang = 'en'|'no')
+  // Region follows _userRegion unless overridden by the toggle inside the overlay
+  const lang = currentLang || 'en';
+  const isNO = lang === 'no';
+  const showUS = regionOverride !== undefined ? regionOverride : (_userRegion === 'us');
 
-  const term = (name, def, detail = '', reg = '') => `
+  // Helper builders — written in the user's chosen language, regulatory refs switch with region toggle
+  const term = (nameNO, nameEN, defNO, defEN, detailNO = '', detailEN = '', reg = '') => `
     <div style="padding:14px 0;border-bottom:1px solid var(--border);">
-      <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:14px;color:var(--text);margin-bottom:3px;">${name}
+      <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:14px;color:var(--text);margin-bottom:3px;">
+        ${isNO ? nameNO : nameEN}
         ${reg ? `<span style="font-size:10px;font-family:'DM Mono',monospace;color:var(--accent);font-weight:400;margin-left:6px;">${reg}</span>` : ''}
       </div>
-      <div style="font-size:13px;color:var(--muted);line-height:1.65;margin-bottom:${detail?'5px':'0'};">${def}</div>
-      ${detail ? `<div style="font-size:11px;color:rgba(110,175,158,0.65);line-height:1.6;">${detail}</div>` : ''}
+      <div style="font-size:13px;color:var(--muted);line-height:1.65;margin-bottom:${(isNO?detailNO:detailEN)?'5px':'0'};">${isNO ? defNO : defEN}</div>
+      ${(isNO ? detailNO : detailEN) ? `<div style="font-size:11px;color:var(--muted);opacity:0.75;line-height:1.6;">${isNO ? detailNO : detailEN}</div>` : ''}
     </div>`;
 
-  const section = title => `<div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--accent);text-transform:uppercase;letter-spacing:0.1em;font-weight:700;padding-top:20px;padding-bottom:6px;">${title}</div>`;
+  const section = (titleNO, titleEN) =>
+    `<div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--accent);text-transform:uppercase;letter-spacing:0.1em;font-weight:700;padding-top:20px;padding-bottom:6px;">${isNO ? titleNO : titleEN}</div>`;
+
+  // Regulatory refs switch with the region toggle (independent of language)
+  const r = (no, us) => showUS ? us : no;
 
   document.getElementById('terminology-content').innerHTML = `
-    ${section(isNO ? 'Tilbaketrekkingskjeden (5 steg)' : 'Recall response chain (5 steps)')}
-    ${term(isNO ? 'Varslet / Notified' : 'Notified',
-      isNO ? 'Butikken har mottatt tilbaketrekkingsvarselet. Settes automatisk når et tilbaketrekk sendes.' : 'The store has received the recall alert. Set automatically when a recall is pushed.',
-      isNO ? 'Betyr ikke at noen ansatt har sett varselet — bare at det ble levert. Tidsstempelet er den juridiske posten for når butikken ble informert.' : 'Does not mean any staff member has seen it — only that it was delivered. The timestamp is the legal record of when the store was informed.',
-      isNO ? 'Matloven §16' : 'FDA 21 CFR 7.46')}
-    ${term(isNO ? 'Bekreftet / Acknowledged' : 'Acknowledged',
-      isNO ? 'Et teammedlem har åpnet varselet og bekreftet at de har lest og forstått det.' : 'A staff member has opened the alert and confirmed they have read and understood it.',
-      isNO ? 'Første steg som krever menneskelig handling. Navn og tidsstempel registreres.' : 'First step requiring a human action. The person\'s name and timestamp are recorded.',
-      isNO ? 'Matloven §16' : 'FDA 21 CFR 7.46')}
-    ${term(isNO ? 'Fjernet fra hylla / Pulled from shelf' : 'Pulled from shelf',
-      isNO ? 'Ansatte har fysisk lokalisert og fjernet alle enheter av det berørte produktet fra hyllene.' : 'Staff have physically located and removed all affected units from all shelf areas.',
-      isNO ? 'Antall enheter fjernet og hylleposisjon registreres. Oppretter den juridiske posten for at produktet er fjernet fra offentlig tilgang.' : 'Units removed and shelf location recorded. Creates the legal record that the product was removed from public access.',
-      '')}
-    ${term(isNO ? 'Kastet / Disposed' : 'Disposed',
-      isNO ? 'Det fjernede produktet er karantenelagt, returnert til produsenten eller destruert.' : 'Removed product has been quarantined, returned to manufacturer, or destroyed.',
-      isNO ? 'Destruksjon er ikke påkrevd — karantene og retur til produsent kvalifiserer.' : 'Destruction is not required — quarantine and return to manufacturer both qualify.',
-      '')}
-    ${term(isNO ? 'Endelig bekreftet / Confirmed' : 'Confirmed',
-      isNO ? 'Butikksjefen eller utpekt koordinator har gjennomgått alle steg og bekreftet at tilbaketrekkingsresponsen er fullstendig for denne butikken.' : 'The store manager has reviewed all steps and confirmed the recall response is complete for this store.',
-      isNO ? 'Siste steg. Når bekreftet, låses butikkens svarpost. Navn, rolle og tidsstempel registreres.' : 'Final step. Once confirmed, the store\'s record is locked. Staff name, role, and timestamp are recorded.',
-      isNO ? 'Matloven §16' : 'FDA 21 CFR 7.55')}
 
-    ${section(isNO ? 'Partinummer og sporing' : 'Lot codes & traceability')}
-    ${term(isNO ? 'Partinummer' : 'TLC (Traceability Lot Code)',
-      isNO ? 'Unik alfanumerisk identifikator tildelt en spesifikk produksjonsbatch. Offisiell Mattilsynet-terminologi er "partinummer".' : 'The unique identifier assigned to a specific production batch of food.',
-      isNO ? 'Batch\'d bruker "partinummer" i alle norske visninger i samsvar med Mattilsynets offisielle terminologi.' : 'Under FSMA 204, a TLC must be recorded at every Critical Tracking Event. Batch\'d captures it at shelf placement.',
-      isNO ? 'Matloven §14' : 'FSMA 204 §1.1330')}
-    ${term(isNO ? 'Hylleplassering' : 'Shelf placement',
-      isNO ? 'Handlingen der en ansatt plasserer et produkt på en hylle. I Batch\'d er dette utløseren for å opprette en sporingspost.' : 'The act of a staff member placing a product onto a store shelf — the trigger for creating a traceability record.',
-      isNO ? 'Hver post fanger: produktnavn, partinummer, utløpsdato, butikk, hylle, antall enheter, ansattnavn og tidsstempel.' : 'Each record captures: product name, lot code, expiry, store, shelf, units, staff member name, and timestamp.',
-      isNO ? 'Matloven §14' : 'FSMA 204 CTE — Receiving')}
-    ${term('GS1-128 / Application Identifier',
-      isNO ? 'Standardisert strekkodeformat som koder inn flere dataelementer i én strekkode: partinummer (AI 10), utløpsdato (AI 17), produksjonsdato (AI 11), mengde (AI 37).' : 'Standardised barcode encoding multiple data elements: lot number (AI 10), expiry (AI 17), production date (AI 11), quantity (AI 37).',
-      isNO ? 'Én GS1-128-skanning i Batch\'d henter alle kodede AIs samtidig.' : 'A single GS1-128 scan in Batch\'d captures all encoded AIs simultaneously.',
+    <!-- Region toggle -->
+    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:10px;margin-bottom:4px;">
+      <span style="font-size:11px;font-family:'DM Mono',monospace;color:var(--muted);">${isNO ? 'Regelverk:' : 'Regulations:'}</span>
+      <div style="display:flex;gap:6px;">
+        <button onclick="openTerminologyOverlay(false)"
+          style="font-size:11px;font-family:'DM Mono',monospace;padding:4px 12px;border-radius:6px;cursor:pointer;font-weight:600;transition:all 0.15s;
+            ${!showUS ? 'background:var(--accent);color:#04120e;border:none;' : 'background:none;border:1px solid var(--border);color:var(--muted);'}">
+          🇳🇴 ${isNO ? 'Norge / Mattilsynet' : 'Norway / Mattilsynet'}
+        </button>
+        <button onclick="openTerminologyOverlay(true)"
+          style="font-size:11px;font-family:'DM Mono',monospace;padding:4px 12px;border-radius:6px;cursor:pointer;font-weight:600;transition:all 0.15s;
+            ${showUS ? 'background:var(--accent);color:#04120e;border:none;' : 'background:none;border:1px solid var(--border);color:var(--muted);'}">
+          🇺🇸 ${isNO ? 'USA / FDA' : 'USA / FDA'}
+        </button>
+      </div>
+    </div>
+
+    ${section('Tilbaketrekkingskjeden (5 steg)', 'Recall response chain (5 steps)')}
+
+    ${term('Varslet', 'Notified',
+      'Butikken har mottatt tilbaketrekkingsvarselet. Settes automatisk når et tilbaketrekk sendes.',
+      'The store has received the recall alert. Set automatically when a recall is pushed.',
+      'Betyr ikke at noen ansatt har sett varselet — bare at det ble levert. Tidsstempelet er den juridiske posten for når butikken ble informert.',
+      'Does not mean any staff member has seen it — only that it was delivered. The timestamp is the legal record of when the store was informed.',
+      r('Matloven §16', 'FDA 21 CFR 7.46'))}
+
+    ${term('Bekreftet', 'Acknowledged',
+      'Et teammedlem har åpnet varselet og bekreftet at de har lest og forstått det.',
+      'A staff member has opened the alert and confirmed they have read and understood it.',
+      'Første steg som krever menneskelig handling. Navn og tidsstempel registreres.',
+      "First step requiring a human action. The person's name and timestamp are recorded.",
+      r('Matloven §16', 'FDA 21 CFR 7.46'))}
+
+    ${term('Fjernet fra hylla', 'Pulled from shelf',
+      'Ansatte har fysisk lokalisert og fjernet alle enheter av det berørte produktet fra hyllene.',
+      'Staff have physically located and removed all affected units from all shelf areas.',
+      'Antall enheter fjernet og hylleposisjon registreres. Oppretter den juridiske posten for at produktet er fjernet fra offentlig tilgang.',
+      'Units removed and shelf location recorded. Creates the legal record that the product was removed from public access.',
+      r('Matloven §16', 'FDA 21 CFR Part 7'))}
+
+    ${term('Kastet', 'Disposed',
+      'Det fjernede produktet er karantenelagt, returnert til produsenten eller destruert.',
+      'Removed product has been quarantined, returned to manufacturer, or destroyed.',
+      'Destruksjon er ikke påkrevd — karantene og retur til produsent kvalifiserer.',
+      'Destruction is not required — quarantine and return to manufacturer both qualify.',
+      '')}
+
+    ${term('Endelig bekreftet', 'Confirmed',
+      'Butikksjefen eller utpekt koordinator har bekreftet at tilbaketrekkingsresponsen er fullstendig for denne butikken.',
+      'The store manager has confirmed the recall response is complete for this store.',
+      'Siste steg. Når bekreftet, låses butikkens svarpost. Navn, rolle og tidsstempel registreres.',
+      "Final step. Once confirmed, the store's record is locked. Staff name, role, and timestamp are recorded.",
+      r('Matloven §16', 'FDA 21 CFR 7.55'))}
+
+    ${section('Partinummer og sporing', 'Lot codes & traceability')}
+
+    ${term('Partinummer (TLC)', 'TLC (Traceability Lot Code)',
+      'Unik alfanumerisk identifikator tildelt en spesifikk produksjonsbatch. Offisiell Mattilsynet-terminologi er "partinummer".',
+      'The unique identifier assigned to a specific production batch of food.',
+      'Batch\'d bruker "partinummer" i alle norske visninger i samsvar med Mattilsynets offisielle terminologi.',
+      'Under FSMA 204, a TLC must be recorded at every Critical Tracking Event. Batch\'d captures it at shelf placement.',
+      r('Matloven §14', 'FSMA 204 §1.1330'))}
+
+    ${term('Hylleplassering', 'Shelf placement',
+      'Handlingen der en ansatt plasserer et produkt på en hylle — utløseren for å opprette en sporingspost i Batch\'d.',
+      "The act of a staff member placing a product onto a store shelf — the trigger for creating a traceability record in Batch'd.",
+      'Hver post fanger: produktnavn, partinummer, utløpsdato, butikk, hylle, antall enheter, ansattnavn og tidsstempel.',
+      'Each record captures: product name, lot code, expiry, store, shelf, units, staff member name, and timestamp.',
+      r('Matloven §14', 'FSMA 204 CTE — Receiving'))}
+
+    ${term('GS1-128 / Applikasjonsidentifikator', 'GS1-128 / Application Identifier',
+      'Standardisert strekkodeformat som koder inn flere dataelementer i én strekkode: partinummer (AI 10), utløpsdato (AI 17), produksjonsdato (AI 11), mengde (AI 37).',
+      'Standardised barcode encoding multiple data elements: lot number (AI 10), expiry (AI 17), production date (AI 11), quantity (AI 37).',
+      'Én GS1-128-skanning i Batch\'d henter alle kodede AIs samtidig.',
+      'A single GS1-128 scan in Batch\'d captures all encoded AIs simultaneously.',
       'GS1 Global Spec')}
-    ${term(isNO ? 'Parti utilgjengelig / Lot unavailable' : 'Lot code unavailable',
-      isNO ? 'Brukes når partinummeret ikke er trykket på emballasjen eller ikke kan leses.' : 'Used when the lot code is not printed on the packaging or cannot be read.',
-      isNO ? 'Aktivering av denne bryteren krever at utløpsdatoen angis i stedet. Regnes ikke som en komplett sporingspost.' : 'Enabling this toggle requires the expiry date to be entered instead. Not counted as a complete traceability record.',
+
+    ${term('Parti utilgjengelig', 'Lot code unavailable',
+      'Brukes når partinummeret ikke er trykket på emballasjen eller ikke kan leses.',
+      'Used when the lot code is not printed on the packaging or cannot be read.',
+      'Aktivering av denne bryteren krever at utløpsdatoen angis i stedet. Regnes ikke som en komplett sporingspost.',
+      'Enabling this toggle requires the expiry date to be entered instead. Not counted as a complete traceability record.',
       '')}
 
-    ${section(isNO ? 'Etterlevelse og dokumenter' : 'Compliance & documents')}
-    ${term(isNO ? 'Felles tilbakekallingsrapport' : 'Joint completion report',
-      isNO ? 'Formelt dokument generert av Batch\'d når alle butikker har nådd "Bekreftet"-status. Navngir begge parter.' : 'Formal document generated when all stores reach Confirmed. Names both the manufacturer and retailer.',
-      isNO ? 'Inneholder: tilbaketrekkingsdetaljer, per-butikk responstab med tidsstempler, revisjonslogg og signaturblokker. Formatert for innsending til tilsynsmyndigheter.' : 'Contains: recall details, per-store response table with timestamps, audit log, and signature blocks. Formatted for regulatory submission.',
+    ${section('Etterlevelse og dokumenter', 'Compliance & documents')}
+
+    ${term('Felles tilbakekallingsrapport', 'Joint completion report',
+      'Formelt dokument generert av Batch\'d når alle butikker har nådd "Endelig bekreftet"-status.',
+      'Formal document generated when all stores reach Confirmed status.',
+      'Inneholder: tilbaketrekkingsdetaljer, per-butikk responstab med tidsstempler, revisjonslogg og signaturblokker.',
+      'Contains: recall details, per-store response table with timestamps, audit log, and signature blocks. Formatted for regulatory submission.',
       '')}
-    ${term(isNO ? 'Revisjonsspor / Audit trail' : 'Audit trail',
-      isNO ? 'Automatisk vedlikeholdt, tidsstemplet logg over hver handling knyttet til en tilbaketrekkingshendelse.' : 'Automatically maintained, timestamped log of every action taken on a recall event.',
-      isNO ? 'Kan ikke redigeres etter at tilbaketrekket er avsluttet. Primær bevisdokumentasjon for myndighetstilsyn.' : 'Cannot be edited once the recall is closed. Primary evidence document for regulatory inspections.',
+
+    ${term('Revisjonsspor', 'Audit trail',
+      'Automatisk vedlikeholdt, tidsstemplet logg over hver handling knyttet til en tilbaketrekkingshendelse.',
+      'Automatically maintained, timestamped log of every action taken on a recall event.',
+      'Kan ikke redigeres etter at tilbaketrekket er avsluttet. Primær bevisdokumentasjon for myndighetstilsyn.',
+      'Cannot be edited once the recall is closed. Primary evidence document for regulatory inspections.',
       '')}
-    ${term(isNO ? 'Mock tilbaketrekkingsøvelse / Drill' : 'Mock recall drill',
-      isNO ? 'Simulert tilbaketrekkingsøvelse for opplæring og beredskapstesting. Inget ekte produkt er berørt.' : 'A simulated recall exercise for training or preparedness testing. No real product is affected.',
-      isNO ? 'Øvelsesrekord er tydelig merket. Øvingssertifikat genereres automatisk ved fullføring.' : 'Drill records are clearly labelled throughout the platform. A drill certificate is generated automatically on completion.',
-      isNO ? 'Mattilsynet beredskapsplan' : 'FDA 21 CFR 7.49')}
+
+    ${term('Mock tilbaketrekkingsøvelse', 'Mock recall drill',
+      'Simulert tilbaketrekkingsøvelse for opplæring og beredskapstesting. Inget ekte produkt er berørt.',
+      'A simulated recall exercise for training or preparedness testing. No real product is affected.',
+      'Øvelsesrekord er tydelig merket. Øvingssertifikat genereres automatisk ved fullføring.',
+      'Drill records are clearly labelled throughout the platform. A drill certificate is generated on completion.',
+      r('Mattilsynet beredskapsplan', 'FDA 21 CFR 7.49'))}
 
     <div style="margin-top:20px;padding:12px 14px;background:var(--surface);border:1px solid var(--border);border-radius:9px;font-size:11px;color:var(--muted);line-height:1.65;">
       ${isNO
-        ? '<strong style="color:var(--text);">Juridisk merknad:</strong> Disse definisjonene beskriver hvordan termer brukes i Batch\'d-plattformen. Juridiske forpliktelser under Matloven og Mattilsynets regelverk forblir hos din organisasjon.'
-        : '<strong style="color:var(--text);">Legal note:</strong> These definitions describe how terms are used within the Batch\'d platform. Legal obligations under FDA, USDA FSIS, and FSMA 204 remain with your organisation.'}
+        ? '<strong style="color:var(--text);">Juridisk merknad:</strong> Disse definisjonene beskriver hvordan termer brukes i Batch\'d. Juridiske forpliktelser under Matloven og Mattilsynets regelverk forblir hos din organisasjon.'
+        : '<strong style="color:var(--text);">Legal note:</strong> These definitions describe how terms are used within Batch\'d. Legal obligations under ' + (showUS ? 'FDA, USDA FSIS, and FSMA 204' : 'Matloven and Mattilsynet') + ' remain with your organisation.'}
     </div>`;
+
+  // Update the overlay header to reflect current language
+  const header = document.querySelector('#terminology-overlay > div > div:first-child > div:first-child');
+  if (header) header.textContent = isNO ? 'Terminologi og hjelp' : 'Terminology & Help';
 
   document.getElementById('terminology-overlay').style.display = 'block';
   document.body.style.overflow = 'hidden';
@@ -13354,7 +13421,7 @@ const TRANSLATIONS = {
     // Drawer menu
     'drawer.navigate': 'Navigate', 'drawer.scan': 'Scan', 'drawer.history': 'History',
     'drawer.recalls': 'Recalls', 'drawer.settings': 'Settings',
-    'drawer.manager': 'Manager', 'drawer.signout': 'Sign out',
+    'drawer.manager': 'Manager', 'drawer.signout': 'Sign out', 'drawer.help': 'Help & Terminology',
     // Step badges, hints, overlays
     'step.badge1': 'Step 1/3', 'step.badge2': 'Step 2/3', 'step.badge3': 'Step 3/3',
     'p1.cameraHintLabel': "Hold product in front of camera — Batch'd will identify it automatically",
@@ -13602,7 +13669,7 @@ const TRANSLATIONS = {
     // Drawer menu
     'drawer.navigate': 'Navigasjon', 'drawer.scan': 'Skann', 'drawer.history': 'Historikk',
     'drawer.recalls': 'Tilbakekall', 'drawer.settings': 'Innstillinger',
-    'drawer.manager': 'Leder', 'drawer.signout': 'Logg ut',
+    'drawer.manager': 'Leder', 'drawer.signout': 'Logg ut', 'drawer.help': 'Hjelp og terminologi',
     // Step badges, hints, overlays
     'step.badge1': 'Steg 1/3', 'step.badge2': 'Steg 2/3', 'step.badge3': 'Steg 3/3',
     'p1.cameraHintLabel': 'Hold produktet foran kameraet — Batch\'d identifiserer det automatisk',
