@@ -3469,7 +3469,7 @@
           <div class="btn-row">
             <button class="btn btn-primary mode-barcode" id="btn-snap-barcode" onclick="snapBarcode()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg><span data-i18n="action.capture"> Capture</span></button>
             <button class="btn btn-ghost mode-barcode" id="btn-ai-barcode" onclick="snapAiBarcode()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><path d="M8 15h.01M12 15h.01M16 15h.01"/></svg><span data-i18n="action.aiRead"> AI Read</span></button>
-            <button class="btn btn-primary mode-ocr" id="btn-snap-ocr" onclick="snapOcr()" style="display:none;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg><span data-i18n="action.snapAnalyse"> Snap & Analyse</span></button>
+            <button class="btn btn-primary mode-ocr" id="btn-snap-ocr" onclick="snapOcr()" ontouchstart="_prewarmOcr()" onmousedown="_prewarmOcr()" style="display:none;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg><span data-i18n="action.snapAnalyse"> Snap &amp; Analyse</span></button>
             <button class="btn btn-ghost" id="btn-retake-barcode" onclick="retakeBarcode()" style="display:none;">↩ Retake</button>
           </div>
 
@@ -5308,6 +5308,14 @@ async function showApp(user) {
     loadStoresFromDB();
     loadTodayScanCount();
     syncOfflineQueue();
+    updateQueueBadge();
+
+    // Track last active timestamp — used by staff panel to show "last seen"
+    sb.from('user_settings').upsert({
+      user_id:        currentUser.id,
+      last_seen_at:   new Date().toISOString(),
+      last_seen_app:  'scanning_app',
+    }, { onConflict: 'user_id' }).catch(() => {});
 
     // initRecallSystem is now safe — external fetches run in background
     await initRecallSystem();
@@ -11564,6 +11572,31 @@ async function assessPhotoQuality(canvas) {
   }
 }
 
+// ── PRE-WARM OCR ──────────────────────────────────────────────
+// Called on touchstart/mousedown — before the snap even fires.
+// Starts the learned pattern lookup in parallel with the frame
+// capture, saving ~200-400ms on every scan.
+// The result is cached in _prewarmResult and consumed by snapOcr.
+let _prewarmResult = null;
+let _prewarmTs = 0;
+
+function _prewarmOcr() {
+  // Debounce — don't fire if called twice in the same 500ms
+  const now = Date.now();
+  if (now - _prewarmTs < 500) return;
+  _prewarmTs = now;
+  _prewarmResult = null;
+
+  const productName = document.getElementById('field-product-name')?.value?.trim() || '';
+  const barcodeNum  = document.getElementById('field-barcode')?.value?.trim() || '';
+  if (!productName && !barcodeNum) return;
+
+  // Fire the DB lookup immediately — cache result for snapOcr to use
+  lookupLearnedPattern(productName, barcodeNum || null, null, null)
+    .then(r => { _prewarmResult = r; })
+    .catch(() => {});
+}
+
 async function snapOcr() {
   // ── MULTI-FRAME TEMPORAL CONSENSUS ───────────────────────────
   // Captures 2 frames 250ms apart then runs OCR on both in parallel.
@@ -11623,10 +11656,15 @@ async function snapOcr() {
     };
   }
 
-  // Shared learned context — fetch once, use for both OCR calls
+  // Shared learned context — use pre-warmed result if available (saves ~200-400ms),
+  // otherwise fetch fresh. Pre-warm fires on button touchstart/mousedown.
   const productName = document.getElementById('field-product-name').value.trim();
   const barcodeNum  = document.getElementById('field-barcode').value.trim();
-  const preLearn = await lookupLearnedPattern(productName, barcodeNum || null, null, null);
+  const prewarmAge  = Date.now() - _prewarmTs;
+  const preLearn = (_prewarmResult && prewarmAge < 3000)
+    ? _prewarmResult
+    : await lookupLearnedPattern(productName, barcodeNum || null, null, null);
+  _prewarmResult = null; // consume it
 
   // Run OCR on both frames in parallel — total time ≈ max(t1, t2), not t1+t2
   const [r1, r2] = await Promise.all([

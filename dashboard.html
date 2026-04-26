@@ -1079,13 +1079,27 @@ async function signOut() {
 async function initDashboard(user) {
   // Get org membership
   const { data: members } = await sb.from('organisation_members')
-    .select('organisation_id, role, store_id')
+    .select('organisation_id, role, store_id, active')
     .eq('user_id', user.id)
     .in('role', ['corp_admin', 'store_manager', 'staff']);
   const member = members?.[0];
 
   if (!member) {
     window.location.replace('https://app.batchdapp.com/signup');
+    return;
+  }
+
+  // Deactivated member — show clear message instead of access
+  if (member.active === false) {
+    document.getElementById('main-app').innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:40px;text-align:center;">
+        <div>
+          <div style="font-size:32px;margin-bottom:16px;">🔒</div>
+          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:20px;margin-bottom:8px;">Account deactivated</div>
+          <div style="font-size:14px;color:var(--muted);max-width:380px;">Your account has been deactivated by your organisation administrator. Contact them to restore access.</div>
+          <button onclick="sb.auth.signOut().then(()=>location.reload())" style="margin-top:20px;font-family:'DM Mono',monospace;font-size:12px;padding:10px 20px;border-radius:8px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;">Sign out</button>
+        </div>
+      </div>`;
     return;
   }
 
@@ -1102,6 +1116,13 @@ async function initDashboard(user) {
   _orgId    = member.organisation_id;
   _userRole = member.role;
   _storeId  = member.store_id || null;
+
+  // Track last active timestamp
+  sb.from('user_settings').upsert({
+    user_id:       user.id,
+    last_seen_at:  new Date().toISOString(),
+    last_seen_app: 'dashboard',
+  }, { onConflict: 'user_id' }).catch(() => {});
 
   const { data: org } = await sb.from('organisations')
     .select('name, region')
@@ -2920,6 +2941,35 @@ async function advanceAckStatus(ackId, status, recallEventId) {
   const btn = event?.target;
   const origText = btn?.textContent;
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
+
+  // ── Units pulled — required before marking as pulled ────────
+  // "Pulled" is the step that creates the legal record of removal.
+  // We need a quantity — even 0 is valid (product couldn't be found).
+  if (status === 'pulled') {
+    const unitsInput = document.getElementById(`units-${ackId}`);
+    const units = unitsInput ? parseInt(unitsInput.value) : NaN;
+    if (isNaN(units) || unitsInput?.value === '') {
+      if (btn) { btn.disabled = false; btn.textContent = origText; }
+      showToast('Please enter units removed (enter 0 if product was not found on shelf)', 'warn', 5000);
+      unitsInput?.focus();
+      unitsInput?.style && (unitsInput.style.borderColor = 'rgba(255,92,92,0.6)');
+      return;
+    }
+    // Save units at the same time as status advance
+    await sb.from('recall_acknowledgements').update({
+      status,
+      acknowledged_at:             new Date().toISOString(),
+      acknowledged_by:             (await sb.auth.getUser()).data.user?.id,
+      units_pulled:                units,
+      units_pulled_confirmed_at:   new Date().toISOString(),
+      units_pulled_confirmed_by:   (await sb.auth.getUser()).data.user?.id,
+    }).eq('id', ackId);
+    if (btn) { btn.disabled = false; btn.textContent = origText; }
+    showToast(`${units} unit${units !== 1 ? 's' : ''} recorded — step complete ✓`, 'ok', 3000);
+    renderRecalls();
+    return;
+  }
+
   const { error } = await sb.from('recall_acknowledgements').update({
     status, acknowledged_at: new Date().toISOString(),
     acknowledged_by: (await sb.auth.getUser()).data.user?.id,
@@ -3718,12 +3768,14 @@ async function renderStaff() {
   try {
 
   const [membersRes, storesRes, acceptedInvRes] = await Promise.all([
-    sb.from('organisation_members').select('user_id, role, joined_at, store_id').eq('organisation_id', _orgId),
+    sb.from('organisation_members').select('user_id, role, joined_at, store_id, active').eq('organisation_id', _orgId),
     sb.from('stores').select('id, name').eq('organisation_id', _orgId).eq('active', true),
     sb.from('invitations').select('email, role').eq('organisation_id', _orgId).eq('accepted', true),
   ]);
 
-  const members     = membersRes.data     || [];
+  const allMembers   = membersRes.data    || [];
+  const members      = allMembers.filter(m => m.active !== false);
+  const deactivated  = allMembers.filter(m => m.active === false);
   const stores      = storesRes.data      || [];
   const acceptedInv = acceptedInvRes.data || [];
 
@@ -3850,6 +3902,13 @@ async function renderStaff() {
                   </div>
                 </div>
                 <span class="recall-status status-resolved" style="flex-shrink:0;">Active</span>
+                <button onclick="deactivateMember('${m.user_id}', '${getEmail(m.role) || m.user_id}')"
+                  style="font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;margin-left:4px;flex-shrink:0;"
+                  onmouseenter="this.style.borderColor='var(--danger)';this.style.color='var(--danger)'"
+                  onmouseleave="this.style.borderColor='var(--border)';this.style.color='var(--muted)'"
+                  title="Deactivate — removes access without deleting scan history">
+                  Deactivate
+                </button>
               </div>`;}).join('')}
       </div>
     </div>
@@ -3868,10 +3927,59 @@ async function renderStaff() {
             <span class="recall-status status-active">Expired</span>
           </div>`).join('')}
       </div>
+    </div>` : ''}
+
+    ${deactivated.length > 0 ? `
+    <div class="panel" style="margin-top:14px;border-color:rgba(255,92,92,0.15);opacity:0.8;">
+      <div class="panel-header">
+        <div class="panel-title" style="color:var(--muted);">Deactivated accounts</div>
+        <div class="panel-sub">${deactivated.length} account${deactivated.length!==1?'s':''} — no access, history preserved</div>
+      </div>
+      <div class="panel-body">
+        ${deactivated.map(m => {
+          const email = getEmail(m.role) || m.user_id.slice(0,8) + '…';
+          return `
+          <div class="activity-item" style="opacity:0.65;">
+            <div class="activity-dot" style="background:var(--border);"></div>
+            <div class="activity-text">
+              <strong>${email}</strong>
+              <span class="role-badge">${m.role.replace(/_/g,' ')}</span>
+            </div>
+            <span class="recall-status" style="background:rgba(106,175,158,0.08);color:var(--muted);">Deactivated</span>
+          </div>`;
+        }).join('')}
+      </div>
     </div>` : ''}`;
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading staff: ${e.message}</div>`;
   }
+}
+
+async function deactivateMember(userId, identifier) {
+  const confirmed = confirm(
+    `Deactivate ${identifier}?\n\nThis removes their access to Batch'd immediately. Their scan history is preserved. You can reactivate them later by contacting support.`
+  );
+  if (!confirmed) return;
+
+  // Prevent self-deactivation
+  const { data: { user } } = await sb.auth.getUser();
+  if (userId === user?.id) {
+    showToast('You cannot deactivate your own account.', 'error', 4000);
+    return;
+  }
+
+  const { error } = await sb.from('organisation_members')
+    .update({ active: false })
+    .eq('user_id', userId)
+    .eq('organisation_id', _orgId);
+
+  if (error) {
+    showToast('Could not deactivate: ' + error.message, 'error', 4000);
+    return;
+  }
+
+  showToast(`${identifier} deactivated — access removed`, 'ok', 3000);
+  renderStaff();
 }
 
 function openInviteForm() {
