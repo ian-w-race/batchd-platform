@@ -12276,14 +12276,48 @@ async function recordManualCorrection(productName, barcodeNumber, correctedLot, 
 // 4. Inverted grayscale — catches laser-etched white-on-light codes
 
 async function preprocessImage(blob, targetWidth) {
+  // Standard resize + global contrast — used for Pass 0 localisation and product ID.
+  // Step 2 lot code extraction uses enhanceLotCodeRegion() instead (see below).
   return new Promise((resolve) => {
     const img = new Image();
     const url = URL.createObjectURL(blob);
     img.onload = () => {
-      const scale = targetWidth / img.width;
-      const w = targetWidth;
-      const h = Math.round(img.height * scale);
+      const w = Math.min(targetWidth, img.width);
+      const h = Math.round(img.height * (w / img.width));
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      canvas.toBlob(resolve, 'image/jpeg', 0.88);
+    };
+    img.onerror = () => resolve(blob);
+    img.src = url;
+  });
+}
 
+// ── STEP 2 LOT CODE IMAGE ENHANCEMENT ────────────────────────────
+// Applied ONLY to the blob sent to the OCR API — never to stored photos.
+// Implements CLAHE-style local contrast enhancement: divides the image into
+// a grid of tiles, equalises each tile's histogram independently, then blends.
+// This handles the critical case where the lot code is a dark inkjet stamp
+// on a dark background locally — global stretching misses this entirely.
+//
+// Pipeline:
+//   1. Resize to targetWidth
+//   2. Tile-based local histogram equalisation (CLAHE)
+//   3. Fixed contrast lift (1.25x) — recovers mid-tones post-equalisation
+//   4. Unsharp mask (sharpening) — critical for motion blur on phone cameras
+//   5. Optional: luminance inversion of very dark regions (for laser etch)
+async function enhanceLotCodeRegion(blob, targetWidth = 1600) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(blob);
+    img.onload = () => {
+      const w = Math.min(targetWidth, img.width * 2); // allow upscale for small crops
+      const h = Math.round(img.height * (w / img.width));
       const canvas = document.createElement('canvas');
       canvas.width = w; canvas.height = h;
       const ctx = canvas.getContext('2d');
@@ -12296,58 +12330,129 @@ async function preprocessImage(blob, targetWidth) {
         const imageData = ctx.getImageData(0, 0, w, h);
         const d = imageData.data;
 
-        // ── Pass 1: Adaptive histogram stretch ────────────────
-        // Find actual min/max luminance in the image, then stretch
-        // to fill 0–255. Critical for low-contrast inkjet codes on
-        // light cardboard — common in Norwegian grocery packaging.
-        let lo = 255, hi = 0;
-        for (let i = 0; i < d.length; i += 4) {
-          const lum = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
-          if (lum < lo) lo = lum;
-          if (lum > hi) hi = lum;
+        // ── STEP 1: Convert to luminance plane ──────────────────
+        const lum = new Float32Array(w * h);
+        for (let i = 0; i < w * h; i++) {
+          const r = d[i*4], g = d[i*4+1], b = d[i*4+2];
+          lum[i] = 0.299*r + 0.587*g + 0.114*b;
         }
-        // Only stretch if the range is genuinely narrow (low contrast image)
-        const range = hi - lo;
-        if (range > 0 && range < 200) {
-          const scale = 255 / range;
-          for (let i = 0; i < d.length; i += 4) {
-            d[i]   = Math.min(255, Math.max(0, (d[i]   - lo) * scale));
-            d[i+1] = Math.min(255, Math.max(0, (d[i+1] - lo) * scale));
-            d[i+2] = Math.min(255, Math.max(0, (d[i+2] - lo) * scale));
+
+        // ── STEP 2: CLAHE-style tiled local equalisation ─────────
+        // Divide into a grid of tiles. Each tile gets its own histogram
+        // equalised, then we interpolate at each pixel from the 4 nearest
+        // tile equalisations. This handles spatially varying contrast —
+        // the key property that global methods miss.
+        const TILES_X = 4, TILES_Y = 4;
+        const tileW = Math.ceil(w / TILES_X);
+        const tileH = Math.ceil(h / TILES_Y);
+        const clipLimit = 4.0; // CLAHE clip limit — prevents noise amplification
+
+        // Build per-tile CDF (cumulative distribution function)
+        const tileCDFs = [];
+        for (let ty = 0; ty < TILES_Y; ty++) {
+          const row = [];
+          for (let tx = 0; tx < TILES_X; tx++) {
+            const x0 = tx * tileW, y0 = ty * tileH;
+            const x1 = Math.min(x0 + tileW, w);
+            const y1 = Math.min(y0 + tileH, h);
+            const hist = new Int32Array(256);
+            let count = 0;
+            for (let py = y0; py < y1; py++) {
+              for (let px = x0; px < x1; px++) {
+                hist[Math.round(lum[py * w + px])]++;
+                count++;
+              }
+            }
+            // Clip histogram to prevent noise amplification
+            const clipVal = Math.round(clipLimit * count / 256);
+            let excess = 0;
+            for (let b = 0; b < 256; b++) {
+              if (hist[b] > clipVal) { excess += hist[b] - clipVal; hist[b] = clipVal; }
+            }
+            // Redistribute excess uniformly
+            const add = Math.floor(excess / 256);
+            for (let b = 0; b < 256; b++) hist[b] += add;
+            // Build CDF
+            const cdf = new Float32Array(256);
+            let cumul = 0;
+            for (let b = 0; b < 256; b++) {
+              cumul += hist[b];
+              cdf[b] = (cumul / count) * 255;
+            }
+            row.push(cdf);
+          }
+          tileCDFs.push(row);
+        }
+
+        // Interpolate per-pixel using bilinear blend of 4 tile CDFs
+        const equalised = new Float32Array(w * h);
+        for (let py = 0; py < h; py++) {
+          for (let px = 0; px < w; px++) {
+            // Pixel position in tile grid (can be fractional)
+            const gx = (px + 0.5) / tileW - 0.5;
+            const gy = (py + 0.5) / tileH - 0.5;
+            const tx0 = Math.max(0, Math.floor(gx)), tx1 = Math.min(TILES_X - 1, tx0 + 1);
+            const ty0 = Math.max(0, Math.floor(gy)), ty1 = Math.min(TILES_Y - 1, ty0 + 1);
+            const fx = gx - Math.floor(gx), fy = gy - Math.floor(gy);
+            const v = Math.round(lum[py * w + px]);
+            // Bilinear blend of the 4 nearest tile CDFs
+            const v00 = tileCDFs[ty0][tx0][v];
+            const v10 = tileCDFs[ty0][tx1][v];
+            const v01 = tileCDFs[ty1][tx0][v];
+            const v11 = tileCDFs[ty1][tx1][v];
+            equalised[py * w + px] =
+              v00 * (1-fx)*(1-fy) + v10 * fx*(1-fy) +
+              v01 * (1-fx)*fy     + v11 * fx*fy;
           }
         }
 
-        // ── Pass 2: Fixed contrast boost on top of stretch ────
-        const contrast = 1.3;
-        const intercept = 128 * (1 - contrast);
+        // Apply equalised luminance back to RGB, preserving colour ratios
+        for (let i = 0; i < w * h; i++) {
+          const orig = lum[i];
+          const eq   = equalised[i];
+          const scale = orig > 1 ? eq / orig : 1;
+          // Blend 60% equalised + 40% original — avoids over-processing
+          const blend = 0.6;
+          const factor = 1 + blend * (scale - 1);
+          d[i*4]   = Math.min(255, Math.max(0, d[i*4]   * factor));
+          d[i*4+1] = Math.min(255, Math.max(0, d[i*4+1] * factor));
+          d[i*4+2] = Math.min(255, Math.max(0, d[i*4+2] * factor));
+        }
+
+        // ── STEP 3: Fixed contrast lift (mid-tone recovery) ─────
+        const contrast = 1.25, intercept = 128 * (1 - contrast);
         for (let i = 0; i < d.length; i += 4) {
           d[i]   = Math.min(255, Math.max(0, d[i]   * contrast + intercept));
           d[i+1] = Math.min(255, Math.max(0, d[i+1] * contrast + intercept));
           d[i+2] = Math.min(255, Math.max(0, d[i+2] * contrast + intercept));
         }
+
         ctx.putImageData(imageData, 0, 0);
 
-        // ── Pass 3: Unsharp mask (edge enhancement) ───────────
+        // ── STEP 4: Unsharp mask (motion blur recovery) ─────────
+        // Lot code photos are often slightly blurry (hand movement at snap).
+        // Unsharp mask: subtract a blurred version from the original.
         const sCanvas = document.createElement('canvas');
         sCanvas.width = w; sCanvas.height = h;
         const sCtx = sCanvas.getContext('2d');
-        sCtx.filter = 'blur(1px)';
+        sCtx.filter = 'blur(1.2px)';
         sCtx.drawImage(canvas, 0, 0);
         const blurred = sCtx.getImageData(0, 0, w, h).data;
         const sharp = ctx.getImageData(0, 0, w, h);
         const sd = sharp.data;
-        const amount = 1.4; // slightly stronger than before since adaptive stretch handles base contrast
+        const sharpAmount = 1.6; // stronger than global — crops are small, noise is bounded
         for (let i = 0; i < sd.length; i += 4) {
-          sd[i]   = Math.min(255, Math.max(0, sd[i]   + amount * (sd[i]   - blurred[i])));
-          sd[i+1] = Math.min(255, Math.max(0, sd[i+1] + amount * (sd[i+1] - blurred[i+1])));
-          sd[i+2] = Math.min(255, Math.max(0, sd[i+2] + amount * (sd[i+2] - blurred[i+2])));
+          sd[i]   = Math.min(255, Math.max(0, sd[i]   + sharpAmount * (sd[i]   - blurred[i])));
+          sd[i+1] = Math.min(255, Math.max(0, sd[i+1] + sharpAmount * (sd[i+1] - blurred[i+1])));
+          sd[i+2] = Math.min(255, Math.max(0, sd[i+2] + sharpAmount * (sd[i+2] - blurred[i+2])));
         }
         ctx.putImageData(sharp, 0, 0);
+
       } catch(e) {
-        console.warn('Preprocessing skipped:', e);
+        // If canvas manipulation fails (e.g. cross-origin), return resized original
       }
 
-      canvas.toBlob(resolve, 'image/jpeg', 0.95);
+      canvas.toBlob(resolve, 'image/jpeg', 0.92);
     };
     img.onerror = () => resolve(blob);
     img.src = url;
@@ -12656,11 +12761,18 @@ async function extractCodesFromImage(blob, learnedContext) {
     }
 
     // ── PREPARE PRIMARY IMAGE ────────────────────────────────
-    // If localised: use a tight crop at high resolution — focused and precise.
-    // If not localised: use the full image at high resolution.
-    const primaryBlob = localisedCrop
-      ? await cropBlob(blob, localisedCrop.yStart, localisedCrop.yEnd, 1600)
-      : await preprocessImage(blob, 1600);
+    // Apply CLAHE-style enhancement to whatever we send to the API.
+    // If localised: crop first, then enhance the crop (most focused, most effective).
+    // If not localised: enhance the full image (still benefits from local contrast).
+    // IMPORTANT: enhanceLotCodeRegion is ONLY applied to the API blob — never to
+    // stored photos. productBlob / barcodeBlob saved to Supabase are untouched.
+    let primaryBlob;
+    if (localisedCrop) {
+      const rawCrop = await cropBlob(blob, localisedCrop.yStart, localisedCrop.yEnd, 1600);
+      primaryBlob = await enhanceLotCodeRegion(rawCrop, 1600);
+    } else {
+      primaryBlob = await enhanceLotCodeRegion(blob, 1600);
+    }
     const b64Primary = await blobToBase64(primaryBlob);
 
     // Build context hint from learned patterns — more specific as confidence grows
