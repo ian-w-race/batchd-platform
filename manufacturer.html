@@ -684,7 +684,13 @@ async function initPortal(user) {
     .eq('user_id', user.id)
     .maybeSingle();
 
-  if (!member) { showAuthMsg('No organisation found for this account. <a href="/manufacturer-signup.html" style="color:var(--accent);">Create one here →</a>'); return; }
+  if (!member) {
+    // No org found — redirect to signup instead of showing a dead-end error.
+    // This handles: magic-link logins that didn't complete setup, manual user
+    // creation without org assignment, and any other incomplete onboarding.
+    window.location.replace('https://app.batchdapp.com/signup');
+    return;
+  }
 
   // Only redirect staff — corp_admin can access manufacturer portal during development
   if (member.role === 'store_manager') {
