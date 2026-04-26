@@ -761,11 +761,14 @@ async function submitAccount() {
     password,
     options: {
       data: {
-        full_name:  `${firstName} ${lastName}`,
-        first_name: firstName,
-        last_name:  lastName,
-        user_type:  _type,
-      }
+        full_name:   `${firstName} ${lastName}`,    // scanning app reads this
+        name:        `${firstName} ${lastName}`,    // fallback alias
+        first_name:  firstName,
+        last_name:   lastName,
+        user_type:   _type,
+        region:      _region,                       // carried to scanning app
+      },
+      emailRedirectTo: null,  // no confirmation email — we auth immediately
     }
   });
 
@@ -851,12 +854,14 @@ async function submitOrg() {
     if (storeErr) console.warn('Store creation warning:', storeErr.message);
   }
 
-  // Create user_settings
+  // Create user_settings — write everything the scanning app needs so it
+  // doesn't prompt for region/language/recall setup again on first launch.
   await sb.from('user_settings').upsert({
-    user_id:             _userId,
-    region:              _region,
-    recall_source:       'both',
+    user_id:              _userId,
+    region:               _region,
+    recall_source:        'both',
     recall_lookback_days: 180,
+    onboarding_done:      true,   // ← prevents scanning app re-onboarding
   }, { onConflict: 'user_id' });
 
   setLoading('btn-org-next', false);
@@ -934,7 +939,9 @@ function launchApp() {
   if (_type === 'manufacturer') {
     window.location.href = 'https://app.batchdapp.com/manufacturer.html';
   } else {
-    window.location.href = 'https://app.batchdapp.com';
+    // Retailers always land in the corporate dashboard — not the scanning app.
+    // The scanning app is for staff invited BY the corp admin, not the admin themselves.
+    window.location.href = 'https://app.batchdapp.com/dashboard.html';
   }
 }
 
@@ -955,10 +962,11 @@ async function checkExistingSession() {
     const role = member.role;
     if (role === 'mfr_admin' || role === 'mfr_qa') {
       window.location.href = 'https://app.batchdapp.com/manufacturer.html';
-    } else if (role === 'staff') {
+    } else if (role === 'staff' || role === 'store_manager') {
       window.location.href = 'https://batchd-app.netlify.app';
     } else {
-      window.location.href = 'https://app.batchdapp.com';
+      // corp_admin → corporate dashboard
+      window.location.href = 'https://app.batchdapp.com/dashboard.html';
     }
     return;
   }

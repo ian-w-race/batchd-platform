@@ -5252,6 +5252,10 @@ async function initAuth() {
 async function showApp(user) {
   // Always update currentUser and refresh profile (handles re-auth)
   currentUser = user;
+  // Prefer full_name from signup metadata over raw email for display
+  currentUser._displayName = user.user_metadata?.full_name
+    || user.user_metadata?.name
+    || user.email;
   fetchUserProfile();
 
   // Prevent double-fire from onAuthStateChange
@@ -5262,8 +5266,10 @@ async function showApp(user) {
   document.getElementById('login-screen').classList.add('hidden');
   document.getElementById('session-expired').style.display = 'none';
   document.body.classList.add('scan-active');  // scan is the default view after login
-  document.getElementById('user-email').textContent = user.email;
-  if (typeof updateDrawerAccount === 'function') { updateDrawerAccount(user.email, localStorage.getItem('batched_region') || 'no'); }
+  document.getElementById('user-email').textContent = currentUser._displayName || user.email;
+  if (typeof updateDrawerAccount === 'function') {
+    updateDrawerAccount(currentUser._displayName || user.email, user.user_metadata?.region || localStorage.getItem('batched_region') || 'no');
+  }
 
   // Reset sign-in button in case it's stuck in loading state
   const signinBtn = document.getElementById('btn-signin');
@@ -6528,11 +6534,37 @@ async function maybeShowOnboarding() {
   // Check Supabase first (per-user, survives device switches)
   try {
     const { data } = await sb.from('user_settings')
-      .select('onboarding_done')
+      .select('onboarding_done, region')
       .eq('user_id', currentUser.id)
       .maybeSingle();
-    if (data?.onboarding_done) return; // already done on any device
-  } catch(e) { /* fall through to localStorage check */ }
+
+    if (data?.onboarding_done) {
+      // Settings exist from signup — apply region silently without showing modal
+      if (data.region && !localStorage.getItem('batched_region')) {
+        localStorage.setItem('batched_region', data.region);
+        _userRegion = data.region;
+        applyRegion(data.region);
+      }
+      return;
+    }
+  } catch(e) { /* fall through */ }
+
+  // Also check user metadata — signup stores region there too
+  const metaRegion = currentUser?.user_metadata?.region;
+  if (metaRegion) {
+    localStorage.setItem('batched_region', metaRegion);
+    _userRegion = metaRegion;
+    applyRegion(metaRegion);
+    // Mark onboarding done so we don't ask again
+    sb.from('user_settings').upsert({
+      user_id:         currentUser.id,
+      region:          metaRegion,
+      onboarding_done: true,
+      recall_source:   'both',
+      recall_lookback_days: 180,
+    }, { onConflict: 'user_id' }).catch(() => {});
+    return;
+  }
 
   // Legacy fallback — if localStorage says done, mark in DB and skip
   if (localStorage.getItem(OB_KEY)) {
@@ -6543,6 +6575,7 @@ async function maybeShowOnboarding() {
     return;
   }
 
+  // First-time user with no settings at all — show onboarding modal
   _obSlide = 0;
   _obRegion = null;
   _obSources = new Set();
@@ -18045,12 +18078,23 @@ function drawerNav(view) {
   setMobileNav(view);
 }
 
-function updateDrawerAccount(email, region) {
+function updateDrawerAccount(displayName, region) {
   const emailEl  = document.getElementById('drawer-email');
   const avatarEl = document.getElementById('drawer-avatar');
   const regionEl = document.getElementById('drawer-region-label');
-  if (emailEl && email) emailEl.textContent = email;
-  if (avatarEl && email) avatarEl.textContent = email[0].toUpperCase();
+  const email    = currentUser?.email || '';
+  const name     = currentUser?._displayName || displayName || email;
+
+  if (emailEl) {
+    // Show full name on first line if different from email, email underneath
+    if (name && name !== email) {
+      emailEl.innerHTML = `<span style="font-weight:600;color:var(--text);font-size:13px;">${name}</span><br><span style="font-size:11px;color:var(--muted);">${email}</span>`;
+    } else {
+      emailEl.textContent = email;
+    }
+  }
+  // Avatar initial — prefer first letter of name, fall back to email
+  if (avatarEl) avatarEl.textContent = (name || email)[0].toUpperCase();
   if (regionEl) regionEl.textContent = region === 'us' ? 'United States' : 'Norway';
 }
 
