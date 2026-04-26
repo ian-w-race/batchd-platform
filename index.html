@@ -5296,12 +5296,12 @@ async function showApp(user) {
     // This ensures invited staff (who never went through onboarding) get defaults
     sb.from('user_settings').select('user_id').eq('user_id', user.id).maybeSingle().then(({ data: existing }) => {
       if (!existing) {
-        sb.from('user_settings').upsert({
+        (async () => { try { await sb.from('user_settings').upsert({
           user_id:              user.id,
           recall_source:        'both',
           recall_lookback_days: 180,
-          region:               'no', // default to Norway/EU — can be changed in settings
-        }, { onConflict: 'user_id' }).catch(e => console.warn('user_settings init failed:', e));
+          region:               'no',
+        }, { onConflict: 'user_id' }); } catch(e) { console.warn('user_settings init failed:', e); } })();
       }
     }).catch(e => console.warn('user_settings check failed:', e));
 
@@ -5311,11 +5311,11 @@ async function showApp(user) {
     updateQueueBadge();
 
     // Track last active timestamp — used by staff panel to show "last seen"
-    sb.from('user_settings').upsert({
+    (async () => { try { await sb.from('user_settings').upsert({
       user_id:        currentUser.id,
       last_seen_at:   new Date().toISOString(),
       last_seen_app:  'scanning_app',
-    }, { onConflict: 'user_id' }).catch(() => {});
+    }, { onConflict: 'user_id' }); } catch(e) {} })();
 
     // initRecallSystem is now safe — external fetches run in background
     await initRecallSystem();
@@ -6564,22 +6564,22 @@ async function maybeShowOnboarding() {
     _userRegion = metaRegion;
     applyRegion(metaRegion);
     // Mark onboarding done so we don't ask again
-    sb.from('user_settings').upsert({
+    (async () => { try { await sb.from('user_settings').upsert({
       user_id:         currentUser.id,
       region:          metaRegion,
       onboarding_done: true,
       recall_source:   'both',
       recall_lookback_days: 180,
-    }, { onConflict: 'user_id' }).catch(() => {});
+    }, { onConflict: 'user_id' }); } catch(e) {} })();
     return;
   }
 
   // Legacy fallback — if localStorage says done, mark in DB and skip
   if (localStorage.getItem(OB_KEY)) {
-    sb.from('user_settings').upsert({
+    (async () => { try { await sb.from('user_settings').upsert({
       user_id: currentUser.id,
       onboarding_done: true
-    }, { onConflict: 'user_id' }).catch(() => {});
+    }, { onConflict: 'user_id' }); } catch(e) {} })();
     return;
   }
 
@@ -6758,12 +6758,10 @@ async function _obFinish() {
 function skipOnboarding() {
   localStorage.setItem(OB_KEY, '1');
   document.getElementById('onboarding-modal').style.display = 'none';
-  try {
-    sb.from('user_settings').upsert({
-      user_id: currentUser.id,
-      onboarding_done: true
-    }, { onConflict: 'user_id' }).catch(() => {});
-  } catch(e) {}
+  (async () => { try { await sb.from('user_settings').upsert({
+    user_id: currentUser.id,
+    onboarding_done: true
+  }, { onConflict: 'user_id' }); } catch(e) {} })();
 }
 
 // ── MULTI-STORE OVERVIEW (#9) ─────────────────────────────────
