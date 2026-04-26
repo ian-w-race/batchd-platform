@@ -2769,6 +2769,12 @@ function showDrillLauncher() {
           <input id="drill-lot" type="text" placeholder="e.g. DRILL-${new Date().toISOString().split('T')[0]}" value="DRILL-${new Date().toISOString().split('T')[0]}" style="font-family:'DM Mono',monospace;" /></div>
         <div class="field"><label>Drill reason (displayed to stores)</label>
           <input id="drill-reason" type="text" value="Annual recall readiness drill — no real product affected" /></div>
+        <div style="margin-bottom:12px;"><label style="font-size:11px;font-family:'DM Mono',monospace;color:var(--muted);display:block;margin-bottom:5px;">SIMULATED SEVERITY</label>
+          <select id="drill-severity" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:10px 12px;font-size:13px;font-family:inherit;">
+            <option value="class_i">Class I — serious health hazard (high urgency drill)</option>
+            <option value="class_ii" selected>Class II — moderate risk (standard drill)</option>
+            <option value="class_iii">Class III — low risk (basic traceability drill)</option>
+          </select></div>
         <div style="background:rgba(245,166,35,0.06);border:1px solid rgba(245,166,35,0.2);border-radius:8px;padding:12px 14px;font-size:11px;color:var(--muted);line-height:1.7;margin-bottom:16px;">
           This drill will be pushed to all connected manufacturer partners as a <strong style="color:var(--warn);">MOCK DRILL</strong> event. All stores will receive an alert and must complete the 5-step response chain. Results are tracked separately from real recalls and generate a drill certificate on completion.
         </div>
@@ -2796,7 +2802,8 @@ async function launchDrill() {
     // Create recall_event with is_drill=true
     const { data: ev, error: evErr } = await sb.from('recall_events').insert({
       product_name: product, lot_number: lot||null, reason, is_drill: true,
-      severity: 'unknown', source_org_id: _orgId,
+      severity: document.getElementById('drill-severity')?.value || 'class_ii',
+      source_org_id: _orgId,
       published_at: new Date().toISOString(),
     }).select().single();
     if (evErr) throw evErr;
