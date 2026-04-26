@@ -8045,6 +8045,10 @@ async function saveRecord() {
     tlc_source:         (document.getElementById('field-tlc-source')?.value.trim()) || null,
     is_ftl:             detectFtlCategory(productName).isFtl || false,
     ftl_category:       detectFtlCategory(productName).category || null,
+    // Full visible text captured by OCR — stored as searchable fallback for recall matching.
+    // Enables matching against production codes, plant numbers, and other metadata
+    // that appears on packaging alongside the lot code.
+    label_text:         (ocrState?.raw || '').slice(0, 600) || null,
   };
 
   // ── Offline support ──
@@ -9214,13 +9218,14 @@ async function checkActiveRecalls() {
 
     let matchedRecalls = [];
     for (const recall of uniqueData) {
-      let exactCount = 0, possibleCount = 0;
+      let exactCount = 0, possibleCount = 0, rawCount = 0;
       for (const r of recentRecords) {
         const { level } = recallMatchLevel(r, recall);
         if (level === 'exact') exactCount++;
         else if (level === 'possible') possibleCount++;
+        else if (level === 'raw') rawCount++;
       }
-      if (exactCount || possibleCount) matchedRecalls.push({ recall, exactCount, possibleCount });
+      if (exactCount || possibleCount || rawCount) matchedRecalls.push({ recall, exactCount, possibleCount, rawCount });
     }
 
     if (!matchedRecalls.length) { document.getElementById('auto-recall-banner').style.display = 'none'; return; }
@@ -9233,6 +9238,7 @@ async function checkActiveRecalls() {
       const parts = [];
       if (m.exactCount)   parts.push(`<strong style="color:var(--danger)">${m.exactCount===1?t('hist.exactMatches',{n:1}):t('hist.exactMatchesPlural',{n:m.exactCount})}</strong>`);
       if (m.possibleCount) parts.push(`<strong style="color:var(--warn)">${m.possibleCount===1?t('hist.possibleMatches',{n:1}):t('hist.possibleMatchesPlural',{n:m.possibleCount})}</strong>`);
+      if (m.rawCount)     parts.push(`<strong style="color:var(--warn)">${m.rawCount} metadata match${m.rawCount!==1?'es':''} — verify lot manually</strong>`);
       const lotPart = m.recall.lot_number ? ` for lot <strong>${esc(m.recall.lot_number)}</strong>` : '';
       return parts.join(' · ') + lotPart + (m.recall.description ? `: ${esc(m.recall.description.slice(0,80))}` : '');
     }).join('<br>');
@@ -9400,6 +9406,7 @@ function renderRecords(records, recallQ) {
     const matchLevel = recallQ ? recallQueryMatch(r, recallQ) : null;
     const isMatch = matchLevel !== null;
     const isPossible = matchLevel === 'possible';
+    const isRaw = matchLevel === 'raw';
     const placedAt = new Date(r.created_at);
     const placedStr = fmtRegionDate(r.created_at, true);
 
@@ -9416,7 +9423,7 @@ function renderRecords(records, recallQ) {
     }
 
     return `
-    <div class="record-card ${matchLevel === 'exact' ? 'recall-match' : matchLevel === 'possible' ? 'recall-possible' : ''} ${r.recall_resolved ? 'recall-resolved' : ''} ${r.removed_from_shelf_at ? 'shelf-removed' : ''}" style="animation-delay:${i*0.04}s">
+    <div class="record-card ${matchLevel === 'exact' ? 'recall-match' : matchLevel === 'possible' ? 'recall-possible' : matchLevel === 'raw' ? 'recall-possible' : ''} ${r.recall_resolved ? 'recall-resolved' : ''} ${r.removed_from_shelf_at ? 'shelf-removed' : ''}" style="animation-delay:${i*0.04}s">
       <div class="record-thumb">
         ${r.product_photo_url
           ? `<img src="${r.product_photo_url}" alt="Product" onclick="openLightbox('${r.product_photo_url}')" style="cursor:pointer;" />`
@@ -9425,7 +9432,7 @@ function renderRecords(records, recallQ) {
       <div class="record-info">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <div class="record-product">${esc(r.product_name || 'Unknown Product')}</div>
-          ${matchLevel === 'exact' ? `<span class="recall-tag">${t('card.lotMatch')}</span>` : matchLevel === 'possible' ? `<span class="recall-tag recall-tag-possible">${t('card.possibleMatch')}</span>` : ''}
+          ${matchLevel === 'exact' ? `<span class="recall-tag">${t('card.lotMatch')}</span>` : matchLevel === 'possible' ? `<span class="recall-tag recall-tag-possible">${t('card.possibleMatch')}</span>` : matchLevel === 'raw' ? `<span class="recall-tag recall-tag-possible" style="background:rgba(245,166,35,0.1);border-color:rgba(245,166,35,0.35);color:var(--warn);font-size:10px;" title="Recall lot code found in packaging metadata — verify manually">⚠ Metadata match — verify</span>` : ''}
           ${r.manager_escalated && !r.recall_resolved ? `<span class="recall-tag" style="background:rgba(245,166,35,0.15);color:var(--warn);border:1px solid rgba(245,166,35,0.4);">${t('card.escalatedTag')}</span>` : ''}
           ${r.recall_resolved ? `<span class="recall-tag" style="background:var(--accent);color:#080f12;">${t('card.resolvedTag')}</span>` : ''}
           ${r.removed_from_shelf_at ? `<span class="recall-tag" style="background:rgba(245,166,35,0.15);color:var(--warn);border:1px solid rgba(245,166,35,0.4);">${t('card.removedTag')}</span>` : ''}
@@ -9498,6 +9505,7 @@ function renderRecords(records, recallQ) {
               : `<button onclick="undoPullFromShelf('${r.id}')" style="font-family:'DM Mono',monospace;font-size:11px;padding:4px 10px;border-radius:6px;border:1px solid rgba(245,166,35,0.5);background:rgba(245,166,35,0.08);color:var(--warn);cursor:pointer;">${t('card.undoRemoval')}</button>`
             }
             ${isMatch ? `<button onclick="openRecallActionSheet('${r.id}')" style="font-family:'DM Mono',monospace;font-size:11px;padding:4px 12px;border-radius:6px;border:1px solid ${matchLevel === 'exact' ? 'var(--danger)' : 'var(--warn)'};background:${matchLevel === 'exact' ? 'rgba(255,92,92,0.1)' : 'rgba(245,166,35,0.1)'};color:${matchLevel === 'exact' ? 'var(--danger)' : 'var(--warn)'};cursor:pointer;font-weight:700;">${t('card.takeAction')}</button>` : ''}
+            ${isRaw ? `<span style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;display:block;margin-top:4px;">Recall code found in label capture. Check physical product before pulling.</span>` : ''}
             ${!isMatch ? `<button onclick="openComplaintSheet('${r.id}','${esc(r.product_name||'')}','${esc(r.lot_number||'')}','${esc(r.barcode_number||'')}','${esc(r.store_name||'')}')" style="font-family:'DM Mono',monospace;font-size:11px;padding:4px 10px;border-radius:6px;border:1px solid rgba(56,189,248,0.3);background:rgba(56,189,248,0.07);color:var(--info);cursor:pointer;">${t('card.reportConcern')}</button>` : ''}
           </div>
         </div>
@@ -9622,47 +9630,67 @@ function lotMatchLevel(scanLot, recallLot) {
 }
 
 // Main entry point — check a scan record against a recall
-// Returns { level: 'exact'|'possible'|null, recall }
+// Returns { level: 'exact'|'possible'|'raw'|null, recall }
+// 'raw' = recall lot code found in the full captured label text, not the parsed lot field.
+//         Surfaces as a warning requiring staff verification — not a confirmed match.
 function recallMatchLevel(scanRecord, recall) {
   const productMatch = fuzzyProductMatch(recall.product_name, scanRecord.product_name);
   if (!productMatch) return { level: null };
 
-  // Barcode exact match
+  // Barcode exact match — strongest signal
   if (recall.barcode_number && scanRecord.barcode_number &&
       recall.barcode_number === scanRecord.barcode_number) {
     return { level: 'exact', recall };
   }
 
-  // Lot number fuzzy match
+  // Lot number fuzzy match — primary traceability field
   if (recall.lot_number && scanRecord.lot_number) {
     const level = lotMatchLevel(scanRecord.lot_number, recall.lot_number);
     if (level) return { level, recall };
   }
 
   // Product name only match (no lot on recall)
-  // Without lot confirmation, this can only ever be 'possible' — never 'exact'
   if (!recall.lot_number && recall.product_name && productMatch) {
     return { level: 'possible', recall };
+  }
+
+  // ── RAW TEXT FALLBACK ─────────────────────────────────────────
+  // The recall has a lot code but it wasn't found in the parsed lot field.
+  // Search the full captured label text — could be a production code, line
+  // code, or other metadata that the recall authority is using as identifier.
+  // Only surfaces as 'raw' — never promotes to 'exact' or 'possible'.
+  // Requires product name match AND recall lot at least 3 chars to avoid noise.
+  if (recall.lot_number && recall.lot_number.length >= 3 && scanRecord.label_text) {
+    const labelLow  = scanRecord.label_text.toLowerCase();
+    const recallLot = recall.lot_number.toLowerCase().trim();
+    const recallNorm = normaliseForFuzzy(recallLot);
+    // Check raw substring match
+    if (labelLow.includes(recallLot)) return { level: 'raw', recall };
+    // Check normalised match (handles OCR confusion in the raw text)
+    if (recallNorm.length >= 3 && normaliseForFuzzy(labelLow).includes(recallNorm)) {
+      return { level: 'raw', recall };
+    }
   }
 
   return { level: null };
 }
 
 // Check a scan record against ALL active recalls
-// Returns highest level found: 'exact' | 'possible' | null
+// Returns highest level found: 'exact' | 'possible' | 'raw' | null
 function checkRecordAgainstRecalls(scanRecord, recalls) {
   let best = null;
   for (const recall of recalls) {
     const { level } = recallMatchLevel(scanRecord, recall);
     if (level === 'exact') return 'exact';
     if (level === 'possible') best = 'possible';
+    else if (level === 'raw' && best !== 'possible') best = 'raw';
   }
   return best;
 }
 
 // Check a query string (from recall search box) against a scan record
-// The query is treated as a recalled lot number (or product name) being searched.
-// Returns 'exact' | 'possible' | null
+// Returns 'exact' | 'possible' | 'raw' | null
+// 'raw' = query string found in the full label text but not the parsed lot field.
 function queryMatchLevel(scanRecord, q) {
   if (!q) return null;
   const query = q.trim();
@@ -9676,22 +9704,22 @@ function queryMatchLevel(scanRecord, q) {
     if (level) return level;
   }
 
-  // 2. Exact product name substring match (both directions) — only 'exact'
-  //    Requires query to be meaningful length (>3 chars) to avoid "13" matching everything
+  // 2. Exact product name substring match
   if (qLow.length >= 1 && (product.includes(qLow) || qLow.includes(product.split(' ')[0]))) {
     return 'exact';
+  }
+
+  // 3. Raw label text fallback — requires 3+ chars to avoid noise
+  if (qLow.length >= 3 && scanRecord.label_text) {
+    const labelLow = scanRecord.label_text.toLowerCase();
+    if (labelLow.includes(qLow)) return 'raw';
+    if (normaliseForFuzzy(labelLow).includes(normaliseForFuzzy(qLow))) return 'raw';
   }
 
   return null;
 }
 
 // recallQueryMatch: used by the recall search box
-// The user has typed a lot number (or product name) they want to investigate.
-// Returns 'exact' | 'possible' | null based on how closely the scan matches.
-// 
-// 'exact'    = the scan's lot matches the typed lot exactly (or via OCR normalisation)
-// 'possible' = the scan's lot is similar (within edit distance threshold)
-// null       = no meaningful match
 function recallQueryMatch(scanRecord, query) {
   if (!query) return null;
   const q = query.trim();
@@ -9709,12 +9737,17 @@ function recallQueryMatch(scanRecord, query) {
     if (level) return level;
   }
 
-  // 3. Product name — only for queries of 4+ chars to avoid noise
+  // 3. Product name
   if (qLow.length >= 1) {
     if (product.includes(qLow)) return 'exact';
-    // Also check first word of product name against query
     const firstWord = product.split(/\s+/)[0];
     if (firstWord && qLow.includes(firstWord)) return 'exact';
+  }
+
+  // 4. Raw label text fallback
+  if (qLow.length >= 3 && scanRecord.label_text) {
+    const labelLow = scanRecord.label_text.toLowerCase();
+    if (labelLow.includes(qLow)) return 'raw';
   }
 
   return null;
@@ -11359,6 +11392,10 @@ async function snapOcr() {
         } else if (level === 'possible' && aiResult.lot_confidence !== 'high') {
           aiResult.lot_confidence = 'medium';
           aiResult.reconcileNote = (aiResult.reconcileNote ? aiResult.reconcileNote + ' · ' : '') + '⚠ Possible recall match';
+        } else if (level === 'raw') {
+          // Raw metadata match — don't boost confidence (the lot code didn't match)
+          // but flag it so the recall alert banner shows
+          aiResult.reconcileNote = (aiResult.reconcileNote ? aiResult.reconcileNote + ' · ' : '') + '~ Recall code in label metadata — verify';
         }
         break;
       }
@@ -12685,7 +12722,7 @@ async function extractCodesFromImage(blob, learnedContext) {
       (productName ? `Product: "${productName}"\n` : '') +
       (contextHint ? `${contextHint}\n` : '') +
       `Return ONLY valid JSON, no markdown:\n` +
-      `{"lot":"code or null","expiry":"date as printed or null","lot_confidence":"high|medium|low","lot_is_date":false,"location_hint":"where on pack","anchor_before":"label text before code or null","anchor_after":"text after code or null","raw":"visible text max 100 chars"}`;
+      `{"lot":"code or null","expiry":"date as printed or null","lot_confidence":"high|medium|low","lot_is_date":false,"location_hint":"where on pack","anchor_before":"label text before code or null","anchor_after":"text after code or null","raw":"ALL visible text verbatim up to 500 chars — capture everything: lot, dates, plant codes, weights, brand, times, all codes. This full text is stored as a searchable fallback for recall matching."}`;
 
     // ── PASS 1: PRIMARY EXTRACTION (sonnet) ──────────────────
     const cropNote = localisedCrop
@@ -12763,7 +12800,7 @@ async function extractCodesFromImage(blob, learnedContext) {
     let lassoNote = '';
 
 
-    const rawText = [pass1.raw, pass2.raw].filter(Boolean).join(' | ').slice(0, 400);
+    const rawText = [pass1.raw, pass2.raw].filter(Boolean).join(' | ').slice(0, 600);
     const locationHint = [pass1.location_hint, pass2.location_hint]
       .find(h => h && h.length > 3) || (localisedCrop ? `y=${localisedCrop.yStart.toFixed(2)}–${localisedCrop.yEnd.toFixed(2)} (auto-localised)` : '');
 
