@@ -5228,6 +5228,26 @@ let autoRecallCode = null; // active recall code from recalls table
 async function initAuth() {
   const { data: { session } } = await sb.auth.getSession();
   if (session) {
+    // Check active flag before showing app — catches deactivated users on session restore
+    const { data: member } = await sb.from('organisation_members')
+      .select('active')
+      .eq('user_id', session.user.id)
+      .maybeSingle();
+    if (member?.active === false) {
+      document.getElementById('login-screen').classList.remove('hidden');
+      document.getElementById('login-screen').innerHTML = `
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:32px;text-align:center;gap:16px;background:var(--bg);">
+          <div style="font-size:40px;">🔒</div>
+          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:18px;color:var(--text);">Account deactivated</div>
+          <div style="font-size:13px;color:var(--muted);max-width:300px;line-height:1.6;">Your account has been deactivated by your organisation administrator. Contact them to restore access.</div>
+          <button onclick="sb.auth.signOut().then(()=>location.reload())"
+            style="margin-top:8px;padding:10px 20px;border-radius:8px;border:1px solid var(--border);background:none;color:var(--muted);font-family:'DM Mono',monospace;font-size:12px;cursor:pointer;">
+            Sign out
+          </button>
+        </div>`;
+      await sb.auth.signOut();
+      return;
+    }
     showApp(session.user);
   } else {
     document.getElementById('login-screen').classList.remove('hidden');
