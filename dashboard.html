@@ -3770,29 +3770,45 @@ async function renderStaff() {
   const [membersRes, storesRes, acceptedInvRes] = await Promise.all([
     sb.from('organisation_members').select('user_id, role, joined_at, store_id, active').eq('organisation_id', _orgId),
     sb.from('stores').select('id, name').eq('organisation_id', _orgId).eq('active', true),
-    sb.from('invitations').select('email, role').eq('organisation_id', _orgId).eq('accepted', true),
+    sb.from('invitations').select('email, role, user_id').eq('organisation_id', _orgId).eq('accepted', true),
   ]);
 
-  const allMembers   = membersRes.data    || [];
-  const members      = allMembers.filter(m => m.active !== false);
-  const deactivated  = allMembers.filter(m => m.active === false);
-  const stores      = storesRes.data      || [];
+  const allMembers  = membersRes.data || [];
+  const members     = allMembers.filter(m => m.active !== false);
+  const deactivated = allMembers.filter(m => m.active === false);
+  const stores      = storesRes.data  || [];
   const acceptedInv = acceptedInvRes.data || [];
 
-  // Build email lookup by role — best proxy available without admin API access
-  // Multiple people may share a role, so we track which emails we've assigned
-  const emailsByRole = {};
+  // Build email lookup keyed by user_id (most reliable)
+  // and by role-order as fallback for members who joined before user_id was tracked
+  const emailByUserId = {};
+  const emailsByRole  = {};
   acceptedInv.forEach(inv => {
-    if (!emailsByRole[inv.role]) emailsByRole[inv.role] = [];
-    emailsByRole[inv.role].push(inv.email);
+    if (inv.user_id) {
+      emailByUserId[inv.user_id] = inv.email;
+    } else {
+      if (!emailsByRole[inv.role]) emailsByRole[inv.role] = [];
+      emailsByRole[inv.role].push(inv.email);
+    }
   });
+
+  // Fetch last_seen for all members
+  const memberIds = allMembers.map(m => m.user_id).filter(Boolean);
+  let lastSeenMap = {};
+  if (memberIds.length) {
+    const { data: settings } = await sb.from('user_settings')
+      .select('user_id, last_seen_at, last_seen_app')
+      .in('user_id', memberIds);
+    (settings || []).forEach(s => { lastSeenMap[s.user_id] = s; });
+  }
+
   const usedEmails = {};
-  const getEmail = (role) => {
+  const getEmail = (userId, role) => {
+    if (userId && emailByUserId[userId]) return emailByUserId[userId];
     if (!emailsByRole[role]?.length) return null;
-    const key = role;
-    usedEmails[key] = (usedEmails[key] || 0);
-    const email = emailsByRole[role][usedEmails[key]] || null;
-    usedEmails[key]++;
+    usedEmails[role] = (usedEmails[role] || 0);
+    const email = emailsByRole[role][usedEmails[role]] || null;
+    usedEmails[role]++;
     return email;
   };
 
@@ -3887,7 +3903,7 @@ async function renderStaff() {
         ${members.length === 0
           ? `<div class="empty">No members yet. Invite your first team member above.</div>`
           : members.map(m => {
-              const email = getEmail(m.role);
+              const email = getEmail(m.user_id, m.role);
               const store = stores.find(s => s.id === m.store_id);
               const roleLabel = m.role.replace(/_/g,' ');
               const initial = roleLabel[0].toUpperCase();
@@ -3902,7 +3918,7 @@ async function renderStaff() {
                   </div>
                 </div>
                 <span class="recall-status status-resolved" style="flex-shrink:0;">Active</span>
-                <button onclick="deactivateMember('${m.user_id}', '${getEmail(m.role) || m.user_id}')"
+                <button onclick="deactivateMember('${m.user_id}', '${getEmail(m.user_id, m.role) || m.user_id}')"
                   style="font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;margin-left:4px;flex-shrink:0;"
                   onmouseenter="this.style.borderColor='var(--danger)';this.style.color='var(--danger)'"
                   onmouseleave="this.style.borderColor='var(--border)';this.style.color='var(--muted)'"
@@ -3937,7 +3953,7 @@ async function renderStaff() {
       </div>
       <div class="panel-body">
         ${deactivated.map(m => {
-          const email = getEmail(m.role) || m.user_id.slice(0,8) + '…';
+          const email = getEmail(m.user_id, m.role) || m.user_id.slice(0,8) + '…';
           return `
           <div class="activity-item" style="opacity:0.65;">
             <div class="activity-dot" style="background:var(--border);"></div>
