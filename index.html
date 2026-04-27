@@ -5100,7 +5100,18 @@
         <div id="ob-src-note" style="font-size:11px;color:var(--muted);margin-top:10px;line-height:1.5;"></div>
       </div>
 
-      <!-- ── Slide 3: How it works ── -->
+      <!-- ── Slide 3: Store selection ── -->
+      <div class="onboarding-slide">
+        <div style="margin-bottom:14px;"><svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></div>
+        <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:20px;color:var(--accent);margin-bottom:6px;" id="ob-store-title">Which store do you work at?</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:16px;line-height:1.5;" id="ob-store-sub">All your scans will be tagged to this store. You can change it in Settings anytime.</div>
+        <div id="ob-store-list" style="display:flex;flex-direction:column;gap:8px;max-height:200px;overflow-y:auto;">
+          <div style="color:var(--muted);font-size:12px;text-align:center;padding:12px;">Loading stores…</div>
+        </div>
+        <div id="ob-store-note" style="font-size:11px;color:var(--muted);margin-top:10px;"></div>
+      </div>
+
+      <!-- ── Slide 4: How it works ── -->
       <div class="onboarding-slide">
         <div style="margin-bottom:14px;"><svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></div>
         <div id="ob-how-title" style="font-family:'Figtree',sans-serif;font-weight:800;font-size:20px;color:var(--accent);margin-bottom:10px;">How to use it</div>
@@ -5145,11 +5156,11 @@
         <div class="onboarding-dot" id="ob-dot-2"></div>
         <div class="onboarding-dot" id="ob-dot-3"></div>
         <div class="onboarding-dot" id="ob-dot-4"></div>
+        <div class="onboarding-dot" id="ob-dot-5"></div>
       </div>
       <div style="display:flex;gap:8px;align-items:center;">
         <button id="ob-back-btn" onclick="onboardingBack()" style="display:none;background:none;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-family:'DM Mono',monospace;font-size:11px;cursor:pointer;padding:8px 12px;">← Back</button>
-        <button id="ob-skip-btn" onclick="skipOnboarding()" style="background:none;border:none;color:var(--muted);font-family:'DM Mono',monospace;font-size:11px;cursor:pointer;padding:8px 12px;">Skip</button>
-        <button id="ob-next-btn" onclick="onboardingNext()" style="background:var(--accent);border:none;border-radius:8px;color:#080f12;font-family:'DM Mono',monospace;font-size:12px;font-weight:700;cursor:pointer;padding:8px 20px;">Next →</button>
+        <button id="ob-next-btn" onclick="onboardingNext()" style="background:var(--accent);border:none;border-radius:8px;color:#052e16;font-family:'DM Mono',monospace;font-size:12px;font-weight:700;cursor:pointer;padding:8px 20px;">Next →</button>
       </div>
     </div>
   </div>
@@ -6004,6 +6015,16 @@ function dateFormatPlaceholder() {
  * @param {string|Date} iso  — ISO string or Date object
  * @param {boolean} includeTime — append HH:MM if true
  */
+// Global fmtDate — region-aware short date formatting
+// Used by manager on-shelf view and other panels that need a quick date display
+function fmtDate(d) {
+  if (!d) return '—';
+  const dt  = new Date(d);
+  const pad = n => String(n).padStart(2,'0');
+  if (_userRegion === 'us') return `${pad(dt.getMonth()+1)}/${pad(dt.getDate())}/${dt.getFullYear()}`;
+  return `${pad(dt.getDate())}.${pad(dt.getMonth()+1)}.${dt.getFullYear()}`;
+}
+
 function fmtRegionDate(iso, includeTime) {
   if (!iso) return '—';
   const d = new Date(iso);
@@ -6551,8 +6572,53 @@ let _obSlide = 0;
 let _obRegion = null;      // 'us' | 'no'
 let _userRegion = 'no';    // active region — 'us'|'no' — loaded from DB
 let _obSources = new Set(); // selected recall sources
-const OB_TOTAL = 5;
-const OB_KEY = 'batched_onboarding_done_v1';
+const OB_KEY   = 'batched_onboarding_done_v1';
+const OB_TOTAL = 6;
+let   _obSelectedStore = null;
+
+// Load stores for slide 3
+async function _obLoadStores() {
+  const el = document.getElementById('ob-store-list');
+  if (!el) return;
+  const isNO = currentLang === 'no';
+  try {
+    const { data: stores } = await sb.from('stores')
+      .select('id, name')
+      .eq('organisation_id', _currentOrgId)
+      .eq('active', true)
+      .order('name');
+    if (!stores?.length) {
+      el.innerHTML = `<div style="font-size:12px;color:var(--muted);text-align:center;padding:12px;">${isNO ? 'Ingen butikker konfigurert. Du kan velge butikk i Innstillinger.' : 'No stores configured. You can select your store in Settings.'}</div>`;
+      return;
+    }
+    // Pre-select if only one store
+    if (stores.length === 1) {
+      _obSelectedStore = stores[0];
+      _currentStoreName = stores[0].name;
+    }
+    el.innerHTML = stores.map(s => `
+      <button onclick="obSelectStore('${s.id}','${s.name.replace(/'/g,"\\'")}',this)"
+        class="ob-choice-btn${_obSelectedStore?.id === s.id ? ' active' : ''}"
+        style="padding:12px 14px;">
+        <span style="font-size:16px;">🏪</span>
+        <div style="text-align:left;">
+          <div style="font-weight:700;font-size:13px;">${s.name}</div>
+        </div>
+        ${_obSelectedStore?.id === s.id ? '<span style="margin-left:auto;color:var(--accent);">✓</span>' : ''}
+      </button>`).join('');
+  } catch(e) {
+    el.innerHTML = `<div style="font-size:11px;color:var(--danger);">Could not load stores: ${e.message}</div>`;
+  }
+}
+
+function obSelectStore(id, name, btn) {
+  _obSelectedStore = { id, name };
+  _currentStoreName = name;
+  _currentStoreId   = id;
+  // Update UI
+  document.querySelectorAll('#ob-store-list .ob-choice-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
 
 // Per-language text for the onboarding slides
 const OB_TEXT = {
@@ -6762,7 +6828,6 @@ function obToggleSource(source) {
 
 // ── Navigation ─────────────────────────────────────────────────
 function onboardingNext() {
-  // Validate slide 2 — must have at least one source
   if (_obSlide === 2 && _obSources.size === 0) {
     document.getElementById('ob-src-note').textContent = currentLang==='no'?'Velg minst én tilbakekalkilde for å fortsette.':'Please select at least one recall source to continue.';
     document.getElementById('ob-src-note').style.color = 'var(--danger)';
@@ -6771,6 +6836,8 @@ function onboardingNext() {
   if (_obSlide < OB_TOTAL - 1) {
     _obSlide++;
     _obUpdateSlide();
+    // Load stores when reaching slide 3
+    if (_obSlide === 3) _obLoadStores();
   } else {
     _obFinish();
   }
@@ -6796,6 +6863,13 @@ async function _obFinish() {
 
   // Save completion to both localStorage (fast) and Supabase (cross-device)
   localStorage.setItem(OB_KEY, '1');
+  // Save store selection if made during onboarding
+  if (_obSelectedStore) {
+    _currentStoreName = _obSelectedStore.name;
+    _currentStoreId   = _obSelectedStore.id;
+    localStorage.setItem('batched_store_name', _obSelectedStore.name);
+    localStorage.setItem('batched_store_id',   _obSelectedStore.id);
+  }
   try {
     await sb.from('user_settings').upsert({
       user_id: currentUser.id,
@@ -6804,9 +6878,10 @@ async function _obFinish() {
       recall_lookback_days: recallLookbackDays,
       region: _obRegion || 'no'
     }, { onConflict: 'user_id' });
+  } catch(e) { console.warn('Could not save onboarding state to DB:', e); }
+  // Apply region regardless of DB success
   _userRegion = _obRegion || 'no';
   applyRegion();
-  } catch(e) { console.warn('Could not save onboarding state to DB:', e); }
 
   document.getElementById('onboarding-modal').style.display = 'none';
 }
@@ -6829,7 +6904,7 @@ async function loadMultiStoreOverview() {
   output.style.display = 'block';
 
   try {
-    let query = sb.from('scans').select('store_name, product_name, lot_number, barcode_number, created_at, removed_from_shelf_at, scanned_by, recall_resolved').order('created_at', { ascending: false });
+    let query = sb.from('scans').select('store_name, product_name, lot_number, barcode_number, created_at, removed_from_shelf_at, scanned_by, recall_resolved').eq('organisation_id', _currentOrgId).order('created_at', { ascending: false });
     if (from) query = query.gte('created_at', from);
     if (to)   { const td = new Date(to); td.setHours(23,59,59,999); query = query.lte('created_at', td.toISOString()); }
     const { data, error } = await query;
