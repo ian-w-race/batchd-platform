@@ -140,8 +140,8 @@ const ROLE_LABELS = {
 
 const ROLE_DESTINATIONS = {
   staff:         'https://batchd-app.netlify.app',
-  store_manager: 'https://app.batchdapp.com',
-  corp_admin:    'https://app.batchdapp.com',
+  store_manager: 'https://batchd-app.netlify.app',  // managers use scanning app
+  corp_admin:    'https://app.batchdapp.com/dashboard.html',
   mfr_admin:     'https://app.batchdapp.com/manufacturer.html',
   mfr_qa:        'https://app.batchdapp.com/manufacturer.html',
 };
@@ -156,31 +156,36 @@ async function init() {
   }
 
   const { data: inv, error } = await sb.from('invitations')
-    .select('*, organisations(name), stores(name)')
+    .select('*, stores(name)')
     .eq('token', token)
     .maybeSingle();
 
   if (error || !inv) {
-    showError('Invalid invitation', 'This invitation link is invalid or has already been used.');
+    showError('Invitation not found', 'This link may have expired or already been used. Please ask your administrator to send a new invitation.');
     return;
   }
-
   if (inv.accepted) {
-    showError('Already accepted', 'This invitation has already been accepted. Please sign in at batchdapp.com.');
+    showError('Already accepted', 'This invitation has already been used. If you need access, ask your administrator to send a new invite.');
+    return;
+  }
+  if (inv.expires_at && new Date(inv.expires_at) < new Date()) {
+    showError('Invitation expired', 'This invitation link has expired. Please ask your administrator to send a new one.');
     return;
   }
 
-  if (new Date(inv.expires_at) < new Date()) {
-    showError('Invitation expired', 'This invitation expired on ' + new Date(inv.expires_at).toLocaleDateString('en-GB') + '. Please ask your administrator to send a new one.');
-    return;
-  }
+  // Fetch org name separately — avoids RLS join issue with anon key
+  let orgName = 'your organisation';
+  const { data: orgData } = await sb.from('organisations')
+    .select('name').eq('id', inv.organisation_id).maybeSingle();
+  if (orgData?.name) orgName = orgData.name;
+  inv._orgName = orgName;
 
   _invitation = inv;
   showForm(inv);
 }
 
 function showForm(inv) {
-  const orgName   = inv.organisations?.name || 'your organisation';
+  const orgName   = inv._orgName || 'your organisation';
   const storeName = inv.stores?.name || null;
   const roleLabel = ROLE_LABELS[inv.role] || inv.role.replace(/_/g, ' ');
 
@@ -266,20 +271,36 @@ async function acceptInvitation() {
     const firstName = nameParts[0];
     const lastName  = nameParts.slice(1).join(' ');
 
-    // Sign up (ignore "already registered" — they may be retrying)
-    const { error: signUpErr } = await sb.auth.signUp({
+    // Sign up — creates the auth account
+    const { data: signUpData, error: signUpErr } = await sb.auth.signUp({
       email: _invitation.email,
       password: pw,
-      options: { data: { first_name: firstName, last_name: lastName } }
+      options: {
+        data: { full_name: name, first_name: firstName, last_name: lastName },
+        emailRedirectTo: null,  // no confirmation email needed — invite is the verification
+      }
     });
-    if (signUpErr && !signUpErr.message.toLowerCase().includes('already registered')) throw signUpErr;
 
-    // Sign in to get live session
+    const alreadyExists = signUpErr?.message?.toLowerCase().includes('already registered')
+                       || signUpErr?.message?.toLowerCase().includes('already been registered');
+    if (signUpErr && !alreadyExists) throw signUpErr;
+
+    // Sign in immediately — if email confirmation is blocking this,
+    // show a clear message pointing to Supabase settings rather than a cryptic error
     const { data: signInData, error: signInErr } = await sb.auth.signInWithPassword({
       email: _invitation.email,
       password: pw,
     });
-    if (signInErr) throw signInErr;
+
+    if (signInErr) {
+      if (signInErr.message?.toLowerCase().includes('email not confirmed')) {
+        throw new Error('Email confirmation is required in your Supabase settings. Go to Authentication → Settings and disable "Enable email confirmations", then try again.');
+      }
+      if (signInErr.message?.toLowerCase().includes('invalid login') && alreadyExists) {
+        throw new Error('This email already has an account with a different password. Please use your existing password, or contact your administrator.');
+      }
+      throw signInErr;
+    }
 
     const userId = signInData.user.id;
 
@@ -297,7 +318,7 @@ async function acceptInvitation() {
     await sb.from('invitations').update({ accepted: true }).eq('id', _invitation.id);
 
     // Show success
-    const orgName   = _invitation.organisations?.name || 'your organisation';
+    const orgName   = _invitation._orgName || 'your organisation';
     const roleLabel = ROLE_LABELS[_invitation.role] || _invitation.role.replace(/_/g,' ');
     const dest      = ROLE_DESTINATIONS[_invitation.role] || 'https://app.batchdapp.com';
     const destLabel = _invitation.role === 'staff' ? 'Open scanning app' : 'Open dashboard';
@@ -320,7 +341,7 @@ async function acceptInvitation() {
       </div>`;
 
   } catch(e) {
-    const orgName = _invitation?.organisations?.name || 'your organisation';
+    const orgName = _invitation?._orgName || 'your organisation';
     showMsg(e.message || 'Could not complete setup. Please try again.', 'error');
     btn.disabled = false;
     btn.innerHTML = `Join ${orgName} →`;
