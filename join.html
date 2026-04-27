@@ -317,11 +317,12 @@ async function acceptInvitation() {
     // Mark invitation accepted
     await sb.from('invitations').update({ accepted: true }).eq('id', _invitation.id);
 
-    // Show success
+    // Show success then auto-redirect with session tokens
     const orgName   = _invitation._orgName || 'your organisation';
     const roleLabel = ROLE_LABELS[_invitation.role] || _invitation.role.replace(/_/g,' ');
-    const dest      = ROLE_DESTINATIONS[_invitation.role] || 'https://app.batchdapp.com';
-    const destLabel = _invitation.role === 'staff' ? 'Open scanning app' : 'Open dashboard';
+    const dest      = ROLE_DESTINATIONS[_invitation.role] || 'https://batchd-app.netlify.app';
+    const isScanning = dest.includes('batchd-app.netlify.app');
+    const destLabel = isScanning ? 'Opening scanning app…' : 'Opening dashboard…';
 
     document.getElementById('card-content').innerHTML = `
       <div style="text-align:center;padding:12px 0 20px;">
@@ -329,16 +330,29 @@ async function acceptInvitation() {
           <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
         </div>
         <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:24px;margin-bottom:8px;">Welcome to Batch'd!</div>
-        <div style="font-size:12px;color:var(--muted);line-height:1.8;margin-bottom:28px;">
+        <div style="font-size:12px;color:var(--muted);line-height:1.8;margin-bottom:20px;">
           You've joined <strong style="color:var(--text);">${orgName}</strong><br>
           as a <strong style="color:var(--accent);">${roleLabel}</strong>.
         </div>
-        <button class="btn" onclick="window.location.href='${dest}'" style="margin-bottom:12px;">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
+        <div style="font-size:12px;color:var(--muted);display:flex;align-items:center;justify-content:center;gap:8px;">
+          <div class="spinner spinner-muted"></div>
           ${destLabel}
-        </button>
-        <div style="font-size:11px;color:var(--muted);">You can sign in any time at <a href="https://batchdapp.com" style="color:var(--accent);">batchdapp.com</a></div>
+        </div>
       </div>`;
+
+    // Redirect after brief success pause — pass session tokens in hash
+    // so the destination app can pick up the session without re-login.
+    // Supabase reads #access_token=...&refresh_token=...&type=signup from the URL hash.
+    setTimeout(() => {
+      const session = signInData.session;
+      if (isScanning && session) {
+        const hash = 'access_token=' + session.access_token + '&refresh_token=' + session.refresh_token + '&type=signup';
+        window.location.href = dest + '#' + hash;
+      } else {
+        window.location.href = dest;
+      }
+    }, 1500);
+
 
   } catch(e) {
     const orgName = _invitation?._orgName || 'your organisation';
