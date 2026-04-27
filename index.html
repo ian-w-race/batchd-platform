@@ -5276,19 +5276,36 @@ async function showApp(user) {
   if (signinBtn) { signinBtn.innerHTML = 'Sign In'; signinBtn.disabled = false; }
 
   try {
-    // Load organisation_id for this user — used in all scan inserts
+    // Load organisation membership — also checks active flag
     const { data: member } = await sb.from('organisation_members')
-      .select('organisation_id, role, store_id')
+      .select('organisation_id, role, store_id, active')
       .eq('user_id', user.id)
       .maybeSingle();
+
     if (member) {
+      // Deactivated members cannot use the scanning app
+      if (member.active === false) {
+        document.getElementById('auth-view').innerHTML = `
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;padding:32px;text-align:center;gap:16px;">
+            <div style="font-size:40px;">🔒</div>
+            <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:18px;">Account deactivated</div>
+            <div style="font-size:13px;color:var(--muted);max-width:300px;line-height:1.6;">Your account has been deactivated by your organisation administrator. Contact them to restore access.</div>
+            <button onclick="sb.auth.signOut().then(()=>location.reload())"
+              style="margin-top:8px;padding:10px 20px;border-radius:8px;border:1px solid var(--border);background:none;color:var(--muted);font-family:'DM Mono',monospace;font-size:12px;cursor:pointer;">
+              Sign out
+            </button>
+          </div>`;
+        document.getElementById('auth-view').style.display = 'flex';
+        document.getElementById('main-app').style.display  = 'none';
+        await sb.auth.signOut();
+        return;
+      }
+
       _currentOrgId    = member.organisation_id;
       _currentUserRole = member.role || null;
-      // Store managers have a store_id assigned in organisation_members.
-      // Save it so manager dashboard filters to only this store.
       if (member.store_id) {
         window._managerStoreId   = member.store_id;
-        window._managerStoreName = null; // resolved after loadStoresFromDB
+        window._managerStoreName = null;
       }
     }
 
