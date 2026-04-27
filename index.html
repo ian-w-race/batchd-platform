@@ -40,7 +40,7 @@
     --bg: #080f12;
     --surface: #0d1e1c;
     --surface2: #13302b;
-    --border: #163d37;
+    --border: rgba(52,211,153,0.2);
     --accent: #34d399;
     --accent-dim: #059669;
     --text: #f4fefb;
@@ -58,7 +58,7 @@
     --bg:            #f0f4f2;
     --surface:       #ffffff;
     --surface2:      #f6f9f7;
-    --border:        #c4d0ca;
+    --border:        #a8bdb7;
     --accent:        #077a55;
     --accent-dim:    #055e40;
     --text:          #0c1e18;
@@ -3968,6 +3968,7 @@
   <!-- Tab strip -->
   <div style="display:flex;gap:4px;margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:10px;flex-wrap:wrap;">
     <button class="mgr-tab active" id="mgr-tab-stores" data-i18n="tab.crossStore" onclick="switchMgrTab('stores')">Cross-Store</button>
+    <button class="mgr-tab" id="mgr-tab-onshelf" onclick="switchMgrTab('onshelf')">On Shelf</button>
     <button class="mgr-tab" id="mgr-tab-storemgmt" data-i18n="tab.storeManage" onclick="switchMgrTab('storemgmt')">Manage Stores</button>
     <button class="mgr-tab" id="mgr-tab-staff" data-i18n="tab.staffActivity" onclick="switchMgrTab('staff')">Staff Activity</button>
     <button class="mgr-tab" id="mgr-tab-recalls" data-i18n="tab.recallMgmt" onclick="switchMgrTab('recalls')">Recall Management</button>
@@ -3992,6 +3993,11 @@
   <!-- Cross-Store Panel -->
   <div id="mgr-panel-stores">
     <div id="mgr-stores-output"><div style="font-size:13px;color:var(--muted);padding:20px 0;text-align:center;" data-i18n="js.loading">Loading…</div></div>
+  </div>
+
+  <!-- On Shelf Panel -->
+  <div id="mgr-panel-onshelf" style="display:none;">
+    <div id="mgr-onshelf-output"><div style="font-size:13px;color:var(--muted);padding:20px 0;text-align:center;">Loading…</div></div>
   </div>
 
   <!-- Store Management Panel -->
@@ -15145,7 +15151,7 @@ function mgrViewStoreScans(storeName) {
 
 function switchMgrTab(tab) {
   _mgrActiveTab = tab;
-  ['stores','storemgmt','staff','recalls','audit','escalated','gs1','fsma','patterns','intel'].forEach(t => {
+  ['stores','onshelf','storemgmt','staff','recalls','audit','escalated','gs1','fsma','patterns','intel'].forEach(t => {
     document.getElementById('mgr-tab-' + t)?.classList.toggle('active', t === tab);
     const panel = document.getElementById('mgr-panel-' + t);
     if (panel) panel.style.display = t === tab ? 'block' : 'none';
@@ -15157,7 +15163,93 @@ function switchMgrTab(tab) {
   if (tab === 'storemgmt') loadStoreMgmt();
   if (tab === 'patterns') loadMgrPatterns();
   if (tab === 'intel') loadMgrIntel();
+  if (tab === 'onshelf') loadMgrOnShelf();
   if (tab !== 'gs1') gs1StopScanner();
+}
+
+// ── ON SHELF VIEW ─────────────────────────────────────────────
+// Shows all products currently on shelf — scans that haven't been
+// removed or recall-resolved. Groups by store, counts units.
+async function loadMgrOnShelf() {
+  const el = document.getElementById('mgr-onshelf-output');
+  if (!el) return;
+  const isNO = currentLang === 'no';
+  el.innerHTML = `<div style="font-size:13px;color:var(--muted);padding:20px 0;text-align:center;font-family:'DM Mono',monospace;"><div class="spinner" style="margin:0 auto 8px;"></div>${isNO ? 'Laster hyllestatus…' : 'Loading shelf status…'}</div>`;
+
+  try {
+    const cutoff = new Date(Date.now() - 180 * 86400000).toISOString();
+    const { data: scans, error } = await sb.from('scans')
+      .select('id,product_name,lot_number,barcode_number,store_name,store_id,quantity,created_at,scanned_by,supplier_name,removed_from_shelf_at,recall_resolved')
+      .eq('organisation_id', _currentOrgId)
+      .is('removed_from_shelf_at', null)
+      .eq('recall_resolved', false)
+      .gte('created_at', cutoff)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    const onShelf = (scans || []).filter(s => !s.removed_from_shelf_at && !s.recall_resolved);
+
+    if (!onShelf.length) {
+      el.innerHTML = `<div style="text-align:center;padding:40px 20px;color:var(--muted);font-size:13px;">${isNO ? 'Ingen produkter registrert på hylla' : 'No products currently on shelf'}</div>`;
+      return;
+    }
+
+    // Group by store
+    const byStore = {};
+    onShelf.forEach(s => {
+      const key = s.store_name || (isNO ? 'Ukjent butikk' : 'Unknown store');
+      if (!byStore[key]) byStore[key] = { store: key, items: [], units: 0, products: new Set() };
+      byStore[key].items.push(s);
+      byStore[key].units += (s.quantity || 1);
+      byStore[key].products.add(s.product_name || '?');
+    });
+
+    const totalUnits    = onShelf.reduce((n,s) => n + (s.quantity||1), 0);
+    const totalProducts = new Set(onShelf.map(s=>s.product_name)).size;
+
+    el.innerHTML = `
+      <!-- Summary -->
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:18px;">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center;">
+          <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:24px;color:var(--accent);">${onShelf.length}</div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.07em;margin-top:3px;">${isNO?'Poster':'Records'}</div>
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center;">
+          <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:24px;color:var(--text);">${totalUnits}</div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.07em;margin-top:3px;">${isNO?'Enheter':'Units'}</div>
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center;">
+          <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:24px;color:var(--text);">${totalProducts}</div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.07em;margin-top:3px;">${isNO?'Produkter':'Products'}</div>
+        </div>
+      </div>
+
+      <!-- Per-store breakdown -->
+      ${Object.values(byStore).sort((a,b) => b.units - a.units).map(store => `
+        <div style="margin-bottom:14px;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--surface);">
+          <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--surface2);">
+            <div>
+              <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:14px;color:var(--text);">${store.store}</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:2px;">${store.items.length} ${isNO?'poster':'records'} · ${store.units} ${isNO?'enheter':'units'} · ${store.products.size} ${isNO?'produkter':'products'}</div>
+            </div>
+            <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:22px;color:var(--accent);">${store.units}</div>
+          </div>
+          ${store.items.slice(0, 12).map(s => `
+            <div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;">
+              <div style="flex:1;min-width:0;">
+                <div style="font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${s.product_name||'—'}</div>
+                <div style="font-size:10px;color:var(--muted);margin-top:2px;font-family:'DM Mono',monospace;">${s.lot_number||isNO?'Parti utilgjengelig':'Lot N/A'} · ${fmtDate(s.created_at)}</div>
+              </div>
+              <div style="font-size:11px;color:var(--muted);text-align:right;flex-shrink:0;">
+                <div style="font-weight:600;color:var(--text);">${s.quantity||1} ${isNO?'stk':'units'}</div>
+                <div style="font-size:10px;">${(s.scanned_by||'').split('@')[0]||'—'}</div>
+              </div>
+            </div>`).join('')}
+          ${store.items.length > 12 ? `<div style="padding:10px 16px;font-size:11px;color:var(--muted);text-align:center;">+${store.items.length - 12} ${isNO?'til':'more'}</div>` : ''}
+        </div>`).join('')}`;
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">${e.message}</div>`;
+  }
 }
 
 function toggleEscalatedTab() {
