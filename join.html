@@ -304,7 +304,10 @@ async function acceptInvitation() {
 
     const userId = signInData.user.id;
 
-    // Add to organisation
+    // Mark invitation accepted — do this regardless of whether account was new or existing
+    await sb.from('invitations').update({ accepted: true }).eq('id', _invitation.id);
+
+    // Add to organisation (idempotent — ignore duplicate key errors)
     const { error: memberErr } = await sb.from('organisation_members').insert({
       organisation_id: _invitation.organisation_id,
       user_id:         userId,
@@ -313,9 +316,6 @@ async function acceptInvitation() {
       joined_at:       new Date().toISOString(),
     });
     if (memberErr && !memberErr.message.includes('duplicate')) throw memberErr;
-
-    // Mark invitation accepted
-    await sb.from('invitations').update({ accepted: true }).eq('id', _invitation.id);
 
     // Show success then auto-redirect with session tokens
     const orgName   = _invitation._orgName || 'your organisation';
