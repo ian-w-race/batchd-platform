@@ -4625,6 +4625,17 @@
         <div id="recall-sheet-ack-chain" style="display:flex;align-items:center;gap:0;"></div>
         <div style="font-size:10px;color:var(--muted);margin-top:5px;">Your actions below automatically update the recall response chain visible to your manager.</div>
       </div>
+      <!-- Coordinator reference card — shown when coordinator is set -->
+      <div id="recall-sheet-coordinator" style="display:none;margin-top:8px;background:rgba(52,211,153,0.05);border:1px solid rgba(52,211,153,0.15);border-radius:8px;padding:9px 12px;">
+        <div style="font-size:10px;font-weight:700;letter-spacing:0.07em;text-transform:uppercase;color:var(--muted);margin-bottom:5px;">📞 Recall coordinator</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--text);" id="recall-sheet-coord-name"></div>
+            <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:2px;" id="recall-sheet-coord-contact"></div>
+          </div>
+          <a id="recall-sheet-coord-tel" href="#" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid rgba(52,211,153,0.25);background:rgba(52,211,153,0.06);color:var(--accent);text-decoration:none;font-family:'DM Mono',monospace;font-weight:600;display:none;">Call →</a>
+        </div>
+      </div>
     </div>
 
     <!-- Steps -->
@@ -8445,10 +8456,10 @@ async function saveRecord() {
 async function checkDuplicate(productName, lotNum, storeName) {
   try {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    // Use UUID when available — store names can change, UUIDs never do
     const storeUUID = window._storeIdMap?.[storeName] || null;
     let q = sb.from('scans')
       .select('id')
+      .eq('organisation_id', _currentOrgId)  // scope to this org
       .ilike('product_name', productName)
       .eq('lot_number', lotNum)
       .gte('created_at', since)
@@ -10698,7 +10709,7 @@ async function generateAuditReport() {
   outputEl.style.display = 'block';
 
   try {
-    let query = sb.from('scans').select('*').order('created_at', { ascending: true });
+    let query = sb.from('scans').select('*').eq('organisation_id', _currentOrgId).order('created_at', { ascending: true });
     if (from)  query = query.gte('created_at', from);
     if (to)    { const td = new Date(to); td.setHours(23,59,59,999); query = query.lte('created_at', td.toISOString()); }
     if (store) {
@@ -15991,7 +16002,7 @@ async function loadMgrStaff() {
   const to   = document.getElementById('mgr-staff-to')?.value;
 
   try {
-    let query = sb.from('scans').select('scanned_by, store_name, created_at, removed_from_shelf_at');
+    let query = sb.from('scans').select('scanned_by, store_name, created_at, removed_from_shelf_at').eq('organisation_id', _currentOrgId);
     if (from) query = query.gte('created_at', from + 'T00:00:00');
     if (to)   query = query.lte('created_at', to   + 'T23:59:59');
     const { data, error } = await query;
@@ -16178,6 +16189,7 @@ async function loadMgrEscalated() {
     // If nothing found in memory but DB might have fresher data, do a direct query
     if (!data.length) {
       const res = await sb.from('scans').select('*')
+        .eq('organisation_id', _currentOrgId)
         .eq('manager_escalated', true)
         .order('manager_escalated_at', { ascending: false });
       if (!res.error && res.data?.length) {
@@ -16997,6 +17009,37 @@ function openRecallActionSheet(scanId) {
     expEl.style.display = 'block';
   } else {
     expEl.style.display = 'none';
+  }
+
+  // Populate coordinator reference card if set
+  const coordCard    = document.getElementById('recall-sheet-coordinator');
+  const coordName    = document.getElementById('recall-sheet-coord-name');
+  const coordContact = document.getElementById('recall-sheet-coord-contact');
+  const coordTel     = document.getElementById('recall-sheet-coord-tel');
+  if (coordCard) {
+    // Load coordinator from user_settings (cached after first load)
+    sb.from('user_settings')
+      .select('recall_coordinator_name, recall_coordinator_contact')
+      .eq('user_id', currentUser.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data?.recall_coordinator_name) {
+          if (coordName) coordName.textContent = data.recall_coordinator_name;
+          if (coordContact) coordContact.textContent = data.recall_coordinator_contact || '';
+          // If contact looks like a phone number, make it a tel: link
+          if (coordTel && data.recall_coordinator_contact) {
+            const contact = data.recall_coordinator_contact;
+            const isPhone = /^[\d\s\+\-\(\)]{7,}$/.test(contact);
+            if (isPhone) {
+              coordTel.href = `tel:${contact.replace(/\s/g,'')}`;
+              coordTel.style.display = 'inline-flex';
+            }
+          }
+          coordCard.style.display = 'block';
+        } else {
+          coordCard.style.display = 'none';
+        }
+      });
   }
 
   // Reset steps
