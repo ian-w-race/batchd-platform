@@ -5547,8 +5547,10 @@ async function fetchReportData(key) {
         const resolved   = ss.filter(s => s.recall_resolved).length;
         const escalated  = ss.filter(s => s.manager_escalated).length;
         const lotCoverage = ss.length > 0 ? ss.filter(s => s.lot_number).length / ss.length : 0;
-        const freqScore   = Math.min(40, recent7 * 6);
-        const score       = ss.length === 0 ? 0 : Math.min(100, Math.round(20 + (lotCoverage * 40) + freqScore));
+        const freqScore   = recent7 >= 3 ? 40 : recent7 >= 1 ? 20 : 0;
+        const lotScore    = Math.round(lotCoverage * 40);
+        const baseScore   = ss.length > 0 ? 20 : 0;
+        const score       = freqScore + lotScore + baseScore;
         const status      = recent7 >= 3 ? 'active' : recent7 >= 1 ? 'slow' : recent30 >= 1 ? 'slow' : 'dark';
         return { ...store, totalScans: ss.length, recent7, recent30, resolved, escalated, score, status };
       });
@@ -6073,27 +6075,126 @@ async function downloadReport(key) {
 function renderLotCheck() {
   const el = document.getElementById('main-content');
   el.innerHTML = `
-    <div style="max-width:700px;">
+    <div style="max-width:760px;">
       <div style="margin-bottom:20px;">
         <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;margin-bottom:4px;">Lot Lookup</div>
-        <div style="font-size:12px;color:var(--muted);">Enter a lot code, barcode, or product name to see shelf status and recall matches across all stores.</div>
+        <div style="font-size:12px;color:var(--muted);">Search any lot code, barcode, or product name — or scroll down to see everything currently on shelf across all stores.</div>
       </div>
 
-      <div style="display:flex;gap:10px;margin-bottom:20px;">
+      <div style="display:flex;gap:10px;margin-bottom:24px;">
         <input type="text" id="lc-input" placeholder="e.g. L2026-03-14A · 7020034 · Grandiosa"
-          style="flex:1;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:13px 16px;color:var(--text);font-family:'DM Mono',monospace;font-size:14px;outline:none;"
-          oninput="runLotCheck()" onkeydown="if(event.key==='Enter')runLotCheck(true)" />
+          style="flex:1;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:13px 16px;color:var(--text);font-family:'DM Mono',monospace;font-size:14px;outline:none;transition:border-color 0.2s;"
+          oninput="runLotCheck()" onkeydown="if(event.key==='Enter')runLotCheck(true)"
+          onfocus="this.style.borderColor='rgba(52,211,153,0.45)'"
+          onblur="this.style.borderColor=''" />
         <button onclick="runLotCheck(true)"
           style="background:var(--accent);color:#052e16;border:none;border-radius:10px;padding:12px 20px;font-weight:700;font-size:13px;cursor:pointer;white-space:nowrap;font-family:'Figtree',sans-serif;box-shadow:0 2px 8px rgba(52,211,153,0.25);">
           Search
         </button>
       </div>
 
-      <div id="lc-result" style="min-height:120px;"></div>
+      <div id="lc-result"></div>
+
+      <!-- Default on-shelf view -->
+      <div id="lc-onshelf">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+          <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;">Currently on shelf — all stores</div>
+          <button onclick="renderLotCheck()" style="font-size:11px;font-family:'DM Mono',monospace;padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;">↻ Refresh</button>
+        </div>
+        <div id="lc-onshelf-content"><div style="color:var(--muted);font-size:12px;display:flex;align-items:center;gap:8px;"><div class="spinner"></div> Loading shelf status…</div></div>
+      </div>
     </div>`;
 
-  // Auto-focus the input
   setTimeout(() => document.getElementById('lc-input')?.focus(), 100);
+  _loadCorpOnShelf();
+}
+
+async function _loadCorpOnShelf() {
+  const el = document.getElementById('lc-onshelf-content');
+  if (!el) return;
+  try {
+    const cutoff = new Date(Date.now() - 180 * 86400000).toISOString();
+    const [scansRes, storesRes] = await Promise.all([
+      sb.from('scans')
+        .select('id,product_name,lot_number,barcode_number,store_name,store_id,quantity,created_at,scanned_by,removed_from_shelf_at,recall_resolved')
+        .eq('organisation_id', _orgId)
+        .is('removed_from_shelf_at', null)
+        .eq('recall_resolved', false)
+        .gte('created_at', cutoff)
+        .order('created_at', { ascending: false })
+        .limit(2000),
+      sb.from('stores').select('id,name').eq('organisation_id', _orgId).eq('active', true),
+    ]);
+
+    const scans  = (scansRes.data || []).filter(s => !s.removed_from_shelf_at && !s.recall_resolved);
+    const stores = storesRes.data || [];
+
+    if (!scans.length) {
+      el.innerHTML = `<div style="padding:32px;text-align:center;background:var(--surface);border:1px solid var(--border);border-radius:12px;color:var(--muted);font-size:13px;">No products currently on shelf in the last 180 days.</div>`;
+      return;
+    }
+
+    const totalUnits    = scans.reduce((n,s) => n + (s.quantity||1), 0);
+    const totalProducts = new Set(scans.map(s => s.product_name)).size;
+    const totalStores   = new Set(scans.map(s => s.store_name)).size;
+
+    // Group by store
+    const byStore = {};
+    scans.forEach(s => {
+      const key = s.store_name || 'Unknown store';
+      if (!byStore[key]) byStore[key] = { store: key, scans: [], units: 0, products: new Set() };
+      byStore[key].scans.push(s);
+      byStore[key].units += (s.quantity || 1);
+      byStore[key].products.add(s.product_name || '?');
+    });
+
+    el.innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px;">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center;box-shadow:var(--shadow-sm);">
+          <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:22px;color:var(--accent);">${scans.length}</div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.07em;margin-top:3px;">Records</div>
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center;box-shadow:var(--shadow-sm);">
+          <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:22px;color:var(--text);">${totalUnits}</div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.07em;margin-top:3px;">Units</div>
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center;box-shadow:var(--shadow-sm);">
+          <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:22px;color:var(--text);">${totalProducts}</div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.07em;margin-top:3px;">Products</div>
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center;box-shadow:var(--shadow-sm);">
+          <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:22px;color:var(--text);">${totalStores}</div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.07em;margin-top:3px;">Stores</div>
+        </div>
+      </div>
+
+      ${Object.values(byStore).sort((a,b) => b.units - a.units).map(store => `
+        <div style="margin-bottom:12px;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--surface);box-shadow:var(--shadow-sm);">
+          <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--surface2);">
+            <div>
+              <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:14px;color:var(--text);">${store.store}</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:2px;">${store.scans.length} records · ${store.units} units · ${store.products.size} products</div>
+            </div>
+            <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:22px;color:var(--accent);">${store.units}</div>
+          </div>
+          <div>
+            ${store.scans.slice(0,10).map(s => `
+              <div style="padding:9px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;">
+                <div style="flex:1;min-width:0;">
+                  <div style="font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${s.product_name||'—'}</div>
+                  <div style="font-size:10px;color:var(--muted);margin-top:1px;font-family:'DM Mono',monospace;">${s.lot_number||'Lot N/A'} · ${fmtDashDT(s.created_at)}</div>
+                </div>
+                <div style="text-align:right;flex-shrink:0;">
+                  <div style="font-size:12px;font-weight:700;color:var(--text);">${s.quantity||1}</div>
+                  <div style="font-size:10px;color:var(--muted);">${(s.scanned_by||'').split('@')[0]||'—'}</div>
+                </div>
+              </div>`).join('')}
+            ${store.scans.length > 10 ? `<div style="padding:9px 16px;font-size:11px;color:var(--muted);text-align:center;">+${store.scans.length - 10} more · <button onclick="showPanel('traceability')" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:11px;font-family:inherit;padding:0;">View all in Traceability →</button></div>` : ''}
+          </div>
+        </div>`).join('')}`;
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:12px;">${e.message}</div>`;
+  }
 }
 
 let _lcDebounce = null;
@@ -6102,7 +6203,12 @@ async function runLotCheck(immediate = false) {
   const el    = document.getElementById('lc-result');
   if (!input || !el) return;
   const q = input.value.trim();
-  if (q.length < 2) { el.innerHTML = ''; return; }
+  if (q.length < 2) {
+    el.innerHTML = '';
+    const onshelf = document.getElementById('lc-onshelf');
+    if (onshelf) onshelf.style.display = 'block';
+    return;
+  }
 
   clearTimeout(_lcDebounce);
   if (!immediate) {
@@ -6111,6 +6217,9 @@ async function runLotCheck(immediate = false) {
   }
 
   el.innerHTML = `<div style="color:var(--muted);font-size:12px;padding:12px 0;">Searching…</div>`;
+  // Hide the default on-shelf view while search results show
+  const onshelf = document.getElementById('lc-onshelf');
+  if (onshelf) onshelf.style.display = 'none';
   const qLow = q.toLowerCase();
 
   try {
