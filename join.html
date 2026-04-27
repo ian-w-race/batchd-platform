@@ -317,6 +317,25 @@ async function acceptInvitation() {
     });
     if (memberErr && !memberErr.message.includes('duplicate')) throw memberErr;
 
+    // Set is_manager flag for store_manager role — controls manager tab in scanning app
+    if (_invitation.role === 'store_manager') {
+      await sb.from('user_profiles').upsert({
+        id:         userId,
+        is_manager: true,
+      }, { onConflict: 'id' });
+    }
+
+    // Create user_settings with region from org (so scanning app skips onboarding)
+    const { data: orgSettings } = await sb.from('organisations')
+      .select('region').eq('id', _invitation.organisation_id).maybeSingle();
+    await sb.from('user_settings').upsert({
+      user_id:              userId,
+      region:               orgSettings?.region || 'no',
+      recall_source:        'both',
+      recall_lookback_days: 180,
+      onboarding_done:      true,
+    }, { onConflict: 'user_id' });
+
     // Show success then auto-redirect with session tokens
     const orgName   = _invitation._orgName || 'your organisation';
     const roleLabel = ROLE_LABELS[_invitation.role] || _invitation.role.replace(/_/g,' ');

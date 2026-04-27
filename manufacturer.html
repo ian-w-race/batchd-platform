@@ -694,7 +694,7 @@ async function initPortal(user) {
 
   // Only redirect staff — corp_admin can access manufacturer portal during development
   if (member.role === 'store_manager') {
-    window.location.replace('https://app.batchdapp.com');
+    window.location.replace('https://app.batchdapp.com/dashboard.html');
     return;
   }
   if (member.role === 'staff') {
@@ -3319,6 +3319,21 @@ async function deleteMfrPattern(id, btn) {
 (async () => {
   const { data: { session } } = await sb.auth.getSession();
   if (session) await initPortal(session.user);
+
+  // Session expiry handling
+  sb.auth.onAuthStateChange((event, session) => {
+    if (event === 'SIGNED_OUT' || (event === 'TOKEN_REFRESHED' && !session)) {
+      const overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(8,15,18,0.95);display:flex;align-items:center;justify-content:center;z-index:9999;';
+      overlay.innerHTML = `<div style="text-align:center;color:var(--text);font-family:'DM Mono',monospace;">
+        <div style="font-size:28px;margin-bottom:12px;">🔒</div>
+        <div style="font-size:14px;margin-bottom:6px;font-weight:600;">Session ended</div>
+        <div style="font-size:12px;color:var(--muted);">Redirecting to login…</div>
+      </div>`;
+      document.body.appendChild(overlay);
+      setTimeout(() => location.reload(), 1500);
+    }
+  });
 })();
 
 // ── Product registry ──────────────────────────────────────────

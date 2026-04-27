@@ -436,6 +436,7 @@
     .auth-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     .auth-msg { font-size: 11px; padding: 9px 12px; border-radius: 6px; margin-bottom: 12px; }
     .auth-msg.error { background: rgba(255,92,92,0.1); border: 1px solid rgba(255,92,92,0.3); color: var(--danger); }
+    .auth-msg.info  { background: rgba(52,211,153,0.08); border: 1px solid rgba(52,211,153,0.25); color: var(--accent); }
     .auth-link { text-align: center; margin-top: 14px; font-size: 11px; color: var(--muted); }
     .auth-link a { color: var(--accent); text-decoration: none; }
 
@@ -622,6 +623,11 @@
     <div class="field"><label>Email</label><input id="auth-email" type="email" placeholder="you@company.com" autocomplete="email" onkeydown="if(event.key==='Enter')doAuth()" /></div>
     <div class="field"><label>Password</label><input id="auth-pw" type="password" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')doAuth()" /></div>
     <button class="auth-btn" id="auth-btn" onclick="doAuth()">Sign in →</button>
+    <div style="text-align:center;margin-top:12px;">
+      <button onclick="doPasswordReset()" style="background:none;border:none;color:var(--muted);font-family:'DM Mono',monospace;font-size:11px;cursor:pointer;padding:4px 8px;transition:color 0.15s;" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--muted)'">
+        Forgot password?
+      </button>
+    </div>
     <div class="auth-link">Don't have an account? <a href="https://batchdapp.com">Sign up at batchdapp.com</a></div>
   </div>
 </div>
@@ -1066,9 +1072,27 @@ async function doAuth() {
   }
 }
 
-function showAuthMsg(txt) {
+async function doPasswordReset() {
+  const email = document.getElementById('auth-email').value.trim();
+  if (!email) {
+    showAuthMsg('Enter your email address above first, then click Forgot password.');
+    return;
+  }
+  const { error } = await sb.auth.resetPasswordForEmail(email, {
+    redirectTo: 'https://app.batchdapp.com/dashboard.html',
+  });
+  if (error) {
+    showAuthMsg(error.message);
+  } else {
+    showAuthMsg(`Password reset email sent to ${email}. Check your inbox.`, 'info');
+  }
+}
+
+function showAuthMsg(txt, type = 'error') {
   const el = document.getElementById('auth-msg');
-  el.textContent = txt; el.style.display = 'block';
+  el.textContent = txt;
+  el.className = `auth-msg ${type}`;
+  el.style.display = 'block';
 }
 
 async function signOut() {
@@ -1104,12 +1128,12 @@ async function initDashboard(user) {
     return;
   }
 
-  // Route by role — manufacturers and staff don't belong here
+  // Route by role — manufacturers, staff and store managers don't belong in the corp dashboard
   if (member.role === 'mfr_admin' || member.role === 'mfr_qa') {
-    window.location.replace('https://manufacturer.batchdapp.com');
+    window.location.replace('https://app.batchdapp.com/manufacturer.html');
     return;
   }
-  if (member.role === 'staff') {
+  if (member.role === 'staff' || member.role === 'store_manager') {
     window.location.replace('https://batchd-app.netlify.app');
     return;
   }
@@ -7754,6 +7778,22 @@ async function toggleScanIntelligence(partnerId, currentValue) {
     _session = session;
     await initDashboard(session.user);
   }
+
+  // Session expiry — reload cleanly when token expires
+  sb.auth.onAuthStateChange((event, session) => {
+    if (event === 'SIGNED_OUT' || (event === 'TOKEN_REFRESHED' && !session)) {
+      // Show a brief message then reload to login screen
+      const overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(8,15,18,0.95);display:flex;align-items:center;justify-content:center;z-index:9999;';
+      overlay.innerHTML = `<div style="text-align:center;color:var(--text);font-family:'DM Mono',monospace;">
+        <div style="font-size:28px;margin-bottom:12px;">🔒</div>
+        <div style="font-size:14px;margin-bottom:6px;font-weight:600;">Session ended</div>
+        <div style="font-size:12px;color:var(--muted);">Redirecting to login…</div>
+      </div>`;
+      document.body.appendChild(overlay);
+      setTimeout(() => location.reload(), 1500);
+    }
+  });
 })();
 </script>
 </body>
