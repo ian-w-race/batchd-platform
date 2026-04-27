@@ -768,6 +768,7 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 let _session = null, _orgId = null, _orgName = '', _orgRegion = 'no';
+let _userId = null, _userEmail = '', _userRole = null, _storeId = null;
 
 // ═══════════════════════════════════════════════════════════════
 // ── Batch'd Intelligence Layer ──────────────────────────────────
@@ -994,7 +995,7 @@ async function createInvestigationFromPattern(productName, lots, complaintCount,
 }
 
 
-let _userRole = 'corp_admin', _storeId = null, _storeName = '';
+let _storeName = '';
 let _activePanel = 'overview';
 
 // ── Clock ──────────────────────────────────────────────────────
@@ -1116,6 +1117,8 @@ async function initDashboard(user) {
   _orgId    = member.organisation_id;
   _userRole = member.role;
   _storeId  = member.store_id || null;
+  _userId   = user.id;
+  _userEmail = user.email;
 
   // Track last active timestamp
   (async () => { try { await sb.from('user_settings').upsert({
@@ -1846,10 +1849,18 @@ async function renderOverview() {
       const lastScan  = storeScans[0]?.created_at || null;
       const daysSince = lastScan ? Math.floor((now - new Date(lastScan)) / 86400000) : 999;
       // Score: based on regularity. Active = scans in last 7d. Slow = scans in last 30d but not 7d. Dark = nothing in 30d.
+      // Status: active = 3+ scans in 7d, slow = 1-2 scans in 7d, dark = none in 7d
       const status = scans7d >= 3 ? 'active' : scans7d >= 1 ? 'slow' : scans30d >= 1 ? 'slow' : 'dark';
-      // Traceability score: 40 base + up to 40 for lot code coverage + 20 for frequency
       const lotCoverage = storeScans.filter(s => s.lot_number).length / Math.max(storeScans.length, 1);
-      const score = Math.min(100, Math.round(40 + (lotCoverage * 40) + Math.min(20, scans7d * 4)));
+      // Compliance score components:
+      //   Frequency (40pts): full marks for 3+ scans/week, halved for slow, zero for dark
+      //   Lot coverage (40pts): % of scans with a lot code captured
+      //   Base (20pts): always granted if store has any history
+      // Dark stores score max 20% — they have no evidence of active traceability
+      const freqScore = status === 'active' ? 40 : status === 'slow' ? 20 : 0;
+      const lotScore  = Math.round(lotCoverage * 40);
+      const baseScore = storeScans.length > 0 ? 20 : 0;
+      const score     = freqScore + lotScore + baseScore;
       return { ...store, scans7d, scans30d, lastScan, daysSince, status, score };
     }).sort((a,b) => {
       const order = {dark:0, slow:1, active:2};
@@ -3903,7 +3914,11 @@ async function renderStaff() {
         ${members.length === 0
           ? `<div class="empty">No members yet. Invite your first team member above.</div>`
           : members.map(m => {
-              const email = getEmail(m.user_id, m.role);
+              const email = getEmail(m.user_id, m.role)
+                         || (m.user_id === _userId ? _userEmail : null)
+                         || lastSeenMap[m.user_id]?.last_seen_app && m.user_id.slice(0,8) + '…'
+                         || m.user_id.slice(0,8) + '…';
+              const lastSeen = lastSeenMap[m.user_id]?.last_seen_at;
               const store = stores.find(s => s.id === m.store_id);
               const roleLabel = m.role.replace(/_/g,' ');
               const initial = roleLabel[0].toUpperCase();
