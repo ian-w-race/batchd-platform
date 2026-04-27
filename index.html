@@ -5230,32 +5230,19 @@ async function initAuth() {
   if (session) {
     // Check active flag before showing app — catches deactivated users on session restore
     const { data: member } = await sb.from('organisation_members')
-      .select('active')
-      .eq('user_id', session.user.id)
-      .maybeSingle();
+      .select('active').eq('user_id', session.user.id).maybeSingle();
     if (member?.active === false) {
-      document.getElementById('login-screen').classList.remove('hidden');
-      document.getElementById('login-screen').innerHTML = `
-        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:32px;text-align:center;gap:16px;background:var(--bg);">
-          <div style="font-size:40px;">🔒</div>
-          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:18px;color:var(--text);">Account deactivated</div>
-          <div style="font-size:13px;color:var(--muted);max-width:300px;line-height:1.6;">Your account has been deactivated by your organisation administrator. Contact them to restore access.</div>
-          <button onclick="sb.auth.signOut().then(()=>location.reload())"
-            style="margin-top:8px;padding:10px 20px;border-radius:8px;border:1px solid var(--border);background:none;color:var(--muted);font-family:'DM Mono',monospace;font-size:12px;cursor:pointer;">
-            Sign out
-          </button>
-        </div>`;
       await sb.auth.signOut();
+      location.reload();
       return;
     }
     showApp(session.user);
   } else {
     document.getElementById('login-screen').classList.remove('hidden');
   }
-  sb.auth.onAuthStateChange((event, session) => {
+  sb.auth.onAuthStateChange(async (event, session) => {
     if (event === 'TOKEN_REFRESHED') return;
     if (event === 'SIGNED_OUT' || !session) {
-      // Show session expired overlay if app was already in use
       if (currentUser) {
         document.getElementById('session-expired').style.display = 'flex';
       } else {
@@ -5264,7 +5251,33 @@ async function initAuth() {
       currentUser = null;
     } else if (session) {
       document.getElementById('session-expired').style.display = 'none';
-      showApp(session.user);
+      // Check active flag BEFORE showing app — block immediately with a flag
+      // to prevent showApp firing from a parallel call while we await the DB
+      if (window._checkingActive) return;
+      window._checkingActive = true;
+      try {
+        const { data: member } = await sb.from('organisation_members')
+          .select('active').eq('user_id', session.user.id).maybeSingle();
+        if (member?.active === false) {
+          await sb.auth.signOut();
+          document.getElementById('login-screen').style.display = 'flex';
+          document.getElementById('login-screen').classList.remove('hidden');
+          document.getElementById('login-screen').innerHTML = `
+            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:32px;text-align:center;gap:16px;background:var(--bg);">
+              <div style="font-size:40px;">🔒</div>
+              <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:18px;color:var(--text);">Account deactivated</div>
+              <div style="font-size:13px;color:var(--muted);max-width:300px;line-height:1.6;">Your account has been deactivated. Contact your administrator to restore access.</div>
+              <button onclick="location.reload()"
+                style="margin-top:8px;padding:10px 20px;border-radius:8px;border:1px solid var(--border);background:none;color:var(--muted);font-family:'DM Mono',monospace;font-size:12px;cursor:pointer;">
+                Back to sign in
+              </button>
+            </div>`;
+          return;
+        }
+        showApp(session.user);
+      } finally {
+        window._checkingActive = false;
+      }
     }
   });
 }
