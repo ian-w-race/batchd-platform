@@ -11918,7 +11918,45 @@ async function snapOcr() {
     ? Promise.resolve(_prewarmResult)
     : lookupLearnedPattern(productName, barcodeNum || null, null, null);
 
-  const [blob2, preLearn] = await Promise.all([frame2Promise, learnPromise]);
+  // ── Speed optimisation: start localise_lot for blob1 NOW ─────
+  // blob1 is already captured. We have 250ms before blob2 is ready.
+  // Run localise_lot for blob1 in parallel with the frame2 wait.
+  // This saves ~600ms on first-time scans by overlapping the localise
+  // pass with the mandatory frame2 wait rather than running it after.
+  // We only pre-localise if there's no learned crop (skip redundant call).
+  const _preLocBlob1Promise = (async () => {
+    // We check for learned crop after learnPromise resolves — if we have one,
+    // skip the pre-localise. Otherwise fire it during the wait.
+    const preLearnCheck = await Promise.race([
+      learnPromise,
+      new Promise(r => setTimeout(r, 100)) // don't wait more than 100ms for this check
+    ]);
+    const hasCrop = preLearnCheck
+      && preLearnCheck.cropYStart != null
+      && (preLearnCheck.cropScanCount || 0) >= 5;
+    if (hasCrop) return null; // learned crop will be used — don't double-localise
+
+    // No stored crop — run localise_lot now so it overlaps with the frame2 wait
+    try {
+      const isUSRegion = _userRegion === 'us';
+      const locBlob = await preprocessImage(blob1, 640);
+      const locB64  = await blobToBase64(locBlob);
+      const locPromise2 = callOcrFunction('localise_lot', locB64, { isUSRegion });
+      const to = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 1200));
+      const locData = await Promise.race([locPromise2, to]);
+      const locText = (locData.content?.[0]?.text || '').replace(/```json|```/g, '').trim();
+      const loc = JSON.parse(locText);
+      if (loc.found && typeof loc.y_start === 'number') {
+        const pad = 0.08;
+        const yS = Math.max(0, loc.y_start - pad);
+        const yE = Math.min(1, loc.y_end + pad);
+        if (yE - yS < 0.85) return { yStart: yS, yEnd: yE, source: 'pre-localised' };
+      }
+    } catch(e) {}
+    return null;
+  })();
+
+  const [blob2, preLearn, preLoc1] = await Promise.all([frame2Promise, learnPromise, _preLocBlob1Promise]);
   _prewarmResult = null; // consume pre-warm result
 
   document.getElementById('ocr-analyzing').style.display = 'flex';
@@ -11939,9 +11977,11 @@ async function snapOcr() {
   }
 
   // Run OCR on both frames in parallel — total time ≈ max(t1, t2), not t1+t2
+  // blob1 gets the pre-computed localise result (ran during frame2 wait) — skips its own Pass 0
+  // blob2 runs its own localise pass (no pre-computed result), but runs in parallel with blob1's Sonnet
   const [r1, r2] = await Promise.all([
-    extractCodesFromImage(blob1, preLearn).catch(() => null),
-    extractCodesFromImage(blob2, preLearn).catch(() => null),
+    extractCodesFromImage(blob1, preLearn, preLoc1).catch(() => null),
+    extractCodesFromImage(blob2, preLearn, null).catch(() => null),
   ]);
 
   // ── CONSENSUS RESOLUTION ──────────────────────────────────
@@ -13362,7 +13402,7 @@ function getPackagingTip(productName) {
 // - Post-extraction validation against false-positive patterns
 // - EU/US "date as lot" detection (no explicit lot = use best-before/pack date)
 
-async function extractCodesFromImage(blob, learnedContext) {
+async function extractCodesFromImage(blob, learnedContext, preLocalisedCrop = null) {
   const _pipelineStart = Date.now();
   const _elapsed = () => Date.now() - _pipelineStart;
   // Hard 3.2s limit — Pass 0 is capped at 1.2s, leaving ~2s for Pass 1.
@@ -13380,53 +13420,59 @@ async function extractCodesFromImage(blob, learnedContext) {
       if (subEl) subEl.innerHTML = `${tip.icon} ${tip.tip}`;
     }
 
-    // ── LEARNED CROP SHORTCUT ────────────────────────────────
-    // If we have stored crop coordinates from 5+ previous scans of this product,
-    // skip Pass 0 (haiku localisation) entirely. We already know where the lot
-    // code lives on this packaging. One fewer API round-trip = ~1s faster.
+    // ── LOCALISE CROP (three priority levels) ────────────────
+    // Priority 1: pre-computed crop (ran during 250ms frame2 wait) — fastest
+    // Priority 2: stored learned crop from 5+ previous scans — also instant
+    // Priority 3: run localise_lot Haiku pass now — ~600ms, raced at 1.2s
     let localisedCrop = null;
 
-    const _hasLearnedCrop = learnedContext
-      && learnedContext.cropYStart != null
-      && learnedContext.cropYEnd   != null
-      && (learnedContext.cropScanCount || 0) >= 5;
+    if (preLocalisedCrop) {
+      // Caller already ran localise_lot during the frame2 wait — use it directly
+      localisedCrop = preLocalisedCrop;
+      console.log(`[LEARNED CROP] Using pre-computed crop from frame2 wait: y=${localisedCrop.yStart.toFixed(2)}–${localisedCrop.yEnd.toFixed(2)}`);
+    } else {
+      const _hasLearnedCrop = learnedContext
+        && learnedContext.cropYStart != null
+        && learnedContext.cropYEnd   != null
+        && (learnedContext.cropScanCount || 0) >= 5;
 
     if (_hasLearnedCrop) {
-      localisedCrop = {
-        yStart: learnedContext.cropYStart,
-        yEnd:   learnedContext.cropYEnd,
-        source: 'learned'
-      };
-      console.log(
-        `[LEARNED CROP] Skipping Pass 0 — using stored region ` +
-        `y=${localisedCrop.yStart.toFixed(2)}–${localisedCrop.yEnd.toFixed(2)} ` +
-        `(${learnedContext.cropScanCount} crop observations, ${learnedContext.scanCount} total scans)`
-      );
-    } else {
-      // ── PASS 0: LOT CODE LOCALISATION (haiku) ─────────────
-      // Finds WHERE on the image the lot code is. Fast and cheap.
-      // Hard-raced against 1.2s — if haiku hasn't responded by then,
-      // we skip it and use the full image. Never blocks the pipeline.
-      try {
-        const locBlob = await preprocessImage(blob, 640); // smaller = faster
-        const locB64  = await blobToBase64(locBlob);
-        const locPromise = callOcrFunction('localise_lot', locB64, { isUSRegion });
-        const timeoutPromise = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 1200));
-        const locData = await Promise.race([locPromise, timeoutPromise]);
-        const locText = (locData.content?.[0]?.text || '').replace(/```json|```/g,'').trim();
-        const loc = JSON.parse(locText);
-        if (loc.found && typeof loc.y_start === 'number' && typeof loc.y_end === 'number') {
-          const pad = 0.08;
-          const yS = Math.max(0, loc.y_start - pad);
-          const yE = Math.min(1, loc.y_end   + pad);
-          if (yE - yS < 0.85) {
-            localisedCrop = { yStart: yS, yEnd: yE, source: 'localised' };
+        localisedCrop = {
+          yStart: learnedContext.cropYStart,
+          yEnd:   learnedContext.cropYEnd,
+          source: 'learned'
+        };
+        console.log(
+          `[LEARNED CROP] Skipping Pass 0 — using stored region ` +
+          `y=${localisedCrop.yStart.toFixed(2)}–${localisedCrop.yEnd.toFixed(2)} ` +
+          `(${learnedContext.cropScanCount} crop observations, ${learnedContext.scanCount} total scans)`
+        );
+      } else {
+        // ── PASS 0: LOT CODE LOCALISATION (haiku) ─────────────
+        // Finds WHERE on the image the lot code is. Fast and cheap.
+        // Hard-raced against 1.2s — if haiku hasn't responded by then,
+        // we skip it and use the full image. Never blocks the pipeline.
+        try {
+          const locBlob = await preprocessImage(blob, 640); // smaller = faster
+          const locB64  = await blobToBase64(locBlob);
+          const locPromise = callOcrFunction('localise_lot', locB64, { isUSRegion });
+          const timeoutPromise = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 1200));
+          const locData = await Promise.race([locPromise, timeoutPromise]);
+          const locText = (locData.content?.[0]?.text || '').replace(/```json|```/g,'').trim();
+          const loc = JSON.parse(locText);
+          if (loc.found && typeof loc.y_start === 'number' && typeof loc.y_end === 'number') {
+            const pad = 0.08;
+            const yS = Math.max(0, loc.y_start - pad);
+            const yE = Math.min(1, loc.y_end   + pad);
+            if (yE - yS < 0.85) {
+              localisedCrop = { yStart: yS, yEnd: yE, source: 'localised' };
+            }
           }
+        } catch(e) {
+          // Timeout or parse error — continue with full image, no delay
         }
-      } catch(e) {
-        // Timeout or parse error — continue with full image, no delay
       }
-    }
+    } // end preLocalisedCrop else block
 
     // ── PREPARE PRIMARY IMAGE ────────────────────────────────
     // Apply CLAHE-style enhancement to whatever we send to the API.
@@ -13474,9 +13520,11 @@ async function extractCodesFromImage(blob, learnedContext) {
         parts.push(_location.endsWith('.') ? _location : _location + '.');
       }
 
-      // Format — what the lot code looks like  
+      // Format — advisory hint only, never a hard constraint.
+      // Lot codes change every production run — the format describes what we've
+      // seen before, but the model must still return any visible lot/batch code.
       if (_format) {
-        parts.push(`Expected format: ${_format}.`);
+        parts.push(`Typical format (may vary by batch): ${_format}.`);
       }
 
       if (parts.length === 0 && productName) {
@@ -13494,10 +13542,11 @@ async function extractCodesFromImage(blob, learnedContext) {
 
         contextHint = `\n\n${label} FOR "${productName}":\n${parts.join('\n')}`;
 
-        // For very high confidence, add explicit instruction
-        if (_scanCount >= 20 && confidence === 'high' && _format) {
-          contextHint += `\nIMPORTANT: Only return codes matching the expected format above.`;
-        }
+        // NOTE: We intentionally do NOT add a hard format constraint here.
+        // Lot codes change every production run, so a previously learned format
+        // (e.g. "^[A-Z]\d{6}$") must never filter out codes from new batches.
+        // The format hint above is guidance — the model must still return any
+        // clearly visible production/lot/batch code it can read.
       }
     } else if (productName) {
       contextHint = `\n\nPRODUCT: "${productName}" — use your knowledge of where this product stamps its lot code.`;
@@ -13512,7 +13561,19 @@ async function extractCodesFromImage(blob, learnedContext) {
 
     const regionHint = isUSRegion
       ? 'US grocery context. Lot code is the TLC (Traceability Lot Code) under FSMA 204 — look for LOT, L#, BATCH, PACK DATE, Julian date code. Ignore UPC/EAN barcodes, zip codes, plant numbers (EST. ####).'
-      : 'Norwegian grocery context. Lot code is "partinummer" — look for L., Parti, LOT, or the alphanumeric code adjacent to "Holdbar til" / "Best før" / "Siste forbruksdag". Ignore "NO #### EF" (EU plant approval), plain dates, EAN barcodes.';
+      : [
+          'Norwegian/EU grocery context.',
+          'The lot code ("partinummer") is the PRODUCTION BATCH identifier, NOT the best-before date.',
+          'On gable-top cartons (milk, juice): the inkjet code block printed on the TOP FOLD typically contains:',
+          '  - A date stamp (DDMMYY or YYMMDD) — this is often the BEST-BEFORE date, NOT the lot code',
+          '  - A production code such as "L.nr XXXXX", "Parti XXXXX", or a short alphanumeric after "EFTER"/"ETTER"',
+          '  - A time stamp (HH:MM) — this is the packaging time, ignore it',
+          '  - A plant/line code — ignore it',
+          'For gable-top inkjet blocks: the lot code is the alphanumeric identifier (e.g. "M-123", "L230415", "T0526A"),',
+          'NOT the 6-digit date stamp.',
+          'On other packaging: look for text near "Holdbar til", "Best før", "L.", "Parti", "LOT", or standalone inkjet codes.',
+          'Ignore "NO #### EF" (EU plant approval number), plain calendar dates, EAN/GS1 barcodes.',
+        ].join(' ');
 
     const coreInstructions =
       `Find the lot/batch code (production traceability identifier) on this food packaging photo.\n` +
