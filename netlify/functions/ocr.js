@@ -3,9 +3,9 @@
 // Tasks: identify_product | read_barcode | localise_lot | extract_codes
 //
 // Speed strategy:
-//   - localise_lot     -> haiku (fast localisation pass)
-//   - extract_codes    -> haiku by default (useHaiku:true), sonnet for escalation
-//   - identify_product -> haiku
+//   - localise_lot     -> haiku (fast localisation pass — only used for stored crops)
+//   - extract_codes    -> sonnet (lot code reading needs visual reasoning)
+//   - identify_product -> sonnet (variant accuracy: Helmelk vs Mellommelk requires reading)
 //   - read_barcode     -> haiku
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
@@ -62,13 +62,11 @@ exports.handler = async (event) => {
     switch (task) {
 
       case 'identify_product': {
-        model = MODEL_HAIKU;
+        // Sonnet — not Haiku. Dairy variant words ("Helmelk" vs "Mellommelk" vs "Lettmelk")
+        // differ by one printed word. Haiku pattern-matches visually and confuses them.
+        // Sonnet reads what is actually printed on the label. Worth the extra ~600ms.
+        model = MODEL_SONNET;
         maxTokens = 80;
-        // IMPORTANT: Do NOT use TINE or milk products as examples — they are the most
-        // common Norwegian product and any example biases the model toward them.
-        // The prompt must emphasise reading exact label text, not visual pattern matching.
-        // Helmelk vs Mellommelk, Original vs Lett, etc. differ only in text — the model
-        // must read what is printed, not guess from visual similarity.
         prompt = [
           'Read the exact product name as printed on this food packaging label.',
           'Do NOT guess or approximate — read the actual text on the label.',
