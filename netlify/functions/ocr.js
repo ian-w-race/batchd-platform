@@ -5,7 +5,7 @@
 // Speed strategy:
 //   - localise_lot     -> haiku (fast localisation pass — only used for stored crops)
 //   - extract_codes    -> sonnet (lot code reading needs visual reasoning)
-//   - identify_product -> sonnet (variant accuracy: Helmelk vs Mellommelk requires reading)
+//   - identify_product -> haiku (fast; staff can correct; lot code is what matters)
 //   - read_barcode     -> haiku
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
@@ -62,10 +62,10 @@ exports.handler = async (event) => {
     switch (task) {
 
       case 'identify_product': {
-        // Sonnet — not Haiku. Dairy variant words ("Helmelk" vs "Mellommelk" vs "Lettmelk")
-        // differ by one printed word. Haiku pattern-matches visually and confuses them.
-        // Sonnet reads what is actually printed on the label. Worth the extra ~600ms.
-        model = MODEL_SONNET;
+        // Haiku for speed (~200ms vs ~1000ms for Sonnet).
+        // Staff review and correct the name if needed — the lot code matters more for traceability.
+        // Improved prompt forces character-level reading not pattern-matching.
+        model = MODEL_HAIKU;
         maxTokens = 80;
         prompt = [
           'Read the exact product name as printed on this food packaging label.',
