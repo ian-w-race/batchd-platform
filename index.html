@@ -531,7 +531,7 @@
 
   .btn-primary {
     background: var(--accent);
-    color: #080f12;
+    color: #052e16;
     font-weight: 500;
     box-shadow: 0 2px 8px rgba(52,211,153,0.25), 0 1px 3px rgba(0,0,0,0.2);
   }
@@ -721,20 +721,24 @@
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 12px;
-    box-shadow: var(--shadow-sm);
+    box-shadow: var(--shadow-sm, 0 1px 4px rgba(0,0,0,0.3));
     overflow: hidden;
     display: flex;
     flex-direction: row;
-    transition: border-color 0.15s;
-    animation: fadeUp 0.3s ease both;
+    transition: border-color 180ms, box-shadow 180ms, transform 180ms;
+    animation: fadeUp 0.25s ease both;
   }
 
   @keyframes fadeUp {
-    from { opacity: 0; transform: translateY(8px); }
+    from { opacity: 0; transform: translateY(6px); }
     to { opacity: 1; transform: translateY(0); }
   }
 
-  .record-card:hover { border-color: var(--accent); }
+  .record-card:hover {
+    border-color: rgba(52,211,153,0.4);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3), 0 0 0 1px rgba(52,211,153,0.1);
+    transform: translateY(-1px);
+  }
 
   .record-thumb {
     flex-shrink: 0;
@@ -2993,6 +2997,14 @@
     border: 1px solid var(--border);
     border-radius: 12px;
     padding: 14px 16px;
+    transition: border-color 180ms, background 180ms;
+  }
+  .recall-action-step:hover {
+    border-color: rgba(52,211,153,0.3);
+  }
+  .recall-action-step.step-done {
+    background: rgba(52,211,153,0.03);
+    border-color: rgba(52,211,153,0.2);
   }
   .recall-step-label {
     display: flex;
@@ -3005,8 +3017,8 @@
     margin-bottom: 10px;
   }
   .recall-step-num {
-    width: 22px;
-    height: 22px;
+    width: 24px;
+    height: 24px;
     border-radius: 50%;
     background: var(--border);
     color: var(--muted);
@@ -3017,10 +3029,12 @@
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
+    transition: background 200ms, color 200ms;
   }
   .recall-action-step.step-done .recall-step-num {
     background: rgba(52,211,153,0.2);
     color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(52,211,153,0.08);
   }
   .recall-location-chip {
     background: var(--surface);
@@ -3039,6 +3053,85 @@
     color: var(--accent);
     background: rgba(52,211,153,0.08);
   }
+
+  /* ── Global button micro-interactions ── */
+  button { transition: opacity 120ms, transform 120ms, background 150ms, border-color 150ms, box-shadow 150ms; }
+  button:not(:disabled):active { transform: scale(0.97); }
+  /* Panel content fade-in */
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+
+  /* ── Improved input hover ── */
+  input:hover:not(:disabled):not(:focus),
+  select:hover:not(:disabled):not(:focus),
+  textarea:hover:not(:disabled):not(:focus) {
+    border-color: rgba(52,211,153,0.35) !important;
+  }
+
+  /* ── Card hover lift ── */
+  .panel:hover { box-shadow: 0 6px 20px rgba(0,0,0,0.3); transition: box-shadow 200ms; }
+
+  /* ═══════════════════════════════════════════════════════════
+     GLOBAL UI SYSTEM — Focus, Skeleton, Motion, Typography
+     ═══════════════════════════════════════════════════════════ */
+
+  /* ── Focus ring system ── */
+  [onclick] { cursor: pointer; }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  input:focus, textarea:focus, select:focus {
+    outline: none;
+    border-color: rgba(52,211,153,0.5) !important;
+    box-shadow: 0 0 0 3px rgba(52,211,153,0.1) !important;
+  }
+  button:focus:not(:focus-visible) { outline: none; }
+
+  /* ── Skeleton shimmer ── */
+  @keyframes shimmer {
+    0%   { background-position: -400px 0; }
+    100% { background-position: 400px 0; }
+  }
+  .skeleton {
+    border-radius: 6px;
+    background: linear-gradient(90deg,
+      var(--surface2) 25%, rgba(52,211,153,0.05) 50%, var(--surface2) 75%);
+    background-size: 400px 100%;
+    animation: shimmer 1.3s ease-in-out infinite;
+  }
+
+  /* ── Motion tokens ── */
+  :root {
+    --ease-out:    cubic-bezier(0.0, 0.0, 0.2, 1);
+    --duration-fast: 120ms;
+    --duration-base: 200ms;
+  }
+
+  /* ── Tap polish ── */
+  button, [role="button"] { -webkit-tap-highlight-color: transparent; }
+  button:active:not(:disabled) { opacity: 0.85; }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(52,211,153,0.2); border-radius: 2px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(52,211,153,0.35); }
+
+  /* ── Text selection ── */
+  ::selection { background: rgba(52,211,153,0.25); color: var(--text); }
+
+  /* ── Status badge system ── */
+  .badge { display:inline-flex; align-items:center; font-size:10px; font-weight:700;
+    padding:2px 8px; border-radius:10px; font-family:'DM Mono',monospace; white-space:nowrap; }
+  .badge-success { background:rgba(52,211,153,0.12); color:var(--accent); }
+  .badge-danger  { background:rgba(255,92,92,0.12);  color:var(--danger); }
+  .badge-warn    { background:rgba(245,166,35,0.12); color:var(--warn); }
+
+  /* ── Card hover lift ── */
+  .record-card { transition: box-shadow var(--duration-base) var(--ease-out), transform var(--duration-base) var(--ease-out); }
+  .record-card:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); }
+
 </style>
 </head>
 <body>
@@ -3059,7 +3152,7 @@
 
     <!-- Sign in / Sign up tab toggle -->
     <div style="display:flex;background:var(--surface2);border-radius:10px;padding:4px;gap:4px;">
-      <button id="tab-signin" onclick="setLoginTab('signin')" style="flex:1;padding:8px;border:none;border-radius:7px;font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.04em;cursor:pointer;transition:all 0.15s;background:var(--accent);color:#080f12;font-weight:600;">Sign In</button>
+      <button id="tab-signin" onclick="setLoginTab('signin')" style="flex:1;padding:8px;border:none;border-radius:7px;font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.04em;cursor:pointer;transition:all 0.15s;background:var(--accent);color:#052e16;font-weight:600;">Sign In</button>
       <button id="tab-signup" onclick="setLoginTab('signup')" style="flex:1;padding:8px;border:none;border-radius:7px;font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.04em;cursor:pointer;transition:all 0.15s;background:transparent;color:var(--muted);">Create Account</button>
     </div>
 
@@ -3260,7 +3353,7 @@
               </div>
               <video id="product-video" autoplay playsinline style="display:none;width:100%;height:100%;object-fit:cover;"></video>
               <div class="camera-frame" id="product-frame" style="display:none;"><span class="auto-capture-indicator" id="auto-indicator-product">✦ Auto-capturing…</span></div>
-              <img id="product-captured" class="captured-img" style="display:none;" />
+              <img id="product-captured" class="captured-img" style="display:none;" / alt="">
               <div class="analyzing-overlay" id="product-analyzing">
                 <div class="spinner"></div>
                 AI identifying product…
@@ -3354,11 +3447,11 @@
         <!-- Location hint card — shown when a learned pattern or brand hint is available -->
         <div id="lot-location-hint" style="display:none;margin:0 0 0;padding:10px 14px;background:rgba(52,211,153,0.07);border:1px solid rgba(52,211,153,0.2);border-radius:10px;margin:8px 16px 0;">
           <div style="display:flex;align-items:flex-start;gap:10px;">
-            <span id="lot-hint-icon" style="font-size:9px;font-family:'DM Mono',monospace;letter-spacing:0.06em;text-transform:uppercase;flex-shrink:0;padding:2px 6px;border-radius:4px;background:rgba(52,211,153,0.15);color:var(--accent);margin-top:2px;"></span>
+            <span id="lot-hint-icon" style="font-size:10px;font-family:'DM Mono',monospace;letter-spacing:0.06em;text-transform:uppercase;flex-shrink:0;padding:2px 6px;border-radius:4px;background:rgba(52,211,153,0.15);color:var(--accent);margin-top:2px;"></span>
             <div style="flex:1;min-width:0;">
               <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
                 <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.07em;color:var(--accent);font-family:'DM Mono',monospace;" id="lot-hint-label">Where to look</div>
-                <span style="font-size:9px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.06em;padding:2px 7px;border-radius:3px;background:rgba(245,166,35,0.15);color:var(--warn);border:1px solid rgba(245,166,35,0.3);">ALPHA</span>
+                <span style="font-size:10px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.06em;padding:2px 7px;border-radius:3px;background:rgba(245,166,35,0.15);color:var(--warn);border:1px solid rgba(245,166,35,0.3);">ALPHA</span>
               </div>
               <div style="font-size:12.5px;color:var(--text);line-height:1.5;" id="lot-hint-text"></div>
               <div style="font-size:10px;color:var(--muted);margin-top:5px;line-height:1.4;">This guide is still learning — hints may be inaccurate until Batch'd has seen more scans of this product. Always verify the code on the packaging.</div>
@@ -3384,7 +3477,7 @@
             </button>
             <button class="mode-btn" id="mode-btn-barcode" onclick="setMode('barcode')">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9V5a2 2 0 0 1 2-2h4M3 15v4a2 2 0 0 0 2 2h4M21 9V5a2 2 0 0 0-2-2h-4M21 15v4a2 2 0 0 1-2 2h-4"/><line x1="7" y1="12" x2="7" y2="12.01"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="17" y1="12" x2="17" y2="12.01"/></svg>
-              <span data-i18n="p2.barcodeScan">Barcode Scan</span> <span style="font-size:9px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.08em;padding:1px 5px;border-radius:3px;background:rgba(245,166,35,0.15);color:var(--warn);border:1px solid rgba(245,166,35,0.3);">ALPHA</span>
+              <span data-i18n="p2.barcodeScan">Barcode Scan</span> <span style="font-size:10px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.08em;padding:1px 5px;border-radius:3px;background:rgba(245,166,35,0.15);color:var(--warn);border:1px solid rgba(245,166,35,0.3);">ALPHA</span>
             </button>
           </div>
 
@@ -3403,11 +3496,11 @@
             </div>
             <div class="scan-line" id="scan-line" style="display:none;"></div>
             <div class="camera-frame" id="barcode-frame" style="display:none;"></div>
-            <img id="barcode-captured" class="captured-img" style="display:none;" />
+            <img id="barcode-captured" class="captured-img" style="display:none;" / alt="">
 
             <!-- Region confirmation overlay — shown on medium/low confidence reads -->
             <div id="region-confirm-overlay" style="display:none;position:relative;width:100%;border-radius:12px;overflow:hidden;background:#000;margin-bottom:8px;">
-              <img id="region-confirm-img" style="width:100%;display:block;" />
+              <img id="region-confirm-img" style="width:100%;display:block;" / alt="">
               <canvas id="region-confirm-canvas" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;"></canvas>
               <div id="region-confirm-badge" style="position:absolute;bottom:10px;left:50%;transform:translateX(-50%);background:var(--overlay);border:1px solid var(--accent);border-radius:20px;padding:5px 14px;font-family:'DM Mono',monospace;font-size:13px;font-weight:700;color:var(--accent);white-space:nowrap;"></div>
             </div>
@@ -3418,7 +3511,7 @@
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
                   Looks right
                 </button>
-                <button onclick="retakeBarcode()" class="btn btn-ghost" style="flex:1;justify-content:center;gap:6px;color:var(--warn);border-color:rgba(245,166,35,0.4);">
+                <button onclick="retakeBarcode()" class="btn btn-ghost" style="flex:1;justify-content:center;gap:6px;color:var(--warn);border-color:var(--warn);">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.24"/></svg>
                   Retake
                 </button>
@@ -3532,7 +3625,7 @@
           <div>
             <div class="flow-phase-title" data-i18n="p3.title">Confirm & Place on Shelf</div>
             <div class="flow-phase-sub" data-i18n="p3.sub">Review details — then confirm placement to create the traceability record</div>
-            <span id="p3-ftl-badge" style="display:none;align-items:center;gap:5px;margin-top:6px;font-size:10px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.06em;color:#3b82f6;background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.3);border-radius:5px;padding:3px 8px;"></span>
+            <span id="p3-ftl-badge" style="display:none;align-items:center;gap:5px;margin-top:6px;font-size:10px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.06em;color:var(--info);background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.3);border-radius:5px;padding:3px 8px;"></span>
           </div>
           <button onclick="cancelScan()" class="cancel-scan-btn" title="Cancel and start over">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg>
@@ -3615,7 +3708,7 @@
 
           <!-- FSMA 204 (USA) KDE fields — shown only for FTL products -->
           <div id="p3-fsma-kde" style="display:none;border-top:1px solid rgba(59,130,246,0.2);padding-top:12px;margin-top:4px;">
-            <div style="font-size:10px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.07em;color:#3b82f6;margin-bottom:8px;">FSMA 204 (USA) REQUIRED KDEs</div>
+            <div style="font-size:10px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.07em;color:var(--info);margin-bottom:8px;">FSMA 204 (USA) REQUIRED KDEs</div>
             <div class="field">
               <label>Reference Document # <span style="color:var(--muted);font-size:10px;">PO / Bill of Lading / Delivery Note</span></label>
               <input type="text" id="field-reference-doc" placeholder="e.g. PO-2024-8811, BOL-441203" autocorrect="off" autocapitalize="characters" />
@@ -3723,7 +3816,7 @@
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
           <span data-i18n="hist.auditReport">Audit Report</span>
         </button>
-        <button class="btn btn-ghost" onclick="openExposureNoticeModal()" style="gap:6px;color:var(--warn);border-color:rgba(245,166,35,0.4);">
+        <button class="btn btn-ghost" onclick="openExposureNoticeModal()" style="gap:6px;color:var(--warn);border-color:var(--warn);">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
           <span data-i18n="hist.exposureNotice">Exposure Notice</span>
         </button>
@@ -4284,7 +4377,7 @@
       <div class="settings-section-header">
         <div class="settings-section-title" style="display:flex;align-items:center;gap:8px;">
           FSMA 204 (USA) Receiving Record Export
-          <span style="font-size:10px;font-family:'DM Mono',monospace;font-weight:700;color:#3b82f6;background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.25);border-radius:4px;padding:2px 6px;letter-spacing:0.06em;">COMPLIANCE</span>
+          <span style="font-size:10px;font-family:'DM Mono',monospace;font-weight:700;color:var(--info);background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.25);border-radius:4px;padding:2px 6px;letter-spacing:0.06em;">COMPLIANCE</span>
         </div>
         <div class="settings-section-sub">Generate the FDA-required electronic sortable spreadsheet for Food Traceability List products. Must be producible within 24 hours of an FDA request (21 CFR Part 1 Subpart S, effective July 2028).</div>
       </div>
@@ -4329,7 +4422,7 @@
           </select>
         </div>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-          <button onclick="fsmaExport()" class="btn btn-primary" style="background:#3b82f6;border-color:#3b82f6;display:flex;align-items:center;gap:6px;">
+          <button onclick="fsmaExport()" class="btn btn-primary" style="background:#3b82f6;border-color:var(--info);display:flex;align-items:center;gap:6px;">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             Export FDA Spreadsheet
           </button>
@@ -4501,7 +4594,7 @@
       <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:13px;color:var(--accent);">Corporate Dashboard</div>
       <div style="font-size:11px;color:var(--muted);margin-top:2px;">Access recalls, compliance, stores and staff management</div>
     </div>
-    <a href="https://app.batchdapp.com" style="font-family:'DM Mono',monospace;font-size:11px;font-weight:700;padding:8px 14px;border-radius:8px;background:var(--accent);color:#080f12;text-decoration:none;white-space:nowrap;">Open dashboard →</a>
+    <a href="https://app.batchdapp.com" style="font-family:'DM Mono',monospace;font-size:11px;font-weight:700;padding:8px 14px;border-radius:8px;background:var(--accent);color:#052e16;text-decoration:none;white-space:nowrap;">Open dashboard →</a>
   </div>
 
 </div>
@@ -4666,7 +4759,7 @@
         </div>
         <div id="recall-step-1-done-body" style="display:none;">
           <div style="font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;padding:4px 0 8px;" id="recall-pull-confirmed"></div>
-          <button onclick="recallUndoPull()" class="btn btn-ghost" style="font-size:11px;padding:5px 12px;color:var(--warn);border-color:rgba(245,166,35,0.4);">↩ Undo pull</button>
+          <button onclick="recallUndoPull()" class="btn btn-ghost" style="font-size:11px;padding:5px 12px;color:var(--warn);border-color:var(--warn);">↩ Undo pull</button>
         </div>
       </div>
 
@@ -4680,7 +4773,7 @@
           <span id="recall-step-2-done" style="display:none;margin-left:auto;font-size:11px;color:var(--accent);font-family:'DM Mono',monospace;">✓ Noted</span>
         </div>
         <div id="recall-step-2-undo-row" style="display:none;margin-bottom:8px;">
-          <button id="recall-step-2-undo" onclick="recallUndoNote()" class="btn btn-ghost" style="font-size:11px;padding:5px 12px;color:var(--warn);border-color:rgba(245,166,35,0.4);cursor:pointer;">↩ Undo note</button>
+          <button id="recall-step-2-undo" onclick="recallUndoNote()" class="btn btn-ghost" style="font-size:11px;padding:5px 12px;color:var(--warn);border-color:var(--warn);cursor:pointer;">↩ Undo note</button>
         </div>
         <div id="recall-step-2-body" style="display:flex;flex-direction:column;gap:8px;">
           <div style="display:flex;gap:6px;flex-wrap:wrap;">
@@ -4699,7 +4792,7 @@
       <!-- Step 2b: Supplier contact (one step back) -->
       <div id="recall-step-2b" class="recall-action-step">
         <div class="recall-step-label">
-          <span class="recall-step-num" style="background:rgba(52,211,153,0.1);color:var(--accent);font-size:9px;">SUP</span>
+          <span class="recall-step-num" style="background:rgba(52,211,153,0.1);color:var(--accent);font-size:10px;">SUP</span>
           <span>Supplier / "one step back"</span>
           <span id="recall-step-2b-done" style="display:none;margin-left:auto;font-size:11px;color:var(--accent);font-family:'DM Mono',monospace;">✓ Logged</span>
         </div>
@@ -4716,7 +4809,7 @@
         </div>
         <div id="recall-step-2b-done-body" style="display:none;">
           <div style="font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;padding:4px 0 8px;" id="recall-supplier-confirmed"></div>
-          <button onclick="recallEditSupplier()" class="btn btn-ghost" style="font-size:11px;padding:5px 12px;color:var(--warn);border-color:rgba(245,166,35,0.4);">✎ Edit</button>
+          <button onclick="recallEditSupplier()" class="btn btn-ghost" style="font-size:11px;padding:5px 12px;color:var(--warn);border-color:var(--warn);">✎ Edit</button>
         </div>
       </div>
 
@@ -4736,7 +4829,7 @@
       <!-- Step 4b: Log a complaint — connects to Triage system -->
       <div id="recall-step-4b" class="recall-action-step">
         <div class="recall-step-label">
-          <span class="recall-step-num" style="background:rgba(56,189,248,0.12);color:var(--info);font-size:9px;">TRG</span>
+          <span class="recall-step-num" style="background:rgba(56,189,248,0.12);color:var(--info);font-size:10px;">TRG</span>
           <span>Log a complaint</span>
         </div>
         <div>
@@ -4756,7 +4849,7 @@
         </div>
         <div>
           <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">Generate a bilingual notice for customers who may have purchased this product.</div>
-          <button onclick="recallActionOpenExposure()" class="btn btn-ghost" style="font-size:12px;padding:8px 16px;color:var(--warn);border-color:rgba(245,166,35,0.4);cursor:pointer;">
+          <button onclick="recallActionOpenExposure()" class="btn btn-ghost" style="font-size:12px;padding:8px 16px;color:var(--warn);border-color:var(--warn);cursor:pointer;">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
             Generate exposure notice →
           </button>
@@ -4766,7 +4859,7 @@
       <!-- Step 5b: Notify Authority -->
       <div id="recall-step-5b" class="recall-action-step">
         <div class="recall-step-label">
-          <span class="recall-step-num" style="font-size:9px;background:rgba(245,166,35,0.1);color:var(--warn);">AUTH</span>
+          <span class="recall-step-num" style="font-size:10px;background:rgba(245,166,35,0.1);color:var(--warn);">AUTH</span>
           <span id="recall-step-5b-title">Notify authority</span>
           <span id="recall-step-5b-done" style="display:none;margin-left:auto;font-size:11px;color:var(--accent);font-family:'DM Mono',monospace;">✓ Notified</span>
         </div>
@@ -4786,7 +4879,7 @@
             <div id="recall-fsis-note" style="display:none;margin-bottom:8px;padding:6px 10px;background:rgba(245,166,35,0.08);border-radius:6px;font-size:11px;color:var(--warn);">⚠️ This product (meat/poultry/eggs) may be regulated by USDA FSIS — notify your local FSIS District Office within 24 hours.</div>
             <div style="display:flex;flex-direction:column;gap:6px;">
               <a href="https://www.accessdata.fda.gov/scripts/rfr/index.cfm" target="_blank"
-                 style="display:inline-flex;align-items:center;gap:6px;padding:7px 12px;background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.25);border-radius:7px;color:#93c5fd;font-family:'DM Mono',monospace;font-size:11px;font-weight:700;text-decoration:none;">
+                 style="display:inline-flex;align-items:center;gap:6px;padding:7px 12px;background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.25);border-radius:7px;color:var(--info);font-family:'DM Mono',monospace;font-size:11px;font-weight:700;text-decoration:none;">
                 📋 File with FDA Reportable Food Registry
               </a>
               <div style="font-size:11px;color:var(--muted);">📞 FDA: <strong style="color:var(--text);">1-888-INFO-FDA</strong> &nbsp;·&nbsp; FSIS: <strong style="color:var(--text);">1-888-MPHotline</strong></div>
@@ -5128,15 +5221,15 @@
         <div id="ob-how-title" style="font-family:'Figtree',sans-serif;font-weight:800;font-size:20px;color:var(--accent);margin-bottom:10px;">How to use it</div>
         <div style="font-size:13px;color:var(--text);line-height:1.7;">
           <div style="display:flex;gap:10px;margin-bottom:10px;align-items:flex-start;">
-            <span style="background:var(--accent);color:#080f12;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:11px;flex-shrink:0;margin-top:1px;">1</span>
+            <span style="background:var(--accent);color:#052e16;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:11px;flex-shrink:0;margin-top:1px;">1</span>
             <span id="ob-step1"><strong>Photograph the label</strong> — AI identifies the product automatically</span>
           </div>
           <div style="display:flex;gap:10px;margin-bottom:10px;align-items:flex-start;">
-            <span style="background:var(--accent);color:#080f12;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:11px;flex-shrink:0;margin-top:1px;">2</span>
+            <span style="background:var(--accent);color:#052e16;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:11px;flex-shrink:0;margin-top:1px;">2</span>
             <span id="ob-step2"><strong>Capture the lot code</strong> — photograph the printed code on the packaging</span>
           </div>
           <div style="display:flex;gap:10px;align-items:flex-start;">
-            <span style="background:var(--accent);color:#080f12;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:11px;flex-shrink:0;margin-top:1px;">3</span>
+            <span style="background:var(--accent);color:#052e16;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:11px;flex-shrink:0;margin-top:1px;">3</span>
             <span id="ob-step3"><strong>Confirm placement</strong> — tap to log the item as placed on shelf</span>
           </div>
         </div>
@@ -6963,12 +7056,12 @@ async function loadMultiStoreOverview() {
         { v: totalUnresolved, l: 'Unresolved',     c: totalUnresolved > 0 ? 'var(--danger)' : 'var(--accent)' },
       ].map(t => `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 6px;text-align:center;">
         <div style="font-size:20px;font-weight:700;color:${t.c};font-family:'Figtree',sans-serif;">${t.v}</div>
-        <div style="font-size:9px;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);margin-top:2px;">${t.l}</div>
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);margin-top:2px;">${t.l}</div>
       </div>`).join('')}
     </div>
 
     <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;">
-      <div style="display:grid;grid-template-columns:1fr 50px 50px 50px 60px;background:var(--surface2);padding:8px 12px;font-size:9px;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);border-bottom:1px solid var(--border);">
+      <div style="display:grid;grid-template-columns:1fr 50px 50px 50px 60px;background:var(--surface2);padding:8px 12px;font-size:10px;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);border-bottom:1px solid var(--border);">
         <span>Store</span>
         <span style="text-align:center;">Scans</span>
         <span style="text-align:center;">Lots</span>
@@ -9524,7 +9617,7 @@ async function loadHistory() {
   const grid = document.getElementById('records-grid');
   grid.innerHTML = `<div class="empty-state"><div class="spinner" style="margin:0 auto;"></div><p style="margin-top:12px;">${t('hist.loadingRecords')}</p></div>`;
   const [scansRes, recallsRes] = await Promise.all([
-    sb.from('scans').select('*').order('created_at', { ascending: false }),
+    sb.from('scans').select('*').eq('organisation_id', _currentOrgId).order('created_at', { ascending: false }),
     sb.from('recalls').select('*').eq('active', true).eq('organisation_id', _currentOrgId)
   ]);
   if (scansRes.error) { grid.innerHTML = '<div class="empty-state"><h3>Error loading records</h3><p>' + scansRes.error.message + '</p></div>'; return; }
@@ -9772,7 +9865,7 @@ function renderRecords(records, recallQ) {
           <div class="record-product">${esc(r.product_name || 'Unknown Product')}</div>
           ${matchLevel === 'exact' ? `<span class="recall-tag">${t('card.lotMatch')}</span>` : matchLevel === 'possible' ? `<span class="recall-tag recall-tag-possible">${t('card.possibleMatch')}</span>` : matchLevel === 'raw' ? `<span class="recall-tag recall-tag-possible" style="background:rgba(245,166,35,0.1);border-color:rgba(245,166,35,0.35);color:var(--warn);font-size:10px;" title="Recall lot code found in packaging metadata — verify manually">⚠ Metadata match — verify</span>` : ''}
           ${r.manager_escalated && !r.recall_resolved ? `<span class="recall-tag" style="background:rgba(245,166,35,0.15);color:var(--warn);border:1px solid rgba(245,166,35,0.4);">${t('card.escalatedTag')}</span>` : ''}
-          ${r.recall_resolved ? `<span class="recall-tag" style="background:var(--accent);color:#080f12;">${t('card.resolvedTag')}</span>` : ''}
+          ${r.recall_resolved ? `<span class="recall-tag" style="background:var(--accent);color:#052e16;">${t('card.resolvedTag')}</span>` : ''}
           ${r.removed_from_shelf_at ? `<span class="recall-tag" style="background:rgba(245,166,35,0.15);color:var(--warn);border:1px solid rgba(245,166,35,0.4);">${t('card.removedTag')}</span>` : ''}
         </div>
         <div class="record-meta">
@@ -9783,7 +9876,7 @@ function renderRecords(records, recallQ) {
           ${r.barcode_number ? `<span class="meta-chip">${t('card.barcodeLabel')} <strong>${esc(r.barcode_number)}</strong></span>` : ''}
           ${r.lot_number     ? `<span class="meta-chip">${t('card.lotLabel')} <strong>${esc(r.lot_number)}</strong></span>` : ''}
           ${r.supplier_name  ? `<span class="meta-chip">${t('card.supplierLabel')} <strong>${esc(r.supplier_name)}</strong></span>` : ''}
-          ${r.is_ftl ? `<span class="meta-chip" style="color:#3b82f6;border-color:rgba(59,130,246,0.3);background:rgba(59,130,246,0.08);">🔵 FSMA 204 (USA)</span>` : ''}
+          ${r.is_ftl ? `<span class="meta-chip" style="color:var(--info);border-color:var(--info);background:rgba(59,130,246,0.08);">🔵 FSMA 204 (USA)</span>` : ''}
           ${r.batch_number   ? `<span class="meta-chip">${t("card.batch")} <strong>${esc(r.batch_number)}</strong></span>` : ''}
         </div>
         ${r.notes ? `<div style="font-size:12px;color:var(--muted);margin-top:4px;${r.notes.includes('LOT_UNAVAILABLE')?'font-style:normal;':'font-style:italic;'}">
@@ -9795,8 +9888,8 @@ function renderRecords(records, recallQ) {
         ${r.complaint_filed ? `<div style="display:inline-flex;align-items:center;gap:5px;margin-top:4px;font-size:10px;font-family:'DM Mono',monospace;padding:3px 9px;border-radius:10px;background:rgba(245,166,35,0.1);border:1px solid rgba(245,166,35,0.3);color:var(--warn);">⚑ Complaint filed</div>` : ''}
         ${exposureHtml}
         <div class="record-photos">
-          ${r.product_photo_url ? `<img class="thumb-mini" src="${r.product_photo_url}" title="Product label" onclick="openLightbox('${r.product_photo_url}')" />` : ''}
-          ${r.barcode_photo_url ? `<img class="thumb-mini" src="${r.barcode_photo_url}" title="Lot code photo" onclick="openLightbox('${r.barcode_photo_url}')" />` : ''}
+          ${r.product_photo_url ? `<img class="thumb-mini" src="${r.product_photo_url}" title="Product label" onclick="openLightbox('${r.product_photo_url}')" / alt="">` : ''}
+          ${r.barcode_photo_url ? `<img class="thumb-mini" src="${r.barcode_photo_url}" title="Lot code photo" onclick="openLightbox('${r.barcode_photo_url}')" / alt="">` : ''}
         </div>
         <!-- Audit note + shelf update panel — core traceability fields are locked -->
           <div id="lot-edit-${r.id}" style="display:none;margin-top:8px;padding:12px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;">
@@ -9805,7 +9898,7 @@ function renderRecords(records, recallQ) {
               <span style="font-size:10px;text-transform:uppercase;letter-spacing:0.07em;color:var(--accent);font-weight:700;">Locked record — add note or update shelf only</span>
             </div>
             <div style="margin-bottom:10px;padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;">
-              <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:4px;">Immutable fields (cannot be changed)</div>
+              <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:4px;">Immutable fields (cannot be changed)</div>
               <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);line-height:1.8;">
                 Product: <span style="color:var(--text);">${esc(r.product_name||'—')}</span><br>
                 Lot code: <span style="color:var(--text);">${esc(r.lot_number||'—')}</span><br>
@@ -10318,8 +10411,8 @@ async function runQuickCheck() {
 
       if (onShelf.length > 0) {
         const urgentStyle = exactRecalls.length
-          ? 'background:rgba(255,92,92,0.07);border-color:rgba(255,92,92,0.3);'
-          : 'background:rgba(52,211,153,0.05);border-color:rgba(52,211,153,0.2);';
+          ? 'background:rgba(255,92,92,0.07);border-color:var(--danger);'
+          : 'background:rgba(52,211,153,0.05);border-color:rgba(52,211,153,0.6);';
         html += `
           <div style="padding:12px 14px;border:1px solid;border-radius:10px;margin-bottom:10px;${urgentStyle}">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
@@ -10777,31 +10870,31 @@ async function generateAuditReport() {
 
     // ── Build HTML report ───────────────────────────────────────
     let html = `
-    <div id="audit-html-report" style="font-family:'Figtree',sans-serif;color:#edfdf8;line-height:1.5;">
+    <div id="audit-html-report" style="font-family:'Figtree',sans-serif;color:var(--text);line-height:1.5;">
 
       <!-- Header -->
       <div style="border-bottom:2px solid #34d399;padding-bottom:14px;margin-bottom:18px;">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
-          <div style="width:28px;height:28px;background:#34d399;border-radius:5px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+          <div style="width:28px;height:28px;background:var(--accent);border-radius:5px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
             <svg width="16" height="16" viewBox="-26 20 52 52" fill="none"><rect x="-22" y="46" width="20" height="20" rx="3" fill="#080f12"/><rect x="2" y="46" width="20" height="20" rx="3" fill="#080f12"/><rect x="-10" y="24" width="20" height="20" rx="3" fill="#080f12" opacity="0.55"/></svg>
           </div>
-          <span style="font-size:18px;font-weight:800;color:#34d399;letter-spacing:-0.3px;">Batch'd</span>
-          <span style="font-size:11px;color:#6aaf9e;text-transform:uppercase;letter-spacing:0.08em;margin-left:4px;">${t('audit.rpt.rts')}</span>
+          <span style="font-size:18px;font-weight:800;color:var(--accent);letter-spacing:-0.3px;">Batch'd</span>
+          <span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-left:4px;">${t('audit.rpt.rts')}</span>
         </div>
-        <div style="font-size:15px;font-weight:700;color:#edfdf8;margin-top:6px;">${t('audit.rpt.title')}</div>
-        <div style="font-size:10px;color:#6aaf9e;margin-top:2px;font-family:'DM Mono',monospace;">${_userRegion === 'us' ? 'FDA FSMA · 21 CFR Part 1 · FSMA 204 (USA) Food Traceability Rule' : 'Matinformasjonsforskriften · EU Reg. 1169/2011 · HACCP Traceability'}</div>
+        <div style="font-size:15px;font-weight:700;color:var(--text);margin-top:6px;">${t('audit.rpt.title')}</div>
+        <div style="font-size:10px;color:var(--muted);margin-top:2px;font-family:'DM Mono',monospace;">${_userRegion === 'us' ? 'FDA FSMA · 21 CFR Part 1 · FSMA 204 (USA) Food Traceability Rule' : 'Matinformasjonsforskriften · EU Reg. 1169/2011 · HACCP Traceability'}</div>
       </div>
 
       <!-- Meta row -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:18px;font-size:11px;font-family:'DM Mono',monospace;">
-        <div><span style="color:#6aaf9e;">${t('audit.rpt.period')}</span> <strong>${periodLabel}</strong></div>
-        <div><span style="color:#6aaf9e;">${t('audit.rpt.store')}</span> <strong>${esc(store || t('audit.rpt.allStores'))}</strong></div>
-        <div><span style="color:#6aaf9e;">${t('audit.rpt.generated')}</span> ${genAt}</div>
-        <div><span style="color:#6aaf9e;">${t('audit.rpt.operator')}</span> ${esc(currentUser?.email || '—')}</div>
+        <div><span style="color:var(--muted);">${t('audit.rpt.period')}</span> <strong>${periodLabel}</strong></div>
+        <div><span style="color:var(--muted);">${t('audit.rpt.store')}</span> <strong>${esc(store || t('audit.rpt.allStores'))}</strong></div>
+        <div><span style="color:var(--muted);">${t('audit.rpt.generated')}</span> ${genAt}</div>
+        <div><span style="color:var(--muted);">${t('audit.rpt.operator')}</span> ${esc(currentUser?.email || '—')}</div>
       </div>
 
       <!-- Regulation line -->
-      <div style="font-size:11px;color:#6aaf9e;font-family:'DM Mono',monospace;margin-bottom:12px;">
+      <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;margin-bottom:12px;">
         ${_userRegion === 'us'
           ? 'Regulatory basis: FDA FSMA · 21 CFR Part 1 · FMI Retail Guidance · FSMA 204 (USA) Food Traceability Rule'
           : 'Regulatory basis: EU Reg. 178/2002 · Mattilsynet · RASFF · EU General Food Law'}
@@ -10809,7 +10902,7 @@ async function generateAuditReport() {
 
       <!-- Compliance summary tiles -->
       <div style="margin-bottom:18px;">
-        <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#6aaf9e;margin-bottom:8px;font-family:'DM Mono',monospace;">${t('audit.rpt.complianceSummary')}</div>
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;font-family:'DM Mono',monospace;">${t('audit.rpt.complianceSummary')}</div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;">
           ${[
             { label: t('audit.rpt.totalScans'),     value: totalScans,       color:'#34d399' },
@@ -10820,7 +10913,7 @@ async function generateAuditReport() {
             { label: t('audit.rpt.resolved'),       value: `${resolvedCount}/${matchedScans.length||0}`, color: unresolvedCount > 0 ? '#ff5c5c' : '#34d399' },
           ].map(tile => `<div style="background:rgba(13,35,28,0.8);border:1px solid #0d2320;border-radius:8px;padding:10px 8px;text-align:center;">
             <div style="font-size:20px;font-weight:700;color:${tile.color};font-family:'Figtree',sans-serif;">${tile.value}</div>
-            <div style="font-size:9px;text-transform:uppercase;letter-spacing:0.06em;color:#6aaf9e;margin-top:2px;">${tile.label}</div>
+            <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);margin-top:2px;">${tile.label}</div>
           </div>`).join('')}
         </div>
       </div>
@@ -10828,47 +10921,47 @@ async function generateAuditReport() {
       ${gaps.length > 0 ? `
       <!-- Gap warning -->
       <div style="background:rgba(245,166,35,0.08);border:1px solid rgba(245,166,35,0.35);border-radius:8px;padding:12px 14px;margin-bottom:18px;">
-        <div style="font-size:11px;font-weight:700;color:#f5a623;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:6px;">${t('audit.rpt.gapsDetected')}</div>
-        <div style="font-size:11px;color:#edfdf8;line-height:1.6;">${t('audit.rpt.gapsText')}<br>
+        <div style="font-size:11px;font-weight:700;color:var(--warn);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:6px;">${t('audit.rpt.gapsDetected')}</div>
+        <div style="font-size:11px;color:var(--text);line-height:1.6;">${t('audit.rpt.gapsText')}<br>
           ${gaps.map(g => `<strong>${g}</strong>`).join(' · ')}
         </div>
       </div>` : `
       <!-- No gaps -->
-      <div style="background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.2);border-radius:8px;padding:10px 14px;margin-bottom:18px;font-size:11px;color:#34d399;">
+      <div style="background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.2);border-radius:8px;padding:10px 14px;margin-bottom:18px;font-size:11px;color:var(--accent);">
         ${t('audit.rpt.noCovGaps')}
       </div>`}
 
       <!-- Recall match section -->
       <div style="margin-bottom:18px;">
-        <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#6aaf9e;margin-bottom:8px;font-family:'DM Mono',monospace;">${t('audit.rpt.recallMatchLog')}</div>
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;font-family:'DM Mono',monospace;">${t('audit.rpt.recallMatchLog')}</div>
         ${matchedScans.length === 0 ? `
-        <div style="background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.2);border-radius:8px;padding:12px 14px;font-size:12px;color:#34d399;">
+        <div style="background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.2);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--accent);">
           ${t('audit.rpt.noMatches')}<br>
-          <span style="font-size:11px;color:#6aaf9e;">${t('audit.rpt.noMatchesSub')}</span>
+          <span style="font-size:11px;color:var(--muted);">${t('audit.rpt.noMatchesSub')}</span>
         </div>` : `
         <div style="border:1px solid rgba(255,92,92,0.3);border-radius:8px;overflow:hidden;">
           ${matchedScans.map((r,i) => `
           <div style="padding:10px 12px;${i < matchedScans.length-1 ? 'border-bottom:1px solid rgba(255,92,92,0.15);' : ''}background:rgba(255,92,92,0.04);">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
-              <strong style="font-size:12px;color:#edfdf8;">${esc(r.product_name||'—')}</strong>
+              <strong style="font-size:12px;color:var(--text);">${esc(r.product_name||'—')}</strong>
               ${r.recall_resolved
                 ? pill(t('audit.rpt.resolvedPill'), '#34d399', 'rgba(52,211,153,0.1)')
                 : pill(t('audit.rpt.unresolvedPill'), '#ff5c5c', 'rgba(255,92,92,0.1)')}
             </div>
-            <div style="font-size:10px;color:#6aaf9e;font-family:'DM Mono',monospace;display:grid;grid-template-columns:1fr 1fr;gap:2px 14px;">
-              <span>${t('audit.rpt.lot')} <strong style="color:#edfdf8;">${esc(r.lot_number||'—')}</strong></span>
-              <span>${t('audit.rpt.storeLbl')} <strong style="color:#edfdf8;">${esc(r.store_name||'—')}</strong></span>
+            <div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;display:grid;grid-template-columns:1fr 1fr;gap:2px 14px;">
+              <span>${t('audit.rpt.lot')} <strong style="color:var(--text);">${esc(r.lot_number||'—')}</strong></span>
+              <span>${t('audit.rpt.storeLbl')} <strong style="color:var(--text);">${esc(r.store_name||'—')}</strong></span>
               <span>${t('audit.rpt.scanned')} ${fmtAuditDate(r.created_at)}</span>
               <span>${t('audit.rpt.by')} ${esc((r.scanned_by||'—').split('@')[0])}</span>
-              ${r.supplier_name ? `<span style="grid-column:span 2;">${t('audit.rpt.supplier')} <strong style="color:#edfdf8;">${esc(r.supplier_name)}</strong></span>` : ''}
+              ${r.supplier_name ? `<span style="grid-column:span 2;">${t('audit.rpt.supplier')} <strong style="color:var(--text);">${esc(r.supplier_name)}</strong></span>` : ''}
               ${r.removed_from_shelf_at ? (() => {
                 const diffMs = new Date(r.removed_from_shelf_at) - new Date(r.created_at);
                 const diffDays = Math.round(diffMs/86400000), diffHrs = Math.round(diffMs/3600000);
                 const diffMins = Math.round(diffMs/60000);
                 const dur = diffDays >= 2 ? `${diffDays} ${t('audit.rpt.days')}` : `${diffHrs} ${t('audit.rpt.hours')}`;
                 const withinTarget = diffMs <= 2*60*60*1000;
-                return `<span style="grid-column:span 2;color:#f5a623;">${t('audit.rpt.exposureWindow')} <strong>${dur}</strong> (${t('audit.rpt.removed')} ${fmtAuditDate(r.removed_from_shelf_at)}) · ${t('audit.rpt.2hTarget')} <strong style="color:${withinTarget?'#34d399':'#ff5c5c'}">${withinTarget ? t('audit.rpt.met') : t('audit.rpt.exceeded')+' ('+diffMins+' '+t('audit.rpt.min')+')'}</strong></span>`;
-              })() : `<span style="grid-column:span 2;color:#ff5c5c;">${t('audit.rpt.notRemovedPending')}</span>`}
+                return `<span style="grid-column:span 2;color:var(--warn);">${t('audit.rpt.exposureWindow')} <strong>${dur}</strong> (${t('audit.rpt.removed')} ${fmtAuditDate(r.removed_from_shelf_at)}) · ${t('audit.rpt.2hTarget')} <strong style="color:${withinTarget?'#34d399':'#ff5c5c'}">${withinTarget ? t('audit.rpt.met') : t('audit.rpt.exceeded')+' ('+diffMins+' '+t('audit.rpt.min')+')'}</strong></span>`;
+              })() : `<span style="grid-column:span 2;color:var(--danger);">${t('audit.rpt.notRemovedPending')}</span>`}
               ${r.recall_resolved ? `<span style="grid-column:span 2">${t('audit.rpt.resolvedBy')} ${fmtAuditDate(r.recall_resolved_at)} ${t('audit.rpt.by').replace(':','')} ${esc((r.recall_resolved_by||'—').split('@')[0])}</span>` : ''}
               ${r.notes ? `<span style="grid-column:span 2">${t('audit.rpt.notes')} ${esc(r.notes)}</span>` : ''}
             </div>
@@ -10887,7 +10980,7 @@ async function generateAuditReport() {
         const notRemovedCount   = totalUnitsPlaced - totalUnitsRemoved;
         return `
       <div style="margin-bottom:18px;">
-        <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#6aaf9e;margin-bottom:8px;font-family:'DM Mono',monospace;">${t('audit.rpt.recallEffectiveness')}</div>
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;font-family:'DM Mono',monospace;">${t('audit.rpt.recallEffectiveness')}</div>
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:8px;">
           ${[
             { label: t('audit.rpt.unitsPlaced'),  value: totalUnitsPlaced, color:'#edfdf8' },
@@ -10896,27 +10989,27 @@ async function generateAuditReport() {
             { label: t('audit.rpt.within2h'),     value: withinTarget+'/'+removedScans.length, color: withinTarget===removedScans.length&&removedScans.length>0?'#34d399':'#f5a623' },
           ].map(tile => `<div style="background:rgba(13,35,28,0.8);border:1px solid #0d2320;border-radius:8px;padding:10px 8px;text-align:center;">
             <div style="font-size:18px;font-weight:700;color:${tile.color};font-family:'Figtree',sans-serif;">${tile.value}</div>
-            <div style="font-size:9px;text-transform:uppercase;letter-spacing:0.06em;color:#6aaf9e;margin-top:2px;">${tile.label}</div>
+            <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);margin-top:2px;">${tile.label}</div>
           </div>`).join('')}
         </div>
         ${recoveryPct < 100
-          ? `<div style="font-size:11px;color:#f5a623;padding:6px 10px;background:rgba(245,166,35,0.07);border-radius:6px;">⚠ ${notRemovedCount} ${notRemovedCount!==1 ? t('audit.rpt.units') : t('audit.rpt.unit')} ${t('audit.rpt.unitsNotRemoved')}</div>`
-          : `<div style="font-size:11px;color:#34d399;padding:6px 10px;background:rgba(52,211,153,0.06);border-radius:6px;">${t('audit.rpt.allUnitsRemoved').replace('{n}', totalUnitsPlaced).replace('{s}', totalUnitsPlaced!==1 ? 's' : '')}</div>`}
+          ? `<div style="font-size:11px;color:var(--warn);padding:6px 10px;background:rgba(245,166,35,0.07);border-radius:6px;">⚠ ${notRemovedCount} ${notRemovedCount!==1 ? t('audit.rpt.units') : t('audit.rpt.unit')} ${t('audit.rpt.unitsNotRemoved')}</div>`
+          : `<div style="font-size:11px;color:var(--accent);padding:6px 10px;background:rgba(52,211,153,0.06);border-radius:6px;">${t('audit.rpt.allUnitsRemoved').replace('{n}', totalUnitsPlaced).replace('{s}', totalUnitsPlaced!==1 ? 's' : '')}</div>`}
       </div>`;
       })() : ''}
 
       <!-- Employee breakdown -->
       ${Object.keys(byEmployee).length > 0 ? `
       <div style="margin-bottom:18px;">
-        <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#6aaf9e;margin-bottom:8px;font-family:'DM Mono',monospace;">${t('audit.rpt.staffActivity')}</div>
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;font-family:'DM Mono',monospace;">${t('audit.rpt.staffActivity')}</div>
         <div style="border:1px solid #0d2320;border-radius:8px;overflow:hidden;">
-          <div style="display:grid;grid-template-columns:1fr auto auto;gap:0;background:rgba(13,30,28,0.8);padding:7px 12px;font-size:9px;text-transform:uppercase;letter-spacing:0.07em;color:#6aaf9e;border-bottom:1px solid #0d2320;">
+          <div style="display:grid;grid-template-columns:1fr auto auto;gap:0;background:rgba(13,30,28,0.8);padding:7px 12px;font-size:10px;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);border-bottom:1px solid #0d2320;">
             <span>${t('audit.rpt.employee')}</span><span style="text-align:right;padding-right:16px;">${t('audit.rpt.scans')}</span><span style="text-align:right;">${t('audit.rpt.recallHits')}</span>
           </div>
           ${Object.entries(byEmployee).sort((a,b) => b[1].total - a[1].total).map(([emp, stat], i, arr) => `
           <div style="display:grid;grid-template-columns:1fr auto auto;gap:0;padding:8px 12px;font-size:11px;${i < arr.length-1 ? 'border-bottom:1px solid #0d2320;' : ''}">
-            <span style="color:#edfdf8;">${esc(emp)}</span>
-            <span style="text-align:right;padding-right:16px;color:#34d399;font-weight:700;font-family:'DM Mono',monospace;">${stat.total}</span>
+            <span style="color:var(--text);">${esc(emp)}</span>
+            <span style="text-align:right;padding-right:16px;color:var(--accent);font-weight:700;font-family:'DM Mono',monospace;">${stat.total}</span>
             <span style="text-align:right;color:${stat.recallHits > 0 ? '#ff5c5c' : '#6aaf9e'};font-family:'DM Mono',monospace;">${stat.recallHits > 0 ? stat.recallHits : '—'}</span>
           </div>`).join('')}
         </div>
@@ -10924,10 +11017,10 @@ async function generateAuditReport() {
 
       <!-- Full scan log -->
       <div style="margin-bottom:18px;">
-        <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#6aaf9e;margin-bottom:8px;font-family:'DM Mono',monospace;">${t('audit.rpt.fullScanLog')} (${totalScans} ${t('audit.rpt.records')})</div>
-        ${totalScans === 0 ? `<div style="font-size:12px;color:#6aaf9e;padding:12px 0;">${t('audit.rpt.noScans')}</div>` : `
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;font-family:'DM Mono',monospace;">${t('audit.rpt.fullScanLog')} (${totalScans} ${t('audit.rpt.records')})</div>
+        ${totalScans === 0 ? `<div style="font-size:12px;color:var(--muted);padding:12px 0;">${t('audit.rpt.noScans')}</div>` : `
         <div style="border:1px solid #0d2320;border-radius:8px;overflow:hidden;">
-          <div style="display:grid;grid-template-columns:90px 1fr 70px 80px;background:rgba(13,30,28,0.8);padding:7px 10px;font-size:9px;text-transform:uppercase;letter-spacing:0.07em;color:#6aaf9e;border-bottom:1px solid #0d2320;">
+          <div style="display:grid;grid-template-columns:90px 1fr 70px 80px;background:rgba(13,30,28,0.8);padding:7px 10px;font-size:10px;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);border-bottom:1px solid #0d2320;">
             <span>${t('audit.rpt.datePlaced')}</span><span>${t('audit.rpt.productLot')}</span><span>${t('audit.rpt.store')}</span><span style="text-align:right;">${t('audit.rpt.exposure')}</span>
           </div>
           ${_auditData.map((r,i) => {
@@ -10943,10 +11036,10 @@ async function generateAuditReport() {
               exposureStr = t('audit.rpt.onShelf');
             }
             return `<div style="display:grid;grid-template-columns:90px 1fr 70px 80px;gap:0;padding:6px 10px;${bg}${i < _auditData.length-1 ? 'border-bottom:1px solid #0d2320;' : ''}">
-              <span style="font-size:9px;color:#6aaf9e;font-family:'DM Mono',monospace;">${fmtAuditDate(r.created_at)}</span>
-              <span style="font-size:10px;color:#edfdf8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:8px;">${esc((r.product_name||'—').slice(0,32))} <span style="color:#6aaf9e;">${esc(r.lot_number||'')}</span></span>
-              <span style="font-size:9px;color:#6aaf9e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc((r.store_name||'—').slice(0,12))}</span>
-              <span style="text-align:right;font-size:9px;">${isMatch ? (r.recall_resolved ? `<span style="color:#34d399;">${t('audit.rpt.resolved')}</span>` : `<span style="color:#ff5c5c;">${t('audit.rpt.match')}</span>`) : `<span style="color:#6aaf9e;">${t('audit.rpt.clear')}</span>`} <span style="color:#6aaf9e;">${exposureStr !== '—' ? exposureStr : ''}</span></span>
+              <span style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${fmtAuditDate(r.created_at)}</span>
+              <span style="font-size:10px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:8px;">${esc((r.product_name||'—').slice(0,32))} <span style="color:var(--muted);">${esc(r.lot_number||'')}</span></span>
+              <span style="font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc((r.store_name||'—').slice(0,12))}</span>
+              <span style="text-align:right;font-size:10px;">${isMatch ? (r.recall_resolved ? `<span style="color:var(--accent);">${t('audit.rpt.resolved')}</span>` : `<span style="color:var(--danger);">${t('audit.rpt.match')}</span>`) : `<span style="color:var(--muted);">${t('audit.rpt.clear')}</span>`} <span style="color:var(--muted);">${exposureStr !== '—' ? exposureStr : ''}</span></span>
             </div>`;
           }).join('')}
         </div>`}
@@ -10954,29 +11047,29 @@ async function generateAuditReport() {
 
       <!-- Signature block -->
       <div style="border-top:1px solid #0d2320;padding-top:18px;margin-top:4px;">
-        <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#6aaf9e;margin-bottom:12px;font-family:'DM Mono',monospace;">${t('audit.rpt.declaration')}</div>
-        <div style="font-size:11px;color:#edfdf8;line-height:1.7;margin-bottom:16px;">
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:12px;font-family:'DM Mono',monospace;">${t('audit.rpt.declaration')}</div>
+        <div style="font-size:11px;color:var(--text);line-height:1.7;margin-bottom:16px;">
           ${t('audit.rpt.certify')}
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
           <div>
             <div style="border-bottom:1px solid #6aaf9e;height:28px;margin-bottom:4px;"></div>
-            <div style="font-size:10px;color:#6aaf9e;">${t('audit.rpt.signature')}</div>
+            <div style="font-size:10px;color:var(--muted);">${t('audit.rpt.signature')}</div>
           </div>
           <div>
-            <div style="border-bottom:1px solid #6aaf9e;height:28px;margin-bottom:4px;padding-top:6px;font-size:11px;color:#edfdf8;">${genAt}</div>
-            <div style="font-size:10px;color:#6aaf9e;">${t('audit.rpt.dateTime')}</div>
+            <div style="border-bottom:1px solid #6aaf9e;height:28px;margin-bottom:4px;padding-top:6px;font-size:11px;color:var(--text);">${genAt}</div>
+            <div style="font-size:10px;color:var(--muted);">${t('audit.rpt.dateTime')}</div>
           </div>
           <div>
-            <div style="border-bottom:1px solid #6aaf9e;height:28px;margin-bottom:4px;padding-top:6px;font-size:11px;color:#edfdf8;">${esc(_recallCoordinator.name || currentUser?.email || '')}</div>
-            <div style="font-size:10px;color:#6aaf9e;">${t('audit.rpt.recallCoordinator')}${_recallCoordinator.contact ? ' · ' + esc(_recallCoordinator.contact) : ''}</div>
+            <div style="border-bottom:1px solid #6aaf9e;height:28px;margin-bottom:4px;padding-top:6px;font-size:11px;color:var(--text);">${esc(_recallCoordinator.name || currentUser?.email || '')}</div>
+            <div style="font-size:10px;color:var(--muted);">${t('audit.rpt.recallCoordinator')}${_recallCoordinator.contact ? ' · ' + esc(_recallCoordinator.contact) : ''}</div>
           </div>
           <div>
-            <div style="border-bottom:1px solid #6aaf9e;height:28px;margin-bottom:4px;padding-top:6px;font-size:11px;color:#edfdf8;">${esc(store || t('audit.rpt.allStores'))}</div>
-            <div style="font-size:10px;color:#6aaf9e;">${t('audit.rpt.storeLocation')}</div>
+            <div style="border-bottom:1px solid #6aaf9e;height:28px;margin-bottom:4px;padding-top:6px;font-size:11px;color:var(--text);">${esc(store || t('audit.rpt.allStores'))}</div>
+            <div style="font-size:10px;color:var(--muted);">${t('audit.rpt.storeLocation')}</div>
           </div>
         </div>
-        <div style="margin-top:16px;font-size:9px;color:#6aaf9e;font-family:'DM Mono',monospace;">
+        <div style="margin-top:16px;font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">
           ${t('audit.rpt.generatedBy')} · ${window.location.hostname} · Report ID: ${Date.now().toString(36).toUpperCase()}
         </div>
       </div>
@@ -11032,12 +11125,12 @@ function printAuditReport() {
     }
     /* Override app dark theme colours for print */
     body * { color: inherit !important; background: transparent !important; border-color: #ccc !important; }
-    [style*="color:#edfdf8"], [style*="color: #edfdf8"] { color: #111 !important; }
-    [style*="color:#34d399"], [style*="color: #34d399"] { color: #0a6b46 !important; }
-    [style*="color:#6aaf9e"], [style*="color: #6aaf9e"] { color: #555 !important; }
-    [style*="color:#ff5c5c"], [style*="color: #ff5c5c"] { color: #c0392b !important; }
-    [style*="color:#f5a623"], [style*="color: #f5a623"] { color: #b07d00 !important; }
-    [style*="color:#67e8f9"]  { color: #0066cc !important; }
+    [style*="color:var(--text)"], [style*="color: #edfdf8"] { color: #111 !important; }
+    [style*="color:var(--accent)"], [style*="color: #34d399"] { color: #0a6b46 !important; }
+    [style*="color:var(--muted)"], [style*="color: #6aaf9e"] { color: #555 !important; }
+    [style*="color:var(--danger)"], [style*="color: #ff5c5c"] { color: #c0392b !important; }
+    [style*="color:var(--warn)"], [style*="color: #f5a623"] { color: #b07d00 !important; }
+    [style*="color:var(--info)"]  { color: #0066cc !important; }
     [style*="background:rgba(52,211,153"] { background: #f0fdf6 !important; }
     [style*="background:rgba(255,92,92"] { background: #fff5f5 !important; }
     [style*="background:rgba(245,166,35"] { background: #fffbeb !important; }
@@ -12050,7 +12143,7 @@ function renderOcrResult(assignment, confidence, source, raw) {
     high:    { label: '✓ High confidence',   cls: 'high',    dot: '✓ HIGH',    dotStyle: 'background:rgba(52,211,153,0.15);color:var(--accent);border:1px solid rgba(52,211,153,0.3);' },
     medium:  { label: '~ Medium confidence', cls: 'medium',  dot: '~ MEDIUM',  dotStyle: 'background:rgba(245,166,35,0.12);color:var(--warn);border:1px solid rgba(245,166,35,0.35);' },
     low:     { label: '? Low confidence',    cls: 'low',     dot: '? LOW',     dotStyle: 'background:rgba(255,92,92,0.1);color:var(--danger);border:1px solid rgba(255,92,92,0.3);' },
-    learned: { label: '★ Learned pattern',   cls: 'learned', dot: '★ LEARNED', dotStyle: 'background:rgba(100,180,255,0.12);color:#67e8f9;border:1px solid rgba(100,180,255,0.3);' },
+    learned: { label: '★ Learned pattern',   cls: 'learned', dot: '★ LEARNED', dotStyle: 'background:rgba(100,180,255,0.12);color:var(--info);border:1px solid rgba(100,180,255,0.3);' },
   };
   const b = badgeMap[confidence] || badgeMap.low;
   lotBadge.innerHTML  = `<span class="confidence-badge ${b.cls}">${b.label}</span>`;
@@ -15048,7 +15141,7 @@ function renderFsmaReadiness() {
           </div>`;
         }).join('')}
       </div>
-    </div>` : `<div style="padding:12px 16px;background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.2);border-radius:8px;font-size:12px;color:#34d399;margin-bottom:16px;">✓ No critical actions needed. Keep scanning and maintain your records to stay compliant.</div>`}
+    </div>` : `<div style="padding:12px 16px;background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.2);border-radius:8px;font-size:12px;color:var(--accent);margin-bottom:16px;">✓ No critical actions needed. Keep scanning and maintain your records to stay compliant.</div>`}
 
     ${catRows ? `
     <!-- FTL Category heatmap -->
@@ -15381,7 +15474,7 @@ async function loadMgrPatterns() {
       const pe = Math.round(p.crop_y_end   * 100);
       const zone = ps < 33 ? 'top' : ps < 66 ? 'middle' : 'lower';
       return '<div style="margin-top:8px;">'
-        + '<div style="font-size:9px;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:4px;">'
+        + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:4px;">'
         + 'Lot code region (' + zone + ' ' + ps + '\u2013' + pe + '% of image) \u00b7 ' + (p.crop_scan_count||0) + ' crop obs.</div>'
         + '<div style="height:8px;background:var(--surface2);border-radius:4px;position:relative;overflow:hidden;">'
         + '<div style="position:absolute;top:0;bottom:0;left:' + ps + '%;width:' + (pe-ps) + '%;background:var(--accent);border-radius:3px;opacity:0.7;"></div>'
@@ -15410,7 +15503,7 @@ async function loadMgrPatterns() {
           + '<div style="font-family:\'Figtree\',sans-serif;font-weight:800;font-size:22px;color:var(--text);">' + totalScans + '</div></div>';
     html += '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;">'
           + '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:4px;">\u26a1 Skip enabled</div>'
-          + '<div style="font-family:\'Figtree\',sans-serif;font-weight:800;font-size:22px;color:#38bdf8;">' + skipCount + '</div></div>';
+          + '<div style="font-family:\'Figtree\',sans-serif;font-weight:800;font-size:22px;color:var(--info);">' + skipCount + '</div></div>';
     html += '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;">'
           + '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:4px;">\u2605 Expert</div>'
           + '<div style="font-family:\'Figtree\',sans-serif;font-weight:800;font-size:22px;color:var(--accent);">' + expertCount + '</div></div>';
@@ -15441,11 +15534,11 @@ async function loadMgrPatterns() {
       // Detail grid
       html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">';
       html += '<div style="background:var(--surface2);border-radius:6px;padding:8px 10px;">'
-            + '<div style="font-size:9px;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:3px;">Lot format</div>'
+            + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:3px;">Lot format</div>'
             + '<div style="font-size:11px;color:var(--text);font-family:\'DM Mono\',monospace;">' + (p.lot_format||'\u2014') + '</div></div>';
       const hint = p.label_hint ? p.label_hint.slice(0,90) + (p.label_hint.length>90?'\u2026':'') : '\u2014';
       html += '<div style="background:var(--surface2);border-radius:6px;padding:8px 10px;">'
-            + '<div style="font-size:9px;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:3px;">Label location</div>'
+            + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:3px;">Label location</div>'
             + '<div style="font-size:11px;color:var(--muted);line-height:1.4;">' + hint + '</div></div>';
       html += '</div>';
 
@@ -15840,7 +15933,7 @@ async function loadMgrIntel() {
         const hasRecall = [...recalledProducts].some(rp => rp.length >= 4 && nameLow.includes(rp.split(' ')[0]));
         return '<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);">'
           + '<div style="font-size:12px;color:var(--text);">' + esc(name)
-          + (hasRecall ? ' <span style="font-size:9px;font-family:\'DM Mono\',monospace;padding:1px 5px;border-radius:3px;background:rgba(255,92,92,0.1);color:var(--danger);margin-left:4px;">RECALLED</span>' : '')
+          + (hasRecall ? ' <span style="font-size:10px;font-family:\'DM Mono\',monospace;padding:1px 5px;border-radius:3px;background:rgba(255,92,92,0.1);color:var(--danger);margin-left:4px;">RECALLED</span>' : '')
           + '</div>'
           + '<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(255,92,92,0.1);color:var(--danger);font-family:\'DM Mono\',monospace;">' + count + ' complaint' + (count !== 1 ? 's' : '') + '</span>'
           + '</div>';
@@ -16267,8 +16360,8 @@ async function loadMgrEscalated() {
           </div>` : ''}
           ${exposureHtml}
           <div class="record-photos">
-            ${r.product_photo_url ? `<img class="thumb-mini" src="${r.product_photo_url}" onclick="openLightbox('${r.product_photo_url}')" />` : ''}
-            ${r.barcode_photo_url ? `<img class="thumb-mini" src="${r.barcode_photo_url}" onclick="openLightbox('${r.barcode_photo_url}')" />` : ''}
+            ${r.product_photo_url ? `<img class="thumb-mini" src="${r.product_photo_url}" onclick="openLightbox('${r.product_photo_url}')" / alt="">` : ''}
+            ${r.barcode_photo_url ? `<img class="thumb-mini" src="${r.barcode_photo_url}" onclick="openLightbox('${r.barcode_photo_url}')" / alt="">` : ''}
           </div>
           <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-top:8px;">
             <div class="record-time">${t('card.placedOn')} ${placedStr}</div>
@@ -16741,7 +16834,7 @@ function gs1RenderResult(raw, parsed, hasLot) {
         <div>
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
             <div style="font-size:13px;font-weight:700;color:${statusColor};">${statusLabel}</div>
-            ${isDL ? `<span style="font-size:9px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.08em;padding:2px 7px;border-radius:4px;background:rgba(56,189,248,0.12);color:#38bdf8;border:1px solid rgba(56,189,248,0.3);">GS1 DIGITAL LINK</span>` : ''}
+            ${isDL ? `<span style="font-size:10px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.08em;padding:2px 7px;border-radius:4px;background:rgba(56,189,248,0.12);color:var(--info);border:1px solid rgba(56,189,248,0.3);">GS1 DIGITAL LINK</span>` : ''}
           </div>
           <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);margin-top:2px;word-break:break-all;">${isDL ? esc(dlDomain) : esc(raw.slice(0,60))}${!isDL && raw.length > 60 ? '…' : ''}</div>
         </div>
@@ -16749,7 +16842,7 @@ function gs1RenderResult(raw, parsed, hasLot) {
 
       ${isDL ? `
       <div style="background:rgba(56,189,248,0.06);border:1px solid rgba(56,189,248,0.2);border-radius:8px;padding:10px 14px;margin-bottom:12px;">
-        <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.07em;color:#38bdf8;margin-bottom:4px;">Digital Link URL</div>
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.07em;color:var(--info);margin-bottom:4px;">Digital Link URL</div>
         <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);word-break:break-all;line-height:1.5;">${esc(raw)}</div>
       </div>` : ''}
 
@@ -16916,8 +17009,8 @@ function _renderAckStrip(ack) {
   const idx = ACK_STEPS.indexOf(ack.status);
   chain.innerHTML = ACK_STEPS.map((s, i) => {
     const done = i <= idx;
-    const dot = `<div style="width:18px;height:18px;border-radius:50%;flex-shrink:0;background:${done?'rgba(52,211,153,0.2)':'rgba(22,61,55,0.5)'};border:1.5px solid ${done?'var(--accent)':'var(--border)'};display:flex;align-items:center;justify-content:center;font-size:9px;color:${done?'var(--accent)':'var(--muted)'};">${done?'✓':i+1}</div>`;
-    const label = `<div style="font-size:9px;color:${done?'var(--accent)':'var(--muted)'};margin-top:3px;white-space:nowrap;">${ACK_LABELS[s]}</div>`;
+    const dot = `<div style="width:18px;height:18px;border-radius:50%;flex-shrink:0;background:${done?'rgba(52,211,153,0.2)':'rgba(22,61,55,0.5)'};border:1.5px solid ${done?'var(--accent)':'var(--border)'};display:flex;align-items:center;justify-content:center;font-size:10px;color:${done?'var(--accent)':'var(--muted)'};">${done?'✓':i+1}</div>`;
+    const label = `<div style="font-size:10px;color:${done?'var(--accent)':'var(--muted)'};margin-top:3px;white-space:nowrap;">${ACK_LABELS[s]}</div>`;
     const line = i < ACK_STEPS.length - 1 ? `<div style="flex:1;height:1px;background:${done&&i<idx?'var(--accent)':'var(--border)'};margin-bottom:11px;min-width:8px;"></div>` : '';
     return `<div style="display:flex;flex-direction:column;align-items:center;">${dot}${label}</div>${line}`;
   }).join('');
@@ -17126,8 +17219,8 @@ function _populateRecallDetails(r) {
     </div>`).join('');
 
   const photos = [
-    r.product_photo_url && `<img src="${r.product_photo_url}" onclick="openLightbox('${r.product_photo_url}')" style="width:72px;height:72px;object-fit:cover;border-radius:8px;cursor:pointer;border:1px solid var(--border);" title="Product photo" />`,
-    r.barcode_photo_url && `<img src="${r.barcode_photo_url}" onclick="openLightbox('${r.barcode_photo_url}')" style="width:72px;height:72px;object-fit:cover;border-radius:8px;cursor:pointer;border:1px solid var(--border);" title="Lot code photo" />`,
+    r.product_photo_url && `<img src="${r.product_photo_url}" onclick="openLightbox('${r.product_photo_url}')" style="width:72px;height:72px;object-fit:cover;border-radius:8px;cursor:pointer;border:1px solid var(--border);" alt="Product scan photo" title="Product photo" />`,
+    r.barcode_photo_url && `<img src="${r.barcode_photo_url}" onclick="openLightbox('${r.barcode_photo_url}')" style="width:72px;height:72px;object-fit:cover;border-radius:8px;cursor:pointer;border:1px solid var(--border);" alt="Product scan photo" title="Lot code photo" />`,
   ].filter(Boolean).join('');
 
   el.innerHTML = `
@@ -18519,11 +18612,11 @@ async function loadRecallsView() {
       if (rows.length > 0) {
         const urgency = unitsOnShelf > 0 ? 'var(--danger)' : 'var(--accent)';
         exposureHtml += '<div style="margin:10px 0;padding:10px 12px;background:var(--surface2);border-radius:8px;border:1px solid var(--border);">';
-        exposureHtml += '<div style="font-size:9px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);font-family:DM Mono,monospace;margin-bottom:8px;">Exposure Summary</div>';
+        exposureHtml += '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);font-family:DM Mono,monospace;margin-bottom:8px;">Exposure Summary</div>';
         exposureHtml += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px;">';
-        exposureHtml += '<div style="text-align:center;"><div style="font-family:Figtree,sans-serif;font-weight:800;font-size:20px;color:' + urgency + ';">' + unitsOnShelf + '</div><div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;">Still on shelf</div></div>';
-        exposureHtml += '<div style="text-align:center;"><div style="font-family:Figtree,sans-serif;font-weight:800;font-size:20px;color:var(--accent);">' + unitsPulled + '</div><div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;">Confirmed pulled</div></div>';
-        exposureHtml += '<div style="text-align:center;"><div style="font-family:Figtree,sans-serif;font-weight:800;font-size:20px;color:var(--text);">' + stores.length + '</div><div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;">Store' + (stores.length !== 1 ? 's' : '') + '</div></div>';
+        exposureHtml += '<div style="text-align:center;"><div style="font-family:Figtree,sans-serif;font-weight:800;font-size:20px;color:' + urgency + ';">' + unitsOnShelf + '</div><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;">Still on shelf</div></div>';
+        exposureHtml += '<div style="text-align:center;"><div style="font-family:Figtree,sans-serif;font-weight:800;font-size:20px;color:var(--accent);">' + unitsPulled + '</div><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;">Confirmed pulled</div></div>';
+        exposureHtml += '<div style="text-align:center;"><div style="font-family:Figtree,sans-serif;font-weight:800;font-size:20px;color:var(--text);">' + stores.length + '</div><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;">Store' + (stores.length !== 1 ? 's' : '') + '</div></div>';
         exposureHtml += '</div>';
         if (stores.length) exposureHtml += '<div style="font-size:11px;color:var(--muted);font-family:DM Mono,monospace;margin-bottom:4px;">Stores: <span style="color:var(--text);">' + stores.map(s => esc(s)).join(' · ') + '</span></div>';
         if (firstPlaced) exposureHtml += '<div style="font-size:11px;color:var(--muted);font-family:DM Mono,monospace;margin-bottom:4px;">First placed: <span style="color:var(--text);">' + fmtRegionDate(firstPlaced, true) + '</span></div>';
@@ -18563,7 +18656,7 @@ async function loadRecallsView() {
     <div style="padding:18px 20px 14px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:10px;">
       <div>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
-          <span style="font-size:11px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.08em;color:#3b82f6;">FSMA 204 (USA) § 1.1315</span>
+          <span style="font-size:11px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.08em;color:var(--info);">FSMA 204 (USA) § 1.1315</span>
         </div>
         <div style="font-family:'Figtree',sans-serif;font-size:17px;font-weight:700;color:var(--text);">Traceability Plan Generator</div>
         <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:3px;">Generates a mandatory written plan meeting FDA Food Traceability Rule requirements</div>
@@ -18622,7 +18715,7 @@ async function loadRecallsView() {
       <div style="font-size:12px;color:var(--muted);line-height:1.6;">
         Batch'd will generate a formatted Traceability Plan PDF covering all five required elements under FSMA 204 (USA) § 1.1315: record-keeping procedures, FTL food identification, TLC assignment method, point of contact, and record retention.
       </div>
-      <div style="background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.2);border-radius:8px;padding:10px 12px;font-size:11px;color:#93c5fd;font-family:'DM Mono',monospace;line-height:1.7;">
+      <div style="background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.2);border-radius:8px;padding:10px 12px;font-size:11px;color:var(--info);font-family:'DM Mono',monospace;line-height:1.7;">
         Your scan history shows <strong id="tp-ftl-count">—</strong> FTL product records across <strong id="tp-store-count">—</strong> stores.<br>
         These will be referenced in the plan as evidence of your current traceability practices.
       </div>

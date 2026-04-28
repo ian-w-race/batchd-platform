@@ -262,7 +262,8 @@
     .panel-body { padding: 16px 18px; }
     .panel-action { font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 5px 12px; cursor: pointer; background: none; transition: all 0.15s; }
     .panel-action:hover { border-color: var(--accent); color: var(--accent); }
-    .panel[onclick]:hover { border-color: rgba(52,211,153,0.2); }
+    .panel[onclick] { cursor: pointer; }
+    [onclick]:hover { border-color: rgba(52,211,153,0.2); }
 
     /* ── Recall list ── */
     .recall-item {
@@ -451,7 +452,7 @@
       background: rgba(52,211,153,0.1);
       border: 1px solid rgba(52,211,153,0.4);
       color: var(--accent);
-      font-size: 8px;
+      font-size: 10px;
       font-weight: 800;
       cursor: pointer;
       flex-shrink: 0;
@@ -898,7 +899,7 @@
       <button class="nav-item" id="nav-onboarding" onclick="showPanel('onboarding')" style="display:none;">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
         Getting started
-        <span id="onboarding-badge" style="margin-left:auto;background:var(--accent);color:#052e16;font-size:9px;padding:1px 6px;border-radius:10px;font-weight:700;display:none;"></span>
+        <span id="onboarding-badge" style="margin-left:auto;background:var(--accent);color:#052e16;font-size:10px;padding:1px 6px;border-radius:10px;font-weight:700;display:none;"></span>
       </button>
       <div class="nav-section">Account</div>
       <button class="nav-item" onclick="showPanel('terminology')">
@@ -1003,6 +1004,9 @@ function productNameMatch(a, b) {
 // Surfaces everything Batch'd knows about a product+lot from all tables.
 // Call with a container element ID and optional product/lot context.
 async function renderIntelligencePanel(containerId, productName, lotCode, opts = {}) {
+  const _errEl = document.getElementById('main-content');
+  try {
+
   const el = document.getElementById(containerId);
   if (!el) return;
   el.innerHTML = `<div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);padding:10px 0;"><div class="spinner"></div> Scanning records…</div>`;
@@ -1090,8 +1094,8 @@ async function renderIntelligencePanel(containerId, productName, lotCode, opts =
       return;
     }
 
-    const fmtDate = d => d ? new Date(d).toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'}) : '—';
-    const sevColor = s => s?.toLowerCase().includes('i') ? 'var(--danger)' : 'var(--warn)';
+    const fmtDate = fmtDash;
+const sevColor = s => s?.toLowerCase().includes('i') ? 'var(--danger)' : 'var(--warn)';
 
     // Unique stores that scanned this product
     const storesSeen = [...new Set(matchedScans.map(s => s.store_name).filter(Boolean))];
@@ -1159,6 +1163,11 @@ async function renderIntelligencePanel(containerId, productName, lotCode, opts =
   } catch(e) {
     el.innerHTML = `<div style="font-size:11px;color:var(--muted);padding:10px 0;">Intelligence unavailable: ${e.message}</div>`;
   }
+
+  } catch(_renderErr) {
+    console.error('[renderIntelligencePanel]', _renderErr);
+    if (_errEl) _errEl.innerHTML += `<div style="margin:20px 0;padding:16px;background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.2);border-radius:10px;font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;"><strong style="color:var(--danger);">Error loading Intelligence</strong><br>${_renderErr.message}</div>`;
+  }
 }
 
 // ── Create investigation from complaint pattern ──────────────────
@@ -1209,7 +1218,7 @@ function updateClock() {
   const now = new Date();
   document.getElementById('topbar-time').textContent =
     now.toLocaleDateString(_dashLocale(), { weekday:'short', day:'numeric', month:'short' }) + ' · ' +
-    now.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+    now.toLocaleTimeString(_dashLocale(), { hour:'2-digit', minute:'2-digit' });
 }
 setInterval(updateClock, 1000); updateClock();
 
@@ -1502,8 +1511,8 @@ async function traceLot() {
     const totalQty     = shipments.reduce((s,h) => s+(h.quantity||0), 0);
     const unit         = shipments[0]?.unit || 'units';
     const isRecalled   = recalls.length > 0;
-    const fmtDate      = d => d ? new Date(d).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : '—';
-    const fmtDT        = d => d ? new Date(d).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '—';
+    const fmtDate = fmtDash;
+const fmtDT        = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '—';
 
     // Chain node builder
     const chainNode = (step, label, detail, status, sublabel) => {
@@ -1670,7 +1679,7 @@ organisation_id for this user = "${_orgId}"`;
       }
 
       const cols = Object.keys(rows[0]).filter(k => !['id','organisation_id','retailer_id','retailer_org_id','manufacturer_id','store_id','recall_event_id','user_id'].includes(k));
-      const fmtVal = v => v === null || v === undefined ? '—' : typeof v === 'boolean' ? (v?'Yes':'No') : typeof v === 'string' && v.match(/^\d{4}-\d{2}-\d{2}/) ? new Date(v).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : String(v).slice(0,60);
+      const fmtVal = v => v === null || v === undefined ? '—' : typeof v === 'boolean' ? (v?'Yes':'No') : typeof v === 'string' && v.match(/^\d{4}-\d{2}-\d{2}/) ? new Date(v).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',year:'numeric'}) : String(v).slice(0,60);
 
       resultsEl.innerHTML = `<div class="panel"><div class="panel-header"><div class="panel-title">${rows.length} result${rows.length!==1?'s':''}</div></div>
         <div class="panel-body" style="padding:0;">
@@ -1747,7 +1756,7 @@ async function loadWeeklyDigest(containerEl) {
     const today = new Date();
     const html = `
       <div style="padding:2px 0 8px;">
-        <div style="font-size:10px;color:var(--muted);margin-bottom:8px;font-family:'DM Mono',monospace;">${today.toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long'})}</div>
+        <div style="font-size:10px;color:var(--muted);margin-bottom:8px;font-family:'DM Mono',monospace;">${today.toLocaleDateString(_dashLocale(),{weekday:'long',day:'numeric',month:'long'})}</div>
         <div style="font-size:12px;color:var(--text);line-height:1.7;">${digest}</div>
         <button onclick="sessionStorage.removeItem('batchd_weekly_digest');loadWeeklyDigest(this.closest('[id]')||document.getElementById('weekly-digest-panel'))" style="font-size:10px;color:var(--muted);background:none;border:none;cursor:pointer;padding:8px 0 0;text-decoration:underline;">Regenerate</button>
       </div>`;
@@ -1799,6 +1808,9 @@ async function checkOnboardingStatus() {
 }
 
 async function renderOnboarding() {
+  const _errEl = document.getElementById('main-content');
+  try {
+
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading setup status…</div>`;
 
@@ -1853,7 +1865,7 @@ async function renderOnboarding() {
         title: 'Run your first mock recall drill',
         desc: `Simulate a recall to test your team's response procedures. ${isUS ? 'FDA recommends annual drills.' : 'Required annually by Mattilsynet best practice.'} Generates a compliance report you can share with auditors.`,
         detail: hasDrill
-          ? `Last drill: ${new Date(drillsRes.data[0].created_at).toLocaleDateString('en-GB', {day:'numeric',month:'long',year:'numeric'})}`
+          ? `Last drill: ${new Date(drillsRes.data[0].created_at).toLocaleDateString(_dashLocale(), {day:'numeric',month:'long',year:'numeric'})}`
           : 'No drills conducted yet.',
         cta: 'Run a drill →', action: `showPanel('recalls')`,
         reg: isUS ? 'FDA annual drill recommendation' : 'Mattilsynet best practice',
@@ -1921,7 +1933,7 @@ async function renderOnboarding() {
                 </div>
                 <div style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:6px;">${step.desc}</div>
                 <div style="font-size:11px;color:${step.done?'var(--accent)':'var(--muted)'};font-style:italic;">${step.detail}</div>
-                <div style="font-size:9px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:4px;opacity:0.7;">${step.reg}</div>
+                <div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:4px;opacity:0.7;">${step.reg}</div>
               </div>
             </div>`;
           }).join('')}
@@ -1943,6 +1955,11 @@ async function renderOnboarding() {
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error: ${e.message}</div>`;
   }
+
+  } catch(_renderErr) {
+    console.error('[renderOnboarding]', _renderErr);
+    if (_errEl) _errEl.innerHTML += `<div style="margin:20px 0;padding:16px;background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.2);border-radius:10px;font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;"><strong style="color:var(--danger);">Error loading Onboarding</strong><br>${_renderErr.message}</div>`;
+  }
 }
 
 // ── Deep-link handler ────────────────────────────────────────
@@ -1963,6 +1980,9 @@ function handleDeepLink() {
 }
 
 async function renderOverview() {
+  const _errEl = document.getElementById('main-content');
+  try {
+
   if (_userRole === 'store_manager') { return renderStoreManagerOverview(); }
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);padding:4px 0;"><div class="spinner"></div> Loading dashboard…</div>`;
@@ -2216,7 +2236,7 @@ async function renderOverview() {
       ...darkStores.filter(s => !predictiveSignals.some(p => p.store.id === s.id)).map(s => ({
         level: 'high', icon: '🔴',
         title: `${s.name} — dark store`,
-        detail: `No scans in ${s.daysSince} day${s.daysSince!==1?'s':''} · last active ${s.lastScan ? new Date(s.lastScan).toLocaleDateString('en-GB',{day:'numeric',month:'short'}) : 'never'}`,
+        detail: `No scans in ${s.daysSince} day${s.daysSince!==1?'s':''} · last active ${s.lastScan ? new Date(s.lastScan).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short'}) : 'never'}`,
         action: `showPanel('stores')`, cta: 'View stores',
       })),
       ...overdueAcksAll.slice(0,3).map(a => ({
@@ -2240,7 +2260,7 @@ async function renderOverview() {
       ...((overdueInvs||[]).map(i => ({
         level: 'warn', icon: '🔍',
         title: `Investigation deadline passed`,
-        detail: `${i.product_name} — deadline was ${new Date(i.deadline_at).toLocaleDateString('en-GB',{day:'numeric',month:'short'})}`,
+        detail: `${i.product_name} — deadline was ${new Date(i.deadline_at).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short'})}`,
         action: `showPanel('investigations')`, cta: 'View investigations',
       }))),
     ];
@@ -2252,9 +2272,8 @@ async function renderOverview() {
       if (ms < 86400000) return Math.floor(ms/3600000) + 'h ago';
       return Math.floor(ms/86400000) + 'd ago';
     };
-    const fmtDate = d => d ? new Date(d).toLocaleDateString('en-GB', {day:'numeric',month:'short'}) : '—';
-
-    el.innerHTML = `
+    const fmtDate = fmtDash;
+el.innerHTML = `
 
     <!-- ── Recall alert banner (only when relevant recalls exist) ── -->
     ${activeCount > 0 ? `
@@ -2485,8 +2504,8 @@ async function renderOverview() {
                   <div style="border-radius:2px 2px 0 0;background:${v>0?'var(--accent)':'var(--border)'};opacity:${v>0?0.4+0.6*(v/sparkMax):0.3};height:${Math.max(3,Math.round(37*(v/sparkMax)))}px;transition:height 0.3s;"></div>
                 </div>`).join('')}
             </div>
-            <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--muted);">
-              ${last7Days.map(d=>`<div>${new Date(d).toLocaleDateString('en-GB',{weekday:'narrow'})}</div>`).join('')}
+            <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);">
+              ${last7Days.map(d=>`<div>${new Date(d).toLocaleDateString(_dashLocale(),{weekday:'narrow'})}</div>`).join('')}
             </div>
             <div style="margin-top:10px;font-size:12px;font-weight:600;color:var(--text);">${scans.length} scans <span style="font-size:10px;font-weight:400;color:var(--muted);">in last 30 days</span></div>
           </div>
@@ -2571,12 +2590,20 @@ async function renderOverview() {
     el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading dashboard: ${e.message}</div>`;
     console.error('Dashboard overview error:', e);
   }
+
+  } catch(_renderErr) {
+    console.error('[renderOverview]', _renderErr);
+    if (_errEl) _errEl.innerHTML += `<div style="margin:20px 0;padding:16px;background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.2);border-radius:10px;font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;"><strong style="color:var(--danger);">Error loading </strong><br>${_renderErr.message}</div>`;
+  }
 }
 
 // ── Recalls panel ─────────────────────────────────────────────
 let _recallsTab = 'active'; // 'active' | 'history' | 'feed' | 'add'
 
 async function renderRecalls() {
+  const _errEl = document.getElementById('main-content');
+  try {
+
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading recalls…</div>`;
   try {
@@ -2673,7 +2700,7 @@ async function renderRecalls() {
     const appAdvanced = a.status === 'confirmed' && a.confirmed_at && a.pulled_at &&
       Math.abs(new Date(a.confirmed_at) - new Date(a.pulled_at)) < 5000;
     const appBadge = appAdvanced
-      ? `<span style="font-size:9px;padding:1px 6px;border-radius:4px;background:rgba(52,211,153,0.1);color:var(--accent);font-family:'DM Mono',monospace;margin-left:4px;" title="Completed via Batch'd scanning app">via app</span>`
+      ? `<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:rgba(52,211,153,0.1);color:var(--accent);font-family:'DM Mono',monospace;margin-left:4px;" title="Completed via Batch'd scanning app">via app</span>`
       : '';
     if (isComplete) {
       return `<div style="border:1px solid rgba(52,211,153,0.3);border-radius:12px;padding:16px 18px;background:rgba(52,211,153,0.04);margin-bottom:10px;">
@@ -2752,10 +2779,10 @@ async function renderRecalls() {
           </div>
         </div>
         <div id="collab-log-${p.recall_event_id}" style="display:none;margin-top:12px;">
-          <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">Collaboration & audit log — ${new Date(ev.published_at||ev.created_at).toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</div>
+          <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">Collaboration & audit log — ${new Date(ev.published_at||ev.created_at).toLocaleDateString(_dashLocale(),{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</div>
           <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;font-size:11px;line-height:2;">
             <div style="display:flex;gap:10px;padding:5px 0;border-bottom:1px solid var(--border);">
-              <span style="color:var(--muted);font-family:'DM Mono',monospace;flex-shrink:0;width:140px;">${new Date(ev.published_at||ev.created_at).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</span>
+              <span style="color:var(--muted);font-family:'DM Mono',monospace;flex-shrink:0;width:140px;">${new Date(ev.published_at||ev.created_at).toLocaleString(_dashLocale(),{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</span>
               <span style="color:var(--text);">🔔 Recall issued by <strong>${mfrName}</strong>${isDrill?' <span style="color:var(--warn);">[DRILL]</span>':''}</span>
             </div>
             ${evAcks.sort((a,b)=>a.acknowledged_at>b.acknowledged_at?1:-1).map(a => {
@@ -2770,7 +2797,7 @@ async function renderRecalls() {
                 return STEPS.indexOf(s.status) <= storeIdx && s.time;
               });
               return steps.map(s => `<div style="display:flex;gap:10px;padding:5px 0;border-bottom:1px solid rgba(22,61,55,0.4);">
-                <span style="color:var(--muted);font-family:'DM Mono',monospace;flex-shrink:0;width:140px;">${s.time?new Date(s.time).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'-'}</span>
+                <span style="color:var(--muted);font-family:'DM Mono',monospace;flex-shrink:0;width:140px;">${s.time?new Date(s.time).toLocaleString(_dashLocale(),{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'-'}</span>
                 <span style="color:${s.status==='confirmed'?'var(--accent)':'var(--text)'};">✓ ${a.stores?.name||'Store'}: ${s.label}</span>
               </div>`).join('');
             }).join('')}
@@ -3010,6 +3037,11 @@ async function renderRecalls() {
   } catch(e) {
     document.getElementById('main-content').innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading recalls: ${e.message}</div>`;
   }
+
+  } catch(_renderErr) {
+    console.error('[renderRecalls]', _renderErr);
+    if (_errEl) _errEl.innerHTML += `<div style="margin:20px 0;padding:16px;background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.2);border-radius:10px;font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;"><strong style="color:var(--danger);">Error loading Recalls</strong><br>${_renderErr.message}</div>`;
+  }
 }
 
 function toggleCollabLog(recallEventId) {
@@ -3173,8 +3205,9 @@ async function advanceAckStatus(ackId, status, recallEventId) {
   // We need a quantity — even 0 is valid (product couldn't be found).
   if (status === 'pulled') {
     const unitsInput = document.getElementById(`units-${ackId}`);
-    const units = unitsInput ? parseInt(unitsInput.value) : NaN;
-    if (isNaN(units) || unitsInput?.value === '') {
+    const rawVal = unitsInput ? unitsInput.value.trim() : '';
+    const units = rawVal === '' ? NaN : parseInt(rawVal, 10);
+    if (isNaN(units) || rawVal === '') {
       if (btn) { btn.disabled = false; btn.textContent = origText; }
       showToast('Please enter units removed (enter 0 if product was not found on shelf)', 'warn', 5000);
       unitsInput?.focus();
@@ -3221,6 +3254,9 @@ async function updateAckStatus(ackId, status) {
 
 // ── Stores panel ──────────────────────────────────────────────
 async function renderStores() {
+  const _errEl = document.getElementById('main-content');
+  try {
+
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading stores…</div>`;
   try {
@@ -3294,6 +3330,11 @@ async function renderStores() {
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading stores: ${e.message}</div>`;
   }
+
+  } catch(_renderErr) {
+    console.error('[renderStores]', _renderErr);
+    if (_errEl) _errEl.innerHTML += `<div style="margin:20px 0;padding:16px;background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.2);border-radius:10px;font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;"><strong style="color:var(--danger);">Error loading Stores</strong><br>${_renderErr.message}</div>`;
+  }
 }
 
 let _editingStoreId = null;
@@ -3357,6 +3398,9 @@ async function saveStore() {
 
 // ── Traceability panel ────────────────────────────────────────
 async function renderTraceability(tab) {
+  const _errEl = document.getElementById('main-content');
+  try {
+
   const el = document.getElementById('main-content');
   const activeTab = tab || 'scans';
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
@@ -3467,7 +3511,7 @@ async function renderTraceability(tab) {
                       </span>
                     </td>
                     <td style="padding:10px 18px;font-size:11px;color:var(--muted);white-space:nowrap;">
-                      ${p.created_at ? new Date(p.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : '—'}
+                      ${p.created_at ? new Date(p.created_at).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',year:'numeric'}) : '—'}
                     </td>
                     <td style="padding:10px 18px;">
                       <button onclick="deletePattern('${p.id}', this)"
@@ -3527,6 +3571,11 @@ async function renderTraceability(tab) {
   } // end ask tab
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading traceability data: ${e.message}</div>`;
+  }
+
+  } catch(_renderErr) {
+    console.error('[renderTraceability]', _renderErr);
+    if (_errEl) _errEl.innerHTML += `<div style="margin:20px 0;padding:16px;background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.2);border-radius:10px;font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;"><strong style="color:var(--danger);">Error loading Traceability</strong><br>${_renderErr.message}</div>`;
   }
 }
 
@@ -3630,6 +3679,9 @@ let _shipmentStatus = '';       // '' | 'recalled' | 'scanned' | 'gap'
 let _shipmentDays   = '90';     // '30'|'90'|'180'|'all'
 
 async function renderShipments() {
+  const _errEl = document.getElementById('main-content');
+  try {
+
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading shipments…</div>`;
   try {
@@ -3717,8 +3769,8 @@ async function renderShipments() {
   if (_shipmentStatus === 'gap')      filtered = filtered.filter(s => s.scanStatus === 'gap');
   if (_shipmentStatus === 'pulled')   filtered = filtered.filter(s => s.scanStatus === 'pulled');
 
-  const fmtD = d => d ? new Date(d).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : '—';
-  const fmtDT = d => d ? new Date(d).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '—';
+  const fmtD = d => d ? new Date(d).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',year:'numeric'}) : '—';
+  const fmtDT = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '—';
 
   function statusPill(sh) {
     if (sh.isRecalled) return `<span style="font-size:10px;padding:2px 9px;border-radius:10px;background:rgba(255,92,92,0.12);color:var(--danger);font-weight:700;white-space:nowrap;">⚠ Recalled</span>`;
@@ -3962,6 +4014,11 @@ async function renderShipments() {
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading shipments: ${e.message}</div>`;
   }
+
+  } catch(_renderErr) {
+    console.error('[renderShipments]', _renderErr);
+    if (_errEl) _errEl.innerHTML += `<div style="margin:20px 0;padding:16px;background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.2);border-radius:10px;font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;"><strong style="color:var(--danger);">Error loading Shipments</strong><br>${_renderErr.message}</div>`;
+  }
 }
 
 function downloadShipmentsCSV() {
@@ -3989,6 +4046,9 @@ function downloadShipmentsCSV() {
 
 // ── Staff panel ───────────────────────────────────────────────
 async function renderStaff() {
+  const _errEl = document.getElementById('main-content');
+  try {
+
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading staff…</div>`;
   try {
@@ -4199,6 +4259,11 @@ async function renderStaff() {
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading staff: ${e.message}</div>`;
   }
+
+  } catch(_renderErr) {
+    console.error('[renderStaff]', _renderErr);
+    if (_errEl) _errEl.innerHTML += `<div style="margin:20px 0;padding:16px;background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.2);border-radius:10px;font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;"><strong style="color:var(--danger);">Error loading Staff</strong><br>${_renderErr.message}</div>`;
+  }
 }
 
 async function deactivateMember(userId, identifier) {
@@ -4321,6 +4386,9 @@ let _complianceStep = 0;  // 0=live dashboard, 1-4=detail categories, 5=results
 let _complianceData = null;
 
 async function renderCompliance() {
+  const _errEl = document.getElementById('main-content');
+  try {
+
   const el = document.getElementById('main-content');
   // Detail view requested (from "Full assessment" button)
   if (_complianceStep >= 1 && _complianceStep <= 4) {
@@ -4337,6 +4405,11 @@ async function renderCompliance() {
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading compliance data…</div>`;
   await loadComplianceData(el);
   renderComplianceDashboard(el);
+
+  } catch(_renderErr) {
+    console.error('[renderCompliance]', _renderErr);
+    if (_errEl) _errEl.innerHTML += `<div style="margin:20px 0;padding:16px;background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.2);border-radius:10px;font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;"><strong style="color:var(--danger);">Error loading Compliance</strong><br>${_renderErr.message}</div>`;
+  }
 }
 
 function renderComplianceDashboard(el) {
@@ -4346,7 +4419,7 @@ function renderComplianceDashboard(el) {
   const isUS = d.isUS;
   const scoreColor = v => v >= 80 ? 'var(--accent)' : v >= 50 ? 'var(--warn)' : 'var(--danger)';
   const scoreLabel = v => v >= 80 ? 'Good standing' : v >= 50 ? 'Needs attention' : 'Action required';
-  const fmtDate = dt => new Date(dt).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});
+  const fmtDate = dt => new Date(dt).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',year:'numeric'});
 
   // Build priority actions list
   const gaps = [];
@@ -4432,7 +4505,7 @@ function renderComplianceDashboard(el) {
             </div>
             <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:3px;">${c.label}</div>
             <div style="font-size:10px;color:var(--muted);line-height:1.5;margin-bottom:6px;">${c.stats}</div>
-            <div style="font-size:9px;font-family:'DM Mono',monospace;color:var(--muted);opacity:0.7;">${c.reg}</div>
+            <div style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);opacity:0.7;">${c.reg}</div>
           </div>`).join('')}
       </div>
 
@@ -4797,7 +4870,7 @@ function renderComplianceCategory(el, step) {
         {
           pass: d.drillInYear,
           label: 'Mock recall drill conducted in last 12 months',
-          detail: d.drillInYear ? `${d.drills.length} drill${d.drills.length!==1?'s':''} on record — last: ${new Date(d.drills[0].created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}` : 'No drills conducted in the last 12 months',
+          detail: d.drillInYear ? `${d.drills.length} drill${d.drills.length!==1?'s':''} on record — last: ${new Date(d.drills[0].created_at).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',year:'numeric'})}` : 'No drills conducted in the last 12 months',
           action: 'Run a mock recall drill from the scanning app → Manager Dashboard → Mock Recall Drill',
         },
         {
@@ -4913,7 +4986,7 @@ function renderComplianceResults(el) {
   const isUS = d.isUS;
   const scoreColor = v => v >= 80 ? 'var(--accent)' : v >= 50 ? 'var(--warn)' : 'var(--danger)';
   const overall = sc.overallScore;
-  const assessedDate = new Date(d.assessedAt).toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  const assessedDate = new Date(d.assessedAt).toLocaleDateString(_dashLocale(),{weekday:'long',day:'numeric',month:'long',year:'numeric'});
 
   const catScores = [
     { label:'Record keeping',    score:sc.docScore,      icon:'📄' },
@@ -5007,7 +5080,7 @@ function renderComplianceResults(el) {
             <div style="display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-bottom:1px solid rgba(22,61,55,0.5);">
               <div>
                 <div style="font-size:12px;font-weight:500;color:var(--text);">${dr.product_name||'Mock drill'}</div>
-                <div style="font-size:10px;color:var(--muted);margin-top:2px;">${new Date(dr.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}</div>
+                <div style="font-size:10px;color:var(--muted);margin-top:2px;">${new Date(dr.created_at).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',year:'numeric'})}</div>
               </div>
               <button onclick="generateDrillReport('${dr.id}')" style="font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;">↓ PDF</button>
             </div>`).join('')}
@@ -5093,8 +5166,8 @@ async function generateJointRecallReport(recallEventId, productName) {
       scanDetails = scans || [];
     }
 
-    const fmtDt = d => d ? new Date(d).toLocaleString('en-GB', {weekday:'short',day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
-    const fmtD  = d => d ? new Date(d).toLocaleDateString('en-GB', {day:'numeric',month:'long',year:'numeric'}) : '—';
+    const fmtDt = d => d ? new Date(d).toLocaleString(_dashLocale(), {weekday:'short',day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+    const fmtD  = d => d ? new Date(d).toLocaleDateString(_dashLocale(), {day:'numeric',month:'long',year:'numeric'}) : '—';
     const confirmed = acks.filter(a => a.status === 'confirmed');
     const allDone   = confirmed.length === acks.length && acks.length > 0;
     const totalUnits = acks.reduce((s, a) => s + (a.units_pulled || 0), 0);
@@ -5216,10 +5289,10 @@ ${ev.description ? `<div style="background:#f9fafb;border:1px solid #e5e7eb;bord
     ${acks.map(a => `<tr>
       <td style="font-weight:600;">${a.stores?.name||'—'}</td>
       <td><span class="chip ${a.status==='confirmed'?'chip-green':a.status==='notified'?'chip-red':'chip-amber'}">${a.status.toUpperCase()}</span></td>
-      <td style="font-family:monospace;font-size:11px;">${a.created_at?new Date(a.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'—'}</td>
+      <td style="font-family:monospace;font-size:11px;">${a.created_at?new Date(a.created_at).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'—'}</td>
       <td style="font-family:monospace;font-size:11px;">${a.acknowledged_at?fmtDashDT(a.acknowledged_at):'—'}</td>
-      <td style="font-family:monospace;font-size:11px;">${a.pulled_at?new Date(a.pulled_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'—'}</td>
-      <td style="font-family:monospace;font-size:11px;">${a.confirmed_at?new Date(a.confirmed_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'—'}</td>
+      <td style="font-family:monospace;font-size:11px;">${a.pulled_at?new Date(a.pulled_at).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'—'}</td>
+      <td style="font-family:monospace;font-size:11px;">${a.confirmed_at?new Date(a.confirmed_at).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'—'}</td>
       <td style="font-family:monospace;">${a.units_pulled ?? '—'}</td>
     </tr>`).join('')}
     <tr style="background:#f0fdf4;font-weight:700;">
@@ -5239,8 +5312,8 @@ ${scanDetails.length > 0 ? `
       <td style="font-weight:600;">${s.product_name||'—'}</td>
       <td style="font-family:monospace;font-size:11px;">${s.lot_number||'—'}</td>
       <td>${s.store_name||'—'}</td>
-      <td style="font-family:monospace;font-size:11px;">${s.created_at?new Date(s.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'—'}</td>
-      <td style="font-family:monospace;font-size:11px;">${s.removed_from_shelf_at?new Date(s.removed_from_shelf_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'Not yet pulled'}</td>
+      <td style="font-family:monospace;font-size:11px;">${s.created_at?new Date(s.created_at).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'—'}</td>
+      <td style="font-family:monospace;font-size:11px;">${s.removed_from_shelf_at?new Date(s.removed_from_shelf_at).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'Not yet pulled'}</td>
       <td style="font-size:11px;">${(s.scanned_by||'—').split('@')[0]}</td>
     </tr>`).join('')}
   </tbody>
@@ -5315,7 +5388,7 @@ async function generateStoreAuditReport(ackId, storeName) {
     if (!a) throw new Error('Acknowledgement not found');
     const ev  = a.recall_events || {};
     const org = a.organisations || {};
-    const fmtDt = d => d ? new Date(d).toLocaleString('en-GB',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+    const fmtDt = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
     const docRef = `STORE-${ackId.slice(0,8).toUpperCase()}`;
     const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Store Audit Record — ${storeName}</title>
     <style>body{font-family:Arial,sans-serif;font-size:13px;color:#1a2e2a;padding:40px;max-width:600px;margin:0 auto;}
@@ -5377,7 +5450,7 @@ async function generateComplianceReport() {
     const isUS = d.isUS;
     const { data: org } = await sb.from('organisations').select('name, contact_email').eq('id', _orgId).single();
     const scoreColor = v => v >= 80 ? '#34d399' : v >= 50 ? '#f5a623' : '#ff5c5c';
-    const today = new Date().toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'});
+    const today = new Date().toLocaleDateString(_dashLocale(),{day:'numeric',month:'long',year:'numeric'});
     const catScores = [
       { label:'Record keeping',    score:sc.docScore,      detail:`${d.lotScans}/${d.scans.length} scans with lot codes` },
       { label:'Traceability chain',score:sc.traceScore,    detail:`${d.supplierScans}/${d.scans.length} scans with supplier data` },
@@ -5456,6 +5529,9 @@ let _reportDateRange = '30'; // '7'|'30'|'90'|'all'
 let _reportExposureIdx = 0;
 
 async function renderReports() {
+  const _errEl = document.getElementById('main-content');
+  try {
+
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading reports…</div>`;
   const isUS = _orgRegion === 'us';
@@ -5604,12 +5680,12 @@ async function renderReports() {
                       ${r.stats.map(s => `
                         <div style="background:var(--surface2);border-radius:7px;padding:8px 10px;text-align:center;">
                           <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;color:var(--text);line-height:1;">${s.val}</div>
-                          <div style="font-size:9px;color:var(--muted);margin-top:2px;line-height:1.3;">${s.label}</div>
+                          <div style="font-size:10px;color:var(--muted);margin-top:2px;line-height:1.3;">${s.label}</div>
                         </div>`).join('')}
                     </div>
                     <!-- Reg reference + actions -->
                     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
-                      <div style="font-size:9px;font-family:'DM Mono',monospace;color:var(--muted);opacity:0.7;">${r.reg}</div>
+                      <div style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);opacity:0.7;">${r.reg}</div>
                       <div style="display:flex;gap:6px;">
                         <button onclick="runReport('${r.key}')"
                           style="font-family:'DM Mono',monospace;font-size:11px;padding:6px 12px;border-radius:6px;border:1px solid var(--glass-border);background:var(--surface2);color:var(--text);cursor:pointer;transition:all 0.15s;"
@@ -5638,6 +5714,11 @@ async function renderReports() {
 
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading reports: ${e.message}</div>`;
+  }
+
+  } catch(_renderErr) {
+    console.error('[renderReports]', _renderErr);
+    if (_errEl) _errEl.innerHTML += `<div style="margin:20px 0;padding:16px;background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.2);border-radius:10px;font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;"><strong style="color:var(--danger);">Error loading Reports</strong><br>${_renderErr.message}</div>`;
   }
 }
 
@@ -5682,7 +5763,7 @@ function reportHeader(title, sub, csvKey) {
 
 function printReport() {
   const reportContent = document.getElementById('main-content')?.innerHTML || '';
-  const today = new Date().toLocaleDateString('en-GB', {weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  const today = new Date().toLocaleDateString(_dashLocale(), {weekday:'long',day:'numeric',month:'long',year:'numeric'});
   const win = window.open('', '_blank');
   win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Batch'd Report — ${_orgName}</title>
   <style>
@@ -5792,9 +5873,9 @@ async function runReport(key) {
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading report…</div>`;
   const data  = await fetchReportData(key);
   const isUS  = _orgRegion === 'us';
-  const date  = new Date().toLocaleDateString('en-GB', {day:'numeric',month:'long',year:'numeric'});
-  const fmtDate = d => d ? new Date(d).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : '—';
-  const fmtDT   = d => d ? new Date(d).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '—';
+  const date  = new Date().toLocaleDateString(_dashLocale(), {day:'numeric',month:'long',year:'numeric'});
+  const fmtDate = fmtDash;
+const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '—';
 
   // Shared: stat tile
   const statTile = (val, label, color='var(--text)') =>
@@ -5875,7 +5956,7 @@ async function runReport(key) {
               return `<tr>
                 <td style="white-space:nowrap;font-size:11px;color:var(--muted);">${fmtDate(d)}</td>
                 <td style="font-size:12px;font-weight:600;color:var(--text);">${r.product_name||'—'}
-                  ${r.is_drill?`<div style="font-size:9px;color:var(--warn);">DRILL</div>`:''}
+                  ${r.is_drill?`<div style="font-size:10px;color:var(--warn);">DRILL</div>`:''}
                 </td>
                 <td style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">${r.lot_number||'—'}</td>
                 <td><span style="font-size:10px;padding:2px 8px;border-radius:10px;${isPushed?'background:rgba(56,189,248,0.1);color:var(--info);':'background:rgba(106,175,158,0.1);color:var(--muted);'}">
@@ -5926,7 +6007,7 @@ async function runReport(key) {
               return `<tr>
                 <td>
                   <div style="font-size:12px;font-weight:600;color:var(--text);">${s.name}</div>
-                  ${i===0?`<div style="font-size:9px;color:var(--accent);">top performer</div>`:''}
+                  ${i===0?`<div style="font-size:10px;color:var(--accent);">top performer</div>`:''}
                 </td>
                 <td>
                   <div style="font-size:14px;font-weight:700;color:var(--accent);">${s.scans.length}</div>
@@ -6151,9 +6232,8 @@ async function matchCustomersToRecall() {
     const blob   = new Blob(['\uFEFF' + csvContent], {type:'text/csv;charset=utf-8;'});
     const csvUrl = URL.createObjectURL(blob);
 
-    const fmtDate = d => d ? new Date(d).toLocaleDateString('en-GB',{day:'numeric',month:'short'}) : '—';
-
-    el.innerHTML = `
+    const fmtDate = fmtDash;
+el.innerHTML = `
       <div style="background:rgba(255,92,92,0.06);border:1px solid rgba(255,92,92,0.2);border-radius:8px;padding:12px 14px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
         <div style="font-size:12px;color:var(--danger);font-weight:600;">⚠ ${matched.length} customer${matched.length!==1?'s':''} matched · ${customers.length - matched.length} not affected</div>
         <a href="${csvUrl}" download="recall-affected-customers-${new Date().toISOString().split('T')[0]}.csv"
@@ -6194,7 +6274,7 @@ async function downloadReport(key) {
         ['Date','Time','Product','Lot Number','Batch Number','Barcode','Store','Scanned By','Quantity','Shelf Location','Supplier','Status','Recall Resolved','Recall Resolved By','Recall Resolved At','Removed From Shelf At'],
         data.map(s => [
           s.created_at ? fmtDash(s.created_at) : '',
-          s.created_at ? new Date(s.created_at).toLocaleTimeString('en-GB') : '',
+          s.created_at ? new Date(s.created_at).toLocaleTimeString(_dashLocale()) : '',
           s.product_name, s.lot_number, s.batch_number, s.barcode_number,
           s.store_name, s.scanned_by, s.quantity, s.shelf_location, s.supplier_name,
           s.recall_resolved ? 'Resolved' : s.removed_from_shelf_at ? 'Removed' : 'On shelf',
@@ -6270,7 +6350,7 @@ async function downloadReport(key) {
           : ['Dato','Tid','Produktnavn','Partinummer','Batchnummer','Strekkode','Leverandør','Butikk','Hylle','Antall','Enhet','Referansedokument','Skannet av'],
         data.map(s => [
           s.created_at ? fmtDash(s.created_at) : '',
-          s.created_at ? new Date(s.created_at).toLocaleTimeString('en-GB') : '',
+          s.created_at ? new Date(s.created_at).toLocaleTimeString(_dashLocale()) : '',
           s.product_name, s.lot_number, s.batch_number, s.barcode_number,
           s.supplier_name, s.store_name, s.shelf_location, s.quantity, '',
           s.reference_document, isUS ? (s.is_ftl ? 'Yes' : 'No') : '', isUS ? (s.ftl_category||'') : '', s.scanned_by,
@@ -6767,6 +6847,9 @@ function renderTerminology() {
 }
 
 async function renderSettings() {
+  const _errEl = document.getElementById('main-content');
+  try {
+
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
   try {
@@ -6903,6 +6986,11 @@ async function renderSettings() {
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading settings: ${e.message}</div>`;
   }
+
+  } catch(_renderErr) {
+    console.error('[renderSettings]', _renderErr);
+    if (_errEl) _errEl.innerHTML += `<div style="margin:20px 0;padding:16px;background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.2);border-radius:10px;font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;"><strong style="color:var(--danger);">Error loading Settings</strong><br>${_renderErr.message}</div>`;
+  }
 }
 
 async function saveRecallSettings() {
@@ -6994,6 +7082,9 @@ async function saveOrgSettings() {
 // ── Coming soon ────────────────────────────────────────────────
 // ── Store manager overview ────────────────────────────────────
 async function renderStoreManagerOverview() {
+  const _errEl = document.getElementById('main-content');
+  try {
+
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
   document.getElementById('topbar-title').textContent = _storeName || 'My Store';
@@ -7087,8 +7178,8 @@ async function renderStoreManagerOverview() {
                 ${scansByDay.map(v => `
                   <div style="flex:1;border-radius:2px;background:var(--accent);opacity:${0.4+0.6*(v/maxDay)};height:${Math.max(4,Math.round(44*(v/maxDay)))}px;"></div>`).join('')}
               </div>
-              <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--muted);">
-                ${last7.map(d=>`<div>${new Date(d).toLocaleDateString('en-GB',{weekday:'narrow'})}</div>`).join('')}
+              <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);">
+                ${last7.map(d=>`<div>${new Date(d).toLocaleDateString(_dashLocale(),{weekday:'narrow'})}</div>`).join('')}
               </div>
             </div>
           </div>
@@ -7111,6 +7202,11 @@ async function renderStoreManagerOverview() {
       </div>`;
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error: ${e.message}</div>`;
+  }
+
+  } catch(_renderErr) {
+    console.error('[renderStoreManagerOverview]', _renderErr);
+    if (_errEl) _errEl.innerHTML += `<div style="margin:20px 0;padding:16px;background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.2);border-radius:10px;font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;"><strong style="color:var(--danger);">Error loading Store Manager</strong><br>${_renderErr.message}</div>`;
   }
 }
 
@@ -7237,10 +7333,19 @@ This will open the Manufacturers panel where you can contact your trading partne
 }
 
 async function renderDashboardTriage() {
+  const _errEl = document.getElementById('main-content');
+  try {
+
   const el = document.getElementById('main-content');
   if (_dashTriageView === 'new') { renderDashTriageForm(el); return; }
   if (_dashTriageView === 'detail' && _dashTriageComplaint) { await renderDashTriageDetail(el); return; }
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);padding:20px 0;"><div class="spinner"></div> Loading triage board…</div>`;
   await renderDashTriageList(el);
+
+  } catch(_renderErr) {
+    console.error('[renderDashboardTriage]', _renderErr);
+    if (_errEl) _errEl.innerHTML += `<div style="margin:20px 0;padding:16px;background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.2);border-radius:10px;font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;"><strong style="color:var(--danger);">Error loading board Triage</strong><br>${_renderErr.message}</div>`;
+  }
 }
 
 function dashTriageLevelStyle(level) {
@@ -7256,6 +7361,9 @@ function dashTriageStatusLabel(status) {
 }
 
 async function renderDashTriageList(el) {
+  const _errEl = document.getElementById('main-content');
+  try {
+
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading complaints...</div>`;
   try {
     const { data: complaints, error } = await sb.from('complaints')
@@ -7323,7 +7431,7 @@ async function renderDashTriageList(el) {
         </div>
       ` : `<div style="display:flex;flex-direction:column;gap:8px;">${filtered.map(c => {
         const s = dashTriageLevelStyle(c.triage_level);
-        const date = new Date(c.created_at).toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' });
+        const date = new Date(c.created_at).toLocaleDateString(_dashLocale(), { day:'2-digit', month:'short', year:'numeric' });
         return `<div onclick="_dashTriageView='detail';_dashTriageComplaint='${c.id}';renderDashboardTriage()" style="background:var(--surface);border:1px solid ${c.triage_level==='critical'?'rgba(255,92,92,0.3)':'var(--border)'};border-radius:12px;padding:16px;cursor:pointer;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='${c.triage_level==='critical'?'rgba(255,92,92,0.3)':'var(--border)'}'">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
@@ -7346,6 +7454,11 @@ async function renderDashTriageList(el) {
     `;
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);padding:20px;">Error: ${e.message}</div>`;
+  }
+
+  } catch(_renderErr) {
+    console.error('[renderDashTriageList]', _renderErr);
+    if (_errEl) _errEl.innerHTML += `<div style="margin:20px 0;padding:16px;background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.2);border-radius:10px;font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;"><strong style="color:var(--danger);">Error loading Triage List</strong><br>${_renderErr.message}</div>`;
   }
 }
 
@@ -7532,6 +7645,9 @@ function showDashTriageMsg(txt, type) {
 }
 
 async function renderDashTriageDetail(el) {
+  const _errEl = document.getElementById('main-content');
+  try {
+
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
   try {
     const [compRes, msgsRes, logRes] = await Promise.all([
@@ -7621,7 +7737,7 @@ async function renderDashTriageDetail(el) {
               ${c.purchase_store||c.store_name ? `<div style="display:flex;justify-content:space-between;gap:8px;"><span style="color:var(--muted);flex-shrink:0;">Store</span><span style="color:var(--text);text-align:right;">${c.purchase_store||c.store_name}</span></div>` : ''}
               ${c.people_affected ? `<div style="display:flex;justify-content:space-between;gap:8px;"><span style="color:var(--muted);flex-shrink:0;">Affected</span><span style="color:var(--text);">${c.people_affected}</span></div>` : ''}
               ${c.medical_attention ? `<div style="display:flex;justify-content:space-between;gap:8px;"><span style="color:var(--muted);flex-shrink:0;">Medical</span><span style="color:${c.medical_attention.includes('emergency')||c.medical_attention.includes('hospital')?'var(--danger)':'var(--text)'};">${c.medical_attention}</span></div>` : ''}
-              <div style="display:flex;justify-content:space-between;gap:8px;"><span style="color:var(--muted);flex-shrink:0;">Received</span><span style="color:var(--text);text-align:right;">${new Date(c.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}</span></div>
+              <div style="display:flex;justify-content:space-between;gap:8px;"><span style="color:var(--muted);flex-shrink:0;">Received</span><span style="color:var(--text);text-align:right;">${new Date(c.created_at).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',year:'numeric'})}</span></div>
             </div>
           </div>
           <div style="background:var(--surface);border:1px solid ${c.triage_level==='critical'?'rgba(255,92,92,0.3)':'var(--border)'};border-radius:12px;padding:16px;">
@@ -7643,7 +7759,7 @@ async function renderDashTriageDetail(el) {
             <div style="display:flex;gap:10px;align-items:flex-start;">
               <div style="width:8px;height:8px;border-radius:50%;background:${m.direction==='inbound'?'var(--warn)':'var(--accent)'};margin-top:5px;flex-shrink:0;"></div>
               <div style="flex:1;">
-                <div style="font-size:10px;color:var(--muted);margin-bottom:3px;">${m.direction==='inbound'?'Inbound':'Outbound'} · ${m.channel} · ${new Date(m.created_at).toLocaleString('en-GB')}</div>
+                <div style="font-size:10px;color:var(--muted);margin-bottom:3px;">${m.direction==='inbound'?'Inbound':'Outbound'} · ${m.channel} · ${new Date(m.created_at).toLocaleString(_dashLocale())}</div>
                 <div style="font-size:12px;color:var(--text);line-height:1.5;background:var(--surface2);padding:10px 12px;border-radius:8px;">${m.content}</div>
               </div>
             </div>`).join('')}
@@ -7660,7 +7776,7 @@ async function renderDashTriageDetail(el) {
             <div style="position:relative;padding-bottom:${i<log.length-1?'16px':'0'};">
               <div style="position:absolute;left:-14px;top:3px;width:9px;height:9px;border-radius:50%;background:var(--accent);border:2px solid var(--bg);"></div>
               <div style="font-size:12px;font-weight:600;color:var(--text);">${entry.action.replace(/_/g,' ')}</div>
-              <div style="font-size:10px;color:var(--muted);margin-top:2px;">${entry.actor_label||'System'} · ${new Date(entry.created_at).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
+              <div style="font-size:10px;color:var(--muted);margin-top:2px;">${entry.actor_label||'System'} · ${new Date(entry.created_at).toLocaleString(_dashLocale(),{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
             </div>`).join('')}
           </div>`}
         </div>
@@ -7691,6 +7807,11 @@ async function renderDashTriageDetail(el) {
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);padding:20px;">Error: ${e.message}</div>`;
   }
+
+  } catch(_renderErr) {
+    console.error('[renderDashTriageDetail]', _renderErr);
+    if (_errEl) _errEl.innerHTML += `<div style="margin:20px 0;padding:16px;background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.2);border-radius:10px;font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;"><strong style="color:var(--danger);">Error loading Triage Detail</strong><br>${_renderErr.message}</div>`;
+  }
 }
 
 async function updateDashTriageStatus(id, newStatus) {
@@ -7702,6 +7823,9 @@ async function updateDashTriageStatus(id, newStatus) {
 }
 
 async function renderEscalationSection(elId, complaintId, productName, lotNumber, triageLevel) {
+  const _errEl = document.getElementById('main-content');
+  try {
+
   const el = document.getElementById(elId);
   if (!el) return;
 
@@ -7745,6 +7869,11 @@ async function renderEscalationSection(elId, complaintId, productName, lotNumber
             </div>`).join('')}
           </div>`}
     </div>`;
+
+  } catch(_renderErr) {
+    console.error('[renderEscalationSection]', _renderErr);
+    if (_errEl) _errEl.innerHTML += `<div style="margin:20px 0;padding:16px;background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.2);border-radius:10px;font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;"><strong style="color:var(--danger);">Error loading Escalation Section</strong><br>${_renderErr.message}</div>`;
+  }
 }
 
 function openEscalateModal(complaintId, productName, lotNumber, triageLevel) {
@@ -7843,6 +7972,9 @@ function renderComingSoon(name) {
 
 // ── Manufacturer Partners ─────────────────────────────────────
 async function renderPartners() {
+  const _errEl = document.getElementById('main-content');
+  try {
+
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
   try {
@@ -7931,6 +8063,11 @@ async function renderPartners() {
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading partners: ${e.message}</div>`;
   }
+
+  } catch(_renderErr) {
+    console.error('[renderPartners]', _renderErr);
+    if (_errEl) _errEl.innerHTML += `<div style="margin:20px 0;padding:16px;background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.2);border-radius:10px;font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;"><strong style="color:var(--danger);">Error loading Partners</strong><br>${_renderErr.message}</div>`;
+  }
 }
 
 async function acceptPartner(id) {
@@ -7971,9 +8108,12 @@ async function toggleScanIntelligence(partnerId, currentValue) {
   }
 
   // Session expiry — reload cleanly when token expires
+  let _sessionReloadFired = false;
   sb.auth.onAuthStateChange((event, session) => {
-    if (event === 'SIGNED_OUT' || (event === 'TOKEN_REFRESHED' && !session)) {
-      // Show a brief message then reload to login screen
+    if (event === 'TOKEN_REFRESHED') return; // normal refresh — ignore
+    if (event === 'SIGNED_OUT') {
+      if (_sessionReloadFired) return;
+      _sessionReloadFired = true;
       const overlay = document.createElement('div');
       overlay.style.cssText = 'position:fixed;inset:0;background:rgba(8,15,18,0.95);display:flex;align-items:center;justify-content:center;z-index:9999;';
       overlay.innerHTML = `<div style="text-align:center;color:var(--text);font-family:'DM Mono',monospace;">
@@ -8215,7 +8355,7 @@ function csvUpdatePreview() {
     <thead><tr>
       ${mapped.map(f => `<th style="font-size:10px;color:var(--muted);text-align:left;padding:9px 10px;border-bottom:1px solid var(--border);background:rgba(0,0,0,0.2);white-space:nowrap;">
         ${f.label}${f.required?'<span style="color:var(--accent);margin-left:3px;">★</span>':''}
-        <div style="font-size:9px;color:rgba(106,175,158,0.5);font-family:'DM Mono',monospace;margin-top:1px;">← ${fieldMap[f.key]}</div>
+        <div style="font-size:10px;color:rgba(106,175,158,0.5);font-family:'DM Mono',monospace;margin-top:1px;">← ${fieldMap[f.key]}</div>
       </th>`).join('')}
     </tr></thead>
     <tbody>
@@ -8392,6 +8532,9 @@ function importStaff() {
 <script>
 // ── Investigations panel (retailer side) ──────────────────────
 async function renderDashInvestigations() {
+  const _errEl = document.getElementById('main-content');
+  try {
+
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading investigations…</div>`;
   try {
@@ -8422,8 +8565,8 @@ async function renderDashInvestigations() {
     const urgColors = { 1:'var(--danger)', 2:'var(--warn)', 3:'var(--muted)' };
     const urgLabels = { 1:'Class I · 24h', 2:'Class II · 72h', 3:'Routine · 7d' };
     const issueLabels = { foreign_object:'Foreign object', mold:'Mold / spoilage', mislabeling:'Mislabeling', allergen:'Allergen concern', contamination:'Contamination', discoloration:'Discoloration', pest:'Pest', packaging:'Packaging defect', other:'Other' };
-    const fmtDate = d => d ? new Date(d).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : '—';
-    const fmtElapsed = d => { if (!d) return '—'; const ms = Date.now()-new Date(d); if (ms<3600000) return Math.floor(ms/60000)+'m'; if (ms<86400000) return Math.floor(ms/3600000)+'h'; return Math.floor(ms/86400000)+'d'; };
+    const fmtDate = fmtDash;
+const fmtElapsed = d => { if (!d) return '—'; const ms = Date.now()-new Date(d); if (ms<3600000) return Math.floor(ms/60000)+'m'; if (ms<86400000) return Math.floor(ms/3600000)+'h'; return Math.floor(ms/86400000)+'d'; };
 
     // Nav badge
     const navBtn = document.getElementById('nav-investigations');
@@ -8478,9 +8621,9 @@ async function renderDashInvestigations() {
                 const circle  = done
                   ? `<div style="width:22px;height:22px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#065f46" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></div>`
                   : current && !myResp
-                    ? `<div style="width:22px;height:22px;border-radius:50%;background:rgba(245,166,35,0.15);border:2px solid var(--warn);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:var(--warn);flex-shrink:0;">${i+1}</div>`
-                    : `<div style="width:22px;height:22px;border-radius:50%;border:1.5px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--muted);flex-shrink:0;">${i+1}</div>`;
-                const lbl  = `<div style="font-size:9px;margin-top:3px;color:${done?'var(--accent)':current?'var(--warn)':'var(--muted)'};font-weight:${current?'600':'400'};white-space:nowrap;text-align:center;">${s}</div>`;
+                    ? `<div style="width:22px;height:22px;border-radius:50%;background:rgba(245,166,35,0.15);border:2px solid var(--warn);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:var(--warn);flex-shrink:0;">${i+1}</div>`
+                    : `<div style="width:22px;height:22px;border-radius:50%;border:1.5px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--muted);flex-shrink:0;">${i+1}</div>`;
+                const lbl  = `<div style="font-size:10px;margin-top:3px;color:${done?'var(--accent)':current?'var(--warn)':'var(--muted)'};font-weight:${current?'600':'400'};white-space:nowrap;text-align:center;">${s}</div>`;
                 const line = isLast ? '' : `<div style="flex:1;height:1.5px;background:${done?'var(--accent)':'var(--border)'};margin:0 2px;margin-bottom:12px;"></div>`;
                 return `<div style="display:flex;flex-direction:column;align-items:center;">${circle}${lbl}</div>${line}`;
               }).join('')}
@@ -8538,6 +8681,11 @@ async function renderDashInvestigations() {
 
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error: ${e.message}</div>`;
+  }
+
+  } catch(_renderErr) {
+    console.error('[renderDashInvestigations]', _renderErr);
+    if (_errEl) _errEl.innerHTML += `<div style="margin:20px 0;padding:16px;background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.2);border-radius:10px;font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;"><strong style="color:var(--danger);">Error loading Investigations</strong><br>${_renderErr.message}</div>`;
   }
 }
 
@@ -8645,7 +8793,7 @@ function dashHandleInvestPhotos(input) {
         const idx = _dashInvestPhotos.length - 1;
         const div = document.createElement('div');
         div.style.cssText = 'position:relative;width:64px;height:64px;';
-        div.innerHTML = `<img src="${e.target.result}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--border);">
+        div.innerHTML = `<img src="${e.target.result}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--border);" alt="Product scan photo">
           <button onclick="_dashInvestPhotos.splice(${idx},1);this.parentElement.remove()" style="position:absolute;top:-6px;right:-6px;background:var(--danger);border:none;color:#fff;border-radius:50%;width:18px;height:18px;font-size:11px;cursor:pointer;line-height:1;">✕</button>`;
         prev.appendChild(div);
       }
@@ -8758,7 +8906,7 @@ async function generateDrillReport(drillId) {
     // Build report HTML
     const isUS = _orgRegion === 'us';
     const regRef = isUS ? 'FDA FSMA Section 204 / 21 CFR 117' : 'EU Regulation 178/2002 / Mattilsynet';
-    const today = new Date().toLocaleDateString('en-GB', { day:'numeric', month:'long', year:'numeric' });
+    const today = new Date().toLocaleDateString(_dashLocale(), { day:'numeric', month:'long', year:'numeric' });
 
     const drillSections = drills.map(d => {
       const ev = evMap[d.recall_event_id] || {};
@@ -8767,7 +8915,7 @@ async function generateDrillReport(drillId) {
       const pulled    = acks.filter(a => ['pulled','disposed','confirmed'].includes(a.status)).length;
       const total     = acks.length;
       const pct       = total > 0 ? Math.round((confirmed/total)*100) : 0;
-      const drillDate = new Date(d.created_at).toLocaleDateString('en-GB', {day:'numeric',month:'long',year:'numeric'});
+      const drillDate = new Date(d.created_at).toLocaleDateString(_dashLocale(), {day:'numeric',month:'long',year:'numeric'});
 
       // Response time analysis
       const responseTimes = acks
@@ -8960,8 +9108,8 @@ async function generateDrillCertificate(recallEventId) {
     const regRef     = isUS
       ? 'FDA FSMA Section 204 / 21 CFR 117.126'
       : 'EU Regulation 178/2002 Art. 19 / Matloven §16';
-    const fmtDate    = d => d ? new Date(d).toLocaleDateString('en-GB', {day:'numeric',month:'long',year:'numeric'}) : '—';
-    const fmtDT      = d => d ? new Date(d).toLocaleString('en-GB', {day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+    const fmtDate = fmtDash;
+const fmtDT      = d => d ? new Date(d).toLocaleString(_dashLocale(), {day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
     const drillDate  = fmtDate(ev.published_at || ev.created_at);
     const today      = fmtDate(new Date());
 
@@ -9544,6 +9692,9 @@ async function checkComplaintPatterns(productName, orgId) {
 
 // Renders pattern alert banners in the complaint triage panel
 async function renderPatternAlerts() {
+  const _errEl = document.getElementById('main-content');
+  try {
+
   const el = document.getElementById('pattern-alerts-container');
   if (!el) return;
 
@@ -9597,6 +9748,11 @@ async function renderPatternAlerts() {
   } catch(e) {
     console.warn('renderPatternAlerts error:', e);
   }
+
+  } catch(_renderErr) {
+    console.error('[renderPatternAlerts]', _renderErr);
+    if (_errEl) _errEl.innerHTML += `<div style="margin:20px 0;padding:16px;background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.2);border-radius:10px;font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;"><strong style="color:var(--danger);">Error loading Pattern Alerts</strong><br>${_renderErr.message}</div>`;
+  }
 }
 
 async function openInvestigationFromPattern(encodedProductName) {
@@ -9618,6 +9774,9 @@ let _consumerNotifRecallId = null;
 let _consumerNotifCustomers = []; // { email, product_name, lot_number } from CSV
 
 async function renderConsumerNotification() {
+  const _errEl = document.getElementById('main-content');
+  try {
+
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading recalls…</div>`;
 
@@ -9704,7 +9863,7 @@ async function renderConsumerNotification() {
           <div id="cn-recall-list">
             ${allRecalls.slice(0, 5).map((r,idx) => {
               const isSelected = _consumerNotifRecallId === r.id;
-              return `<div class="cn-recall-row" data-idx="${idx}" data-product="${(r.product_name||'').toLowerCase()}" data-lot="${(r.lot_number||'').toLowerCase()}" data-source="${r._type}" data-severity="${(r.severity||'').toLowerCase()}" data-date="${new Date(r.published_at||r.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}).toLowerCase()}"
+              return `<div class="cn-recall-row" data-idx="${idx}" data-product="${(r.product_name||'').toLowerCase()}" data-lot="${(r.lot_number||'').toLowerCase()}" data-source="${r._type}" data-severity="${(r.severity||'').toLowerCase()}" data-date="${new Date(r.published_at||r.created_at).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',year:'numeric'}).toLowerCase()}"
                 onclick="selectNotifRecall('${r.id}','${encodeURIComponent(r.product_name||'')}','${encodeURIComponent(r.lot_number||'')}','${encodeURIComponent(r.reason||'')}')"
                 style="display:flex;align-items:center;gap:14px;padding:14px 18px;border-bottom:1px solid var(--border);cursor:pointer;background:${isSelected?'rgba(52,211,153,0.06)':'transparent'};transition:background 0.15s;"
                 onmouseover="if(!this.classList.contains('cn-selected'))this.style.background='rgba(52,211,153,0.04)'" onmouseout="if(!this.classList.contains('cn-selected'))this.style.background='transparent'">
@@ -9715,7 +9874,7 @@ async function renderConsumerNotification() {
                   <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${r.product_name||'—'}</div>
                   <div style="font-size:11px;color:var(--muted);margin-top:2px;">
                     ${r.lot_number?`Lot: <span style="font-family:'DM Mono',monospace;">${r.lot_number}</span> · `:''}
-                    ${r._type==='pushed'?'Manufacturer push':'Manual'} · ${new Date(r.published_at||r.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}
+                    ${r._type==='pushed'?'Manufacturer push':'Manual'} · ${new Date(r.published_at||r.created_at).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',year:'numeric'})}
                   </div>
                 </div>
                 ${r.severity?`<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(255,92,92,0.1);color:var(--danger);white-space:nowrap;flex-shrink:0;">${r.severity}</span>`:''}
@@ -9738,7 +9897,7 @@ async function renderConsumerNotification() {
       <div id="cn-recalls-data" data-recalls="${encodeURIComponent(JSON.stringify(allRecalls.map(r => ({
         id: r.id, product_name: r.product_name||'', lot_number: r.lot_number||'',
         severity: r.severity||'', _type: r._type, reason: r.reason||'',
-        date: new Date(r.published_at||r.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}),
+        date: new Date(r.published_at||r.created_at).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',year:'numeric'}),
       }))))}" data-selected="${_consumerNotifRecallId||''}" style="display:none;"></div>
 
       <!-- Step 2: Customer data -->
@@ -9809,6 +9968,11 @@ async function renderConsumerNotification() {
 
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error: ${e.message}</div>`;
+  }
+
+  } catch(_renderErr) {
+    console.error('[renderConsumerNotification]', _renderErr);
+    if (_errEl) _errEl.innerHTML += `<div style="margin:20px 0;padding:16px;background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.2);border-radius:10px;font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;"><strong style="color:var(--danger);">Error loading Consumer Notification</strong><br>${_renderErr.message}</div>`;
   }
 }
 
