@@ -8395,6 +8395,7 @@ async function saveRecord() {
   const _retainYears = 2;
   const _retainUntil = new Date(Date.now() + _retainYears * 365.25 * 24 * 60 * 60 * 1000).toISOString();
 
+  const _ftlResult = detectFtlCategory(productName); // cache — avoids running all 16 regexes twice
   const payload = {
     product_name:    productName,
     barcode_number:  barcodeNum  || null,
@@ -8412,8 +8413,10 @@ async function saveRecord() {
     // FSMA 204 (USA) KDEs
     reference_document: (document.getElementById('field-reference-doc')?.value.trim()) || null,
     tlc_source:         (document.getElementById('field-tlc-source')?.value.trim()) || null,
-    is_ftl:             detectFtlCategory(productName).isFtl || false,
-    ftl_category:       detectFtlCategory(productName).category || null,
+    is_ftl:             _ftlResult.isFtl || false,
+    ftl_category:       _ftlResult.category || null,
+    // Expiry date — captured from OCR or manual entry, stored for traceability
+    expiry_date:        expiryVal || null,
     // Full visible text captured by OCR — stored as searchable fallback for recall matching.
     // Enables matching against production codes, plant numbers, and other metadata
     // that appears on packaging alongside the lot code.
@@ -8469,27 +8472,22 @@ async function saveRecord() {
       }
     }
 
-    const { error } = await sb.from('scans').insert({
+    const { data: insertedRows, error } = await sb.from('scans').insert({
       ...payload,
       product_photo_url: productUrl,
       barcode_photo_url: barcodeUrl
-    });
+    }).select('id'); // .select() returns the inserted row — no secondary query needed
 
     if (error) throw error;
 
-    // ── Cross-reference: match this scan against all active recalls ──
+    // ── Cross-reference: match this scan against active recalls ──
     // Fire-and-forget — never blocks the scan confirmation UX.
-    // Gets the inserted scan ID from a follow-up query.
+    // ID comes directly from the insert return — no race condition.
     (async () => {
       try {
-        const { data: inserted } = await sb.from('scans')
-          .select('id').eq('organisation_id', _currentOrgId)
-          .eq('product_name', productName)
-          // Prefer store_id (UUID) match — more reliable than store_name text
-          .eq(_currentStoreId ? 'store_id' : 'store_name', _currentStoreId || storeName || '')
-          .order('created_at', { ascending: false }).limit(1);
-        if (inserted?.[0]?.id) {
-          await matchScanAgainstRecalls(inserted[0].id, {
+        const insertedId = insertedRows?.[0]?.id;
+        if (insertedId) {
+          await matchScanAgainstRecalls(insertedId, {
             lot_number: lotNum || null,
             barcode_number: barcodeNum || null,
             product_name: productName,
@@ -8621,26 +8619,44 @@ async function syncOfflineQueue() {
 
   if (!offlineQueue.length || !navigator.onLine) return;
 
+  // Evict items older than 7 days — stale scans are no longer meaningful
+  // and items that fail repeatedly (e.g. bad base64) would loop forever.
+  const STALE_MS = 7 * 24 * 60 * 60 * 1000;
+  const now_ms = Date.now();
+  const fresh = offlineQueue.filter(item => (now_ms - (item.ts || 0)) < STALE_MS);
+  if (fresh.length < offlineQueue.length) {
+    const evicted = offlineQueue.length - fresh.length;
+    console.warn(`[offline] Evicted ${evicted} stale queue items (>7 days old)`);
+    offlineQueue = fresh;
+    localStorage.setItem('batched_offline_queue', JSON.stringify(offlineQueue));
+  }
+
+  if (!offlineQueue.length) return;
+
   let synced = 0;
   const remaining = [];
   for (const item of offlineQueue) {
     try {
       const ts = item.ts || Date.now();
-      const productPath = `product-${ts}.jpg`;
-      const barcodePath = `barcode-${ts}.jpg`;
+      const orgPrefix = (item.payload?.organisation_id || 'unknown').slice(0, 8);
+      const productPath = `orgs/${orgPrefix}/scans/${ts}_product.jpg`;
+      const barcodePath = `orgs/${orgPrefix}/scans/${ts}_lotcode.jpg`;
 
-      // Re-upload photos from base64
-      const pBlob = await base64ToBlob(item.productB64, 'image/jpeg');
-      const bBlob = await base64ToBlob(item.barcodeB64, 'image/jpeg');
+      // Upload product photo (always present for label-mode scans)
+      let productUrl = null;
+      if (item.productB64) {
+        const pBlob = await base64ToBlob(item.productB64, 'image/jpeg');
+        const pUp = await sb.storage.from('scan-photos').upload(productPath, pBlob, { contentType: 'image/jpeg' });
+        if (!pUp.error) productUrl = sb.storage.from('scan-photos').getPublicUrl(productPath).data.publicUrl;
+      }
 
-      const [pUp, bUp] = await Promise.all([
-        sb.storage.from('scan-photos').upload(productPath, pBlob, { contentType: 'image/jpeg' }),
-        sb.storage.from('scan-photos').upload(barcodePath, bBlob, { contentType: 'image/jpeg' })
-      ]);
-      if (pUp.error || bUp.error) throw new Error('Upload failed');
-
-      const productUrl = sb.storage.from('scan-photos').getPublicUrl(productPath).data.publicUrl;
-      const barcodeUrl = sb.storage.from('scan-photos').getPublicUrl(barcodePath).data.publicUrl;
+      // Upload lot code photo — may be null if barcode mode was used or lot unavailable
+      let barcodeUrl = null;
+      if (item.barcodeB64) {
+        const bBlob = await base64ToBlob(item.barcodeB64, 'image/jpeg');
+        const bUp = await sb.storage.from('scan-photos').upload(barcodePath, bBlob, { contentType: 'image/jpeg' });
+        if (!bUp.error) barcodeUrl = sb.storage.from('scan-photos').getPublicUrl(barcodePath).data.publicUrl;
+      }
 
       const { error } = await sb.from('scans').insert({
         ...item.payload,
@@ -8650,6 +8666,8 @@ async function syncOfflineQueue() {
       if (error) throw error;
       synced++;
     } catch(e) {
+      // Keep the item in the queue — will retry on next sync
+      // (but it won't stay forever — the 7-day eviction above handles true failures)
       remaining.push(item);
     }
   }

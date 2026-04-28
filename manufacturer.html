@@ -1256,9 +1256,12 @@ async function calculateImpactPreviewStep3() {
     return;
   }
   const shipmentSelect = 'id, lot_number, barcode, quantity, unit, shipped_at, stores(name), organisations!shipments_retailer_id_fkey(name)';
+  // 18-month lookback — food products beyond their shelf life are not current exposure.
+  // Showing 3-year-old shipments creates false alarm on the impact preview.
+  const lookbackDate = new Date(Date.now() - 18 * 30 * 24 * 60 * 60 * 1000).toISOString();
   let hits = [];
-  if (lot) { const { data } = await sb.from('shipments').select(shipmentSelect).eq('manufacturer_id', _orgId).eq('lot_number', lot); hits = [...hits, ...(data||[])]; }
-  if (barcode) { const { data } = await sb.from('shipments').select(shipmentSelect).eq('manufacturer_id', _orgId).eq('barcode', barcode); const existing = new Set(hits.map(h=>h.id)); hits = [...hits, ...(data||[]).filter(h=>!existing.has(h.id))]; }
+  if (lot) { const { data } = await sb.from('shipments').select(shipmentSelect).eq('manufacturer_id', _orgId).eq('lot_number', lot).gte('shipped_at', lookbackDate); hits = [...hits, ...(data||[])]; }
+  if (barcode) { const { data } = await sb.from('shipments').select(shipmentSelect).eq('manufacturer_id', _orgId).eq('barcode', barcode).gte('shipped_at', lookbackDate); const existing = new Set(hits.map(h=>h.id)); hits = [...hits, ...(data||[]).filter(h=>!existing.has(h.id))]; }
   if (hits.length === 0) {
     preview.innerHTML = `<div style="padding:12px 14px;background:rgba(106,175,158,0.06);border:1px solid var(--glass-border);border-radius:8px;font-size:11px;color:var(--muted);">No shipment records found for this lot/barcode — shelf impact unknown. Recall will still push to all trading partners.</div>`;
     return;

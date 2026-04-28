@@ -1203,6 +1203,11 @@ async function createInvestigationFromPattern(productName, lots, complaintCount,
 
 let _storeName = '';
 let _activePanel = 'overview';
+// ── renderOverview cache — 2 minute TTL ──────────────────────
+// Overview fires 10 Supabase queries on every panel switch.
+// Cache the result for 2 minutes so navigating away and back is instant.
+let _overviewCache     = null;   // { data, renderedAt }
+const OVERVIEW_CACHE_TTL = 120 * 1000; // 2 minutes
 
 // ── Clock ──────────────────────────────────────────────────────
 
@@ -1476,6 +1481,12 @@ function showPanel(name) {
   (fns[name] || renderComingSoon)(name);
 }
 
+// Invalidate overview cache — call this after any action that changes the data it shows
+// (adding stores, acknowledging recalls, logging complaints, etc.)
+function invalidateOverviewCache() {
+  _overviewCache = null;
+}
+
 // ── Overview dashboard ────────────────────────────────────────
 
 // ═══════════════════════════════════════════════════════════════
@@ -1707,16 +1718,16 @@ async function loadWeeklyDigest(containerEl) {
   containerEl.innerHTML = '<div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);"><div class="spinner"></div> Generating weekly digest…</div>';
 
   try {
-    const days7  = new Date(Date.now() - 7  * 86400000).toISOString();
-    const days30 = new Date(Date.now() - 30 * 86400000).toISOString();
+    const days7   = new Date(Date.now() - 7  * 86400000).toISOString();
+    const days30  = new Date(Date.now() - 30 * 86400000).toISOString();
     const days365 = new Date(Date.now() - 365 * 86400000).toISOString();
 
     const [scansRes, acksRes, complaintsRes, drillsRes, storesRes] = await Promise.all([
-      sb.from('scans').select('id,store_name,lot_number,created_at').eq('organisation_id', _orgId).gte('created_at', days7),
-      sb.from('recall_acknowledgements').select('id,status,updated_at').eq('organisation_id', _orgId),
-      sb.from('complaints').select('id,product_name').eq('receiving_org_id', _orgId).gte('created_at', days7),
+      sb.from('scans').select('id,store_name,lot_number,created_at').eq('organisation_id', _orgId).gte('created_at', days7).limit(500),
+      sb.from('recall_acknowledgements').select('id,status,updated_at').eq('organisation_id', _orgId).limit(200),
+      sb.from('complaints').select('id,product_name').eq('receiving_org_id', _orgId).gte('created_at', days7).limit(100),
       sb.from('mock_recall_drills').select('id').eq('retailer_org_id', _orgId).gte('created_at', days365).limit(1),
-      sb.from('stores').select('id,name,active').eq('organisation_id', _orgId).eq('active', true),
+      sb.from('stores').select('id,name,active').eq('organisation_id', _orgId).eq('active', true).limit(50),
     ]);
 
     const newScans     = (scansRes.data||[]).length;
@@ -1731,27 +1742,52 @@ async function loadWeeklyDigest(containerEl) {
     const lotCaptureRate = newScans > 0 ? Math.round((recentScans7.filter(s=>s.lot_number).length/newScans)*100) : 0;
     const clusters     = Object.values(complaints.reduce((g,c)=>{ const k=(c.product_name||'').toLowerCase().split(' ')[0]; if(k) g[k]=(g[k]||0)+1; return g; },{})).filter(v=>v>=2).length;
 
-    const res = await fetch('/.netlify/functions/ai-analyze', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        task: 'weekly_digest',
-        data: {
-          orgName: _orgName,
-          region:  _orgRegion,
-          weekData: {
-            newScans, activeRecalls: acks.length > 0 ? 1 : 0,
-            responseRate, darkStores,
-            newComplaints: complaints.length, clusters,
-            openInvestigations: 0,
-            drillCompliant: !!(drillsRes.data?.length),
-            lotCaptureRate,
+    // 9-second timeout — Netlify functions have a 10s limit; leave 1s buffer
+    const controller = new AbortController();
+    const timeoutId  = setTimeout(() => controller.abort(), 9000);
+
+    let digest = '';
+    try {
+      const res = await fetch('/.netlify/functions/ai-analyze', {
+        method: 'POST',
+        signal: controller.signal,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          task: 'weekly_digest',
+          data: {
+            orgName: _orgName,
+            region:  _orgRegion,
+            weekData: {
+              newScans, activeRecalls: acks.length > 0 ? 1 : 0,
+              responseRate, darkStores,
+              newComplaints: complaints.length, clusters,
+              openInvestigations: 0,
+              drillCompliant: !!(drillsRes.data?.length),
+              lotCaptureRate,
+            },
           },
-        },
-      }),
-    });
-    const json = await res.json();
-    const digest = (json.result || '').trim();
+        }),
+      });
+      clearTimeout(timeoutId);
+      if (res.ok) {
+        const json = await res.json();
+        digest = (json.result || '').trim();
+      }
+    } catch(fetchErr) {
+      clearTimeout(timeoutId);
+      // Function unavailable or timed out — generate a local summary instead
+    }
+
+    // If the AI digest failed or was empty, produce a clean local summary
+    if (!digest) {
+      const parts = [];
+      parts.push(`${newScans} product${newScans !== 1 ? 's' : ''} scanned this week.`);
+      if (lotCaptureRate < 80) parts.push(`Lot code capture rate: ${lotCaptureRate}% — below target.`);
+      if (darkStores.length)   parts.push(`${darkStores.length} store${darkStores.length !== 1 ? 's' : ''} with no scans this week: ${darkStores.slice(0,3).join(', ')}${darkStores.length > 3 ? '…' : ''}.`);
+      if (responseRate < 100)  parts.push(`Recall response rate: ${responseRate}%.`);
+      if (complaints.length)   parts.push(`${complaints.length} complaint${complaints.length !== 1 ? 's' : ''} logged.`);
+      digest = parts.length ? parts.join(' ') : 'No activity this week.';
+    }
 
     const today = new Date();
     const html = `
@@ -1763,7 +1799,7 @@ async function loadWeeklyDigest(containerEl) {
     sessionStorage.setItem('batchd_weekly_digest', html);
     containerEl.innerHTML = html;
   } catch(e) {
-    containerEl.innerHTML = `<div style="font-size:11px;color:var(--muted);">Digest unavailable — ${e.message}</div>`;
+    containerEl.innerHTML = `<div style="font-size:11px;color:var(--muted);">Weekly summary unavailable — check back later.</div>`;
   }
 }
 
@@ -1985,6 +2021,14 @@ async function renderOverview() {
 
   if (_userRole === 'store_manager') { return renderStoreManagerOverview(); }
   const el = document.getElementById('main-content');
+
+  // ── Cache check — return immediately if data is still fresh ──
+  const _now = Date.now();
+  if (_overviewCache && (_now - _overviewCache.renderedAt) < OVERVIEW_CACHE_TTL) {
+    el.innerHTML = _overviewCache.html;
+    return;
+  }
+
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);padding:4px 0;"><div class="spinner"></div> Loading dashboard…</div>`;
   try {
 
@@ -3196,6 +3240,7 @@ async function sendRecallReminder(recallEventId, productName) {
 }
 
 async function advanceAckStatus(ackId, status, recallEventId) {
+  invalidateOverviewCache(); // recall ack changes overview KPIs
   const btn = event?.target;
   const origText = btn?.textContent;
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
@@ -3362,6 +3407,7 @@ function closeStoreForm() {
 }
 
 async function saveStore() {
+  invalidateOverviewCache(); // store changes overview
   const name    = document.getElementById('sf-name').value.trim();
   const code    = document.getElementById('sf-code').value.trim();
   const address = document.getElementById('sf-address').value.trim();
@@ -6651,13 +6697,13 @@ async function runLotCheck(immediate = false) {
     }
 
     el.innerHTML = html;
+    // Save to cache — renderOverview is expensive (10 queries); serve from cache for 2 min
+    _overviewCache = { html, renderedAt: Date.now() };
 
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);padding:12px;">${e.message}</div>`;
   }
-}
-
-function renderTerminology() {
+} {
   const el = document.getElementById('main-content');
   const isUS = _orgRegion === 'us';
 
