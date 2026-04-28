@@ -14,9 +14,20 @@ const { createClient } = require('@supabase/supabase-js');
 
 const SUPABASE_URL     = process.env.SUPABASE_URL     || 'https://lurxucdmrugikdlvvebc.supabase.co';
 const SUPABASE_KEY     = process.env.SUPABASE_SERVICE_KEY; // service role — can read across orgs
-const RESEND_API_KEY   = process.env.RESEND_API_KEY   || 're_hfJMphfo_4jQcxm42VWsQ83X9JbyaRpRB';
+const RESEND_API_KEY   = process.env.RESEND_API_KEY;   // must be set in Netlify env vars
 const FROM_EMAIL       = 'recalls@batchdapp.com';
 const FROM_NAME        = "Batch'd Recall Alerts";
+
+// HTML-safe string escaping — prevents broken email if product names contain < > & etc.
+function esc(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g,  '&amp;')
+    .replace(/</g,  '&lt;')
+    .replace(/>/g,  '&gt;')
+    .replace(/"/g,  '&quot;')
+    .replace(/'/g,  '&#39;');
+}
 
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
@@ -135,14 +146,20 @@ exports.handler = async (event) => {
     }
 
     // ── Exposure data from scan_recall_matches ───────────────────
-    // Pull aggregate exposure per org for this recall so the email
-    // gives actionable context: how many units, which stores, for how long.
+    // Gracefully handles the case where the table doesn't exist yet.
     let exposureByOrg = {};
     const matchRecallId = recall_event_id || recall_id;
-    const { data: matchRows } = await sb
-      .from('scan_recall_matches')
-      .select('organisation_id, store_name, quantity, placed_at, removed_at, scanned_by')
-      .eq('recall_id', matchRecallId);
+    let matchRows = null;
+    try {
+      const srmRes = await sb
+        .from('scan_recall_matches')
+        .select('organisation_id, store_name, quantity, placed_at, removed_at, scanned_by')
+        .eq('recall_id', matchRecallId);
+      if (!srmRes.error) matchRows = srmRes.data;
+    } catch(srmErr) {
+      // Table may not exist — exposure data will be omitted from the email
+      console.warn('[push-recall-email] scan_recall_matches unavailable:', srmErr.message);
+    }
 
     if (matchRows && matchRows.length > 0) {
       matchRows.forEach(m => {
@@ -169,8 +186,8 @@ exports.handler = async (event) => {
       const isNO     = (org.region || 'no') === 'no';
 
       const subject = isDrill
-        ? `[DRILL] Batch'd Recall Drill: ${recallData.product_name}`
-        : `⚠ Recall Alert: ${recallData.product_name}${recallData.lot_number ? ` — Lot ${recallData.lot_number}` : ''}`;
+        ? `[DRILL] Batch'd Recall Drill: ${esc(recallData.product_name}`
+        : `⚠ Recall Alert: ${esc(recallData.product_name}${recallData.lot_number ? ` — Lot ${recallData.lot_number}` : ''}`;
 
       const html = buildRecallEmailHtml({
         org, recallData, exposure, isDrill, isNO,
@@ -298,11 +315,11 @@ function buildRecallEmailHtml({ org, recallData, exposure, isDrill, isNO, dashbo
           ${drillBanner}
 
           <div style="font-size:13px;color:#888;margin-bottom:6px;font-family:monospace;text-transform:uppercase;letter-spacing:0.06em;">
-            ${isNO ? 'Hei' : 'Hello'}, ${org.name}
+            ${isNO ? 'Hei' : 'Hello'}, ${esc(org.name)}
           </div>
 
           <h1 style="margin:0 0 8px;font-size:22px;font-weight:800;color:#1a1a1a;line-height:1.2;">
-            ${isDrill ? '🔔 ' : '⚠️ '}${recallData.product_name || 'Unknown product'}
+            ${isDrill ? '🔔 ' : '⚠️ '}${esc(recallData.product_name) || 'Unknown product'}
           </h1>
 
           ${severityLabel}
@@ -311,19 +328,19 @@ function buildRecallEmailHtml({ org, recallData, exposure, isDrill, isNO, dashbo
           <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8f8f8;border-radius:8px;padding:14px 16px;margin-bottom:4px;">
             <tr><td style="padding:4px 0;">
               <span style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.06em;font-family:monospace;">${isNO ? 'Partinummer' : 'Lot Number'}</span><br>
-              <strong style="font-size:15px;color:#1a1a1a;font-family:monospace;">${recallData.lot_number || (isNO ? 'Alle partier' : 'All lots')}</strong>
+              <strong style="font-size:15px;color:#1a1a1a;font-family:monospace;">${esc(recallData.lot_number) || (isNO ? 'Alle partier' : 'All lots')}</strong>
             </td></tr>
             ${recallData.barcode ? `<tr><td style="padding:4px 0;border-top:1px solid #eee;">
               <span style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.06em;font-family:monospace;">${isNO ? 'Strekkode' : 'Barcode'}</span><br>
-              <strong style="font-size:13px;color:#1a1a1a;font-family:monospace;">${recallData.barcode}</strong>
+              <strong style="font-size:13px;color:#1a1a1a;font-family:monospace;">${esc(recallData.barcode)}</strong>
             </td></tr>` : ''}
             ${recallData.reason ? `<tr><td style="padding:4px 0;border-top:1px solid #eee;">
               <span style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.06em;font-family:monospace;">${isNO ? 'Årsak' : 'Reason'}</span><br>
-              <span style="font-size:13px;color:#333;">${recallData.reason}</span>
+              <span style="font-size:13px;color:#333;">${esc(recallData.reason)}</span>
             </td></tr>` : ''}
             ${recallData.manufacturer_name ? `<tr><td style="padding:4px 0;border-top:1px solid #eee;">
               <span style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.06em;font-family:monospace;">${isNO ? 'Produsent' : 'Manufacturer'}</span><br>
-              <span style="font-size:13px;color:#333;">${recallData.manufacturer_name}</span>
+              <span style="font-size:13px;color:#333;">${esc(recallData.manufacturer_name)}</span>
             </td></tr>` : ''}
           </table>
 
@@ -357,8 +374,8 @@ function buildRecallEmailHtml({ org, recallData, exposure, isDrill, isNO, dashbo
         <td style="background:#f8f8f8;padding:20px 32px;border-top:1px solid #eee;">
           <div style="font-size:11px;color:#888;text-align:center;line-height:1.6;">
             ${isNO
-              ? `Denne varslingen ble sendt fra Batch'd til ${org.name}.<br>Traceability og tilbakekallingsadministrasjon for matvarebransjen.`
-              : `This alert was sent by Batch'd to ${org.name}.<br>Food traceability and recall management for grocery retail.`}
+              ? `Denne varslingen ble sendt fra Batch'd til ${esc(org.name)}.<br>Traceability og tilbakekallingsadministrasjon for matvarebransjen.`
+              : `This alert was sent by Batch'd to ${esc(org.name)}.<br>Food traceability and recall management for grocery retail.`}
             <br><a href="https://batchd.no" style="color:#34d399;text-decoration:none;">batchd.no</a>
           </div>
         </td>

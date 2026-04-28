@@ -13,8 +13,10 @@ const MODEL_HAIKU  = 'claude-haiku-4-5-20251001';
 const MODEL_SONNET = 'claude-sonnet-4-20250514';
 
 async function callAnthropic(model, maxTokens, prompt, imageB64) {
+  // 25-second timeout — Netlify background functions allow 26s; leave 1s buffer
   const resp = await fetch(ANTHROPIC_API_URL, {
     method: 'POST',
+    signal: AbortSignal.timeout(25000),
     headers: {
       'Content-Type': 'application/json',
       'x-api-key': process.env.ANTHROPIC_API_KEY,
@@ -108,9 +110,11 @@ exports.handler = async (event) => {
 
   } catch (err) {
     console.error('OCR function error:', err);
+    // Don't expose internal error details (may contain API key validation info)
+    const safeMsg = err.message?.startsWith('Anthropic API error') ? 'OCR service unavailable' : (err.message || 'Internal error');
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: err.message }),
+      body: JSON.stringify({ error: safeMsg }),
     };
   }
 };

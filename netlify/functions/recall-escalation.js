@@ -4,13 +4,19 @@
 const { createClient } = require('@supabase/supabase-js');
 
 const SUPABASE_URL   = process.env.SUPABASE_URL || 'https://lurxucdmrugikdlvvebc.supabase.co';
-const RESEND_API_KEY = process.env.RESEND_API_KEY || 're_hfJMphfo_4jQcxm42VWsQ83X9JbyaRpRB';
+const RESEND_API_KEY = process.env.RESEND_API_KEY; // must be set in Netlify env vars
 const FROM_EMAIL     = "Batch'd Alerts <alerts@batchdapp.com>";
 const TWO_H = 2  * 60 * 60 * 1000;
 const H24   = 24 * 60 * 60 * 1000;
 
+function esc(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
 async function sendEmail(to, subject, html) {
   const res = await fetch('https://api.resend.com/emails', {
+    signal: AbortSignal.timeout(8000),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${RESEND_API_KEY}` },
     body: JSON.stringify({ from: FROM_EMAIL, to: [to], subject, html }),
@@ -60,22 +66,22 @@ exports.handler = async (event) => {
             <div style="font-weight:700;color:#34d399;font-size:13px;text-transform:uppercase;letter-spacing:.05em;">
               ${tier==='2h'?'⏰ 2-Hour Escalation':'🚨 24-Hour Escalation — Immediate Action Required'}
             </div>
-            <div style="color:rgba(255,255,255,0.6);font-size:12px;margin-top:4px;">${store} · ${retailer.name}</div>
+            <div style="color:rgba(255,255,255,0.6);font-size:12px;margin-top:4px;">${esc(store)} · ${esc(retailer.name)}</div>
           </div>
           <div style="padding:20px 24px;">
             <div style="background:#fff3f3;border:1px solid #fed7d7;border-radius:8px;padding:14px;margin-bottom:14px;">
-              <div style="font-size:15px;font-weight:700;color:#1a1a1a;">${product}</div>
-              ${lot?`<div style="font-family:monospace;font-size:12px;color:#555;margin-top:3px;">Lot: ${lot}</div>`:''}
+              <div style="font-size:15px;font-weight:700;color:#1a1a1a;">${esc(product)}</div>
+              ${lot?`<div style="font-family:monospace;font-size:12px;color:#555;margin-top:3px;">Lot: ${esc(lot)}</div>`:''}
             </div>
             <p style="color:#333;font-size:14px;line-height:1.6;">
               ${tier==='2h'
-                ?`<strong>${store}</strong> received a recall alert <strong>2 hours ago</strong> and has not yet acknowledged it.`
-                :`<strong>${store}</strong> received a recall alert <strong>24 hours ago</strong> and has still not acknowledged it. Immediate action required.`}
+                ?`<strong>${esc(store)}</strong> received a recall alert <strong>2 hours ago</strong> and has not yet acknowledged it.`
+                :`<strong>${esc(store)}</strong> received a recall alert <strong>24 hours ago</strong> and has still not acknowledged it. Immediate action required.`}
             </p>
             ${coord?`<div style="background:#f7f7f7;border-radius:8px;padding:12px;margin-bottom:14px;">
               <div style="font-size:10px;color:#888;text-transform:uppercase;margin-bottom:3px;">Recall coordinator</div>
-              <div style="font-weight:600;color:#333;">${coord}</div>
-              ${coordTel?`<div style="font-size:12px;color:#666;">${coordTel}</div>`:''}
+              <div style="font-weight:600;color:#333;">${esc(coord)}</div>
+              ${coordTel?`<div style="font-size:12px;color:#666;">${esc(coordTel)}</div>`:''}
             </div>`:''}
             <div style="text-align:center;padding:8px 0 16px;">
               <a href="https://batchd-app.netlify.app" style="background:#34d399;color:#052e16;text-decoration:none;font-weight:700;font-size:14px;padding:13px 26px;border-radius:8px;display:inline-block;">
@@ -83,7 +89,7 @@ exports.handler = async (event) => {
               </a>
             </div>
             <p style="font-size:11px;color:#999;border-top:1px solid #eee;padding-top:12px;">
-              Sent automatically by Batch'd because ${store} has not responded within ${tier==='2h'?'2 hours':'24 hours'}.
+              Sent automatically by Batch'd because ${esc(store)} has not responded within ${tier==='2h'?'2 hours':'24 hours'}.
               ${tier==='24h'?'Contact your recall coordinator immediately.':''}
             </p>
           </div>
@@ -97,7 +103,7 @@ exports.handler = async (event) => {
 
       if (elapsed >= TWO_H && !ack.escalation_2h_sent_at) {
         try {
-          await sendEmail(toEmail, `[2h Escalation] Recall not acknowledged — ${product} · ${store}`, buildHtml('2h'));
+          await sendEmail(toEmail, `[2h Escalation] Recall not acknowledged — ${esc(product)} · ${esc(store)}`, buildHtml('2h'));
           updates.escalation_2h_sent_at = now.toISOString();
           sent2h++;
         } catch(e) { console.error('2h email error:', e.message); }
@@ -105,7 +111,7 @@ exports.handler = async (event) => {
 
       if (elapsed >= H24 && !ack.escalation_24h_sent_at) {
         try {
-          await sendEmail(toEmail, `[URGENT 24h] Recall still unacknowledged — ${product} · ${store}`, buildHtml('24h'));
+          await sendEmail(toEmail, `[URGENT 24h] Recall still unacknowledged — ${esc(product)} · ${esc(store)}`, buildHtml('24h'));
           updates.escalation_24h_sent_at = now.toISOString();
           sent24h++;
         } catch(e) { console.error('24h email error:', e.message); }
