@@ -26,8 +26,14 @@ async function sendEmail(to, subject, html) {
 
 exports.handler = async (event) => {
   try {
+    // Netlify scheduled functions send an empty body — handle both cases cleanly
+    const isScheduled = event.httpMethod === undefined || event.httpMethod === null;
     const body = event.body ? JSON.parse(event.body) : {};
     const { recallEventId, orgId } = body;
+
+    if (isScheduled) {
+      console.log('[recall-escalation] Scheduled run — checking all overdue acknowledgements');
+    }
     const sb  = createClient(SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
     const now = new Date();
 
@@ -122,7 +128,9 @@ exports.handler = async (event) => {
       }
     }
 
-    return { statusCode: 200, body: JSON.stringify({ checked: (acks||[]).length, sent2h, sent24h }) };
+    const result = { checked: (acks||[]).length, sent2h, sent24h, at: new Date().toISOString() };
+    console.log('[recall-escalation] Done:', result);
+    return { statusCode: 200, body: JSON.stringify(result) };
   } catch(err) {
     console.error('Escalation error:', err);
     return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
