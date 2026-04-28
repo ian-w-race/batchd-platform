@@ -2086,7 +2086,7 @@ async function renderOverview() {
     const { data: ownRecallsRaw } = await sb.from('recalls')
       .select('id, product_name, lot_number, active, source, created_at, reason, is_pushed, recall_event_id')
       .eq('organisation_id', _orgId)
-      .eq('active', true);
+      .eq('active', true).limit(300);
     // Feed sources — imported from FDA/RASFF/Mattilsynet daily feeds.
     // These are NOT operational alerts unless they match something in scan history.
     const FEED_SOURCES = new Set(['fda','rasff','FDA','RASFF','mattilsynet','Mattilsynet']);
@@ -2657,7 +2657,7 @@ async function renderRecalls() {
     sb.from('recalls').select('*').eq('organisation_id', _orgId).order('created_at', {ascending:false}),
     sb.from('recall_acknowledgements').select('*, stores(name)').eq('organisation_id', _orgId).order('created_at', {ascending:false}),
     sb.from('user_settings').select('recall_coordinator_name, recall_coordinator_contact, recall_coordinator_backup').eq('user_id', userId).single(),
-  ]);
+  ]).limit(300);
   const coord   = coordRes.data || {};
   const recalls = recallsRes.data || [];
   const acks    = acksRes.data   || [];
@@ -3749,7 +3749,7 @@ async function renderShipments() {
     sb.from('recall_distributions')
       .select('recall_event_id, recall_events!inner(lot_number, product_name, is_drill)')
       .eq('retailer_org_id', _orgId),
-  ]);
+  ]).limit(200);
 
   const list       = shipRes.data || [];
   const recalledLots = new Set([
@@ -5850,7 +5850,7 @@ async function fetchReportData(key) {
       const [recallsRes, distRes] = await Promise.all([
         sb.from('recalls').select('*').eq('organisation_id', _orgId).order('created_at', {ascending:false}),
         sb.from('recall_distributions').select('recall_event_id, est_affected_units, distributed_at').eq('retailer_org_id', _orgId),
-      ]);
+      ]).limit(500);
       let pushed = [];
       const distData = distRes.data || [];
       if (distData.length > 0) {
@@ -6572,7 +6572,7 @@ async function runLotCheck(immediate = false) {
         .gte('created_at', cutoff)
         .order('created_at', { ascending: false })
         .limit(1000),
-      sb.from('recalls').select('*').eq('active', true).eq('organisation_id', _orgId),
+      sb.from('recalls').select('*').eq('active', true).eq('organisation_id', _orgId).limit(200),
       sb.from('recall_distributions')
         .select('recall_event_id, recall_events!inner(id,product_name,lot_number,reason,severity,is_drill)')
         .eq('retailer_org_id', _orgId)
@@ -9852,7 +9852,7 @@ async function renderConsumerNotification() {
       .eq('active', true)
       .not('source', 'in', '("fda","rasff","FDA","RASFF")')
       .gte('created_at', ninetyDaysAgo)
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false }).limit(100);
 
     // Deduplicate: exclude manual recalls that are already represented by a pushed recall_event
     const pushedKeys = new Set(recallEvents.map(e =>
