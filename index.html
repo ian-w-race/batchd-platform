@@ -8507,13 +8507,16 @@ async function saveRecord() {
 
     // Save learned pattern with confidence level, barcode, and anchor tokens
     if (ocrState && ocrState.codeA) {
-      // Merge locationHint with anchor hint for richer label description
-      const combinedHint = [ocrState.anchorHint, ocrState.locationHint].filter(Boolean).join(' · ') || ocrState.locationHint;
+      // Build location hint from location string only (not anchor — stored separately)
+      const locationOnly = ocrState.locationHint || null;
       await saveLearnedPattern(
         productName, barcodeNum || null,
         ocrState.codeA, ocrState.codeB,
-        ocrState.lotIsFirst, ocrState.raw, combinedHint,
-        ocrState.confidence, ocrState.localisedCrop || null
+        ocrState.lotIsFirst, null, // rawText no longer injected — use null
+        locationOnly,
+        ocrState.confidence, ocrState.localisedCrop || null,
+        ocrState.anchorBefore || null,
+        ocrState.anchorAfter  || null
       );
     }
 
@@ -12632,21 +12635,39 @@ function buildPatternResult(row, source) {
         const topLoc = sorted[0][0];
         const total = sorted.reduce((s,[,v]) => s+v, 0);
         const pct = Math.round(sorted[0][1] / total * 100);
-        locationHint = `${topLoc} (seen ${pct}% of ${total} scan${total!==1?'s':''})${row.label_hint ? '. ' + row.label_hint : ''}`;
+        // If location_frequency has a clear winner, prepend it to the label_hint.
+        // But only if it adds signal (not already in label_hint).
+        const locSummary = `${topLoc} (${pct}% of ${total} scan${total!==1?'s':''})`;
+        if (row.label_hint && !row.label_hint.includes(topLoc)) {
+          locationHint = `${locSummary}. ${row.label_hint}`;
+        } else if (!row.label_hint) {
+          locationHint = locSummary;
+        }
       }
     } catch(e) {}
   }
+
+  // Build anchor hint from stored tokens if not already in label_hint
+  let anchorHint = null;
+  if (row.anchor_before && !(locationHint || '').includes(row.anchor_before)) {
+    anchorHint = `After "${row.anchor_before}" on the label`;
+  } else if (row.anchor_after && !(locationHint || '').includes(row.anchor_after)) {
+    anchorHint = `Before "${row.anchor_after}" on the label`;
+  }
+
   return {
-    lotIsFirst: row.lot_is_first,
-    scanCount: row.scan_count || 1,
-    lotFormat: row.lot_format,
-    batchFormat: row.batch_format,
-    labelHint: locationHint,
-    confidence: row.confidence_level || 'low',
+    lotIsFirst:    row.lot_is_first,
+    scanCount:     row.scan_count || 1,
+    lotFormat:     row.lot_format,
+    batchFormat:   row.batch_format,
+    labelHint:     locationHint,
+    anchorHint,
+    anchorBefore:  row.anchor_before || null,
+    anchorAfter:   row.anchor_after  || null,
+    confidence:    row.confidence_level || 'low',
     source,
-    // Stored crop coordinates — used to skip localisation pass for known products
-    cropYStart: (row.crop_y_start != null) ? row.crop_y_start : null,
-    cropYEnd:   (row.crop_y_end   != null) ? row.crop_y_end   : null,
+    cropYStart:    (row.crop_y_start != null) ? row.crop_y_start : null,
+    cropYEnd:      (row.crop_y_end   != null) ? row.crop_y_end   : null,
     cropScanCount: row.crop_scan_count || 0
   };
 }
@@ -12709,7 +12730,7 @@ function describeCodeFormat(code) {
 // Confidence ranking for gate checks
 const CONF_RANK = { high: 4, medium: 3, low: 2, brand: 1 };
 
-async function saveLearnedPattern(productName, barcodeNumber, codeA, codeB, lotIsFirst, rawText, locationHint, newConfidence, localisedCrop) {
+async function saveLearnedPattern(productName, barcodeNumber, codeA, codeB, lotIsFirst, rawText, locationHint, newConfidence, localisedCrop, anchorBefore, anchorAfter) {
   if (!productName || !codeA) return;
   try {
     const lotCode   = lotIsFirst ? codeA : codeB;
@@ -12720,10 +12741,44 @@ async function saveLearnedPattern(productName, barcodeNumber, codeA, codeB, lotI
     const brand   = extractBrand(productName);
     const incomingRank = CONF_RANK[newConfidence] || CONF_RANK.low;
 
-    const locationPart = locationHint ? ` Found at: ${locationHint}.` : '';
-    const labelHint = rawText
-      ? `Label text: "${rawText.slice(0, 150)}".${locationPart} Lot: ${lotFormat}${batchFormat ? `, batch: ${batchFormat}` : ''}.`
-      : locationHint ? `${locationHint}. Lot: ${lotFormat}.` : null;
+    // ── STRUCTURED LABEL HINT CONSTRUCTION ──────────────────────
+    // The label_hint is injected directly into every future OCR prompt for this product.
+    // It must be:
+    //   1. Short — every extra token slows the response and adds noise
+    //   2. Actionable — tells the model WHERE to look and WHAT format to expect
+    //   3. Stable across production runs — describes the packaging, not a specific code
+    //
+    // Previously: `Label text: "${rawText.slice(0,150)}". Found at: ${location}.`
+    // This was a 200+ char blob of random OCR fragments that confused rather than helped.
+    //
+    // Now: build a compact structured hint from the meaningful signals only:
+    //   - Anchor tokens (text printed immediately before/after the lot code on the label)
+    //   - Location (where on the packaging to look)
+    //   - Format (what the lot code looks like)
+    // Explicitly exclude raw OCR text.
+
+    const parts = [];
+
+    // 1. Anchor tokens — highest signal. "Look for 'L.nr:' — lot code follows immediately."
+    if (anchorBefore && anchorBefore.length <= 20) {
+      parts.push(`After "${anchorBefore}": lot code`);
+    } else if (anchorAfter && anchorAfter.length <= 20) {
+      parts.push(`Before "${anchorAfter}": lot code`);
+    }
+
+    // 2. Location — where on the packaging
+    if (locationHint) {
+      // Trim to the essential part — drop redundant "Found at:" prefix if present
+      const loc = locationHint.replace(/^Found at:\s*/i, '').split('.')[0].trim();
+      if (loc.length <= 80) parts.push(loc);
+    }
+
+    // 3. Format — what to look for
+    if (lotFormat) {
+      parts.push(`Format: ${lotFormat}`);
+    }
+
+    const labelHint = parts.length ? parts.join('. ') + '.' : null;
 
     // Try barcode lookup first, then normalised name
     let existing = null;
@@ -12806,6 +12861,9 @@ async function saveLearnedPattern(productName, barcodeNumber, codeA, codeB, lotI
         confidence_level:   protectHints ? existing.confidence_level : (newConfidence || existing.confidence_level),
         product_key:        normKey,
         brand_key:          brand,
+        // Anchor tokens — always update (they're structural label features, not lot-specific)
+        anchor_before:      anchorBefore || existing.anchor_before || null,
+        anchor_after:       anchorAfter  || existing.anchor_after  || null,
         crop_y_start:       newCropYStart,
         crop_y_end:         newCropYEnd,
         crop_scan_count:    newCropScanCount
@@ -12832,6 +12890,8 @@ async function saveLearnedPattern(productName, barcodeNumber, codeA, codeB, lotI
         location_frequency: JSON.stringify(freq),
         confidence_level:   newConfidence || 'low',
         scan_count:         1,
+        anchor_before:      anchorBefore || null,
+        anchor_after:       anchorAfter  || null,
         crop_y_start:       localisedCrop?.yStart ?? null,
         crop_y_end:         localisedCrop?.yEnd   ?? null,
         crop_scan_count:    (localisedCrop?.yStart != null) ? 1 : 0
@@ -12853,7 +12913,8 @@ async function recordManualCorrection(productName, barcodeNumber, correctedLot, 
     productName, barcodeNumber,
     lotIsFirst ? correctedLot : correctedBatch,
     lotIsFirst ? correctedBatch : correctedLot,
-    lotIsFirst, null, locationHint, 'high'
+    lotIsFirst, null, locationHint, 'high',
+    null, null, null  // no crop or anchor data from manual correction
   );
 }
 
@@ -13368,42 +13429,60 @@ async function extractCodesFromImage(blob, learnedContext) {
     let contextHint = '';
     const _scanCount = learnedContext?.scanCount || 0;
 
-    if (learnedContext && learnedContext.source !== 'brand' && _scanCount >= 20
-        && learnedContext.confidence === 'high' && learnedContext.lotFormat) {
-      // ── HIGH CONFIDENCE MODE (20+ scans) ──────────────────
-      // We know this product extremely well. Lock the format and location.
-      const cropDesc = _hasLearnedCrop
-        ? `The lot code region is in the ${localisedCrop.yStart < 0.5 ? 'upper' : 'lower'} portion of this cropped image.`
-        : '';
-      const isRegex = learnedContext.lotFormat.startsWith('^');
-      contextHint = `\n\nHIGH CONFIDENCE PATTERN FOR "${productName}" (${_scanCount} confirmed scans):\n`
-        + `Lot code format: ${learnedContext.lotFormat}\n`
-        + (isRegex ? `Regex validation: only accept codes matching ${learnedContext.lotFormat}\n` : '')
-        + (learnedContext.batchFormat ? `Batch format: ${learnedContext.batchFormat}\n` : '')
-        + (learnedContext.labelHint ? `Location: ${learnedContext.labelHint}\n` : '')
-        + `${cropDesc}\n`
-        + `IMPORTANT: Find a code matching this EXACT format. Do not return a different code type.`;
+    // ── BUILD STRUCTURED CONTEXT HINT ────────────────────────────
+    // Priority order: anchor tokens > location > format
+    // Anchor tokens are the highest-signal input — they tell the model exactly
+    // what text to look for on the label as a landmark before/after the lot code.
+    // Example: anchorBefore="L.nr:" → model looks for "L.nr:" then reads what follows.
+    // This is far more reliable than injecting raw OCR text or vague location strings.
 
-    } else if (learnedContext && learnedContext.source !== 'brand' && _scanCount >= 5) {
-      // ── ESTABLISHED PATTERN (5-19 scans) ──────────────────
-      // Good confidence — use format + location as strong guide.
-      contextHint = `\n\nESTABLISHED PATTERN FOR THIS PRODUCT (${productName}, ${_scanCount} scans):\n`
-        + (learnedContext.labelHint ? `${learnedContext.labelHint}\n` : '')
-        + (learnedContext.lotFormat ? `Expected lot format: ${learnedContext.lotFormat}` : '')
-        + `\nPrioritise codes matching this pattern.`;
+    const _anchor    = learnedContext?.anchorBefore || learnedContext?.anchorAfter || null;
+    const _anchorDir = learnedContext?.anchorBefore ? 'after' : 'before';
+    const _location  = learnedContext?.labelHint
+      ? learnedContext.labelHint.replace(/Label text:[^.]+\.\s*/i, '').trim() // strip any old raw-text injection
+      : null;
+    const _format    = learnedContext?.lotFormat;
 
-    } else if (learnedContext && learnedContext.labelHint && learnedContext.source !== 'brand') {
-      // ── EARLY LEARNING (1-4 scans) ────────────────────────
-      contextHint = `\n\nPREVIOUSLY LEARNED FOR THIS PRODUCT (${productName}, ${_scanCount} scan${_scanCount!==1?'s':''}):\n${learnedContext.labelHint}\nUse this as a guide.`;
+    if (learnedContext && _scanCount >= 1) {
+      const parts = [];
 
-    } else if (learnedContext && learnedContext.labelHint && learnedContext.source === 'brand') {
-      contextHint = `\n\nBRAND KNOWLEDGE FOR "${productName}":\n${learnedContext.labelHint}`;
+      // Anchor token — most actionable signal
+      if (_anchor) {
+        parts.push(`Look for the text "${_anchor}" on the label — the lot code is immediately ${_anchorDir} it.`);
+      }
 
-    } else if (learnedContext && learnedContext.lotFormat) {
-      contextHint = `\n\nPREVIOUSLY LEARNED FOR "${productName}":\nLot format: ${learnedContext.lotFormat}${learnedContext.batchFormat ? `\nBatch format: ${learnedContext.batchFormat}` : '\nNo separate batch code expected.'}\nPrioritise codes matching these formats.`;
+      // Location — where on the packaging
+      if (_location && _location.length <= 120) {
+        parts.push(_location.endsWith('.') ? _location : _location + '.');
+      }
 
+      // Format — what the lot code looks like  
+      if (_format) {
+        parts.push(`Expected format: ${_format}.`);
+      }
+
+      if (parts.length === 0 && productName) {
+        // No learned data yet — just use product name for model's own knowledge
+        contextHint = `\n\nPRODUCT: "${productName}"`;
+      } else if (parts.length > 0) {
+        const confidence = learnedContext?.confidence || 'low';
+        const label = _scanCount >= 20 && confidence === 'high'
+          ? `HIGH CONFIDENCE (${_scanCount} scans)`
+          : _scanCount >= 5
+          ? `ESTABLISHED PATTERN (${_scanCount} scans)`
+          : learnedContext?.source === 'brand'
+          ? `BRAND KNOWLEDGE`
+          : `LEARNED (${_scanCount} scan${_scanCount !== 1 ? 's' : ''})`;
+
+        contextHint = `\n\n${label} FOR "${productName}":\n${parts.join('\n')}`;
+
+        // For very high confidence, add explicit instruction
+        if (_scanCount >= 20 && confidence === 'high' && _format) {
+          contextHint += `\nIMPORTANT: Only return codes matching the expected format above.`;
+        }
+      }
     } else if (productName) {
-      contextHint = `\n\nPRODUCT: "${productName}" — use any knowledge of where this type of product typically stamps its lot code.`;
+      contextHint = `\n\nPRODUCT: "${productName}" — use your knowledge of where this product stamps its lot code.`;
     }
 
     // ── BUILD EXTRACTION PROMPT ──────────────────────────────
