@@ -5416,6 +5416,21 @@ async function showApp(user) {
   if (currentUser._appInitDone) return;
   currentUser._appInitDone = true;
 
+  // ── NETLIFY FUNCTION WARM-UP ─────────────────────────────────
+  // Netlify functions cold-start after ~5-15 minutes of inactivity, adding
+  // ~500ms to the first scan of every session. Fire a tiny warm-up call
+  // immediately on login so by the time the user reaches Step 1, the function
+  // is already warm. Use a 1x1 pixel JPEG — minimal data, real cold-start wake.
+  (async () => {
+    try {
+      const warmCanvas = document.createElement('canvas');
+      warmCanvas.width = 1; warmCanvas.height = 1;
+      const warmBlob = await new Promise(r => warmCanvas.toBlob(r, 'image/jpeg', 0.5));
+      const warmB64  = await blobToBase64(warmBlob);
+      await callOcrFunction('identify_product', warmB64);
+    } catch(e) {} // silent — this is purely a warm-up
+  })();
+
   // ── Hide login screen IMMEDIATELY — before any async work ──
   document.getElementById('login-screen').classList.add('hidden');
   document.getElementById('session-expired').style.display = 'none';
@@ -11742,7 +11757,7 @@ function _acLoop() {
           ? 'Is there a food product label clearly visible, in focus, and filling most of the frame? Answer only YES or NO.'
           : 'Is there a lot number, batch number, or production code clearly visible and readable in this image? Answer only YES or NO.';
 
-        const result = await callOcrFunction('extract_codes', b64, { prompt });
+        const result = await callOcrFunction('extract_codes', b64, { prompt, useHaiku: true });
         const answer = (result.content?.[0]?.text || '').trim().toUpperCase();
         if (_acActive && answer.startsWith('YES')) {
           stopAutoCapture();
@@ -11864,19 +11879,32 @@ async function snapOcr() {
   if (quality.issue) showToast(quality.message, 'warn', 4000);
   document.getElementById('btn-retake-barcode').style.display = 'flex';
 
-  // Frame 2 — 250ms later (video is still streaming in background)
-  await new Promise(r => setTimeout(r, 250));
-  const c2 = document.createElement('canvas');
-  c2.width = vid.videoWidth; c2.height = vid.videoHeight;
-  c2.getContext('2d').drawImage(vid, 0, 0);
-  const blob2 = await new Promise(res => c2.toBlob(res, 'image/jpeg', 0.85));
+  // Frame 2 + lookupLearnedPattern — run IN PARALLEL during the 250ms wait.
+  // Previously sequential: await 250ms, then await DB query (~500ms total).
+  // Now both run simultaneously — total ≈ max(250ms, DB query time) ≈ 250ms.
+  const productName = document.getElementById('field-product-name').value.trim();
+  const barcodeNum  = document.getElementById('field-barcode').value.trim();
+  const prewarmAge  = Date.now() - _prewarmTs;
+
+  const frame2Promise = new Promise(r => setTimeout(r, 250)).then(() => {
+    const c2 = document.createElement('canvas');
+    c2.width = vid.videoWidth; c2.height = vid.videoHeight;
+    c2.getContext('2d').drawImage(vid, 0, 0);
+    return new Promise(res => c2.toBlob(res, 'image/jpeg', 0.85));
+  });
+
+  const learnPromise = (_prewarmResult && prewarmAge < 3000)
+    ? Promise.resolve(_prewarmResult)
+    : lookupLearnedPattern(productName, barcodeNum || null, null, null);
+
+  const [blob2, preLearn] = await Promise.all([frame2Promise, learnPromise]);
+  _prewarmResult = null; // consume pre-warm result
 
   document.getElementById('ocr-analyzing').style.display = 'flex';
 
   // ── COUNTDOWN — starts immediately, visible from the first moment ──
-  // Target: 4s total. Counts 4→3→2→1→done. Gives users confidence it will finish.
   const _countdownEl = document.getElementById('ocr-countdown');
-  let _countdownVal = 4;
+  let _countdownVal = 3;
   if (_countdownEl) {
     _countdownEl.textContent = `${_countdownVal}s`;
     const _cdInterval = setInterval(() => {
@@ -11888,16 +11916,6 @@ async function snapOcr() {
       if (_countdownEl) _countdownEl.textContent = '';
     };
   }
-
-  // Shared learned context — use pre-warmed result if available (saves ~200-400ms),
-  // otherwise fetch fresh. Pre-warm fires on button touchstart/mousedown.
-  const productName = document.getElementById('field-product-name').value.trim();
-  const barcodeNum  = document.getElementById('field-barcode').value.trim();
-  const prewarmAge  = Date.now() - _prewarmTs;
-  const preLearn = (_prewarmResult && prewarmAge < 3000)
-    ? _prewarmResult
-    : await lookupLearnedPattern(productName, barcodeNum || null, null, null);
-  _prewarmResult = null; // consume it
 
   // Run OCR on both frames in parallel — total time ≈ max(t1, t2), not t1+t2
   const [r1, r2] = await Promise.all([
@@ -12503,18 +12521,26 @@ function detectFtlCategory(productName) {
   return { isFtl: false, category: null, label: null };
 }
 
-// Normalise a product name to a stable lookup key
-// "Tine Helmelk 1L", "TINE helmelk 1 liter" → "tine helmelk"
+// Normalise a product name to a stable lookup key.
+// DESIGN DECISION: We keep the size/volume as part of the key.
+// "Tine Helmelk 1L" and "Tine Helmelk 2L" are different SKUs with
+// different packaging — possibly different lot code locations.
+// Stripping the size was causing them to share a pattern, which
+// could direct staff to the wrong place on the label.
+// We do strip pure unit strings (ml, dl, kg, g) but keep the number.
 function normaliseProductKey(name) {
   if (!name) return '';
   return name
     .toLowerCase()
-    .replace(/\b(1l|1\.5l|2l|3l|0\.5l|500ml|1000ml|1liter|1 liter|1litre|250g|500g|750g|1kg|2kg|100g|200g|400g)\b/g, '')
-    .replace(/\b(ml|dl|cl|l|kg|g|mg|pk|stk|pcs|x)\b/g, '')
+    // Strip standalone unit strings but keep the number: "1L" → "1", "500ml" → "500"
+    .replace(/(\d+)\s*(ml|dl|cl|l|kg|g|mg|liter|litre)/g, '$1')
+    // Strip pure unit words with no number
+    .replace(/\b(pk|stk|pcs|x)\b/g, '')
+    // Normalise Norwegian special chars for matching
     .replace(/[^a-z0-9æøå\s]/g, '')
     .replace(/\s+/g, ' ')
     .trim()
-    .split(' ').slice(0, 4).join(' '); // max 4 words
+    .split(' ').slice(0, 5).join(' '); // max 5 words (was 4 — size now counts)
 }
 
 // Extract brand from a product name
@@ -12719,15 +12745,16 @@ async function saveLearnedPattern(productName, barcodeNumber, codeA, codeB, lotI
     }
 
     if (existing) {
-      // ── CONFIDENCE GATE: never overwrite a higher-confidence record ──
+      // ── CONFIDENCE GATE ──────────────────────────────────────
+      // IMPORTANT: Lot codes change every production run — that's the point.
+      // We must NOT gate on the specific lot code value, only on FORMAT/LOCATION knowledge.
+      // A high-confidence record means we know WHERE and WHAT FORMAT to look for,
+      // not that the code itself is fixed. Always update the code_a/code_b values.
+      // Only protect the format/location hints from being overwritten by lower-confidence reads.
       const storedRank = CONF_RANK[existing.confidence_level] || CONF_RANK.low;
-      if (incomingRank < storedRank) {
-        // Just bump the scan count, don't touch the codes or hints
-        await sb.from('code_patterns').update({
-          scan_count: (existing.scan_count || 1) + 1
-        }).eq('id', existing.id);
-        return;
-      }
+      const protectHints = incomingRank < storedRank;
+      // protectHints=true → keep the stored format/label hints, update code + count only
+      // protectHints=false → overwrite everything with the higher-confidence reading
 
       // ── UPDATE LOCATION FREQUENCY ────────────────────────────
       let freq = {};
@@ -12764,18 +12791,19 @@ async function saveLearnedPattern(productName, barcodeNumber, codeA, codeB, lotI
       await sb.from('code_patterns').update({
         scan_count:         (existing.scan_count || 1) + 1,
         barcode_number:     barcodeNumber || existing.barcode_number,
+        // Always update the actual lot code — it changes every production run
         code_a:             codeA,
         code_b:             codeB || null,
         lot_is_first:       lotIsFirst,
-        // Infer regex from confirmed code — stored as "^..." to distinguish
-        // from human-readable format strings like "YYMMDD"
-        lot_format:         (codeA && incomingRank >= CONF_RANK.medium)
-                              ? (inferLotPattern(codeA) || lotFormat)
-                              : lotFormat,
-        batch_format:       batchFormat,
-        label_hint:         labelHint || existing.label_hint,
+        // Format/location hints — only overwrite if incoming is higher or equal confidence
+        lot_format:         protectHints ? existing.lot_format
+                              : ((codeA && incomingRank >= CONF_RANK.medium)
+                                  ? (inferLotPattern(codeA) || lotFormat)
+                                  : lotFormat),
+        batch_format:       protectHints ? existing.batch_format : batchFormat,
+        label_hint:         protectHints ? existing.label_hint : (labelHint || existing.label_hint),
         location_frequency: JSON.stringify(freq),
-        confidence_level:   newConfidence || existing.confidence_level,
+        confidence_level:   protectHints ? existing.confidence_level : (newConfidence || existing.confidence_level),
         product_key:        normKey,
         brand_key:          brand,
         crop_y_start:       newCropYStart,
@@ -13096,71 +13124,65 @@ function validateLotCode(code) {
   const c = code.trim();
 
   // Too short or too long
-  if (c.length < 3) return { valid: false, reason: 'too short (< 3 chars)' };
-  if (c.length > 30) return { valid: false, reason: 'too long (> 30 chars)' };
+  if (c.length < 2) return { valid: false, reason: 'too short (< 2 chars)' };
+  if (c.length > 35) return { valid: false, reason: 'too long (> 35 chars)' };
 
-  // Pure digits that look like weight/volume (3-4 digits ending in nothing special)
-  if (/^\d{3,4}$/.test(c)) return { valid: false, reason: 'looks like weight or volume' };
-
-  // Pure time stamp HH:MM or HH:MM:SS
+  // Pure time stamp HH:MM or HH:MM:SS — never a lot code
   if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(c)) return { valid: false, reason: 'looks like a time' };
 
-  // Plain DD/MM/YY or DD.MM.YY or DD-MM-YY date formats
-  if (/^\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}$/.test(c)) return { valid: false, reason: 'looks like a plain date' };
-
-  // Plain MMYYYY or MMYY (expiry date format)
-  if (/^\d{2}\/\d{4}$/.test(c)) return { valid: false, reason: 'looks like MM/YYYY expiry' };
-
-  // Pure month name
-  if (/^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|januar|februar|mars|april|mai|juni|juli|august|september|oktober|november|desember)$/i.test(c)) {
-    return { valid: false, reason: 'looks like a month name' };
-  }
-
-  // Norwegian/EU establishment approval number (slaughterhouse ID — NOT a lot code)
-  // Format: "NO 1234 EF", "NO-1234-EF", "NO1234EF", "SE 1234 EG", "DK 1234 EF"
+  // Norwegian/EU establishment approval number — NOT a lot code
+  // Format: "NO 1234 EF", "NO-1234-EF", "SE 1234 EG", etc.
   if (/^(NO|SE|DK|FI|DE|NL|FR|IT|ES|PL)\s*-?\s*\d{2,5}\s*-?\s*(EF|EG|EK|EC|CE)$/i.test(c)) {
-    return { valid: false, reason: 'looks like EU plant/establishment approval number (not a lot code)' };
+    return { valid: false, reason: 'EU plant approval number' };
   }
 
-  // Norwegian postal codes (4 digits) — could appear on address lines
-  if (/^\d{4}$/.test(c)) return { valid: false, reason: 'looks like a Norwegian postal code' };
+  // "E-numbers" (food additives like E220, E471) — always followed by nothing else
+  if (/^E\d{3,4}[a-z]?$/i.test(c)) return { valid: false, reason: 'E-number food additive' };
 
-  // "E-numbers" (food additives like E220, E471)
-  if (/^E\d{3,4}[a-z]?$/i.test(c)) return { valid: false, reason: 'looks like an E-number food additive' };
+  // Barcode-length pure digits (8, 12, 13, 14 digits) — EAN/UPC barcodes
+  if (/^\d{8}$/.test(c) || /^\d{12,14}$/.test(c)) return { valid: false, reason: 'looks like a barcode' };
 
-  // Barcode-length pure digits (8, 12, 13, 14 digits) — EAN/UPC
-  if (/^\d{8}$/.test(c) || /^\d{12,14}$/.test(c)) return { valid: false, reason: 'looks like a barcode number' };
+  // ── POSITIVE RECOGNITION — accept these without further checks ────────
+  // Norwegian/EU lot code patterns
+  if (/^\d{6}$/.test(c)) return { valid: true, reason: 'YYMMDD date code' };
+  if (/^\d{8}$/.test(c) && c.startsWith('20')) return { valid: true, reason: 'YYYYMMDD date code' };
+  if (/^[LlTt][\-\.]?\d/.test(c)) return { valid: true, reason: 'L/T-prefixed lot code' };
+  if (/^[A-Z]{2,6}[\-\.]\d{6,8}/.test(c)) return { valid: true, reason: 'brand-prefixed lot code' };
+  if (/^[A-Z]{2,6}\d{6,8}[\-\.]?[A-Z0-9]{0,4}$/.test(c)) return { valid: true, reason: 'compound lot code' };
 
-  // ── US FDA TLC POSITIVE RECOGNITION ──────────────────────────
-  // Julian date codes: 7-digit YYYYDDD (e.g. 2023213 = day 213 of 2023)
-  if (/^\d{7}$/.test(c) && _userRegion === 'us') {
+  // US FDA TLC formats
+  if (/^\d{7}$/.test(c)) {
     const year = parseInt(c.slice(0,4)), day = parseInt(c.slice(4));
-    if (year >= 2000 && year <= 2035 && day >= 1 && day <= 366)
-      return { valid: true, reason: 'US Julian date TLC (YYYYDDD)' };
+    if (year >= 2000 && year <= 2040 && day >= 1 && day <= 366)
+      return { valid: true, reason: 'US Julian YYYYDDD' };
   }
-  // 5-digit Julian YYDDD (e.g. 25105 = day 105 of 2025)
-  if (/^\d{5}$/.test(c) && _userRegion === 'us') {
+  if (/^\d{5}$/.test(c)) {
     const day = parseInt(c.slice(2));
-    if (day >= 1 && day <= 366) return { valid: true, reason: 'US Julian date TLC (YYDDD)' };
+    if (day >= 1 && day <= 366) return { valid: true, reason: 'US Julian YYDDD' };
   }
-  // GS1 Application Identifier (10) = lot/batch — already extracted upstream
-  // but validate AI-10 extracted values: typically 1-20 chars
-  if (/^[A-Z0-9\-]{3,20}$/.test(c) && _userRegion === 'us')
-    return { valid: true, reason: 'US alphanumeric TLC' };
+  if (/^[A-Z]{2,6}\d{3,}/.test(c) && c.length >= 6) return { valid: true, reason: 'US compound TLC' };
+  if (/^\d{6}[A-Z]$/.test(c)) return { valid: true, reason: 'US grower code' };
 
-  // US compound codes: alpha company prefix + digits (e.g. BFCA179A152023213)
-  if (/^[A-Z]{2,6}\d{3,}/.test(c) && c.length >= 8 && c.length <= 25)
-    return { valid: true, reason: 'US compound TLC (company+location+date)' };
-
-  // 6 digits + letter: grower/location code (e.g. 475123C)
-  if (/^\d{6}[A-Z]$/.test(c))
-    return { valid: true, reason: 'US grower location code (6-digit + letter)' };
-
-  // Looks like a valid lot code — has some alphanumeric content
+  // ── GENERAL ACCEPTANCE ────────────────────────────────────────────────
+  // A lot code must have some alphanumeric content.
+  // We reject very short pure-numeric codes that look like weights/volumes,
+  // but accept anything >= 4 chars that has alphanumeric characters.
   const hasLetter = /[A-Za-z]/.test(c);
-  const hasDigit = /\d/.test(c);
+  const hasDigit  = /\d/.test(c);
+
+  // 3-4 pure digits — looks like weight/volume/postal code
+  if (!hasLetter && c.length <= 4) return { valid: false, reason: 'short pure-numeric — looks like weight/volume' };
+
+  // Plain date formats — reject common ones but don't be too aggressive
+  // Only reject if it's CLEARLY a date with separators
+  if (/^\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}$/.test(c) && !hasLetter) {
+    return { valid: false, reason: 'looks like a plain date' };
+  }
+
   if (!hasLetter && !hasDigit) return { valid: false, reason: 'no alphanumeric characters' };
 
+  // Accept anything else — lot codes are varied and we should err on the side
+  // of showing the user something they can verify, rather than silently dropping it
   return { valid: true, reason: '' };
 }
 
