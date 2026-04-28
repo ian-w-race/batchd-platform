@@ -64,7 +64,20 @@ exports.handler = async (event) => {
       case 'identify_product': {
         model = MODEL_HAIKU;
         maxTokens = 80;
-        prompt = 'You are identifying a food product from a photo of its packaging.\nReturn ONLY the product name (brand + product, e.g. "TINE Helmelk 1.5L" or "Gilde Kjottdeig 400g").\nNo explanations. Just the product name. If you cannot identify it, return "Unknown Product".';
+        // IMPORTANT: Do NOT use TINE or milk products as examples — they are the most
+        // common Norwegian product and any example biases the model toward them.
+        // The prompt must emphasise reading exact label text, not visual pattern matching.
+        // Helmelk vs Mellommelk, Original vs Lett, etc. differ only in text — the model
+        // must read what is printed, not guess from visual similarity.
+        prompt = [
+          'Read the exact product name as printed on this food packaging label.',
+          'Do NOT guess or approximate — read the actual text on the label.',
+          'Distinguish carefully between similar variants: pay close attention to words like',
+          '"Helmelk", "Mellommelk", "Lettmelk", "Skummet", "Lett", "Original", "Økologisk",',
+          '"Extra", "Light", fat percentages, and size/weight.',
+          'Return ONLY: Brand + exact product name + size (e.g. "Gilde Bacon 150g" or "Kavli Rekesalat 200g").',
+          'No explanations. Just the product name. If the label is unreadable, return "Unknown Product".',
+        ].join('\n');
         break;
       }
 
