@@ -11628,13 +11628,13 @@ let _acCtx      = null;
 let _acLastAiCall = 0;    // timestamp of last AI check
 
 const AC_LOOP_INTERVAL  = 300;   // ms — how often the fast local check runs
-const AC_AI_INTERVAL    = 1500;  // ms — minimum gap between AI calls
-const AC_SHARP_MIN      = 8;     // Laplacian pre-filter (rejects obvious blur/dark)
-const AC_BRIGHT_MIN     = 45;
-const AC_BRIGHT_MAX     = 215;
-const AC_CONTRAST_MIN   = 25;    // std-dev pre-filter
-const AC_MOTION_MAX     = 12;    // max mean-absolute-diff between frames (motion gate)
-const AC_STABLE_MIN     = 2;     // consecutive stable frames before triggering
+const AC_AI_INTERVAL    = 600;   // ms — minimum gap between AI calls (was 1500 — too slow; 600 = snappy)
+const AC_SHARP_MIN      = 6;     // Laplacian pre-filter — was 8, reduced for real-world cameras
+const AC_BRIGHT_MIN     = 40;    // brightness floor — was 45, supermarket lighting can be dim
+const AC_BRIGHT_MAX     = 220;
+const AC_CONTRAST_MIN   = 20;    // std-dev pre-filter — was 25, product packs can be uniform colour
+const AC_MOTION_MAX     = 15;    // max mean-absolute-diff — was 12, allow slight hand tremor
+const AC_STABLE_MIN     = 1;     // consecutive stable frames before triggering — was 2; 1 = faster (quality still gated by frameOk + motion)
 
 function startAutoCapture(phase) {
   stopAutoCapture();
@@ -12868,11 +12868,13 @@ async function saveLearnedPattern(productName, barcodeNumber, codeA, codeB, lotI
         code_a:             codeA,
         code_b:             codeB || null,
         lot_is_first:       lotIsFirst,
-        // Format/location hints — only overwrite if incoming is higher or equal confidence
+        // lot_format: prefer human-readable description over regex pattern.
+        // describeCodeFormat() returns things like "6-digit date (DDMMYY)".
+        // inferLotPattern() returns regex like "^[A-Z]\d{3}[A-Z]$" which confuses
+        // the AI on future scans when the new batch has a slightly different format.
+        // Store the human-readable description; the AI doesn't benefit from regex syntax.
         lot_format:         protectHints ? existing.lot_format
-                              : ((codeA && incomingRank >= CONF_RANK.medium)
-                                  ? (inferLotPattern(codeA) || lotFormat)
-                                  : lotFormat),
+                              : (lotFormat || existing.lot_format || null),
         batch_format:       protectHints ? existing.batch_format : batchFormat,
         label_hint:         protectHints ? existing.label_hint : (labelHint || existing.label_hint),
         location_frequency: JSON.stringify(freq),
@@ -12900,9 +12902,9 @@ async function saveLearnedPattern(productName, barcodeNumber, codeA, codeB, lotI
         code_a:             codeA,
         code_b:             codeB || null,
         lot_is_first:       lotIsFirst,
-        lot_format:         (codeA && newConfidence !== 'low')
-                              ? (inferLotPattern(codeA) || lotFormat)
-                              : lotFormat,
+        // Store human-readable format description only — not regex.
+        // Regex patterns confuse the model on future scans with slightly different formats.
+        lot_format:         lotFormat || null,
         batch_format:       batchFormat,
         label_hint:         labelHint,
         location_frequency: JSON.stringify(freq),
@@ -13455,9 +13457,12 @@ async function extractCodesFromImage(blob, learnedContext) {
       }
 
       // Format — advisory hint only, never a hard constraint.
-      // Lot codes change every production run — the format describes what we've
-      // seen before, but the model must still return any visible lot/batch code.
-      if (_format) {
+      // CRITICAL: Skip regex patterns (starting with ^) — they over-constrain the model.
+      // A regex like ^[A-Z]\d{3}[A-Z]$ was learned from ONE specific batch's lot code.
+      // The next batch may have a different format (M-123 vs L250K, etc.) and the model
+      // will return null rather than surface a valid but differently-formatted code.
+      // Only inject human-readable descriptions like "YYMMDD" or "6-digit date code".
+      if (_format && !_format.startsWith('^') && !_format.includes('\\d') && !_format.includes('[A-Z]')) {
         parts.push(`Typical format (may vary by batch): ${_format}.`);
       }
 
@@ -13497,17 +13502,25 @@ async function extractCodesFromImage(blob, learnedContext) {
       ? 'US grocery context. Lot code is the TLC (Traceability Lot Code) under FSMA 204 — look for LOT, L#, BATCH, PACK DATE, Julian date code. Ignore UPC/EAN barcodes, zip codes, plant numbers (EST. ####).'
       : [
           'Norwegian/EU grocery context.',
-          'The lot code ("partinummer") is the PRODUCTION BATCH identifier, NOT the best-before date.',
-          'On gable-top cartons (milk, juice): the inkjet code block printed on the TOP FOLD typically contains:',
-          '  - A date stamp (DDMMYY or YYMMDD) — this is often the BEST-BEFORE date, NOT the lot code',
-          '  - A production code such as "L.nr XXXXX", "Parti XXXXX", or a short alphanumeric after "EFTER"/"ETTER"',
-          '  - A time stamp (HH:MM) — this is the packaging time, ignore it',
-          '  - A plant/line code — ignore it',
-          'For gable-top inkjet blocks: the lot code is the alphanumeric identifier (e.g. "M-123", "L230415", "T0526A"),',
-          'NOT the 6-digit date stamp.',
-          'On other packaging: look for text near "Holdbar til", "Best før", "L.", "Parti", "LOT", or standalone inkjet codes.',
-          'Ignore "NO #### EF" (EU plant approval number), plain calendar dates, EAN/GS1 barcodes.',
-        ].join(' ');
+          'The lot code ("partinummer") is the PRODUCTION BATCH IDENTIFIER for EU 178/2002 traceability.',
+          '',
+          'On gable-top cartons (TINE, Fjordland, Bama, etc.) the inkjet code block on the TOP FOLD or BASE has this structure:',
+          '  DD.MM.YY or YYMMDD → BEST-BEFORE DATE → put in expiry field, this is NOT the lot code',
+          '  OFTE HH:MM → PACKAGING TIME (the time the product was filled) → ignore entirely',
+          '  OFTEST HH:MM → same as OFTE → packaging time, ignore',
+          '  GOD [code] → QUALITY CODE — this might be the lot code IF no ETTER/PARTI code exists',
+          '  ETTER [code] → THIS IS THE LOT CODE (traceability batch reference) — return [code] as the lot',
+          '  PARTI [code] → THIS IS THE LOT CODE — return [code] as the lot',
+          '  BATCH [code] → THIS IS THE LOT CODE — return [code] as the lot',
+          '  L.nr [code] or L [code] → THIS IS THE LOT CODE — return [code] as the lot',
+          '',
+          'Examples from real TINE gable-top blocks:',
+          '  "14.05.26 OFTE 13:23 GOD 3F6A1 ETTER M-123" → lot = "M-123", expiry = "14.05.26"',
+          '  "260514 L.nr 2305-A" → lot = "2305-A", expiry = "26.05.14"',
+          '',
+          'For other packaging: look for text near "Holdbar til", "Best før", "L.", "Parti", "LOT", "Batch".',
+          'Always ignore "NO XXXX EF" (EU plant approval number), plain dates, and time stamps.',
+        ].join('\n');
 
     const coreInstructions =
       `Find the lot/batch code (production traceability identifier) on this food packaging photo.\n` +
