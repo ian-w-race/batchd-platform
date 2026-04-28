@@ -11918,45 +11918,7 @@ async function snapOcr() {
     ? Promise.resolve(_prewarmResult)
     : lookupLearnedPattern(productName, barcodeNum || null, null, null);
 
-  // ── Speed optimisation: start localise_lot for blob1 NOW ─────
-  // blob1 is already captured. We have 250ms before blob2 is ready.
-  // Run localise_lot for blob1 in parallel with the frame2 wait.
-  // This saves ~600ms on first-time scans by overlapping the localise
-  // pass with the mandatory frame2 wait rather than running it after.
-  // We only pre-localise if there's no learned crop (skip redundant call).
-  const _preLocBlob1Promise = (async () => {
-    // We check for learned crop after learnPromise resolves — if we have one,
-    // skip the pre-localise. Otherwise fire it during the wait.
-    const preLearnCheck = await Promise.race([
-      learnPromise,
-      new Promise(r => setTimeout(r, 100)) // don't wait more than 100ms for this check
-    ]);
-    const hasCrop = preLearnCheck
-      && preLearnCheck.cropYStart != null
-      && (preLearnCheck.cropScanCount || 0) >= 5;
-    if (hasCrop) return null; // learned crop will be used — don't double-localise
-
-    // No stored crop — run localise_lot now so it overlaps with the frame2 wait
-    try {
-      const isUSRegion = _userRegion === 'us';
-      const locBlob = await preprocessImage(blob1, 640);
-      const locB64  = await blobToBase64(locBlob);
-      const locPromise2 = callOcrFunction('localise_lot', locB64, { isUSRegion });
-      const to = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 1200));
-      const locData = await Promise.race([locPromise2, to]);
-      const locText = (locData.content?.[0]?.text || '').replace(/```json|```/g, '').trim();
-      const loc = JSON.parse(locText);
-      if (loc.found && typeof loc.y_start === 'number') {
-        const pad = 0.08;
-        const yS = Math.max(0, loc.y_start - pad);
-        const yE = Math.min(1, loc.y_end + pad);
-        if (yE - yS < 0.85) return { yStart: yS, yEnd: yE, source: 'pre-localised' };
-      }
-    } catch(e) {}
-    return null;
-  })();
-
-  const [blob2, preLearn, preLoc1] = await Promise.all([frame2Promise, learnPromise, _preLocBlob1Promise]);
+  const [blob2, preLearn] = await Promise.all([frame2Promise, learnPromise]);
   _prewarmResult = null; // consume pre-warm result
 
   document.getElementById('ocr-analyzing').style.display = 'flex';
@@ -11977,11 +11939,9 @@ async function snapOcr() {
   }
 
   // Run OCR on both frames in parallel — total time ≈ max(t1, t2), not t1+t2
-  // blob1 gets the pre-computed localise result (ran during frame2 wait) — skips its own Pass 0
-  // blob2 runs its own localise pass (no pre-computed result), but runs in parallel with blob1's Sonnet
   const [r1, r2] = await Promise.all([
-    extractCodesFromImage(blob1, preLearn, preLoc1).catch(() => null),
-    extractCodesFromImage(blob2, preLearn, null).catch(() => null),
+    extractCodesFromImage(blob1, preLearn).catch(() => null),
+    extractCodesFromImage(blob2, preLearn).catch(() => null),
   ]);
 
   // ── CONSENSUS RESOLUTION ──────────────────────────────────
@@ -13402,11 +13362,10 @@ function getPackagingTip(productName) {
 // - Post-extraction validation against false-positive patterns
 // - EU/US "date as lot" detection (no explicit lot = use best-before/pack date)
 
-async function extractCodesFromImage(blob, learnedContext, preLocalisedCrop = null) {
+async function extractCodesFromImage(blob, learnedContext) {
   const _pipelineStart = Date.now();
   const _elapsed = () => Date.now() - _pipelineStart;
-  // Hard 3.2s limit — Pass 0 is capped at 1.2s, leaving ~2s for Pass 1.
-  // If we exceed this, return immediately so users aren't left waiting.
+  // Hard 3.2s limit — if we exceed this, return immediately so users aren't left waiting.
   const PIPELINE_TIMEOUT_MS = 3200;
 
   try {
@@ -13420,59 +13379,34 @@ async function extractCodesFromImage(blob, learnedContext, preLocalisedCrop = nu
       if (subEl) subEl.innerHTML = `${tip.icon} ${tip.tip}`;
     }
 
-    // ── LOCALISE CROP (three priority levels) ────────────────
-    // Priority 1: pre-computed crop (ran during 250ms frame2 wait) — fastest
-    // Priority 2: stored learned crop from 5+ previous scans — also instant
-    // Priority 3: run localise_lot Haiku pass now — ~600ms, raced at 1.2s
+    // ── CROP STRATEGY ────────────────────────────────────────────
+    // Priority 1: stored learned crop from 5+ previous scans — instant, no API call.
+    //   This is how known products get fast AND accurate — after 5 scans we know
+    //   exactly where the lot code lives on that packaging.
+    // Priority 2: full enhanced image — no localise_lot Haiku pass.
+    //   localise_lot was adding 600ms sequentially before the Sonnet call.
+    //   With the improved regionHint in the prompt, Sonnet finds the code
+    //   on the full CLAHE-enhanced image. Saves 600ms per scan for new products.
     let localisedCrop = null;
 
-    if (preLocalisedCrop) {
-      // Caller already ran localise_lot during the frame2 wait — use it directly
-      localisedCrop = preLocalisedCrop;
-      console.log(`[LEARNED CROP] Using pre-computed crop from frame2 wait: y=${localisedCrop.yStart.toFixed(2)}–${localisedCrop.yEnd.toFixed(2)}`);
-    } else {
-      const _hasLearnedCrop = learnedContext
-        && learnedContext.cropYStart != null
-        && learnedContext.cropYEnd   != null
-        && (learnedContext.cropScanCount || 0) >= 5;
+    const _hasLearnedCrop = learnedContext
+      && learnedContext.cropYStart != null
+      && learnedContext.cropYEnd   != null
+      && (learnedContext.cropScanCount || 0) >= 5;
 
     if (_hasLearnedCrop) {
-        localisedCrop = {
-          yStart: learnedContext.cropYStart,
-          yEnd:   learnedContext.cropYEnd,
-          source: 'learned'
-        };
-        console.log(
-          `[LEARNED CROP] Skipping Pass 0 — using stored region ` +
-          `y=${localisedCrop.yStart.toFixed(2)}–${localisedCrop.yEnd.toFixed(2)} ` +
-          `(${learnedContext.cropScanCount} crop observations, ${learnedContext.scanCount} total scans)`
-        );
-      } else {
-        // ── PASS 0: LOT CODE LOCALISATION (haiku) ─────────────
-        // Finds WHERE on the image the lot code is. Fast and cheap.
-        // Hard-raced against 1.2s — if haiku hasn't responded by then,
-        // we skip it and use the full image. Never blocks the pipeline.
-        try {
-          const locBlob = await preprocessImage(blob, 640); // smaller = faster
-          const locB64  = await blobToBase64(locBlob);
-          const locPromise = callOcrFunction('localise_lot', locB64, { isUSRegion });
-          const timeoutPromise = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 1200));
-          const locData = await Promise.race([locPromise, timeoutPromise]);
-          const locText = (locData.content?.[0]?.text || '').replace(/```json|```/g,'').trim();
-          const loc = JSON.parse(locText);
-          if (loc.found && typeof loc.y_start === 'number' && typeof loc.y_end === 'number') {
-            const pad = 0.08;
-            const yS = Math.max(0, loc.y_start - pad);
-            const yE = Math.min(1, loc.y_end   + pad);
-            if (yE - yS < 0.85) {
-              localisedCrop = { yStart: yS, yEnd: yE, source: 'localised' };
-            }
-          }
-        } catch(e) {
-          // Timeout or parse error — continue with full image, no delay
-        }
-      }
-    } // end preLocalisedCrop else block
+      localisedCrop = {
+        yStart: learnedContext.cropYStart,
+        yEnd:   learnedContext.cropYEnd,
+        source: 'learned'
+      };
+      console.log(
+        `[LEARNED CROP] Using stored region ` +
+        `y=${localisedCrop.yStart.toFixed(2)}–${localisedCrop.yEnd.toFixed(2)} ` +
+        `(${learnedContext.cropScanCount} crop observations, ${learnedContext.scanCount} total scans)`
+      );
+    }
+    // No else — for new products we go straight to full enhanced image + Sonnet.
 
     // ── PREPARE PRIMARY IMAGE ────────────────────────────────
     // Apply CLAHE-style enhancement to whatever we send to the API.
