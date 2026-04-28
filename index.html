@@ -33,6 +33,9 @@
 <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 <script src="https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js"></script>
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<!-- Tesseract.js — on-device OCR for lot code extraction without network calls -->
+<!-- Loaded here so the JS is cached; language data downloads lazily on first Step 2 use -->
+<script src="https://unpkg.com/tesseract.js@5.1.0/dist/tesseract.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700;800&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
 <style>
@@ -5864,6 +5867,7 @@ async function signOut() {
   clearInterval(recallSchedulerInterval);
   recallSchedulerInterval = null;
   if (_realtimeChannel) { sb.removeChannel(_realtimeChannel); _realtimeChannel = null; }
+  destroyTesseract(); // clean up the OCR worker
   await sb.auth.signOut();
 }
 
@@ -7532,6 +7536,10 @@ async function startProductCamera() {
 }
 
 async function snapProduct() {
+  // Trigger tesseract init now — user will spend 2-3s reviewing product name,
+  // giving the worker time to initialize before they tap to Step 2
+  if (!_tesseractReady && !_tesseractLoading) initTesseract();
+
   stopAutoCapture();
   const vid = document.getElementById('product-video');
   if (!vid.srcObject || vid.paused) { await startProductCamera(); return; }
@@ -11918,12 +11926,55 @@ async function snapOcr() {
     ? Promise.resolve(_prewarmResult)
     : lookupLearnedPattern(productName, barcodeNum || null, null, null);
 
-  const [blob2, preLearn] = await Promise.all([frame2Promise, learnPromise]);
-  _prewarmResult = null; // consume pre-warm result
+  // ── CASCADE A: GS1-128 static decode ────────────────────────
+  // Try to decode a GS1-128 barcode from blob1 — if lot code is embedded
+  // via Application Identifier (10) we're done before any OCR or network call.
+  const gs1 = await tryGS1StaticDecode(blob1);
+  if (gs1?.lot) {
+    if (typeof snapOcr._clearCountdown === 'function') { snapOcr._clearCountdown(); snapOcr._clearCountdown = null; }
+    ocrState = {
+      codeA: gs1.lot, codeB: null, lotIsFirst: true,
+      confidence: 'high', raw: '', expiry: gs1.expiry || null,
+      locationHint: gs1.source, localisedCrop: null,
+      anchorBefore: null, anchorAfter: null, anchorHint: null,
+      reconcileNote: `✓ ${gs1.source}`,
+    };
+    populateStep2Fields(ocrState);
+    return;
+  }
+
+  // ── CASCADE B: Tesseract on-device OCR ───────────────────────
+  // Start tesseract on blob1 DURING the 250ms frame2 wait.
+  // Tesseract typically takes 300-500ms — by starting it now, it will often
+  // finish before or shortly after blob2 is ready, adding near-zero latency.
+  const tesseractPromise = _tesseractReady
+    ? runTesseractOnImage(blob1).catch(() => null)
+    : Promise.resolve(null);
+
+  const [blob2, preLearn, tesseractText] = await Promise.all([frame2Promise, learnPromise, tesseractPromise]);
+  _prewarmResult = null;
+
+  // Apply brand rules to tesseract text — if high confidence, skip Sonnet entirely
+  if (tesseractText) {
+    const brandResult = applyBrandRules(productName, tesseractText);
+    if (brandResult?.confidence === 'high' && validateLotCode(brandResult.lot).valid) {
+      if (typeof snapOcr._clearCountdown === 'function') { snapOcr._clearCountdown(); snapOcr._clearCountdown = null; }
+      const expiryFromText = extractExpiryFromText(tesseractText);
+      ocrState = {
+        codeA: brandResult.lot, codeB: null, lotIsFirst: true,
+        confidence: 'high', raw: tesseractText, expiry: expiryFromText,
+        locationHint: brandResult.source, localisedCrop: null,
+        anchorBefore: null, anchorAfter: null, anchorHint: null,
+        reconcileNote: `✓ On-device: ${brandResult.source}`,
+      };
+      populateStep2Fields(ocrState);
+      return;
+    }
+  }
 
   document.getElementById('ocr-analyzing').style.display = 'flex';
 
-  // ── COUNTDOWN — starts immediately, visible from the first moment ──
+  // ── COUNTDOWN ────────────────────────────────────────────────
   const _countdownEl = document.getElementById('ocr-countdown');
   let _countdownVal = 3;
   if (_countdownEl) {
@@ -11932,16 +11983,16 @@ async function snapOcr() {
       _countdownVal = Math.max(0, _countdownVal - 1);
       if (_countdownEl) _countdownEl.textContent = _countdownVal > 0 ? `${_countdownVal}s` : '…';
     }, 1000);
-    snapOcr._clearCountdown = () => {
-      clearInterval(_cdInterval);
-      if (_countdownEl) _countdownEl.textContent = '';
-    };
+    snapOcr._clearCountdown = () => { clearInterval(_cdInterval); if (_countdownEl) _countdownEl.textContent = ''; };
   }
 
-  // Run OCR on both frames in parallel — total time ≈ max(t1, t2), not t1+t2
+  // ── CASCADE C: Sonnet with tesseract context ──────────────────
+  // Pass tesseractText so extractCodesFromImage can:
+  //   1. Prepend it to the prompt (Sonnet sees the text, not just the image)
+  //   2. Apply brand rules to it as a post-processing fallback
   const [r1, r2] = await Promise.all([
-    extractCodesFromImage(blob1, preLearn).catch(() => null),
-    extractCodesFromImage(blob2, preLearn).catch(() => null),
+    extractCodesFromImage(blob1, preLearn, tesseractText).catch(() => null),
+    extractCodesFromImage(blob2, preLearn, null).catch(() => null),
   ]);
 
   // ── CONSENSUS RESOLUTION ──────────────────────────────────
@@ -12066,8 +12117,57 @@ async function snapOcr() {
   const formatHint = learned?.lotFormat || preLearn?.lotFormat || null;
   showLotFormatHint(formatHint);
 
-  // Show region confirmation overlay for medium/low confidence
-  showRegionConfirmation(blob1, aiResult.localisedCrop || null, assignment, confidence, source, aiResult.raw);
+  // Display the result in the OCR review panel
+  renderOcrResult(assignment, confidence, source, aiResult.raw);
+}
+
+// ── populateStep2Fields ────────────────────────────────────────
+// Called by the early-return cascade paths (GS1 decode, brand rules on
+// tesseract text) to populate the Step 2 UI without going through Sonnet.
+// Replicates the field-population logic from the normal snapOcr flow.
+function populateStep2Fields(state) {
+  // Hide the analyzing spinner and clear the countdown timer
+  const analyzeEl = document.getElementById('ocr-analyzing');
+  if (analyzeEl) analyzeEl.style.display = 'none';
+  if (typeof snapOcr._clearCountdown === 'function') {
+    snapOcr._clearCountdown();
+    snapOcr._clearCountdown = null;
+  }
+
+  // Populate expiry field if found and not already filled by user
+  if (state.expiry) {
+    const expiryField = document.getElementById('field-expiry');
+    if (expiryField && !expiryField.value) {
+      expiryField.value = state.expiry;
+      expiryField.style.borderColor = 'rgba(52,211,153,0.4)';
+    }
+  }
+
+  showLotFormatHint(null);
+
+  // Display the result in the OCR review panel
+  const assignment = { lot: state.codeA || null, batch: state.codeB || null };
+  renderOcrResult(assignment, state.confidence || 'high', state.reconcileNote || state.locationHint || '', state.raw || '');
+}
+
+// ── extractExpiryFromText ──────────────────────────────────────
+// Pulls a best-before date from raw OCR text using common Norwegian
+// date formats (DD.MM.YY, DD/MM/YY, DD-MM-YY, YYMMDD, DDMMYY).
+// Used when the cascade returns early (GS1/brand rules) and we still
+// want to capture the expiry date from the inkjet code block.
+function extractExpiryFromText(text) {
+  if (!text) return null;
+  // Prefer formatted dates: DD.MM.YY or DD.MM.YYYY
+  const m1 = text.match(/(\d{2}[.\/\-]\d{2}[.\/\-]\d{2,4})/);
+  if (m1) return m1[1];
+  // 6-digit compact: DDMMYY or YYMMDD — only if plausible (month 01-12)
+  const m2 = text.match(/\b(\d{2})(\d{2})(\d{2})\b/);
+  if (m2) {
+    const [, a, b, c] = m2;
+    if (parseInt(b) >= 1 && parseInt(b) <= 12) return `${a}.${b}.${c}`; // DDMMYY
+    if (parseInt(a) >= 1 && parseInt(a) <= 12) return `${b}.${a}.${c}`; // MMDDYY
+  }
+  return null;
 }
 
 // ── MANUAL CORRECTION TRACKING ───────────────────────────────
@@ -12401,6 +12501,191 @@ function inferLotPattern(code) {
 function lotMatchesPattern(code, patternStr) {
   if (!patternStr || !patternStr.startsWith('^')) return false;
   try { return new RegExp(patternStr).test(code); } catch { return false; }
+}
+
+// ══════════════════════════════════════════════════════════════
+// CASCADE ARCHITECTURE — Step 2 lot code extraction
+// A: ZXing GS1-128 static decode  → instant, 0 network, perfect accuracy
+// B: Tesseract.js on-device OCR + brand rules → ~300ms, 0 network
+// C: Sonnet with tesseract text as context → ~1000ms, 1 API call
+//    Post-process: apply brand rules to Sonnet's raw text output
+// ══════════════════════════════════════════════════════════════
+
+// ── A: GS1-128 Static Decode ─────────────────────────────────
+async function tryGS1StaticDecode(blob) {
+  try {
+    if (typeof ZXing === 'undefined') return null;
+    const url = URL.createObjectURL(blob);
+    const img  = new Image();
+    img.src = url;
+    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; });
+    URL.revokeObjectURL(url);
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+    canvas.getContext('2d').drawImage(img, 0, 0);
+    const gs1Result = new ZXing.BrowserMultiFormatReader().decode(canvas);
+    if (!gs1Result) return null;
+    const parsed = parseGS1(gs1Result.getText());
+    if (parsed?.lot) {
+      console.log('[GS1-128] Lot code found via static decode:', parsed.lot);
+      return { lot: parsed.lot, expiry: parsed.expiry || null, source: 'GS1-128 AI(10)' };
+    }
+  } catch(e) { /* No barcode in image — normal */ }
+  return null;
+}
+
+// ── B: Brand Rules Engine ─────────────────────────────────────
+// Per-brand extraction rules applied to raw OCR text (tesseract output
+// and Sonnet's raw field). Each pattern specifies the text LABEL that
+// precedes the lot code in Norwegian/EU packaging inkjet stamps.
+//
+// Norwegian gable-top inkjet structure:
+//   "DD.MM.YY  OFTE HH:MM  GOD [code]  ETTER [LOT]"
+//   ETTER = the lot/batch traceability identifier
+
+const BRAND_LOT_RULES = {
+  // Norwegian dairy
+  tine:      { aliases: ['tine'],
+    strip: [/\d{2}[.\/\-]\d{2}[.\/\-]\d{2,4}/g, /OFTE\s+\d{1,2}:\d{2}/gi],
+    patterns: [
+      { regex: /ETTER\s+([A-Z0-9][A-Z0-9\-\.]{1,14})/i,        label: 'ETTER', confidence: 'high' },
+      { regex: /PARTI\s+([A-Z0-9][A-Z0-9\-\.]{1,14})/i,        label: 'PARTI', confidence: 'high' },
+      { regex: /L\.?\s*nr\.?\s+([A-Z0-9][A-Z0-9\-\.]{1,14})/i, label: 'L.nr',  confidence: 'medium' },
+    ] },
+  qmeieri:   { aliases: ['q-meieriene', 'q meieriene', 'q dairy', 'q-meieri'],
+    strip: [/\d{2}[.\/\-]\d{2}[.\/\-]\d{2,4}/g, /OFTE\s+\d{1,2}:\d{2}/gi],
+    patterns: [
+      { regex: /ETTER\s+([A-Z0-9][A-Z0-9\-\.]{1,14})/i, label: 'ETTER', confidence: 'high' },
+      { regex: /PARTI\s+([A-Z0-9][A-Z0-9\-\.]{1,14})/i, label: 'PARTI', confidence: 'high' },
+    ] },
+  synnove:   { aliases: ['synnøve', 'synnove'],
+    patterns: [
+      { regex: /PARTI\s+([A-Z0-9][A-Z0-9\-\.]{1,14})/i,        label: 'PARTI', confidence: 'high' },
+      { regex: /L\.?\s*nr\.?\s*([A-Z0-9][A-Z0-9\-\.]{1,14})/i, label: 'L.nr',  confidence: 'high' },
+    ] },
+  // Norwegian meat / poultry
+  gilde:     { aliases: ['gilde', 'nortura'],
+    patterns: [
+      { regex: /[Pp]arti\s+([A-Z0-9][A-Z0-9\-\.]{1,14})/,       label: 'Parti', confidence: 'high' },
+      { regex: /L\.?\s*nr\.?\s*([A-Z0-9][A-Z0-9\-\.]{1,14})/i,  label: 'L.nr',  confidence: 'high' },
+      { regex: /[Bb]atch\s*:?\s*([A-Z0-9][A-Z0-9\-\.]{1,14})/i, label: 'Batch', confidence: 'high' },
+    ] },
+  prior:     { aliases: ['prior'],
+    patterns: [
+      { regex: /[Pp]arti\s+([A-Z0-9][A-Z0-9\-\.]{1,14})/,      label: 'Parti', confidence: 'high' },
+      { regex: /L\.?\s*nr\.?\s*([A-Z0-9][A-Z0-9\-\.]{1,14})/i, label: 'L.nr',  confidence: 'high' },
+    ] },
+  nordfjord: { aliases: ['nordfjord'],
+    patterns: [{ regex: /[Pp]arti\s+([A-Z0-9][A-Z0-9\-\.]{1,14})/, label: 'Parti', confidence: 'high' }] },
+  // Norwegian spreads / condiments
+  kavli:     { aliases: ['kavli'],
+    patterns: [
+      { regex: /L\.?\s*nr\.?\s*([A-Z0-9][A-Z0-9\-\.]{1,14})/i, label: 'L.nr', confidence: 'high' },
+      { regex: /[Ll]ot\s*:?\s*([A-Z0-9][A-Z0-9\-\.]{1,14})/,   label: 'Lot',  confidence: 'high' },
+    ] },
+  stabburet: { aliases: ['stabburet'],
+    patterns: [
+      { regex: /[Pp]arti\s+([A-Z0-9][A-Z0-9\-\.]{1,14})/,      label: 'Parti', confidence: 'high' },
+      { regex: /L\.?\s*nr\.?\s*([A-Z0-9][A-Z0-9\-\.]{1,14})/i, label: 'L.nr',  confidence: 'high' },
+    ] },
+  mills:     { aliases: ['mills'],
+    patterns: [
+      { regex: /[Ll]ot\s*:?\s*([A-Z0-9][A-Z0-9\-\.]{1,14})/,  label: 'Lot',   confidence: 'high' },
+      { regex: /[Pp]arti\s+([A-Z0-9][A-Z0-9\-\.]{1,14})/,      label: 'Parti', confidence: 'high' },
+    ] },
+  // Norwegian seafood
+  leroy:     { aliases: ['lerøy', 'leroy', 'lerøy seafood', 'lerøy aurora'],
+    patterns: [
+      { regex: /[Ll]ot\s*:?\s*([A-Z0-9][A-Z0-9\-\.]{2,14})/,   label: 'Lot',   confidence: 'high' },
+      { regex: /[Bb]atch\s*:?\s*([A-Z0-9][A-Z0-9\-\.]{2,14})/, label: 'Batch', confidence: 'high' },
+      { regex: /PARTI\s+([A-Z0-9][A-Z0-9\-\.]{1,14})/i,        label: 'PARTI', confidence: 'high' },
+    ] },
+  // Frozen / bakery
+  grandiosa: { aliases: ['grandiosa'],
+    patterns: [
+      { regex: /[Ll]ot\s*:?\s*([A-Z0-9][A-Z0-9\-\.]{2,14})/, label: 'Lot',   confidence: 'high' },
+      { regex: /PARTI\s+([A-Z0-9][A-Z0-9\-\.]{1,14})/i,       label: 'PARTI', confidence: 'high' },
+    ] },
+  findus:    { aliases: ['findus'],
+    patterns: [{ regex: /[Ll]ot\s*:?\s*([A-Z0-9][A-Z0-9\-\.]{2,14})/, label: 'Lot', confidence: 'high' }] },
+  // US produce / grocery
+  dole:      { aliases: ['dole'],
+    patterns: [
+      { regex: /LOT\s*:?\s*([A-Z0-9][A-Z0-9\-\.]{2,16})/i,   label: 'LOT',   confidence: 'high' },
+      { regex: /BATCH\s*:?\s*([A-Z0-9][A-Z0-9\-\.]{2,16})/i, label: 'BATCH', confidence: 'high' },
+    ] },
+  driscolls: { aliases: ["driscoll's", 'driscolls', 'driscoll'],
+    patterns: [{ regex: /LOT\s*:?\s*([A-Z0-9][A-Z0-9\-\.]{2,16})/i, label: 'LOT', confidence: 'high' }] },
+};
+
+// Apply brand rules to raw OCR text. Returns { lot, confidence, source } or null.
+// Used on BOTH tesseract output AND Sonnet's raw text field as post-processing.
+function applyBrandRules(productName, rawText) {
+  if (!rawText || !productName) return null;
+  const nameLower = productName.toLowerCase();
+  let rule = null;
+  for (const [, r] of Object.entries(BRAND_LOT_RULES)) {
+    if (r.aliases.some(a => nameLower.includes(a))) { rule = r; break; }
+  }
+  if (!rule) return null;
+
+  let text = rawText;
+  for (const strip of (rule.strip || [])) text = text.replace(strip, ' ');
+
+  for (const { regex, label, confidence } of rule.patterns) {
+    const m = text.match(regex);
+    if (m?.[1]) {
+      const code = m[1].trim().replace(/[.\s]+$/, '');
+      if (code.length >= 2 && validateLotCode(code).valid) {
+        console.log(`[Brand Rule] ${label}: "${code}" (${confidence})`);
+        return { lot: code, confidence, source: `brand_rule:${label}` };
+      }
+    }
+  }
+  return null;
+}
+
+// ── Tesseract.js worker lifecycle ─────────────────────────────
+// Language data (~1.3MB eng) is cached by browser after first download.
+// Triggered in snapProduct() so it initializes during Step 1 review time.
+let _tesseractWorker  = null;
+let _tesseractReady   = false;
+let _tesseractLoading = false;
+
+async function initTesseract() {
+  if (_tesseractReady || _tesseractLoading || typeof Tesseract === 'undefined') return;
+  _tesseractLoading = true;
+  try {
+    _tesseractWorker = await Tesseract.createWorker('eng', 1, { logger: () => {} });
+    await _tesseractWorker.setParameters({
+      tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-./: ',
+      tessedit_pageseg_mode:   '11', // PSM_SPARSE_TEXT — best for scattered inkjet codes
+    });
+    _tesseractReady = true;
+    console.log('[Tesseract] Ready — on-device OCR active');
+  } catch(e) {
+    console.warn('[Tesseract] Init failed (Sonnet fallback will be used):', e.message);
+    _tesseractWorker = null; _tesseractReady = false;
+  } finally { _tesseractLoading = false; }
+}
+
+async function runTesseractOnImage(blob) {
+  if (!_tesseractWorker || !_tesseractReady) return null;
+  const url = URL.createObjectURL(blob);
+  try {
+    const { data: { text, confidence } } = await _tesseractWorker.recognize(url);
+    const raw = text?.trim() || null;
+    if (raw) console.log(`[Tesseract] conf=${confidence?.toFixed(0)}% text="${raw.slice(0,100)}"`);
+    return raw;
+  } catch(e) { return null; }
+  finally { URL.revokeObjectURL(url); }
+}
+
+async function destroyTesseract() {
+  if (!_tesseractWorker) return;
+  try { await _tesseractWorker.terminate(); } catch(e) {}
+  _tesseractWorker = null; _tesseractReady = false;
+  console.log('[Tesseract] Worker terminated');
 }
 
 // ── BRAND KNOWLEDGE BASE ──────────────────────────────────────
@@ -13364,7 +13649,7 @@ function getPackagingTip(productName) {
 // - Post-extraction validation against false-positive patterns
 // - EU/US "date as lot" detection (no explicit lot = use best-before/pack date)
 
-async function extractCodesFromImage(blob, learnedContext) {
+async function extractCodesFromImage(blob, learnedContext, tesseractText = null) {
   const _pipelineStart = Date.now();
   const _elapsed = () => Date.now() - _pipelineStart;
   // Hard 3.2s limit — if we exceed this, return immediately so users aren't left waiting.
@@ -13537,15 +13822,46 @@ async function extractCodesFromImage(blob, learnedContext) {
       : '';
     const pass1Prompt = cropNote ? `${cropNote}${coreInstructions}` : coreInstructions;
 
-    const pass1 = await callOcrApi(b64Primary, pass1Prompt, false); // Sonnet — capable
+    // If tesseract extracted text on-device, prepend it as high-quality context.
+    // This dramatically improves Sonnet's accuracy — it sees the text directly
+    // rather than having to read it from the image. Think of it as "reading ahead."
+    const enrichedPrompt = tesseractText
+      ? `On-device OCR extracted this text from the image:\n"${tesseractText.slice(0, 350)}"\n\nUse this text to identify the lot code. ${pass1Prompt}`
+      : pass1Prompt;
+
+    const pass1 = await callOcrApi(b64Primary, enrichedPrompt, false); // Sonnet — capable
     console.log(`[Pass 1] ${localisedCrop ? 'localised crop' : 'full image'}:`, pass1);
 
     // ── PASS 2: REMOVED for speed ─────────────────────────
-    // The adversarial sonnet pass (2-4s) has been replaced by the two-frame
-    // temporal consensus in snapOcr. If Pass 1 returns nothing, we surface
-    // the empty result immediately and let the user enter manually — faster
-    // and more honest than a 4-second wait that usually also finds nothing.
     const pass2 = { lot: null, batch: null, lot_confidence: 'low', lot_is_date: false, raw: '', anchor_before: null, anchor_after: null };
+
+    // ── BRAND RULES POST-PROCESS ─────────────────────────
+    // If Sonnet returned null for lot, apply brand rules to its raw text.
+    // This catches the case where Sonnet correctly read all the text but
+    // couldn't identify which code is the lot (e.g. TINE's ETTER M-123).
+    // Brand rules are deterministic and don't add any latency here.
+    if (!pass1.lot && pass1.raw) {
+      const productNameEl = document.getElementById('field-product-name');
+      const pName = productNameEl?.value?.trim() || '';
+      const brandFallback = applyBrandRules(pName, pass1.raw);
+      if (brandFallback?.lot) {
+        console.log('[Brand Rule Post-process] Found in Sonnet raw:', brandFallback);
+        pass1.lot = brandFallback.lot;
+        pass1.lot_confidence = brandFallback.confidence;
+      }
+    }
+
+    // Also try on tesseractText if Sonnet still returned nothing
+    if (!pass1.lot && tesseractText) {
+      const productNameEl = document.getElementById('field-product-name');
+      const pName = productNameEl?.value?.trim() || '';
+      const tessResult = applyBrandRules(pName, tesseractText);
+      if (tessResult?.lot) {
+        console.log('[Brand Rule on Tesseract] Rescued from tesseract text:', tessResult);
+        pass1.lot = tessResult.lot;
+        pass1.lot_confidence = tessResult.confidence;
+      }
+    }
 
     // ── RECONCILE ────────────────────────────────────────────
     const allLots    = [pass1.lot, pass2.lot].filter(Boolean);
