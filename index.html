@@ -6857,7 +6857,8 @@ function _obApplyText() {
   const nb = document.getElementById('ob-next-btn');
   nb.textContent = _obSlide === OB_TOTAL - 1 ? tx.letsGo : tx.next;
   document.getElementById('ob-back-btn').textContent = tx.back;
-  document.getElementById('ob-skip-btn').textContent = tx.skip;
+  const skipBtn = document.getElementById('ob-skip-btn');
+  if (skipBtn) skipBtn.textContent = tx.skip;
 }
 
 function _obUpdateSlide() {
@@ -16696,16 +16697,26 @@ async function mgrAddRecall() {
 
 
 async function mgrToggleRecall(id, active) {
-  await sb.from('recalls').update({ active }).eq('id', id);
-  loadMgrRecalls();
-  if (document.getElementById('settings-recall-list')) loadRecallsList();
+  try {
+    const { error } = await sb.from('recalls').update({ active }).eq('id', id);
+    if (error) throw error;
+    loadMgrRecalls();
+    if (document.getElementById('settings-recall-list')) loadRecallsList();
+  } catch(e) {
+    showToast('Could not update recall: ' + e.message, 'error', 4000);
+  }
 }
 
 async function mgrDeleteRecall(id) {
   if (!confirm('Permanently delete this recall? This cannot be undone.')) return;
-  await sb.from('recalls').delete().eq('id', id);
-  loadMgrRecalls();
-  if (document.getElementById('settings-recall-list')) loadRecallsList();
+  try {
+    const { error } = await sb.from('recalls').delete().eq('id', id);
+    if (error) throw error;
+    loadMgrRecalls();
+    if (document.getElementById('settings-recall-list')) loadRecallsList();
+  } catch(e) {
+    showToast('Could not delete recall: ' + e.message, 'error', 4000);
+  }
 }
 
 function mgrEditRecall(id) {
