@@ -11969,7 +11969,7 @@ async function snapOcr() {
   const barcodeNum  = document.getElementById('field-barcode').value.trim();
   const prewarmAge  = Date.now() - _prewarmTs;
 
-  const frame2Promise = new Promise(r => setTimeout(r, 250)).then(() => {
+  const frame2Promise = new Promise(r => setTimeout(r, 150)).then(() => {
     const c2 = document.createElement('canvas');
     c2.width = vid.videoWidth; c2.height = vid.videoHeight;
     c2.getContext('2d').drawImage(vid, 0, 0);
@@ -13471,7 +13471,7 @@ async function enhanceLotCodeRegion(blob, targetWidth = 1600) {
         // If canvas manipulation fails (e.g. cross-origin), return resized original
       }
 
-      canvas.toBlob(resolve, 'image/jpeg', 0.92);
+      canvas.toBlob(resolve, 'image/jpeg', 0.88);
     };
     img.onerror = () => resolve(blob);
     img.src = url;
@@ -13761,10 +13761,10 @@ async function extractCodesFromImage(blob, learnedContext, tesseractText = null)
     // stored photos. productBlob / barcodeBlob saved to Supabase are untouched.
     let primaryBlob;
     if (localisedCrop) {
-      const rawCrop = await cropBlob(blob, localisedCrop.yStart, localisedCrop.yEnd, 1600);
-      primaryBlob = await enhanceLotCodeRegion(rawCrop, 1600);
+      const rawCrop = await cropBlob(blob, localisedCrop.yStart, localisedCrop.yEnd, 960);
+      primaryBlob = await enhanceLotCodeRegion(rawCrop, 960);
     } else {
-      primaryBlob = await enhanceLotCodeRegion(blob, 1600);
+      primaryBlob = await enhanceLotCodeRegion(blob, 960);
     }
     const b64Primary = await blobToBase64(primaryBlob);
 
@@ -13845,24 +13845,15 @@ async function extractCodesFromImage(blob, learnedContext, tesseractText = null)
       ? 'US grocery context. Lot code is the TLC (Traceability Lot Code) under FSMA 204 — look for LOT, L#, BATCH, PACK DATE, Julian date code. Ignore UPC/EAN barcodes, zip codes, plant numbers (EST. ####).'
       : [
           'Norwegian/EU grocery context.',
-          'The lot code ("partinummer") is the PRODUCTION BATCH IDENTIFIER for EU 178/2002 traceability.',
+          'The lot code ("partinummer") is the production batch identifier — NOT a best-before date or timestamp.',
           '',
-          'On gable-top cartons (TINE, Fjordland, Bama, etc.) the inkjet code block on the TOP FOLD or BASE has this structure:',
-          '  DD.MM.YY or YYMMDD → BEST-BEFORE DATE → put in expiry field, this is NOT the lot code',
-          '  OFTE HH:MM → PACKAGING TIME (the time the product was filled) → ignore entirely',
-          '  OFTEST HH:MM → same as OFTE → packaging time, ignore',
-          '  GOD [code] → QUALITY CODE — this might be the lot code IF no ETTER/PARTI code exists',
-          '  ETTER [code] → THIS IS THE LOT CODE (traceability batch reference) — return [code] as the lot',
-          '  PARTI [code] → THIS IS THE LOT CODE — return [code] as the lot',
-          '  BATCH [code] → THIS IS THE LOT CODE — return [code] as the lot',
-          '  L.nr [code] or L [code] → THIS IS THE LOT CODE — return [code] as the lot',
+          'Return the code following these label keywords as the lot:',
+          '  ETTER [code] → lot code   |   PARTI [code] → lot code',
+          '  BATCH [code] → lot code   |   L.nr [code] or L [code] → lot code',
+          '  GOD [code] → lot code only if no ETTER/PARTI/BATCH/L.nr keyword exists',
           '',
-          'Examples from real TINE gable-top blocks:',
-          '  "14.05.26 OFTE 13:23 GOD 3F6A1 ETTER M-123" → lot = "M-123", expiry = "14.05.26"',
-          '  "260514 L.nr 2305-A" → lot = "2305-A", expiry = "26.05.14"',
-          '',
-          'For other packaging: look for text near "Holdbar til", "Best før", "L.", "Parti", "LOT", "Batch".',
-          'Always ignore "NO XXXX EF" (EU plant approval number), plain dates, and time stamps.',
+          'IGNORE: dates (BEST FØR / Holdbar til / DD.MM.YY), times (OFTE / OFTEST HH:MM), EU plant codes (NO XXXX EF), EAN barcodes.',
+          'If none of the above keywords appear, return the most prominent alphanumeric production code visible.',
         ].join('\n');
 
     const coreInstructions =
