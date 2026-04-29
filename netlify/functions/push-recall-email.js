@@ -248,7 +248,7 @@ function buildRecallEmailHtml({ org, recallData, exposure, isDrill, isNO, dashbo
   const sourceLabel = {
     manufacturer_push: 'Manufacturer Push',
     fda:              'FDA Recall',
-    rasff:            'RASFF Alert',
+    rasff:            'Mattilsynet Alert',
     mattilsynet:      'Mattilsynet',
     manual:           'Manual Entry',
   }[recallData.source] || 'Recall Alert';
