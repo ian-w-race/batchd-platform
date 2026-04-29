@@ -7541,29 +7541,43 @@ async function snapProduct() {
   stopAutoCapture();
   const vid = document.getElementById('product-video');
   if (!vid.srcObject || vid.paused) { await startProductCamera(); return; }
+
+  // Draw BOTH canvases synchronously while the video frame is still live.
+  // 1. Full-res display canvas — used for the thumbnail shown to the user.
   const canvas = document.createElement('canvas');
   canvas.width = vid.videoWidth; canvas.height = vid.videoHeight;
   canvas.getContext('2d').drawImage(vid, 0, 0);
 
-  canvas.toBlob(async (blob) => {
-    productBlob = blob;
-    const url = URL.createObjectURL(blob);
-    const img = document.getElementById('product-captured');
-    img.src = url;
-    img.style.display = 'block';
-    vid.style.display = 'none';
-    document.getElementById('product-frame').style.display = 'none';
-    document.getElementById('btn-snap-product').style.display = 'none';
-    document.getElementById('btn-retake-product').style.display = 'flex';
+  // 2. Small API canvas — drawn directly from the video element (no decode round-trip).
+  //    480px is sufficient for Haiku to read product names; halves the payload vs 600px.
+  const apiW = Math.min(480, vid.videoWidth);
+  const apiH = Math.round(vid.videoHeight * (apiW / vid.videoWidth));
+  const apiCanvas = document.createElement('canvas');
+  apiCanvas.width = apiW; apiCanvas.height = apiH;
+  apiCanvas.getContext('2d').drawImage(vid, 0, 0, apiW, apiH);
 
-    document.getElementById('product-analyzing').style.display = 'flex';
-    // Resize to 600px max before API call — full resolution is wasteful for
-    // product identification and adds ~1-2s of transfer + processing time.
-    const smallBlob = await preprocessImage(blob, 600);
-    const name = await identifyProduct(smallBlob);
-    document.getElementById('product-analyzing').style.display = 'none';
-    setProductNameFilled(name);
-  }, 'image/jpeg', 0.85);
+  // Encode both in parallel — display blob at 0.82, API blob at 0.80
+  // (product ID needs text legibility, not photographic quality)
+  const [displayBlob, apiBlob] = await Promise.all([
+    new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.82)),
+    new Promise(r => apiCanvas.toBlob(r, 'image/jpeg', 0.80)),
+  ]);
+
+  productBlob = displayBlob;
+  const url = URL.createObjectURL(displayBlob);
+  const img = document.getElementById('product-captured');
+  img.src = url;
+  img.style.display = 'block';
+  vid.style.display = 'none';
+  document.getElementById('product-frame').style.display = 'none';
+  document.getElementById('btn-snap-product').style.display = 'none';
+  document.getElementById('btn-retake-product').style.display = 'flex';
+
+  document.getElementById('product-analyzing').style.display = 'flex';
+  // apiBlob is already correctly sized — preprocessImage not needed
+  const name = await identifyProduct(apiBlob);
+  document.getElementById('product-analyzing').style.display = 'none';
+  setProductNameFilled(name);
 }
 
 function retakeProduct() {
