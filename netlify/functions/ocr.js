@@ -64,17 +64,11 @@ exports.handler = async (event) => {
       case 'identify_product': {
         // Haiku for speed (~200ms vs ~1000ms for Sonnet).
         // Staff review and correct the name if needed — the lot code matters more for traceability.
-        // Improved prompt forces character-level reading not pattern-matching.
         model = MODEL_HAIKU;
         maxTokens = 80;
         prompt = [
-          'Read the exact product name as printed on this food packaging label.',
-          'Do NOT guess or approximate — read the actual text on the label.',
-          'Distinguish carefully between similar variants: pay close attention to words like',
-          '"Helmelk", "Mellommelk", "Lettmelk", "Skummet", "Lett", "Original", "Økologisk",',
-          '"Extra", "Light", fat percentages, and size/weight.',
-          'Return ONLY: Brand + exact product name + size (e.g. "Gilde Bacon 150g" or "Kavli Rekesalat 200g").',
-          'No explanations. Just the product name. If the label is unreadable, return "Unknown Product".',
+          'Read the exact product name from this food packaging label. Include brand, product name, and variant — distinguish carefully between similar types: Helmelk/Mellommelk/Lettmelk/Skummet, Lett/Original/Økologisk/Extra, fat percentages, and weight/size.',
+          'Return ONLY: "Brand ProductName Size" (e.g. "Gilde Bacon 150g"). If unreadable: "Unknown Product". No explanations.',
         ].join('\n');
         break;
       }
