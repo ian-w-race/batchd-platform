@@ -15626,11 +15626,11 @@ function renderMgrStatTiles() {
   const stores   = [...new Set(_mgrAllScans.map(r => r.store_name).filter(Boolean))];
   const staff    = [...new Set(_mgrAllScans.map(r => r.scanned_by).filter(Boolean))];
   const onShelf  = _mgrAllScans.filter(r => !r.removed_from_shelf_at).length;
-  // Exclude ALL automated feed sources — only count manually entered / manufacturer-pushed recalls
-  // that are operationally relevant to this manager.
-  // 'fda', 'rasff', 'mattilsynet' = bulk-imported reference data, not operational recalls.
-  const FEED_SOURCES = ['fda','rasff','FDA','RASFF','mattilsynet','Mattilsynet','feed','Feed'];
-  const active   = _mgrAllRecalls.filter(r => r.active && !FEED_SOURCES.includes(r.source)).length;
+  // Only count recalls explicitly created by users (manual) or pushed by manufacturers.
+  // Inclusive filter is safer than an exclusion list — null sources and future feed
+  // sources won't accidentally inflate the count.
+  const OPERATIONAL_SOURCES = ['manual', 'manufacturer_push'];
+  const active   = _mgrAllRecalls.filter(r => r.active && OPERATIONAL_SOURCES.includes(r.source)).length;
   const today    = new Date().toISOString().slice(0,10);
   const todayScans = _mgrAllScans.filter(r => r.created_at?.slice(0,10) === today).length;
   const unresolved = _mgrAllScans.filter(r => r.recall_resolved === false && !r.removed_from_shelf_at).length;
@@ -15679,7 +15679,9 @@ function renderMgrStores() {
   }
   // Check recall matches per store
   // Exclude FDA/RASFF bulk data — only show operationally relevant recalls
-  const activeRecalls = _mgrAllRecalls.filter(r => r.active && !['fda','rasff','FDA','RASFF'].includes(r.source));
+  // Inclusive filter — only manual and manufacturer_push recalls are operationally relevant.
+  // Excludes FDA/RASFF/Mattilsynet feed data and any records with source=null.
+  const activeRecalls = _mgrAllRecalls.filter(r => r.active && ['manual','manufacturer_push'].includes(r.source));
   for (const r of _mgrAllScans) {
     const storeKey = r.store_id || ('name:' + (r.store_name || t('store.noStore')));
     const hit = activeRecalls.some(rec =>
