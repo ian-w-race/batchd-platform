@@ -9453,11 +9453,19 @@ async function deleteRecall(id) {
 }
 
 async function addManualRecall() {
-  const productName = document.getElementById('recall-product-name').value.trim();
-  const lot = document.getElementById('recall-lot').value.trim();
-  const batch = document.getElementById('recall-batch').value.trim();
-  const desc = document.getElementById('recall-desc').value.trim();
-  const msgEl = document.getElementById('add-recall-msg');
+  // These form elements no longer exist in the current HTML.
+  // This function is retained for reference but is effectively dead code.
+  const productNameEl = document.getElementById('recall-product-name');
+  const lotEl         = document.getElementById('recall-lot');
+  const batchEl       = document.getElementById('recall-batch');
+  const descEl        = document.getElementById('recall-desc');
+  const msgEl         = document.getElementById('add-recall-msg');
+  if (!productNameEl || !msgEl) return; // elements not present — safe exit
+
+  const productName = productNameEl.value.trim();
+  const lot   = lotEl?.value.trim()   || '';
+  const batch = batchEl?.value.trim() || '';
+  const desc  = descEl?.value.trim()  || '';
 
   if (!productName) { msgEl.style.color = 'var(--danger)'; msgEl.textContent = '⚠ Product name is required.'; return; }
 
@@ -9479,11 +9487,11 @@ async function addManualRecall() {
       if (r?.[0]?.id) sweepScansForRecall(r[0].id);
     })();
     msgEl.style.color = 'var(--accent)'; msgEl.textContent = '✓ Recall added';
-    document.getElementById('recall-product-name').value = '';
-    document.getElementById('recall-lot').value = '';
-    document.getElementById('recall-batch').value = '';
-    document.getElementById('recall-desc').value = '';
-    setTimeout(() => msgEl.textContent = '', 2500);
+    if (productNameEl) productNameEl.value = '';
+    if (lotEl)         lotEl.value         = '';
+    if (batchEl)       batchEl.value       = '';
+    if (descEl)        descEl.value        = '';
+    setTimeout(() => { if (msgEl) msgEl.textContent = ''; }, 2500);
     loadRecallsList();
   } catch(e) {
     msgEl.style.color = 'var(--danger)'; msgEl.textContent = '✗ ' + e.message;
@@ -12389,19 +12397,23 @@ function swapLotBatch() {
     ? { lot: ocrState.codeA, batch: ocrState.codeB }
     : { lot: ocrState.codeB, batch: ocrState.codeA };
 
-  document.getElementById('ocr-lot-display').textContent = assignment.lot || 'Not found';
-  // batch display removed
-  document.getElementById('field-lot').value = assignment.lot || '';
-  // field-batch removed from UI
+  const lotDisplay = document.getElementById('ocr-lot-display');
+  if (lotDisplay) lotDisplay.textContent = assignment.lot || 'Not found';
+  const lotField = document.getElementById('field-lot');
+  if (lotField) lotField.value = assignment.lot || '';
 
   const btn = document.getElementById('btn-swap');
-  btn.classList.toggle('swapped', ocrState.swapped);
-  btn.textContent = ocrState.swapped ? '⇄ Swapped — undo?' : '⇄ Swap Lot & Batch';
+  if (btn) {
+    btn.classList.toggle('swapped', ocrState.swapped);
+    btn.textContent = ocrState.swapped ? '⇄ Swapped — undo?' : '⇄ Swap Lot & Batch';
+  }
 
   const hint = document.getElementById('swap-hint');
-  hint.textContent = ocrState.swapped
-    ? 'Swapped — this correction will be saved as a learned pattern'
-    : ocrState.source;
+  if (hint) {
+    hint.textContent = ocrState.swapped
+      ? 'Swapped — this correction will be saved as a learned pattern'
+      : ocrState.source;
+  }
 }
 
 // ── HEURISTIC SCORER ─────────────────────────────────────────
@@ -17716,26 +17728,33 @@ function _resetRecallStep2b(r) {
 }
 
 function _resetRecallStep4(r) {
+  // recall-step-4 was renamed to recall-step-4b in an HTML restructure.
+  // This function is kept for compatibility but the elements no longer exist.
+  // All accesses are guarded — if the elements are absent this is a no-op.
   const flagged = r.manager_escalated === true;
   const doneLabel = document.getElementById('recall-step-4-done');
-  const body = document.getElementById('recall-step-4-body');
-  const doneBody = document.getElementById('recall-step-4-done-body');
-  const num = document.getElementById('recall-step-4-num');
-  const step = document.getElementById('recall-step-4');
+  const body      = document.getElementById('recall-step-4-body');
+  const doneBody  = document.getElementById('recall-step-4-done-body');
+  const num       = document.getElementById('recall-step-4-num');
+  const step      = document.getElementById('recall-step-4');
+
+  if (!step) return; // Step 4 elements not present in current HTML — safe exit
 
   if (flagged) {
-    doneLabel.style.display = 'inline';
-    body.style.display = 'none';
-    doneBody.style.display = 'block';
+    if (doneLabel) doneLabel.style.display = 'inline';
+    if (body)      body.style.display      = 'none';
+    if (doneBody)  doneBody.style.display  = 'block';
     const when = r.manager_escalated_at ? ' · ' + fmtRegionDate(r.manager_escalated_at, true) : '';
-    const step4Text = doneBody.querySelector('div');
-    if (step4Text) step4Text.textContent = (currentLang==='no'?'Flagget for ledergjennomgang':'Flagged for manager review') + when;
+    if (doneBody) {
+      const step4Text = doneBody.querySelector('div');
+      if (step4Text) step4Text.textContent = (currentLang==='no'?'Flagget for ledergjennomgang':'Flagged for manager review') + when;
+    }
     step.classList.add('step-done');
     if (num) { num.style.background = 'rgba(52,211,153,0.2)'; num.style.color = 'var(--accent)'; }
   } else {
-    doneLabel.style.display = 'none';
-    body.style.display = 'block';
-    doneBody.style.display = 'none';
+    if (doneLabel) doneLabel.style.display = 'none';
+    if (body)      body.style.display      = 'block';
+    if (doneBody)  doneBody.style.display  = 'none';
     step.classList.remove('step-done');
     if (num) { num.style.background = ''; num.style.color = ''; }
   }
