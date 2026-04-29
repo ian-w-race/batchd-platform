@@ -8841,7 +8841,7 @@ let recallSource = 'both'; // default until loaded from DB
 const SOURCE_DESCS = {
   fda:    'Pulls active food recalls from the US FDA enforcement database. Useful for imported American products.',
   rasff:  'Pulls alerts from Mattilsynet (Norwegian Food Safety Authority) and manual recall records — the most complete combination for Norwegian grocery stores.',
-  both:   'Pulls from all three sources: FDA (USA), RASFF (EU/EEA), and Mattilsynet (Norway). Maximum coverage.',
+  both:   'Pulls from both sources: FDA (USA) and Mattilsynet (Norway/EU). Maximum coverage.',
   manual: 'Only recalls you enter manually below. No automatic feed.'
 };
 
@@ -8935,7 +8935,9 @@ async function runAutoFetch() {
     promises.push(fetchFDARecalls().catch(e => console.warn('FDA fetch error:', e)));
   }
   if (recallSource === 'rasff' || recallSource === 'both') {
-    promises.push(fetchRASFFRecalls().catch(e => console.warn('RASFF fetch error:', e)));
+    // 'rasff' key in user_settings means Norwegian/EU source = Mattilsynet only.
+    // RASFF has no reliable public API — fetchRASFFRecalls() was always failing silently.
+    // fetchMattilsynetRecalls() covers Norway via Mattilsynet's public RSS feed.
     promises.push(fetchMattilsynetRecalls().catch(e => console.warn('Mattilsynet fetch error:', e)));
   }
   await Promise.allSettled(promises);
@@ -9338,7 +9340,7 @@ function renderRecallSourcePills() {
   const srcColors = {
     all:        { color:'var(--muted)',   bg:'rgba(106,175,158,0.1)',  label: currentLang==='no'?'Alle':'All' },
     fda:        { color:'var(--info)',    bg:'rgba(56,189,248,0.1)',   label:'FDA' },
-    rasff:      { color:'var(--warn)',    bg:'rgba(245,166,35,0.1)',   label:'RASFF' },
+    rasff:      { color:'var(--accent)', bg:'rgba(52,211,153,0.1)',   label:'Mattilsynet' },
     mattilsynet:{ color:'var(--accent)',  bg:'rgba(52,211,153,0.1)',   label:'Mattilsynet' },
     manufacturer_push:{ color:'var(--info)', bg:'rgba(56,189,248,0.1)', label: currentLang==='no'?'Produsent':'Manufacturer' },
     manual:     { color:'var(--muted)',   bg:'rgba(106,175,158,0.08)', label: currentLang==='no'?'Manuell':'Manual' },
@@ -9512,13 +9514,8 @@ async function fetchExternalRecalls() {
       }
     }
     if (recallSource === 'rasff' || recallSource === 'both') {
-      try {
-        const n = await fetchRASFFRecalls();
-        results.push(`RASFF: +${n}`);
-      } catch(e) {
-        results.push(`RASFF: ✗ ${e.message}`);
-        console.error('RASFF fetch failed:', e);
-      }
+      // 'rasff' = Norwegian/EU source. RASFF has no reliable public API.
+      // Mattilsynet's RSS feed covers Norway and EU-relevant alerts.
       try {
         const n = await fetchMattilsynetRecalls();
         results.push(`Mattilsynet: +${n}`);
@@ -9567,6 +9564,12 @@ async function fetchFDARecalls() {
   return added;
 }
 
+// ── DEPRECATED: fetchRASFFRecalls ────────────────────────────
+// RASFF has no reliable public API — this function has never succeeded.
+// It was calling the Netlify recall-feeds proxy which only implements
+// FDA and Mattilsynet. fetchMattilsynetRecalls() covers Norwegian/EU
+// food safety alerts via Mattilsynet's public RSS feed instead.
+// Kept here for reference; nothing calls this function any more.
 async function fetchRASFFRecalls() {
   const resp = await fetch('/.netlify/functions/recall-feeds?source=rasff');
   if (!resp.ok) throw new Error('RASFF proxy error ' + resp.status);
@@ -17524,7 +17527,7 @@ function openRecallActionSheet(scanId) {
     const rec = matchedR?.recall;
     if (rec) {
       const src = (rec.source || 'manual').toUpperCase();
-      const srcLabel = src === 'FDA' ? 'FDA Recall' : src === 'RASFF' ? 'EU RASFF Alert' : src === 'MATTILSYNET' ? 'Mattilsynet' : src === 'MANUFACTURER_PUSH' ? 'Manufacturer Alert' : 'Manual Recall';
+      const srcLabel = src === 'FDA' ? 'FDA Recall' : src === 'RASFF' ? 'Mattilsynet' : src === 'MATTILSYNET' ? 'Mattilsynet' : src === 'MANUFACTURER_PUSH' ? 'Manufacturer Alert' : 'Manual Recall';
       if (srcEl) srcEl.textContent = srcLabel + (rec.lot_number ? ' · Lot: ' + rec.lot_number : '');
       if (reasonEl2) reasonEl2.textContent = rec.reason_for_recall || rec.reason || rec.description?.split('[')[0]?.trim() || '';
       // Description may contain the reason — show remaining detail
