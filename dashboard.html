@@ -2009,10 +2009,13 @@ function handleDeepLink() {
   if (highlight) _deepLinkHighlight = highlight;
   if (lot)       _deepLinkHighlight = lot;
   const target = (panel && panel !== 'overview') ? panel : 'overview';
-  setTimeout(() => showPanel(target), 200);
   if (params.toString()) {
     window.history.replaceState({}, '', window.location.pathname);
   }
+  // Use requestAnimationFrame to ensure DOM is painted before panel switch,
+  // but don't delay — the 200ms window was long enough for other async work
+  // to accidentally override the target panel.
+  requestAnimationFrame(() => showPanel(target));
 }
 
 async function renderOverview() {

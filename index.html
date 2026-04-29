@@ -4594,7 +4594,7 @@
       <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:13px;color:var(--accent);">Corporate Dashboard</div>
       <div style="font-size:11px;color:var(--muted);margin-top:2px;">Access recalls, compliance, stores and staff management</div>
     </div>
-    <a href="https://app.batchdapp.com/dashboard.html" style="font-family:'DM Mono',monospace;font-size:11px;font-weight:700;padding:8px 14px;border-radius:8px;background:var(--accent);color:#052e16;text-decoration:none;white-space:nowrap;">Open dashboard →</a>
+    <button onclick="window.open('https://app.batchdapp.com/dashboard.html','_blank')" style="font-family:'DM Mono',monospace;font-size:11px;font-weight:700;padding:8px 14px;border-radius:8px;background:var(--accent);color:#052e16;border:none;cursor:pointer;white-space:nowrap;">Open dashboard →</button>
   </div>
 
 </div>
@@ -5281,10 +5281,10 @@
     <div style="display:flex;gap:10px;flex-wrap:wrap;">
       <button class="btn btn-primary" onclick="goToRecallsFromLogin()" style="flex:1;justify-content:center;background:var(--danger);border-color:var(--danger);">⚠ Review affected scans</button>
       <button class="btn btn-ghost" onclick="dismissLoginRecall()" style="flex:1;justify-content:center;">Dismiss</button>
-      <a href="https://app.batchdapp.com/dashboard.html?panel=recalls" class="btn btn-ghost" style="flex:1;justify-content:center;text-decoration:none;font-size:12px;display:flex;align-items:center;gap:5px;">
+      <button class="btn btn-ghost" onclick="window.open('https://app.batchdapp.com/dashboard.html?panel=recalls','_blank')" style="flex:1;justify-content:center;font-size:12px;display:flex;align-items:center;gap:5px;">
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
         View on dashboard
-      </a>
+      </button>
     </div>
   </div>
 </div>
@@ -15636,14 +15636,13 @@ function renderMgrStatTiles() {
   const stores   = [...new Set(_mgrAllScans.map(r => r.store_name).filter(Boolean))];
   const staff    = [...new Set(_mgrAllScans.map(r => r.scanned_by).filter(Boolean))];
   const onShelf  = _mgrAllScans.filter(r => !r.removed_from_shelf_at).length;
-  // Only count recalls explicitly created by users (manual) or pushed by manufacturers.
-  // Inclusive filter is safer than an exclusion list — null sources and future feed
-  // sources won't accidentally inflate the count.
-  const OPERATIONAL_SOURCES = ['manual', 'manufacturer_push'];
-  const active   = _mgrAllRecalls.filter(r => r.active && OPERATIONAL_SOURCES.includes(r.source)).length;
-  const today    = new Date().toISOString().slice(0,10);
-  const todayScans = _mgrAllScans.filter(r => r.created_at?.slice(0,10) === today).length;
+  // Active recalls count: use matched scans not yet resolved. External recalls (Mattilsynet,
+  // FDA) have no organisation_id so they're excluded from _mgrAllRecalls — counting matched
+  // scans is the right signal for "products on my shelves affected by a recall."
   const unresolved = _mgrAllScans.filter(r => r.recall_resolved === false && !r.removed_from_shelf_at).length;
+  const active     = unresolved;
+  const today      = new Date().toISOString().slice(0,10);
+  const todayScans = _mgrAllScans.filter(r => r.created_at?.slice(0,10) === today).length;
   const escalated  = _mgrAllScans.filter(r => r.manager_escalated === true && !r.recall_resolved).length;
 
   el.innerHTML = [
