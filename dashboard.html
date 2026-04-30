@@ -4502,7 +4502,9 @@ function renderComplianceDashboard(el) {
   if (d.scans.length === 0)                                              gaps.push({ cat:'Record keeping',    msg:'No scan records — open the scanning app and start scanning products', link:"showPanel('traceability')" });
   else if (d.lotScans/Math.max(d.scans.length,1) < 0.7)                 gaps.push({ cat:'Record keeping',    msg:`Lot code coverage is ${Math.round(d.lotScans/Math.max(d.scans.length,1)*100)}% — target 100% to meet ${isUS?'FSMA 204':'EU 178/2002'} requirements`, link:null });
   if (d.confirmedPartners === 0)                                         gaps.push({ cat:'Traceability',       msg:'No manufacturer partners connected — one-step-back traceability is incomplete', link:"showPanel('partners')" });
-  if (d.supplierScans === 0 && d.scans.length > 0)                      gaps.push({ cat:'Traceability',       msg:'Supplier names not recorded on any scans — ask staff to enter supplier during scanning', link:null });
+  if (d.supplierScans === 0 && d.scans.length > 0)                      gaps.push({ cat:'Traceability',       msg:`Supplier names not recorded on any scans — ask staff to enter supplier during scanning`, link:null });
+  if (isUS && (d.tlcSourceScans||0) === 0 && d.scans.length > 0)        gaps.push({ cat:'Traceability',       msg:`TLC source not recorded on any scans — required KDE under FSMA 204 §1.1330`, link:null });
+  if (isUS && (d.refDocScans||0) === 0 && d.scans.length > 0)           gaps.push({ cat:'Traceability',       msg:`Reference document not recorded on any scans — required KDE under FSMA 204 §1.1330`, link:null });
   if (!d.drillInYear)                                                    gaps.push({ cat:'Recall readiness',   msg:'No mock recall drill in the last 12 months — run one now to test your response chain', link:"showPanel('recalls')" });
   if (!d.coordinator)                                                      gaps.push({ cat:'Recall readiness',   msg:`No recall coordinator assigned — required by ${isUS?'FDA 21 CFR 7.49':'Mattilsynet guidance'}`, link:"showPanel('settings')" });
   if (d.acks.length > 0 && d.acksProgressed === 0)                       gaps.push({ cat:'Recall readiness',   msg:'Recalls received but none acknowledged — open the Recalls panel and progress your response', link:"showPanel('recalls')" });
@@ -4514,7 +4516,9 @@ function renderComplianceDashboard(el) {
       stats:`${d.scans.length} records · ${Math.round(d.lotScans/Math.max(d.scans.length,1)*100)}% lot code coverage`,
       step:1 },
     { label:'Traceability chain', score:sc.traceScore,     icon:'🔗', reg:isUS?'FSMA 204 KDEs / CTEs':'EU 178/2002 Art. 18',
-      stats:`${d.confirmedPartners} manufacturer${d.confirmedPartners!==1?'s':''} · ${Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)}% supplier coverage`,
+      stats: isUS
+        ? `${d.confirmedPartners} partner${d.confirmedPartners!==1?'s':''} · ${Math.round((d.tlcSourceScans||0)/Math.max(d.scans.length,1)*100)}% TLC source · ${Math.round((d.refDocScans||0)/Math.max(d.scans.length,1)*100)}% ref doc`
+        : `${d.confirmedPartners} manufacturer${d.confirmedPartners!==1?'s':''} · ${Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)}% supplier coverage`,
       step:2 },
     { label:'Recall readiness',   score:sc.recallScore,    icon:'🚨', reg:isUS?'FDA 21 CFR · 24h RFR notification':'Mattilsynet §16 · Immediate notification',
       stats:`${d.drills.length} drill${d.drills.length!==1?'s':''} · ${d.acksConfirmed} full response${d.acksConfirmed!==1?'s':''} completed`,
@@ -4609,9 +4613,13 @@ function renderComplianceDashboard(el) {
             </div>
             <div style="padding:0 16px;">
               ${complianceCheck(d.confirmedPartners > 0, 'Manufacturer partners connected', d.confirmedPartners > 0 ? d.confirmedPartners+' confirmed partner'+( d.confirmedPartners!==1?'s':'') : 'No partners — one-step-back incomplete', 'Go to Manufacturer Partners')}
-              ${complianceCheck(d.supplierScans > 0, 'Supplier name documented (one-step back)', d.supplierScans > 0 ? Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)+'% of scans include supplier' : 'No supplier data on scans', 'Staff should enter supplier during scanning')}
-              ${complianceCheck(d.supplierScans/Math.max(d.scans.length,1) > 0.5, 'Traceability coverage >50%', Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)+'% of records have supplier data', 'Target 100% for all received goods')}
-              ${complianceCheck(d.confirmedPartners > 0 && d.supplierScans > 0, 'Full one-step-back chain established', d.confirmedPartners > 0 && d.supplierScans > 0 ? 'Both manufacturer connections and supplier records present' : 'Requires manufacturer connections + supplier records', null)}
+              ${complianceCheck(d.supplierScans > 0, isUS ? 'Supplier / previous source documented' : 'Supplier name documented (one-step back)', d.supplierScans > 0 ? Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)+'% of scans include supplier' : 'No supplier data on scans', 'Staff should enter supplier during scanning')}
+              ${isUS
+                ? complianceCheck((d.tlcSourceScans||0) > 0, 'TLC source documented (FSMA 204 KDE)', (d.tlcSourceScans||0) > 0 ? Math.round((d.tlcSourceScans||0)/Math.max(d.scans.length,1)*100)+'% of scans include TLC source' : 'No TLC source on any scans — required KDE', 'Enter TLC source (lot assigning document) during scanning')
+                : complianceCheck(d.supplierScans/Math.max(d.scans.length,1) > 0.5, 'Traceability coverage >50%', Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)+'% of records have supplier data', 'Target 100% for all received goods')}
+              ${isUS
+                ? complianceCheck((d.refDocScans||0) > 0, 'Reference document recorded (FSMA 204 KDE)', (d.refDocScans||0) > 0 ? Math.round((d.refDocScans||0)/Math.max(d.scans.length,1)*100)+'% of scans include reference document' : 'No reference documents on any scans — required KDE', 'Enter PO/invoice number during scanning')
+                : complianceCheck(d.confirmedPartners > 0 && d.supplierScans > 0, 'Full one-step-back chain established', d.confirmedPartners > 0 && d.supplierScans > 0 ? 'Both manufacturer connections and supplier records present' : 'Requires manufacturer connections + supplier records', null)}
             </div>
           </div>
         </div>
@@ -4777,7 +4785,14 @@ async function loadComplianceData(el) {
   const isUS = _orgRegion === 'us';
 
   const [scansRes, storesRes, acksRes, drillsRes, partnersRes, orgRes] = await Promise.all([
-    sb.from('scans').select('lot_number, supplier_name, is_ftl, created_at, store_id, store_name').eq('organisation_id', _orgId),
+    // 365-day lookback + cap: prevents unbounded query on large orgs.
+    // Columns include FSMA 204 KDEs (tlc_source, reference_document) for US scoring.
+    sb.from('scans')
+      .select('lot_number, supplier_name, is_ftl, tlc_source, reference_document, created_at, store_id, store_name')
+      .eq('organisation_id', _orgId)
+      .gte('created_at', days365)
+      .order('created_at', { ascending: false })
+      .limit(2000),
     sb.from('stores').select('id, name, active').eq('organisation_id', _orgId),
     sb.from('recall_acknowledgements').select('status, acknowledged_at, created_at, recall_event_id').eq('organisation_id', _orgId),
     sb.from('mock_recall_drills').select('id, created_at, recall_event_id').eq('retailer_org_id', _orgId).gte('created_at', days365).order('created_at', {ascending:false}),
@@ -4808,15 +4823,28 @@ async function loadComplianceData(el) {
   const lotScans          = scans.filter(s => s.lot_number).length;
   const supplierScans     = scans.filter(s => s.supplier_name).length;
   const ftlScans          = scans.filter(s => s.is_ftl).length;
+  // FSMA 204 KDE fields — only meaningful for US orgs but computed for both
+  const tlcSourceScans    = scans.filter(s => s.tlc_source).length;
+  const refDocScans       = scans.filter(s => s.reference_document).length;
   const acksProgressed    = acks.filter(a => a.status !== 'notified').length;
   const acksConfirmed     = acks.filter(a => a.status === 'confirmed').length;
   const drillInYear       = drills.length > 0;
   const storeIdsRecent    = new Set(recentScans.map(s => s.store_id || s.store_name).filter(Boolean));
   const storesActiveRecent= activeStores.filter(s => storeIdsRecent.has(s.id) || storeIdsRecent.has(s.name)).length;
 
-  // Scores
-  const docScore      = scans.length === 0 ? 0 : Math.round((lotScans / scans.length) * 100);
-  const traceScore    = scans.length === 0 ? 0 : Math.round((supplierScans / scans.length) * 100);
+  // ── Scores ────────────────────────────────────────────────────
+  // docScore: lot code (TLC) capture rate — the core record for both frameworks
+  const docScore = scans.length === 0 ? 0 : Math.round((lotScans / scans.length) * 100);
+
+  // traceScore: region-aware.
+  //   US  (FSMA 204): KDE completeness — TLC source + reference document + supplier name.
+  //       These three are the "manually-entered" required KDEs beyond lot number.
+  //       Average of three coverage rates so each gap is equally penalised.
+  //   EU  (178/2002): One-step-back — supplier name is the primary traceability field.
+  const traceScore = scans.length === 0 ? 0 : isUS
+    ? Math.round(((tlcSourceScans + refDocScans + supplierScans) / (3 * scans.length)) * 100)
+    : Math.round((supplierScans / scans.length) * 100);
+
   // Coordinator adds to recall readiness score
   const hasCoordinator = !!(org.recall_coordinator_name && org.recall_coordinator_contact);
   let recallScore     = 20;
@@ -4831,7 +4859,9 @@ async function loadComplianceData(el) {
 
   _complianceData = {
     scans, stores, acks, drills, partners, activeStores, confirmedPartners,
-    recentScans, lotScans, supplierScans, ftlScans, acksProgressed, acksConfirmed,
+    recentScans, lotScans, supplierScans, ftlScans,
+    tlcSourceScans, refDocScans,        // FSMA 204 KDE fields
+    acksProgressed, acksConfirmed,
     drillInYear, storesActiveRecent, isUS,
     coordinator: org.recall_coordinator_name ? { name: org.recall_coordinator_name, contact: org.recall_coordinator_contact } : null,
     lookbackDays: org.recall_lookback_days || 365,
@@ -4920,21 +4950,50 @@ function renderComplianceCategory(el, step) {
         },
         {
           pass: d.supplierScans > 0,
-          label: 'Supplier name documented (one step back)',
+          label: isUS ? 'Supplier / previous source documented' : 'Supplier name documented (one step back)',
           detail: d.supplierScans > 0 ? `${d.supplierScans} of ${d.scans.length} records include supplier name (${Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)}%)` : 'No supplier names on record',
-          action: 'Ensure staff enter supplier / delivery company name during the scan flow',
+          action: 'Ensure staff enter the supplier or delivery company name during the scan flow',
         },
-        {
+        // US-specific: FSMA 204 KDE — TLC Source
+        ...(isUS ? [{
+          pass: (d.tlcSourceScans||0) > 0,
+          label: 'TLC source documented (FSMA 204 KDE)',
+          detail: (d.tlcSourceScans||0) > 0
+            ? `${d.tlcSourceScans} of ${d.scans.length} records include TLC source (${Math.round((d.tlcSourceScans||0)/Math.max(d.scans.length,1)*100)}%)`
+            : 'No TLC source recorded — required Key Data Element under FSMA 204 §1.1330',
+          action: 'Staff should enter the TLC source field when scanning products — this is the document or system that assigned the lot code',
+        }] : []),
+        // US-specific: FSMA 204 KDE — Reference document
+        ...(isUS ? [{
+          pass: (d.refDocScans||0) > 0,
+          label: 'Reference document recorded (FSMA 204 KDE)',
+          detail: (d.refDocScans||0) > 0
+            ? `${d.refDocScans} of ${d.scans.length} records include a reference document (${Math.round((d.refDocScans||0)/Math.max(d.scans.length,1)*100)}%)`
+            : 'No reference documents on record — required Key Data Element under FSMA 204 §1.1330',
+          action: 'Staff should enter the purchase order, invoice, or delivery note number when scanning received goods',
+        }] : []),
+        // EU-specific: coverage threshold check
+        ...(!isUS ? [{
           pass: d.supplierScans / Math.max(d.scans.length, 1) > 0.5,
           label: 'Traceability chain coverage above 50%',
           detail: `${Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)}% of records have supplier data`,
           action: 'Increase supplier name capture — target 100% for all received goods',
-        },
+        }] : []),
         {
-          pass: d.confirmedPartners > 0 && d.supplierScans > 0,
-          label: 'Full one-step-back chain established',
-          detail: d.confirmedPartners > 0 && d.supplierScans > 0 ? 'Both manufacturer connections and supplier records are present' : 'Requires both manufacturer connections and supplier records on scans',
-          action: 'Connect manufacturers in the Manufacturers panel and ensure supplier names are recorded on all scans',
+          pass: isUS
+            ? d.confirmedPartners > 0 && (d.tlcSourceScans||0) > 0 && (d.refDocScans||0) > 0
+            : d.confirmedPartners > 0 && d.supplierScans > 0,
+          label: isUS ? 'Full FSMA 204 KDE chain established' : 'Full one-step-back chain established',
+          detail: isUS
+            ? (d.confirmedPartners > 0 && (d.tlcSourceScans||0) > 0 && (d.refDocScans||0) > 0
+                ? 'Manufacturer connections, TLC source, and reference documents all present'
+                : 'Requires manufacturer connections + TLC source + reference documents on scans')
+            : (d.confirmedPartners > 0 && d.supplierScans > 0
+                ? 'Both manufacturer connections and supplier records are present'
+                : 'Requires both manufacturer connections and supplier records on scans'),
+          action: isUS
+            ? 'Connect manufacturers in the Manufacturers panel and ensure staff complete all KDE fields when scanning'
+            : 'Connect manufacturers in the Manufacturers panel and ensure supplier names are recorded on all scans',
         },
       ],
     },
