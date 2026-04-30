@@ -12124,7 +12124,10 @@ async function snapOcr() {
     assignment = learned.lotIsFirst
       ? { lot: codeA, batch: codeB }
       : { lot: codeB, batch: codeA };
-    confidence = 'learned';
+    // Only show 'learned' confidence when a code was actually found.
+    // If the AI returned nothing, the learned pattern tells us WHERE to look
+    // but not WHAT was found — show 'low' so staff know to retake/edit.
+    confidence = (assignment.lot) ? 'learned' : 'low';
     const sourceLabel = learned.source === 'brand'
       ? `Brand pattern (${extractBrand(productName)})`
       : `Learned from ${learned.scanCount} previous scan${learned.scanCount !== 1 ? 's' : ''} of "${productName}"`;
@@ -16132,7 +16135,12 @@ function renderPatternChip(localisedCrop, prefetchedPattern) {
   const chip = document.getElementById('ocr-pattern-chip');
   if (!chip) return;
 
-  const scanCount  = localisedCrop?.cropScanCount || prefetchedPattern?.scan_count || 0;
+  // _prefetchedPattern is a buildPatternResult object (camelCase scanCount)
+  // but may also be a raw Supabase row (snake_case scan_count). Check both.
+  const scanCount  = localisedCrop?.cropScanCount
+    || prefetchedPattern?.scanCount
+    || prefetchedPattern?.scan_count
+    || 0;
   const cropCount  = localisedCrop?.cropScanCount || 0;
 
   let label = '', color = 'var(--muted)', bg = 'transparent';
