@@ -2888,7 +2888,9 @@
     body.scan-active #phase-3 .review-row { padding: 1px 0 !important; }
     body.scan-active #phase-3 .review-label { font-size: 9px !important; }
     body.scan-active #phase-3 .review-value { font-size: 12px !important; }
-    body.scan-active #phase-3 .review-photos { display: none !important; }
+    body.scan-active #phase-3 .review-photos { display: flex !important; flex-direction: row !important; align-items: center !important; gap: 6px !important; margin-top: 0 !important; }
+    body.scan-active #phase-3 .review-photos > div { display: none !important; } /* hide label in compact mode */
+    body.scan-active #phase-3 .review-photo-mini { width: 52px !important; height: 52px !important; }
     body.scan-active #phase-3 hr.divider { margin: 4px 0 !important; }
     body.scan-active #phase-3 .flow-phase-body > .field { display: block !important; position: static !important; padding: 0 !important; }
     body.scan-active #phase-3 .flow-phase-body > .field > label { display: block !important; font-size: 9px !important; margin-bottom: 2px !important; }
@@ -3648,15 +3650,17 @@
             <div class="flow-phase-sub" data-i18n="p3.sub">Review details — then confirm placement to create the traceability record</div>
             <span id="p3-ftl-badge" style="display:none;align-items:center;gap:5px;margin-top:6px;font-size:10px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.06em;color:var(--info);background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.3);border-radius:5px;padding:3px 8px;"></span>
           </div>
-          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px;flex-shrink:0;">
-            <span id="p3-step-badge" data-i18n="step.badge3" style="flex-shrink:0;padding:8px 14px;min-height:36px;box-sizing:border-box;display:inline-flex;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-family:'DM Mono',monospace;font-size:11px;font-weight:700;letter-spacing:0.05em;color:var(--text);white-space:nowrap;">Step 3/3</span>
-            <button onclick="cancelScan()" class="cancel-scan-btn" title="Cancel and start over">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg>
-              <span data-i18n="action.cancel">Cancel</span>
-            </button>
-          </div>
+          <button onclick="cancelScan()" class="cancel-scan-btn" title="Cancel and start over">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            <span data-i18n="action.cancel">Cancel</span>
+          </button>
         </div>
         <div class="flow-phase-body">
+
+          <!-- Step 3/3 badge — right-aligned, mirrors Phase 1/2 badge placement in body -->
+          <div style="display:flex;justify-content:flex-end;flex-shrink:0;">
+            <span id="p3-step-badge" data-i18n="step.badge3" style="padding:6px 14px;box-sizing:border-box;display:inline-flex;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-family:'DM Mono',monospace;font-size:11px;font-weight:700;letter-spacing:0.05em;color:var(--text);white-space:nowrap;">Step 3/3</span>
+          </div>
 
           <!-- Pre-placement recall warning — populated by checkPrePlacementRecall() -->
           <div id="pre-placement-recall-alert" style="display:none;background:rgba(255,92,92,0.08);border:1.5px solid rgba(255,92,92,0.5);border-radius:10px;padding:14px 16px;">
@@ -7348,11 +7352,15 @@ function populateReview() {
     barcodeRow.style.display = 'none';
   }
 
-  // Photos
+  // Photos — lot code scan photo shown below the lot code row
   const photosEl = document.getElementById('review-photos');
   photosEl.innerHTML = '';
   const barcodeCapImg = document.getElementById('barcode-captured');
   if (barcodeCapImg.src && barcodeCapImg.style.display !== 'none') {
+    const label = document.createElement('div');
+    label.style.cssText = 'font-size:9px;font-family:\'DM Mono\',monospace;letter-spacing:0.07em;color:var(--muted);text-transform:uppercase;margin-bottom:3px;';
+    label.textContent = currentLang === 'no' ? 'Partikode-skanning' : 'Lot code scan';
+    photosEl.appendChild(label);
     const img = document.createElement('img');
     img.src = barcodeCapImg.src;
     img.className = 'review-photo-mini';
