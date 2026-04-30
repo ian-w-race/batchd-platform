@@ -15429,6 +15429,7 @@ function applyManagerUI(isManager) {
 
 let _mgrAllScans = [];
 let _mgrAllRecalls = [];
+let _mgrScanRecallMatches = []; // confirmed scan↔recall pairings from scan_recall_matches table
 let _mgrLoaded = false;
 let _mgrActiveTab = 'stores';
 
@@ -15520,8 +15521,16 @@ async function loadMgrData() {
     const mgrRecallLookback = new Date(Date.now() - 90 * 86400000).toISOString();
     recallsQuery = recallsQuery.gte('created_at', mgrRecallLookback).limit(300);
 
-    const [scansRes, recallsRes] = await withTimeout(
-      Promise.all([scansQuery, recallsQuery]),
+    const [scansRes, recallsRes, matchRes] = await withTimeout(
+      Promise.all([
+        scansQuery,
+        recallsQuery,
+        // scan_recall_matches: confirmed scan↔recall pairings. Used as source of truth
+        // for feed-sourced recalls (FDA, Mattilsynet) in the stat tile count.
+        orgId
+          ? sb.from('scan_recall_matches').select('scan_id, recall_id').eq('organisation_id', orgId).limit(1000)
+          : Promise.resolve({ data: [] }),
+      ]),
       10000
     );
     let allScans = scansRes.data || [];
@@ -15536,8 +15545,9 @@ async function loadMgrData() {
       );
     }
 
-    _mgrAllScans   = allScans;
-    _mgrAllRecalls = recallsRes.data || [];
+    _mgrAllScans           = allScans;
+    _mgrAllRecalls         = recallsRes.data || [];
+    _mgrScanRecallMatches  = matchRes.data   || [];
   } catch(e) {
     console.error('loadMgrData error:', e.message);
     // Leave arrays as-is ([] from init) so renders can still run with empty state
@@ -15733,27 +15743,56 @@ function renderMgrStatTiles() {
   const staff    = [...new Set(_mgrAllScans.map(r => r.scanned_by).filter(Boolean))];
   const onShelf  = _mgrAllScans.filter(r => !r.removed_from_shelf_at).length;
 
-  // ── Active recalls: distinct active recalls with ≥1 exact lot/barcode match
-  // in on-shelf scans. Uses exact matching (same logic as matchScanAgainstRecalls).
+  // ── Active recalls: distinct active recalls requiring action on this org's shelves.
   //
-  // WHY NOT recall_resolved: that field defaults to false on every scan insert,
-  // so counting recall_resolved===false would equal the entire on-shelf scan count.
-  // The correct signal is: does an ACTIVE RECALL exist whose lot/barcode appears
-  // in our current on-shelf inventory?
+  // Two-tier approach matching the logic in renderRecalls and loadRecallsView:
+  //
+  //   Feed recalls (FDA, Mattilsynet): ONLY count if confirmed via scan_recall_matches.
+  //     These are bulk-imported records; their lot numbers may coincidentally match scans.
+  //     scan_recall_matches is populated by matchScanAgainstRecalls() and sweepScansForRecall().
+  //
+  //   Manual / manufacturer-push recalls: count if they have an exact lot or barcode match
+  //     with an on-shelf scan. These are intentionally targeted recalls.
+  //
+  // WHY NOT recall_resolved on scans: that field defaults to false on every insert,
+  // so counting recall_resolved===false equals the entire on-shelf scan count.
+
+  const FEED_SRC = new Set(['fda','FDA','rasff','RASFF','mattilsynet','Mattilsynet']);
   const _onShelfScans = _mgrAllScans.filter(s => !s.removed_from_shelf_at);
-  // Build O(1) lookup maps for on-shelf lots and barcodes
+
+  // Build confirmed match set: recall IDs that have at least one on-shelf scan in scan_recall_matches
+  const _onShelfScanIds = new Set(_onShelfScans.map(s => s.id).filter(Boolean));
+  const _confirmedRecallIds = new Set(
+    _mgrScanRecallMatches
+      .filter(m => _onShelfScanIds.has(m.scan_id))
+      .map(m => m.recall_id)
+      .filter(Boolean)
+  );
+
+  // Build O(1) lookup maps for exact lot/barcode matching (used for manual/push recalls)
   const _onShelfLots = new Set(_onShelfScans.map(s => (s.lot_number||'').toLowerCase().trim()).filter(Boolean));
   const _onShelfBcs  = new Set(_onShelfScans.map(s => (s.barcode_number||'').toLowerCase().trim()).filter(Boolean));
+
   const _matchedIds  = new Set();
   for (const r of _mgrAllRecalls) {
     if (!r.active) continue;
-    const rLot = (r.lot_number    ||'').toLowerCase().trim();
-    const rBc  = (r.barcode_number||'').toLowerCase().trim();
-    if (!rLot && !rBc) continue; // recall without lot or barcode cannot be matched
-    if ((rLot && _onShelfLots.has(rLot)) || (rBc && _onShelfBcs.has(rBc))) {
-      _matchedIds.add(r.id);
+    if (FEED_SRC.has(r.source)) {
+      // Feed recall: only count if confirmed via scan_recall_matches
+      if (_confirmedRecallIds.has(r.id)) _matchedIds.add(r.id);
+    } else {
+      // Manual / push recall: count if exact lot or barcode matches an on-shelf scan
+      const rLot = (r.lot_number    ||'').toLowerCase().trim();
+      const rBc  = (r.barcode_number||'').toLowerCase().trim();
+      if (!rLot && !rBc) continue;
+      if ((rLot && _onShelfLots.has(rLot)) || (rBc && _onShelfBcs.has(rBc))) {
+        _matchedIds.add(r.id);
+      }
     }
   }
+  // Also include any confirmed feed-recall match where the recall row isn't in _mgrAllRecalls
+  // (e.g. loadMgrRecalls() may have filtered it out or it's outside the 90-day window)
+  _confirmedRecallIds.forEach(id => _matchedIds.add(id));
+
   const active = _matchedIds.size;
 
   const today      = new Date().toISOString().slice(0,10);
