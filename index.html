@@ -7087,10 +7087,16 @@ async function loadMultiStoreOverview() {
       if (r.scanned_by) byStore[s].employees.add(r.scanned_by.split('@')[0]);
       if (r.lot_number) byStore[s].lots.add(r.lot_number);
       if (!r.removed_from_shelf_at) byStore[s].onShelf++;
-      const isMatch = activeRecalls.some(rec =>
-        (rec.lot_number && (r.lot_number||'').toLowerCase().includes(rec.lot_number.toLowerCase())) ||
-        (rec.product_name && (r.product_name||'').toLowerCase().includes(rec.product_name.toLowerCase()))
-      );
+      // Strict three-condition rule: exact lot OR exact barcode match only.
+      // Substring/product matching previously over-counted Recall Hits per store.
+      const sLot     = (r.lot_number     || '').toLowerCase().trim();
+      const sBarcode = (r.barcode_number || '').toLowerCase().trim();
+      const isMatch = activeRecalls.some(rec => {
+        const recLot     = (rec.lot_number     || '').toLowerCase().trim();
+        const recBarcode = (rec.barcode_number || '').toLowerCase().trim();
+        return (recLot && sLot && recLot === sLot) ||
+               (recBarcode && sBarcode && recBarcode === sBarcode);
+      });
       if (isMatch) {
         byStore[s].recallHits++;
         if (!r.recall_resolved) byStore[s].unresolved++;
@@ -7420,11 +7426,17 @@ async function checkPrePlacementRecall() {
     const recalls = [...(recallsRes.data || []), ...pushedRecalls];
     if (!recalls.length) return;
 
+    // Strict three-condition rule: exact lot OR exact barcode match only.
+    // Substring matching here was producing false positives (e.g. recall lot "C12"
+    // matched scan lot "ABC123") and the first-word product fallback was matching
+    // every scan of a similarly-named product. See comment in matchScanAgainstRecalls.
+    const lotInput     = lotNum.toLowerCase().trim();
+    const barcodeInput = barcodeNum.toLowerCase().trim();
     const matches = recalls.filter(r => {
-      const lotMatch      = r.lot_number     && lotNum      && lotNum.toLowerCase().includes(r.lot_number.toLowerCase());
-      const barcodeMatch  = r.barcode_number && barcodeNum  && r.barcode_number === barcodeNum;
-      const productMatch  = r.product_name   && productName && productName.toLowerCase().includes(r.product_name.toLowerCase().split(' ')[0]);
-      return lotMatch || barcodeMatch || productMatch;
+      const rLot     = (r.lot_number     || '').toLowerCase().trim();
+      const rBarcode = (r.barcode_number || '').toLowerCase().trim();
+      return (rLot && lotInput && rLot === lotInput) ||
+             (rBarcode && barcodeInput && rBarcode === barcodeInput);
     });
 
     if (!matches.length) return;
@@ -8370,11 +8382,14 @@ async function matchScanAgainstRecalls(scanId, scanData) {
   if (!rows.length) return;
 
   try {
-    // upsert — ignore conflicts (scan_id + recall_id already matched)
-    await sb.from('scan_recall_matches').upsert(rows, {
+    // upsert — ignore conflicts (scan_id + recall_id already matched).
+    // Supabase doesn't throw on RLS / constraint failures; destructure error so a
+    // silent failure here doesn't quietly break the active-recall counter.
+    const { error } = await sb.from('scan_recall_matches').upsert(rows, {
       onConflict: 'scan_id,recall_id',
       ignoreDuplicates: true,
     });
+    if (error) throw error;
   } catch(e) {
     console.warn('[cross-ref] matchScanAgainstRecalls failed:', e.message);
   }
@@ -8544,24 +8559,24 @@ async function saveRecord() {
     if (error) throw error;
 
     // ── Cross-reference: match this scan against active recalls ──
-    // Fire-and-forget — never blocks the scan confirmation UX.
-    // ID comes directly from the insert return — no race condition.
-    (async () => {
-      try {
-        const insertedId = insertedRows?.[0]?.id;
-        if (insertedId) {
-          await matchScanAgainstRecalls(insertedId, {
-            lot_number: lotNum || null,
-            barcode_number: barcodeNum || null,
-            product_name: productName,
-            store_name: storeName || null,
-            store_id: _currentStoreId || null,
-            scanned_by: currentUser?.email || null,
-            quantity: quantity,
-          });
-        }
-      } catch(e) { console.warn('[cross-ref] post-save match failed:', e.message); }
-    })();
+    // Awaited (not fire-and-forget): if the user navigates away mid-flight the upsert
+    // can be lost, leaving the scan unlinked in scan_recall_matches and causing the
+    // active-recall count to under-report. The added latency is one upsert (<100ms typical),
+    // and the resetForm() below already runs on a 1.2s timer so UX is unaffected.
+    try {
+      const insertedId = insertedRows?.[0]?.id;
+      if (insertedId) {
+        await matchScanAgainstRecalls(insertedId, {
+          lot_number: lotNum || null,
+          barcode_number: barcodeNum || null,
+          product_name: productName,
+          store_name: storeName || null,
+          store_id: _currentStoreId || null,
+          scanned_by: currentUser?.email || null,
+          quantity: quantity,
+        });
+      }
+    } catch(e) { console.warn('[cross-ref] post-save match failed:', e.message); }
 
     // Correction feedback loop — if employee edited lot/batch, record it as high-confidence
     await maybeRecordCorrection(productName, barcodeNum || null);
@@ -8673,7 +8688,21 @@ window.addEventListener('online',  updateQueueBadge);
 window.addEventListener('offline', updateQueueBadge);
 
 // ── OFFLINE SYNC ──────────────────────────────────────────────
+// In-flight lock: this function is invoked from three places (online event,
+// manual confirm dialog, login). Concurrent runs would walk the same queue
+// and double-insert the same scans (no client_uuid for idempotency yet).
+let _syncOfflineQueueRunning = false;
 async function syncOfflineQueue() {
+  if (_syncOfflineQueueRunning) return;
+  _syncOfflineQueueRunning = true;
+  try {
+    return await _syncOfflineQueueImpl();
+  } finally {
+    _syncOfflineQueueRunning = false;
+  }
+}
+
+async function _syncOfflineQueueImpl() {
   // Load any queued items from localStorage
   try {
     const stored = localStorage.getItem('batched_offline_queue');
@@ -8721,12 +8750,30 @@ async function syncOfflineQueue() {
         if (!bUp.error) barcodeUrl = sb.storage.from('scan-photos').getPublicUrl(barcodePath).data.publicUrl;
       }
 
-      const { error } = await sb.from('scans').insert({
+      const { data: insertedRows, error } = await sb.from('scans').insert({
         ...item.payload,
         product_photo_url: productUrl,
         barcode_photo_url: barcodeUrl
-      });
+      }).select('id');
       if (error) throw error;
+
+      // Cross-reference against active recalls — same as the online saveRecord path.
+      // Without this, scans saved offline never get linked into scan_recall_matches
+      // and won't appear in active-recall counts.
+      const insertedId = insertedRows?.[0]?.id;
+      if (insertedId) {
+        try {
+          await matchScanAgainstRecalls(insertedId, {
+            lot_number:     item.payload?.lot_number     || null,
+            barcode_number: item.payload?.barcode_number || null,
+            product_name:   item.payload?.product_name   || null,
+            store_name:     item.payload?.store_name     || null,
+            store_id:       item.payload?.store_id       || null,
+            scanned_by:     item.payload?.scanned_by     || null,
+            quantity:       item.payload?.quantity       || 1,
+          });
+        } catch(e) { console.warn('[offline-sync] cross-ref failed for scan', insertedId, e.message); }
+      }
       synced++;
     } catch(e) {
       // Keep the item in the queue — will retry on next sync
@@ -9057,11 +9104,14 @@ async function checkRecallsOnLogin(silent = false) {
       return true;
     });
 
-    // Load recent scans for this check
+    // Load recent scans for this check.
+    // Per the platform-wide three-condition rule, only scans still on shelf can drive
+    // an active-recall alert — already-pulled lots should not trigger a login warning.
     const cutoff = new Date(Date.now() - recallLookbackDays * 24 * 60 * 60 * 1000).toISOString();
     const { data: recentScans } = await sb.from('scans')
       .select('id,product_name,lot_number,batch_number,barcode_number,store_name,created_at')
       .eq('organisation_id', _currentOrgId)
+      .is('removed_from_shelf_at', null)
       .gte('created_at', cutoff)
       .order('created_at', { ascending: false });
 
@@ -10056,16 +10106,25 @@ function renderRecords(records, recallQ) {
 }
 
 function isRecallMatchAny(r) {
-  // Check record against allRecords' companion recall data loaded at login
+  // Check record against companion recall data loaded at login.
   if (!loginRecallMatches || !loginRecallMatches.length) {
-    // Fallback: any record that has been marked as a recall match via recall_resolved field
-    return r.recall_resolved === true || r.recall_resolved === false && r.manager_escalated;
+    // Fallback when match data didn't load: only count rows the user has explicitly
+    // marked resolved — that's a hard recall-match indicator. Previously this also
+    // returned true for any escalated scan, which conflated escalation with recall match.
+    return r.recall_resolved === true;
   }
-  return loginRecallMatches.some(m =>
-    (m.recall.lot_number && (r.lot_number||'').toLowerCase().includes(m.recall.lot_number.toLowerCase())) ||
-    (m.recall.product_name && (r.product_name||'').toLowerCase().includes(m.recall.product_name.toLowerCase())) ||
-    (m.recall.barcode_number && (r.barcode_number||'').toLowerCase().includes(m.recall.barcode_number.toLowerCase()))
-  );
+  // Strict three-condition rule: exact lot OR exact barcode match only.
+  // Product-name substring matching was producing false positives (e.g. recall lot
+  // "C12" matched scan lot "ABC123"; recall product "Coop tilbakekaller X" matched
+  // every Coop-brand scan). See comment in matchScanAgainstRecalls.
+  const rLot     = (r.lot_number     || '').toLowerCase().trim();
+  const rBarcode = (r.barcode_number || '').toLowerCase().trim();
+  return loginRecallMatches.some(m => {
+    const mLot     = (m.recall.lot_number     || '').toLowerCase().trim();
+    const mBarcode = (m.recall.barcode_number || '').toLowerCase().trim();
+    return (mLot && rLot && mLot === rLot) ||
+           (mBarcode && rBarcode && mBarcode === rBarcode);
+  });
 }
 
 // ── FUZZY RECALL MATCHING ENGINE ─────────────────────────────
@@ -10357,7 +10416,7 @@ async function submitQuickAddRecall() {
       if (existing?.length) { msgEl.style.color='var(--warn)'; msgEl.textContent='~ This product + lot is already an active recall.'; return; }
     }
 
-    const { error } = await sb.from('recalls').insert({
+    const { data: newRecall, error } = await sb.from('recalls').insert({
       product_name:    product,
       lot_number:      lot     || null,
       barcode_number:  barcode || null,
@@ -10365,17 +10424,15 @@ async function submitQuickAddRecall() {
       source:          'manual',
       active:          true,
       organisation_id: _currentOrgId,
-    });
+    }).select('id').single();
     if (error) throw error;
+    const _newRecallId = newRecall?.id;
 
-    // Update cached recalls immediately
-    _cachedActiveRecalls.push({ product_name: product, lot_number: lot || null, barcode_number: barcode || null, description: reason, active: true, source: 'manual' });
+    // Update cached recalls immediately.
+    // id is required so matchScanAgainstRecalls() can write the scan_recall_matches row.
+    _cachedActiveRecalls.push({ id: _newRecallId, product_name: product, lot_number: lot || null, barcode_number: barcode || null, description: reason, active: true, source: 'manual' });
 
     // Sweep existing scans for this new recall — non-blocking
-    const _newRecallId = (await sb.from('recalls').select('id')
-      .eq('product_name', product)
-      .eq('organisation_id', _currentOrgId)
-      .order('created_at', { ascending: false }).limit(1)).data?.[0]?.id;
     if (_newRecallId) {
       sweepScansForRecall(_newRecallId).then(async n => {
         // Also check if any matched scans already had complaints
@@ -10559,39 +10616,64 @@ async function runQuickCheck() {
 }
 
 // ── RECALL RESOLUTION ─────────────────────────────────────────
+// In-flight set: prevents double-clicks on the History card resolve/unresolve
+// buttons from firing two updates and two toasts. Keyed by scanId so concurrent
+// actions on different rows are still allowed.
+const _resolveInFlight = new Set();
+
 async function resolveRecall(scanId) {
-  const note = prompt('Optional: add a note about what action was taken (e.g. "3 units removed from shelf"):') ?? '';
+  if (_resolveInFlight.has(scanId)) return;
+  _resolveInFlight.add(scanId);
   try {
-    const { error } = await sb.from('scans').update({
+    const note = prompt('Optional: add a note about what action was taken (e.g. "3 units removed from shelf"):') ?? '';
+    // Preserve any existing notes on the row (e.g. LOT_UNAVAILABLE marker, prior shelf-location notes)
+    const existing = allRecords.find(r => r.id === scanId);
+    const existingNotes = (existing?.notes || '').trim();
+    const combinedNotes = note
+      ? (existingNotes ? `${existingNotes}\n\n${note}` : note)
+      : (existingNotes || null);
+    const { data: updated, error } = await sb.from('scans').update({
       recall_resolved: true,
       recall_resolved_by: currentUser?.email || null,
       recall_resolved_at: new Date().toISOString(),
-      notes: note || null
-    }).eq('id', scanId);
+      notes: combinedNotes
+    }).eq('id', scanId).select('id');
     if (error) throw error;
+    if (!updated || !updated.length) {
+      showToast('Could not mark as resolved — you may not have permission to update this record.', 'error', 5000);
+      return;
+    }
     const idx = allRecords.findIndex(r => r.id === scanId);
     if (idx !== -1) {
       allRecords[idx].recall_resolved = true;
       allRecords[idx].recall_resolved_by = currentUser?.email || null;
       allRecords[idx].recall_resolved_at = new Date().toISOString();
-      if (note) allRecords[idx].notes = note;
+      allRecords[idx].notes = combinedNotes;
     }
     applyFilters();
     showToast('Recall marked as resolved.', 'ok', 2500);
   } catch(e) {
     showToast('Could not mark as resolved: ' + e.message, 'error', 4000);
+  } finally {
+    _resolveInFlight.delete(scanId);
   }
 }
 
 async function unresolveRecall(scanId) {
+  if (_resolveInFlight.has(scanId)) return;
   if (!confirm('Undo this resolution? The recall will be marked as unresolved and require action again.')) return;
+  _resolveInFlight.add(scanId);
   try {
-    const { error } = await sb.from('scans').update({
+    const { data: updated, error } = await sb.from('scans').update({
       recall_resolved: false,
       recall_resolved_by: null,
       recall_resolved_at: null
-    }).eq('id', scanId);
+    }).eq('id', scanId).select('id');
     if (error) throw error;
+    if (!updated || !updated.length) {
+      showToast('Could not undo — you may not have permission to update this record.', 'error', 5000);
+      return;
+    }
     const idx = allRecords.findIndex(r => r.id === scanId);
     if (idx !== -1) {
       allRecords[idx].recall_resolved = false;
@@ -10602,6 +10684,8 @@ async function unresolveRecall(scanId) {
     showToast('Resolution undone — recall is now active again.', 'ok', 3000);
   } catch(e) {
     showToast('Could not undo resolution: ' + e.message, 'error', 4000);
+  } finally {
+    _resolveInFlight.delete(scanId);
   }
 }
 
@@ -10743,10 +10827,12 @@ async function buildShiftSummary() {
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
     const store = document.getElementById('field-store').value || null;
 
-    // Fetch today's scans for current user
+    // Fetch today's scans for current user (scoped to their organisation —
+    // RLS should also enforce this but defence-in-depth is cheap)
     let query = sb.from('scans')
-      .select('id, product_name, lot_number, store_name, recall_resolved, created_at, scanned_by')
+      .select('id, product_name, lot_number, barcode_number, store_name, recall_resolved, created_at, scanned_by')
       .gte('created_at', todayStart)
+      .eq('organisation_id', _currentOrgId)
       .eq('scanned_by', currentUser?.email || '')
       .order('created_at', { ascending: false });
 
@@ -10761,10 +10847,19 @@ async function buildShiftSummary() {
     const total = scans?.length || 0;
     const uniqueProducts = new Set((scans || []).map(s => s.product_name)).size;
     const storesScanned  = [...new Set((scans || []).map(s => s.store_name).filter(Boolean))];
-    const recallMatches  = (scans || []).filter(s => activeRecalls.some(r =>
-      (r.lot_number && s.lot_number && r.lot_number.toLowerCase() === s.lot_number.toLowerCase()) ||
-      (r.product_name && s.product_name && s.product_name.toLowerCase().includes(r.product_name.toLowerCase()))
-    ));
+    // Strict three-condition rule: exact lot OR exact barcode match only.
+    // Product-name substring matching previously over-counted (every Coop-brand
+    // scan matched a recall titled "Coop tilbakekaller …"). See matchScanAgainstRecalls.
+    const recallMatches = (scans || []).filter(s => {
+      const sLot     = (s.lot_number     || '').toLowerCase().trim();
+      const sBarcode = (s.barcode_number || '').toLowerCase().trim();
+      return activeRecalls.some(r => {
+        const rLot     = (r.lot_number     || '').toLowerCase().trim();
+        const rBarcode = (r.barcode_number || '').toLowerCase().trim();
+        return (rLot && sLot && rLot === sLot) ||
+               (rBarcode && sBarcode && rBarcode === sBarcode);
+      });
+    });
     const resolved = (scans || []).filter(s => s.recall_resolved).length;
 
     // Recent 5 products
@@ -10934,20 +11029,21 @@ async function generateAuditReport() {
     const uniqueProducts = new Set(_auditData.map(r => (r.product_name||'').toLowerCase().trim()).filter(Boolean)).size;
     const activeRecallCount = _auditRecalls.length;
 
-    const matchedScans = _auditData.filter(r => _auditRecalls.some(rec =>
-      (rec.lot_number    && (r.lot_number   ||'').toLowerCase().includes(rec.lot_number.toLowerCase())) ||
-      (rec.barcode_number && r.barcode_number && rec.barcode_number === r.barcode_number) ||
-      (rec.product_name  && (r.product_name ||'').toLowerCase().includes(rec.product_name.toLowerCase()))
-    ));
+    // Strict three-condition rule: exact lot OR exact barcode match only.
+    // This count drives the audit report's match/resolved/coverage numbers — those
+    // are regulatory documents, so loose product matching here was over-reporting.
+    const matchedScans = _auditData.filter(r => {
+      const sLot     = (r.lot_number     || '').toLowerCase().trim();
+      const sBarcode = (r.barcode_number || '').toLowerCase().trim();
+      return _auditRecalls.some(rec => {
+        const recLot     = (rec.lot_number     || '').toLowerCase().trim();
+        const recBarcode = (rec.barcode_number || '').toLowerCase().trim();
+        return (recLot && sLot && recLot === sLot) ||
+               (recBarcode && sBarcode && recBarcode === sBarcode);
+      });
+    });
     const resolvedCount = matchedScans.filter(r => r.recall_resolved).length;
     const unresolvedCount = matchedScans.length - resolvedCount;
-
-    // Recall-negative scans
-    const recallCheckedClean = activeRecallCount > 0
-      ? _auditData.filter(r => !matchedScans.includes(r) &&
-          _auditRecalls.some(rec => rec.product_name && (r.product_name||'').toLowerCase().includes(rec.product_name.toLowerCase().split(' ')[0]))
-        ).length
-      : 0;
 
     // Coverage
     const coveragePct = activeRecallCount > 0
@@ -11410,10 +11506,16 @@ function auditExportCSV() {
   const headers = ['Date Placed on Shelf','Product Name','Barcode','Lot Number','Batch Number','Store','Shelf Location','Quantity','Placed By','Notes','Recall Match','Resolved','Resolved By','Resolved At'];
   const recallSet = new Set((_auditRecalls||[]).flatMap(r => [r.lot_number, r.product_name].filter(Boolean).map(v => v.toLowerCase())));
   const rows = _auditData.map(r => {
-    const isMatch = (_auditRecalls||[]).some(rec =>
-      (rec.lot_number && (r.lot_number||'').toLowerCase().includes(rec.lot_number.toLowerCase())) ||
-      (rec.product_name && (r.product_name||'').toLowerCase().includes(rec.product_name.toLowerCase()))
-    );
+    // Strict three-condition rule: exact lot OR exact barcode match only.
+    // Drives the "Recall Match" column in the exported audit CSV (regulatory document).
+    const sLot     = (r.lot_number     || '').toLowerCase().trim();
+    const sBarcode = (r.barcode_number || '').toLowerCase().trim();
+    const isMatch = (_auditRecalls||[]).some(rec => {
+      const recLot     = (rec.lot_number     || '').toLowerCase().trim();
+      const recBarcode = (rec.barcode_number || '').toLowerCase().trim();
+      return (recLot && sLot && recLot === sLot) ||
+             (recBarcode && sBarcode && recBarcode === sBarcode);
+    });
     return [
       fmtAuditDate(r.created_at),
       r.product_name||'', r.barcode_number||'', r.lot_number||'', r.batch_number||'',
@@ -15789,9 +15891,10 @@ function renderMgrStatTiles() {
       }
     }
   }
-  // Also include any confirmed feed-recall match where the recall row isn't in _mgrAllRecalls
-  // (e.g. loadMgrRecalls() may have filtered it out or it's outside the 90-day window)
-  _confirmedRecallIds.forEach(id => _matchedIds.add(id));
+  // (Previously a fallback added every _confirmedRecallIds entry here, but it bypassed
+  //  the active=true check and counted deactivated recalls or matched-then-pulled scans.
+  //  The strict three-condition rule lives in the main loop above. Recalls outside the
+  //  90-day window are intentionally not surfaced — same as the recalls panel.)
 
   const active = _matchedIds.size;
 
@@ -15848,11 +15951,16 @@ function renderMgrStores() {
   const activeRecalls = _mgrAllRecalls.filter(r => r.active && ['manual','manufacturer_push'].includes(r.source));
   for (const r of _mgrAllScans) {
     const storeKey = r.store_id || ('name:' + (r.store_name || t('store.noStore')));
-    const hit = activeRecalls.some(rec =>
-      (rec.lot_number && (r.lot_number||'').toLowerCase().includes(rec.lot_number.toLowerCase())) ||
-      (rec.product_name && (r.product_name||'').toLowerCase().includes(rec.product_name.toLowerCase())) ||
-      (rec.barcode_number && (r.barcode_number||'').toLowerCase().includes(rec.barcode_number.toLowerCase()))
-    );
+    // Strict three-condition rule: exact lot OR exact barcode match only.
+    // Loose product matching previously inflated per-store recall counts.
+    const sLot     = (r.lot_number     || '').toLowerCase().trim();
+    const sBarcode = (r.barcode_number || '').toLowerCase().trim();
+    const hit = activeRecalls.some(rec => {
+      const recLot     = (rec.lot_number     || '').toLowerCase().trim();
+      const recBarcode = (rec.barcode_number || '').toLowerCase().trim();
+      return (recLot && sLot && recLot === sLot) ||
+             (recBarcode && sBarcode && recBarcode === sBarcode);
+    });
     if (hit && stores[storeKey]) stores[storeKey].recallMatches++;
   }
 
@@ -16294,7 +16402,8 @@ function renderPatternChip(localisedCrop, prefetchedPattern) {
 async function flagScanWithComplaint(scanId) {
   if (!scanId) return;
   try {
-    await sb.from('scans').update({ complaint_filed: true }).eq('id', scanId);
+    const { error } = await sb.from('scans').update({ complaint_filed: true }).eq('id', scanId);
+    if (error) throw error;
   } catch(e) { console.warn('Could not flag scan with complaint:', e.message); }
 }
 
@@ -16329,13 +16438,19 @@ async function autoEscalateForComplaintRecallMatch(scanId, recall) {
   if (!scanId) return;
   try {
     const now = new Date().toISOString();
-    await sb.from('scans').update({
+    const { data: updated, error } = await sb.from('scans').update({
       manager_escalated:    true,
       manager_escalated_at: now,
       manager_escalated_by: 'system:complaint+recall',
-    }).eq('id', scanId);
+    }).eq('id', scanId).select('id');
+    if (error) throw error;
+    if (!updated || !updated.length) {
+      // RLS blocked or row missing — do not desync local cache to a state that didn't persist
+      console.warn('[cross-ref] autoEscalateForComplaintRecallMatch: 0 rows updated for scan', scanId);
+      return;
+    }
 
-    // Update local cache
+    // Update local cache only after the DB write is confirmed
     const idx = allRecords?.findIndex(r => r.id === scanId);
     if (idx >= 0) {
       allRecords[idx].manager_escalated    = true;
@@ -16427,9 +16542,6 @@ async function loadMgrIntel() {
     // ── Stores with zero scans this week ──
     const activeStores = new Set(scans.map(s => s.store_name).filter(Boolean));
     const silentStores = allStores.filter(s => !activeStores.has(s));
-
-    // ── Recall alerts this week ──
-    const recallScans = scans.filter(s => s.recall_resolved !== null && s.recall_resolved !== undefined);
 
     // ── Complaint signals (last 30 days) ──
     const complaintsByProduct = {};
@@ -16835,16 +16947,18 @@ async function mgrAddRecall() {
   const fullDesc = [hazard, desc, severity ? `Severity: ${severity}` : '', bestBefore ? `Best before: ${bestBefore}` : '', manufacturer ? `Manufacturer: ${manufacturer}` : '', notifiedBy ? `Notified by: ${notifiedBy}` : ''].filter(Boolean).join(' · ');
 
   try {
-    const { error } = await sb.from('recalls').insert({
+    const { data: newRecall, error } = await sb.from('recalls').insert({
       product_name: product, lot_number: lot || null, batch_number: null,
-      barcode_number: barcode || null, description: fullDesc, source: 'manual', active: true
-    });
+      barcode_number: barcode || null, description: fullDesc, source: 'manual', active: true,
+      organisation_id: _currentOrgId,
+    }).select('id').single();
     if (error) throw error;
     msgEl.style.color='var(--accent)'; msgEl.textContent='✓ Recall added — active for all stores';
     ['mgr-recall-product','mgr-recall-lot','mgr-recall-barcode','mgr-recall-bestbefore','mgr-recall-manufacturer','mgr-recall-desc','mgr-recall-notifiedby'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
     const hazEl = document.getElementById('mgr-recall-hazard'); if (hazEl) hazEl.value = '';
     const sevEl = document.getElementById('mgr-recall-severity'); if (sevEl) sevEl.value = '';
-    _cachedActiveRecalls.push({ product_name: product, lot_number: lot || null, barcode_number: barcode || null, description: fullDesc, active: true, source: 'manual' });
+    // id is required so matchScanAgainstRecalls() can write the scan_recall_matches row
+    _cachedActiveRecalls.push({ id: newRecall?.id, product_name: product, lot_number: lot || null, barcode_number: barcode || null, description: fullDesc, active: true, source: 'manual' });
     setTimeout(() => { if (msgEl) msgEl.textContent=''; }, 3000);
     loadMgrRecalls();
     checkActiveRecalls();
@@ -16857,8 +16971,16 @@ async function mgrAddRecall() {
 
 async function mgrToggleRecall(id, active) {
   try {
-    const { error } = await sb.from('recalls').update({ active }).eq('id', id);
+    const { data: updated, error } = await sb.from('recalls')
+      .update({ active })
+      .eq('id', id)
+      .eq('organisation_id', _currentOrgId)
+      .select('id');
     if (error) throw error;
+    if (!updated || !updated.length) {
+      showToast('Could not update recall — record not found in your organisation.', 'error', 4000);
+      return;
+    }
     loadMgrRecalls();
     if (document.getElementById('settings-recall-list')) loadRecallsList();
   } catch(e) {
@@ -16869,8 +16991,16 @@ async function mgrToggleRecall(id, active) {
 async function mgrDeleteRecall(id) {
   if (!confirm('Permanently delete this recall? This cannot be undone.')) return;
   try {
-    const { error } = await sb.from('recalls').delete().eq('id', id);
+    const { data: deleted, error } = await sb.from('recalls')
+      .delete()
+      .eq('id', id)
+      .eq('organisation_id', _currentOrgId)
+      .select('id');
     if (error) throw error;
+    if (!deleted || !deleted.length) {
+      showToast('Could not delete recall — record not found in your organisation.', 'error', 4000);
+      return;
+    }
     loadMgrRecalls();
     if (document.getElementById('settings-recall-list')) loadRecallsList();
   } catch(e) {
@@ -17703,11 +17833,17 @@ function openRecallActionSheet(scanId) {
   const reasonEl2 = document.getElementById('recall-sheet-info-reason');
   const descEl   = document.getElementById('recall-sheet-info-desc');
   if (infoEl) {
-    // Match against recalls in memory (loginRecallMatches) or loaded allRecalls
-    const matchedR = (loginRecallMatches || []).find(m =>
-      (r.lot_number && m.recall.lot_number && r.lot_number.toLowerCase().includes(m.recall.lot_number.toLowerCase())) ||
-      (r.product_name && m.recall.product_name && r.product_name.toLowerCase().includes(m.recall.product_name.toLowerCase()))
-    );
+    // Match against recalls in memory (loginRecallMatches).
+    // Strict exact lot or barcode match — loose matching here was showing wrong
+    // recall info on the action sheet (e.g. an FDA recall's reason for a Mattilsynet match).
+    const sLot     = (r.lot_number     || '').toLowerCase().trim();
+    const sBarcode = (r.barcode_number || '').toLowerCase().trim();
+    const matchedR = (loginRecallMatches || []).find(m => {
+      const mLot     = (m.recall.lot_number     || '').toLowerCase().trim();
+      const mBarcode = (m.recall.barcode_number || '').toLowerCase().trim();
+      return (mLot && sLot && mLot === sLot) ||
+             (mBarcode && sBarcode && mBarcode === sBarcode);
+    });
     const rec = matchedR?.recall;
     if (rec) {
       const src = (rec.source || 'manual').toUpperCase();
@@ -17937,12 +18073,17 @@ async function recallActionEscalate() {
 
   const now = new Date().toISOString();
   try {
-    const { error } = await sb.from('scans').update({
+    const { data: updated, error } = await sb.from('scans').update({
       manager_escalated: true,
       manager_escalated_at: now,
       manager_escalated_by: currentUser?.email || null
-    }).eq('id', _recallActionId);
+    }).eq('id', _recallActionId).select('id');
     if (error) throw error;
+    if (!updated || !updated.length) {
+      if (btn) { btn.disabled = false; btn.textContent = currentLang==='no'?'Flagg for ledergjennomgang →':'Flag for manager review →'; }
+      showToast('Could not flag — you may not have permission to update this record.', 'error', 5000);
+      return;
+    }
 
     const idx = allRecords.findIndex(r => r.id === _recallActionId);
     if (idx !== -1) {
@@ -18575,12 +18716,13 @@ async function recallActionFileRecall() {
   msgEl.textContent = currentLang==='no'?'Lagrer i systemet…':'Saving to system…';
 
   try {
-    // Check if this product+lot is already an active recall
+    // Check if this product+lot is already an active recall (scoped to this org)
     const { data: existing } = await sb.from('recalls')
       .select('id')
       .ilike('product_name', r.product_name || '')
       .eq('lot_number', r.lot_number || '')
       .eq('active', true)
+      .eq('organisation_id', _currentOrgId)
       .limit(1);
 
     if (existing && existing.length > 0) {
@@ -18591,14 +18733,15 @@ async function recallActionFileRecall() {
       return;
     }
 
-    const { error } = await sb.from('recalls').insert({
+    const { data: newRecall, error } = await sb.from('recalls').insert({
       product_name:   r.product_name || null,
       lot_number:     r.lot_number   || null,
       barcode_number: r.barcode_number || null,
       description:    reason,
       source:         'manual',
-      active:         true
-    });
+      active:         true,
+      organisation_id: _currentOrgId,
+    }).select('id').single();
     if (error) throw error;
 
     // Mark step 0 done
@@ -18617,10 +18760,12 @@ async function recallActionFileRecall() {
     if (confirmed) confirmed.textContent = `Recall filed · "${r.product_name}" · Lot: ${r.lot_number || '—'} · Reason: ${reason}`;
     if (msgEl)     msgEl.textContent = '';
 
-    // Refresh cached recalls so auto-matching picks up the new recall
+    // Refresh cached recalls so auto-matching picks up the new recall.
+    // id is required so matchScanAgainstRecalls() can write the scan_recall_matches row.
     _cachedActiveRecalls = [..._cachedActiveRecalls, {
+      id: newRecall?.id,
       product_name: r.product_name, lot_number: r.lot_number,
-      barcode_number: r.barcode_number, description: reason, active: true
+      barcode_number: r.barcode_number, description: reason, active: true, source: 'manual'
     }];
 
     showToast(`Recall filed for "${r.product_name}" — visible to all stores.`, 'ok', 4000);
@@ -18744,10 +18889,15 @@ async function saveRecallLocation() {
   if (!note) return;
 
   try {
-    const { error } = await sb.from('scans')
+    const { data: updated, error } = await sb.from('scans')
       .update({ notes: note })
-      .eq('id', _recallActionId);
+      .eq('id', _recallActionId)
+      .select('id');
     if (error) throw error;
+    if (!updated || !updated.length) {
+      showToast('Could not save note — you may not have permission to update this record.', 'error', 5000);
+      return;
+    }
 
     const idx = allRecords.findIndex(r => r.id === _recallActionId);
     if (idx !== -1) { allRecords[idx].notes = note; _recallActionRecord = allRecords[idx]; }
@@ -18788,17 +18938,26 @@ function recallActionOpenExposure() {
 
 async function recallActionResolve() {
   if (!_recallActionId) return;
+  if (_resolveInFlight.has(_recallActionId)) return;
+  _resolveInFlight.add(_recallActionId);
+  const lockedId = _recallActionId;
   const btn = document.getElementById('recall-resolve-btn');
   btn.disabled = true;
   btn.textContent = t('js.saving');
 
   try {
-    const { error } = await sb.from('scans').update({
+    const { data: updated, error } = await sb.from('scans').update({
       recall_resolved: true,
       recall_resolved_by: currentUser?.email || null,
       recall_resolved_at: new Date().toISOString()
-    }).eq('id', _recallActionId);
+    }).eq('id', _recallActionId).select('id');
     if (error) throw error;
+    if (!updated || !updated.length) {
+      btn.disabled = false;
+      btn.textContent = '✓ Mark as resolved';
+      showToast('Could not resolve — you may not have permission to update this record.', 'error', 5000);
+      return;
+    }
 
     const idx = allRecords.findIndex(r => r.id === _recallActionId);
     if (idx !== -1) {
@@ -18834,18 +18993,27 @@ async function recallActionResolve() {
     btn.disabled = false;
     btn.textContent = '✓ Mark as resolved';
     showToast('Could not resolve: ' + e.message, 'error', 4000);
+  } finally {
+    _resolveInFlight.delete(lockedId);
   }
 }
 
 async function recallActionUnresolve() {
   if (!_recallActionId) return;
+  if (_resolveInFlight.has(_recallActionId)) return;
+  _resolveInFlight.add(_recallActionId);
+  const lockedId = _recallActionId;
   try {
-    const { error } = await sb.from('scans').update({
+    const { data: updated, error } = await sb.from('scans').update({
       recall_resolved: false,
       recall_resolved_by: null,
       recall_resolved_at: null
-    }).eq('id', _recallActionId);
+    }).eq('id', _recallActionId).select('id');
     if (error) throw error;
+    if (!updated || !updated.length) {
+      showToast('Could not undo — you may not have permission to update this record.', 'error', 5000);
+      return;
+    }
     const idx = allRecords.findIndex(r => r.id === _recallActionId);
     if (idx !== -1) {
       allRecords[idx].recall_resolved = false;
@@ -18868,6 +19036,8 @@ async function recallActionUnresolve() {
     showToast('Resolution undone.', 'ok', 2000);
   } catch(e) {
     showToast('Could not undo: ' + e.message, 'error', 4000);
+  } finally {
+    _resolveInFlight.delete(lockedId);
   }
 }
 
@@ -19151,12 +19321,15 @@ async function loadRecallsView() {
       return;
     }
 
-    // Step 1: get product/lot/barcode scan history for this org
+    // Step 1: get product/lot/barcode scan history for this org.
+    // Per the platform-wide three-condition rule, only scans still on shelf can drive
+    // an active recall — pulled lots must not surface as ACTIVE in the drawer.
     // Limit to 1000 most recent — enough for accurate recall matching, prevents hang on large tables
     const scansResult = await withTimeout(
       sb.from('scans')
         .select('product_name, lot_number, barcode_number, store_id, store_name')
         .eq('organisation_id', orgId)
+        .is('removed_from_shelf_at', null)
         .order('created_at', { ascending: false })
         .limit(1000),
       10000
@@ -19235,9 +19408,13 @@ async function loadRecallsView() {
     let exposureByRecall = {};
     if (recallIds.length) {
       try {
+        // removed_at is intentionally omitted — it is never written by app code
+        // (pullFromShelf writes to scans.removed_from_shelf_at, not scan_recall_matches).
+        // Selecting it would cause a silent Supabase error, returning data:null and
+        // leaving exposureByRecall empty so the drawer shows the "Calculating…" stub forever.
         const { data: matchRows } = await sb
           .from('scan_recall_matches')
-          .select('recall_id, store_name, quantity, placed_at, removed_at, scanned_by, match_type')
+          .select('recall_id, store_name, quantity, placed_at, scanned_by, match_type')
           .in('recall_id', recallIds)
           .eq('organisation_id', _currentOrgId);
         if (matchRows) {
@@ -19257,16 +19434,16 @@ async function loadRecallsView() {
         ? fmtRegionDate(r.published_at || r.created_at) : '';
 
       // ── Exposure summary from scan_recall_matches ──
-      const rows       = exposureByRecall[r.id] || [];
-      const totalUnits = rows.reduce((s, m) => s + (m.quantity || 1), 0);
-      const pulledRows = rows.filter(m => m.removed_at);
-      const onShelf    = rows.filter(m => !m.removed_at);
-      const unitsPulled= pulledRows.reduce((s, m) => s + (m.quantity || 1), 0);
-      const unitsOnShelf = onShelf.reduce((s, m) => s + (m.quantity || 1), 0);
-      const stores     = [...new Set(rows.map(m => m.store_name).filter(Boolean))];
-      const maxExposure= rows.length ? Math.max(...rows.map(m => {
-        const end   = m.removed_at ? new Date(m.removed_at) : new Date();
-        const start = m.placed_at  ? new Date(m.placed_at)  : end;
+      // removed_at not tracked here — all match rows treated as on-shelf.
+      // scans.removed_from_shelf_at is the authoritative pull record.
+      const rows         = exposureByRecall[r.id] || [];
+      const totalUnits   = rows.reduce((s, m) => s + (m.quantity || 1), 0);
+      const unitsOnShelf = totalUnits;
+      const unitsPulled  = 0;
+      const stores       = [...new Set(rows.map(m => m.store_name).filter(Boolean))];
+      const maxExposure  = rows.length ? Math.max(...rows.map(m => {
+        const end   = new Date();
+        const start = m.placed_at ? new Date(m.placed_at) : end;
         return (end - start) / 3600000; // ms → hours
       })) : null;
       const firstPlaced= rows.length ? rows.reduce((a, b) => a.placed_at < b.placed_at ? a : b).placed_at : null;
