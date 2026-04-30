@@ -15455,13 +15455,25 @@ async function refreshManagerDashboard() {
 }
 
 async function loadMgrData() {
+  // Wrap Promise.all in a race timeout — if Supabase stalls, fail fast
+  // so renderMgrStatTiles/renderMgrStores still run (showing empty state)
+  const withTimeout = (p, ms) => Promise.race([
+    p,
+    new Promise((_, rej) => setTimeout(() => rej(new Error('Manager data load timed out')), ms))
+  ]);
+
   try {
     // Always filter by org. If the user is a store_manager with a store_id assigned,
     // filter server-side by store_id OR store_name (for legacy scans without store_id).
     const mgrStoreId   = window._managerStoreId   || null;
     const mgrStoreName = window._managerStoreName  || null;
+    const orgId        = _currentOrgId || null;
 
-    let scansQuery = sb.from('scans').select('*').eq('organisation_id', _currentOrgId || '').order('created_at', { ascending: false }).limit(500);
+    let scansQuery = sb.from('scans')
+      .select('id,product_name,lot_number,barcode_number,store_name,store_id,quantity,created_at,removed_from_shelf_at,recall_resolved,manager_escalated,scanned_by,is_ftl,supplier_name,reference_document')
+      .order('created_at', { ascending: false })
+      .limit(500);
+    if (orgId) scansQuery = scansQuery.eq('organisation_id', orgId);
 
     // Corp admins see all stores. Store managers see only their store.
     // Use server-side OR filter when store_id is known — avoids loading the full org scan set.
@@ -15476,13 +15488,16 @@ async function loadMgrData() {
     }
 
     let recallsQuery = sb.from('recalls').select('*').order('created_at', { ascending: false });
-    if (_currentOrgId) recallsQuery = recallsQuery.eq('organisation_id', _currentOrgId);
+    if (orgId) recallsQuery = recallsQuery.eq('organisation_id', orgId);
     // 90-day lookback — manager stat tiles show operational/current recall status,
     // not all-time history. FDA/RASFF feed records are excluded in renderMgrStatTiles.
-    const _mgrRecallLookback = new Date(Date.now() - 90 * 86400000).toISOString();
-    recallsQuery = recallsQuery.gte('created_at', _mgrRecallLookback).limit(300);
+    const mgrRecallLookback = new Date(Date.now() - 90 * 86400000).toISOString();
+    recallsQuery = recallsQuery.gte('created_at', mgrRecallLookback).limit(300);
 
-    const [scansRes, recallsRes] = await Promise.all([scansQuery, recallsQuery]);
+    const [scansRes, recallsRes] = await withTimeout(
+      Promise.all([scansQuery, recallsQuery]),
+      10000
+    );
     let allScans = scansRes.data || [];
 
     // Safety net: client-side dedup for corp admins viewing cross-store data.
@@ -15499,6 +15514,7 @@ async function loadMgrData() {
     _mgrAllRecalls = recallsRes.data || [];
   } catch(e) {
     console.error('loadMgrData error:', e.message);
+    // Leave arrays as-is ([] from init) so renders can still run with empty state
   }
 }
 
