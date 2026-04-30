@@ -15413,9 +15413,10 @@ async function loadManagerDashboard() {
     || _currentUserRole === 'store_manager';
   if (!isAllowed) return;
   updateMgrSubtitle();
-  await loadMgrData();
-  renderMgrStatTiles();
-  renderMgrStores();
+  try {
+    await loadMgrData();
+    renderMgrStatTiles();
+    renderMgrStores();
   // Show red dot on Escalated tab if there are unresolved escalations
   const escalatedCount = _mgrAllScans.filter(r => r.manager_escalated === true && !r.recall_resolved).length;
   const badge = document.getElementById('mgr-escalated-badge');
@@ -15439,6 +15440,11 @@ async function loadManagerDashboard() {
   if (_mgrActiveTab === 'staff' && sfrom?.value) loadMgrStaff();
   if (_mgrActiveTab === 'escalated') loadMgrEscalated();
   _mgrLoaded = true;
+  } catch(e) {
+    console.error('loadManagerDashboard error:', e);
+    const el = document.getElementById('mgr-stores-output');
+    if (el) el.innerHTML = `<div style="font-size:13px;color:var(--danger);padding:20px 0;text-align:center;">Failed to load dashboard data. Pull to refresh or tap Refresh.<br><span style="font-size:11px;color:var(--muted);">${e.message}</span></div>`;
+  }
 }
 
 async function refreshManagerDashboard() {
@@ -15455,8 +15461,7 @@ async function loadMgrData() {
     const mgrStoreId   = window._managerStoreId   || null;
     const mgrStoreName = window._managerStoreName  || null;
 
-    let scansQuery = sb.from('scans').select('*').order('created_at', { ascending: false });
-    if (_currentOrgId) scansQuery = scansQuery.eq('organisation_id', _currentOrgId);
+    let scansQuery = sb.from('scans').select('*').eq('organisation_id', _currentOrgId || '').order('created_at', { ascending: false }).limit(500);
 
     // Corp admins see all stores. Store managers see only their store.
     // Use server-side OR filter when store_id is known — avoids loading the full org scan set.
@@ -16670,7 +16675,10 @@ async function loadMgrRecalls() {
   if (!el) return;
   el.innerHTML = `<div style="font-size:13px;color:var(--muted);padding:8px 0;">${t('js.loading')}</div>`;
   try {
-    const { data, error } = await sb.from('recalls').select('*').order('created_at', { ascending: false });
+    const { data, error } = await sb.from('recalls').select('*')
+      .eq('organisation_id', _currentOrgId || '')
+      .order('created_at', { ascending: false })
+      .limit(300);
     if (error) throw error;
     _mgrAllRecalls = data || [];
     if (!data.length) {
