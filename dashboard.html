@@ -2054,7 +2054,11 @@ async function renderOverview() {
       sb.from('shipments').select('id, lot_number, quantity, unit, shipped_at, stores(name), organisations!shipments_manufacturer_id_fkey(id,name), products(name)').eq('retailer_id', _orgId).order('shipped_at', {ascending:false}).limit(200),
       sb.from('recall_acknowledgements').select('id, status, recall_event_id, store_id, updated_at, organisation_id').eq('organisation_id', _orgId),
       sb.from('recall_distributions').select('recall_event_id, distributed_at').eq('retailer_org_id', _orgId),
-      sb.from('scan_recall_matches').select('recall_id, recall_product, recall_lot, store_name, quantity, placed_at, removed_at, match_confidence').eq('organisation_id', _orgId),
+      // NOTE: removed_at is intentionally omitted — it is never written by app code
+      // (pullFromShelf writes to scans.removed_from_shelf_at, not scan_recall_matches).
+      // Selecting it would cause a silent Supabase error if the column doesn't exist,
+      // returning data:null and zeroing matchedRecallIds → activeCount = 0.
+      sb.from('scan_recall_matches').select('recall_id, recall_product, recall_lot, store_name, quantity, placed_at, match_confidence').eq('organisation_id', _orgId),
     ]);
 
     const stores    = storesRes.data    || [];
@@ -2066,8 +2070,10 @@ async function renderOverview() {
     const srmRows   = srmRes.data       || [];
 
     // ── Exposure metrics from scan_recall_matches ─────────────
-    const srmOnShelf  = srmRows.filter(m => !m.removed_at);
-    const srmPulled   = srmRows.filter(m =>  m.removed_at);
+    // removed_at not fetched (never written by app code) — all matched rows are treated as on-shelf.
+    // scans.removed_from_shelf_at is the authoritative pull record; scan_recall_matches has no removal tracking.
+    const srmOnShelf  = srmRows; // all match rows = on-shelf (removed_at not tracked here)
+    const srmPulled   = [];      // pull tracking comes from scans.removed_from_shelf_at instead
     const unitsOnShelf  = srmOnShelf.reduce((s, m) => s + (m.quantity || 1), 0);
     const unitsPulled   = srmPulled.reduce((s, m)  => s + (m.quantity || 1), 0);
     const storesExposed = new Set(srmRows.map(m => m.store_name).filter(Boolean)).size;
@@ -2106,11 +2112,25 @@ async function renderOverview() {
 
     // Deduplicate: remove any recall that is already represented by a recall_event
     const pushedLotKeys = new Set(recallEvents.map(e => (e.product_name||'').toLowerCase() + '|' + (e.lot_number||'').toLowerCase()));
+    // Build scan history lookup for direct cross-reference (fallback when scan_recall_matches
+    // is missing rows, e.g. sweep RPC wasn't called when the recall was first added).
+    const _scannedLots = new Set(scans.map(s => (s.lot_number||'').toLowerCase().trim()).filter(Boolean));
+    const _scannedBcs  = new Set(scans.map(s => (s.barcode_number||'').toLowerCase().trim()).filter(Boolean));
+
     const ownRecalls = (ownRecallsRaw || []).filter(r => {
       if (r.is_pushed || r.recall_event_id) return false; // auto-created from push — skip
-      // Feed-imported recalls only show if they've matched something in scan history
-      if (FEED_SOURCES.has(r.source)) return matchedRecallIds.has(r.id);
-      const key = (r.product_name||'').toLowerCase() + '|' + (r.lot_number||'').toLowerCase();
+      const rLot = (r.lot_number||'').toLowerCase().trim();
+      const rBc  = (r.barcode_number||'').toLowerCase().trim();
+      if (FEED_SOURCES.has(r.source)) {
+        if (!rLot && !rBc) return false; // feed recall with no lot/barcode can't be matched
+        // Primary check: scan_recall_matches (retroactive sweep). Fallback: direct cross-reference
+        // against recent scans. Using both ensures a recall shows even if the sweep wasn't run.
+        return matchedRecallIds.has(r.id) ||
+               (rLot && _scannedLots.has(rLot)) ||
+               (rBc  && _scannedBcs.has(rBc));
+      }
+      // Manual recalls: always show (not a feed source, not a push duplicate)
+      const key = (r.product_name||'').toLowerCase() + '|' + rLot;
       return !pushedLotKeys.has(key);
     });
 
@@ -6342,13 +6362,14 @@ async function downloadReport(key) {
     } else if (key === 'recalls') {
       // Fetch exposure data for the CSV
       const srmForCsv = await sb.from('scan_recall_matches')
-        .select('recall_id, quantity, removed_at, store_name')
+        .select('recall_id, quantity, store_name')
         .eq('organisation_id', _orgId);
       const srmData = srmForCsv.data || [];
       const exposureForRecall = id => {
         const rows = srmData.filter(m => m.recall_id === id);
-        const onShelf = rows.filter(m=>!m.removed_at).reduce((s,m)=>s+(m.quantity||1),0);
-        const pulled  = rows.filter(m=> m.removed_at).reduce((s,m)=>s+(m.quantity||1),0);
+        // removed_at not tracked in scan_recall_matches (app uses scans.removed_from_shelf_at)
+        const onShelf = rows.reduce((s,m)=>s+(m.quantity||1),0);
+        const pulled  = 0;
         const stores  = [...new Set(rows.map(m=>m.store_name).filter(Boolean))].join('; ');
         return { onShelf, pulled, stores };
       };

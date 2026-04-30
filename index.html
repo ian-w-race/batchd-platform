@@ -15732,13 +15732,33 @@ function renderMgrStatTiles() {
   const stores   = [...new Set(_mgrAllScans.map(r => r.store_name).filter(Boolean))];
   const staff    = [...new Set(_mgrAllScans.map(r => r.scanned_by).filter(Boolean))];
   const onShelf  = _mgrAllScans.filter(r => !r.removed_from_shelf_at).length;
-  // Active recalls count: use matched scans not yet resolved. External recalls (Mattilsynet,
-  // FDA) have no organisation_id so they're excluded from _mgrAllRecalls — counting matched
-  // scans is the right signal for "products on my shelves affected by a recall."
-  const unresolved = _mgrAllScans.filter(r => r.recall_resolved === false && !r.removed_from_shelf_at).length;
-  const active     = unresolved;
+
+  // ── Active recalls: distinct active recalls with ≥1 exact lot/barcode match
+  // in on-shelf scans. Uses exact matching (same logic as matchScanAgainstRecalls).
+  //
+  // WHY NOT recall_resolved: that field defaults to false on every scan insert,
+  // so counting recall_resolved===false would equal the entire on-shelf scan count.
+  // The correct signal is: does an ACTIVE RECALL exist whose lot/barcode appears
+  // in our current on-shelf inventory?
+  const _onShelfScans = _mgrAllScans.filter(s => !s.removed_from_shelf_at);
+  // Build O(1) lookup maps for on-shelf lots and barcodes
+  const _onShelfLots = new Set(_onShelfScans.map(s => (s.lot_number||'').toLowerCase().trim()).filter(Boolean));
+  const _onShelfBcs  = new Set(_onShelfScans.map(s => (s.barcode_number||'').toLowerCase().trim()).filter(Boolean));
+  const _matchedIds  = new Set();
+  for (const r of _mgrAllRecalls) {
+    if (!r.active) continue;
+    const rLot = (r.lot_number    ||'').toLowerCase().trim();
+    const rBc  = (r.barcode_number||'').toLowerCase().trim();
+    if (!rLot && !rBc) continue; // recall without lot or barcode cannot be matched
+    if ((rLot && _onShelfLots.has(rLot)) || (rBc && _onShelfBcs.has(rBc))) {
+      _matchedIds.add(r.id);
+    }
+  }
+  const active = _matchedIds.size;
+
   const today      = new Date().toISOString().slice(0,10);
   const todayScans = _mgrAllScans.filter(r => r.created_at?.slice(0,10) === today).length;
+  // Escalated: scans explicitly flagged by staff as manager_escalated, not yet resolved
   const escalated  = _mgrAllScans.filter(r => r.manager_escalated === true && !r.recall_resolved).length;
 
   el.innerHTML = [
