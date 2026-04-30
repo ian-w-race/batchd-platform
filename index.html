@@ -11980,15 +11980,22 @@ async function snapOcr() {
   const prewarmAge  = Date.now() - _prewarmTs;
 
   const frame2Promise = new Promise(r => setTimeout(r, 150)).then(() => {
-    const c2 = document.createElement('canvas');
-    c2.width = vid.videoWidth; c2.height = vid.videoHeight;
-    c2.getContext('2d').drawImage(vid, 0, 0);
-    return new Promise(res => c2.toBlob(res, 'image/jpeg', 0.85));
-  });
+    try {
+      const c2 = document.createElement('canvas');
+      c2.width = vid.videoWidth; c2.height = vid.videoHeight;
+      // Guard: video may report 0×0 after being hidden (iOS Safari pauses stream)
+      if (!c2.width || !c2.height) return null;
+      const ctx2 = c2.getContext('2d');
+      if (!ctx2) return null;
+      ctx2.drawImage(vid, 0, 0);
+      return new Promise(res => c2.toBlob(res, 'image/jpeg', 0.85));
+    } catch(e) { return null; }
+  }).catch(() => null);
 
-  const learnPromise = (_prewarmResult && prewarmAge < 3000)
+  const learnPromise = ((_prewarmResult && prewarmAge < 3000)
     ? Promise.resolve(_prewarmResult)
-    : lookupLearnedPattern(productName, barcodeNum || null, null, null);
+    : lookupLearnedPattern(productName, barcodeNum || null, null, null)
+  ).catch(() => null);
 
   // ── CASCADE A: GS1-128 static decode ────────────────────────
   // Try to decode a GS1-128 barcode from blob1 — if lot code is embedded
