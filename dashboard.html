@@ -3351,41 +3351,67 @@ async function advanceAckStatus(ackId, status, recallEventId) {
       unitsInput?.style && (unitsInput.style.borderColor = 'rgba(255,92,92,0.6)');
       return;
     }
-    // Save units at the same time as status advance
-    await sb.from('recall_acknowledgements').update({
+    // Save units at the same time as status advance.
+    // All ack writes scope by organisation_id and check rows-affected so a
+    // forged ackId from another org can't be flipped via this path.
+    const userId = (await sb.auth.getUser()).data.user?.id;
+    const { data: pulledUpd, error: pulledErr } = await sb.from('recall_acknowledgements').update({
       status,
       acknowledged_at:             new Date().toISOString(),
-      acknowledged_by:             (await sb.auth.getUser()).data.user?.id,
+      acknowledged_by:             userId,
       units_pulled:                units,
       units_pulled_confirmed_at:   new Date().toISOString(),
-      units_pulled_confirmed_by:   (await sb.auth.getUser()).data.user?.id,
-    }).eq('id', ackId);
+      units_pulled_confirmed_by:   userId,
+    }).eq('id', ackId).eq('organisation_id', _orgId).select('id');
     if (btn) { btn.disabled = false; btn.textContent = origText; }
+    if (pulledErr) {
+      showToast('Could not save: ' + pulledErr.message, 'error', 4000);
+      return;
+    }
+    if (!pulledUpd || !pulledUpd.length) {
+      showToast('Could not save — acknowledgement not found in your organisation.', 'error', 4000);
+      return;
+    }
     showToast(`${units} unit${units !== 1 ? 's' : ''} recorded — step complete ✓`, 'ok', 3000);
     renderRecalls();
     return;
   }
 
-  const { error } = await sb.from('recall_acknowledgements').update({
+  const { data: updated, error } = await sb.from('recall_acknowledgements').update({
     status, acknowledged_at: new Date().toISOString(),
     acknowledged_by: (await sb.auth.getUser()).data.user?.id,
-  }).eq('id', ackId);
-  if (error) { if (btn) { btn.disabled=false; btn.textContent=origText; } return; }
+  }).eq('id', ackId).eq('organisation_id', _orgId).select('id');
+  if (error)               { if (btn) { btn.disabled=false; btn.textContent=origText; } showToast('Could not save: ' + error.message, 'error', 4000); return; }
+  if (!updated || !updated.length) { if (btn) { btn.disabled=false; btn.textContent=origText; } showToast('Could not save — acknowledgement not found in your organisation.', 'error', 4000); return; }
   if (status === 'confirmed') showToast('Step complete — store confirmed ✓', 'ok', 3000);
   renderRecalls();
 }
 
 async function saveUnits(ackId) {
   const val = parseInt(document.getElementById('units-' + ackId)?.value || '0');
-  await sb.from('recall_acknowledgements').update({ units_pulled: val }).eq('id', ackId);
+  const { data: updated, error } = await sb.from('recall_acknowledgements')
+    .update({ units_pulled: val })
+    .eq('id', ackId)
+    .eq('organisation_id', _orgId)
+    .select('id');
+  if (error)               { showToast('Could not save units: ' + error.message, 'error', 4000); return; }
+  if (!updated || !updated.length) { showToast('Could not save — acknowledgement not found in your organisation.', 'error', 4000); return; }
   showToast('Units saved', 'ok', 2000);
 }
 
 async function updateAckStatus(ackId, status) {
-  await sb.from('recall_acknowledgements').update({
+  const { data: updated, error } = await sb.from('recall_acknowledgements').update({
     status, acknowledged_at: new Date().toISOString(),
     acknowledged_by: (await sb.auth.getUser()).data.user?.id,
-  }).eq('id', ackId);
+  }).eq('id', ackId).eq('organisation_id', _orgId).select('id');
+  if (error) {
+    showToast('Could not update status: ' + error.message, 'error', 4000);
+    return;
+  }
+  if (!updated || !updated.length) {
+    showToast('Could not update — acknowledgement not found in your organisation.', 'error', 4000);
+    return;
+  }
 }
 
 
@@ -3518,8 +3544,11 @@ async function saveStore() {
 
   const payload = { name, store_code: code||null, address: address||null, active, organisation_id: _orgId };
 
+  // UPDATE branch scopes by org_id so a forged _editingStoreId can't rewrite
+  // another org's store row (which would also overwrite that store's
+  // organisation_id with this user's, since payload includes organisation_id).
   const { error } = _editingStoreId
-    ? await sb.from('stores').update(payload).eq('id', _editingStoreId)
+    ? await sb.from('stores').update(payload).eq('id', _editingStoreId).eq('organisation_id', _orgId)
     : await sb.from('stores').insert(payload);
 
   if (error) {
@@ -3802,8 +3831,14 @@ function traceabilityHeader(activeTab) {
 async function deletePattern(id, btn) {
   if (!confirm('Delete this learned pattern? The scanning app will re-learn it from future scans.')) return;
   btn.disabled = true; btn.textContent = '…';
-  const { error } = await sb.from('code_patterns').delete().eq('id', id);
-  if (error) { btn.disabled = false; btn.textContent = 'Delete'; showToast('Error: ' + error.message, 'error', 4000); return; }
+  // Scope by org_id so a forged pattern id can't delete another org's row.
+  const { data: deleted, error } = await sb.from('code_patterns')
+    .delete()
+    .eq('id', id)
+    .eq('organisation_id', _orgId)
+    .select('id');
+  if (error)               { btn.disabled = false; btn.textContent = 'Delete'; showToast('Error: ' + error.message, 'error', 4000); return; }
+  if (!deleted || !deleted.length) { btn.disabled = false; btn.textContent = 'Delete'; showToast('Could not delete — pattern not found in your organisation.', 'error', 4000); return; }
   renderTraceability('patterns');
 }
 
