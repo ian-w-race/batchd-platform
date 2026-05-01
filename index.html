@@ -8517,6 +8517,15 @@ async function saveRecord() {
     // Enables matching against production codes, plant numbers, and other metadata
     // that appears on packaging alongside the lot code.
     label_text:         (ocrState?.raw || '').slice(0, 600) || null,
+    // Idempotency key — generated client-side so network retries can't create
+    // duplicate scan rows. Backed by UNIQUE constraint on scans.client_uuid.
+    // Generated here (not at insert time) so the offline queue path stores the
+    // same UUID it'll replay with — duplicate replays land in the constraint
+    // violation handler in syncOfflineQueue and get dropped from the queue.
+    // crypto.randomUUID requires a modern browser (Chrome 92+, Safari 15.4+,
+    // Firefox 95+); older browsers fall back to null and lose the protection
+    // (same behavior as before this change).
+    client_uuid:        (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : null,
   };
 
   // ── Offline support ──
@@ -8773,7 +8782,14 @@ async function _syncOfflineQueueImpl() {
         product_photo_url: productUrl,
         barcode_photo_url: barcodeUrl
       }).select('id');
-      if (error) throw error;
+      if (error) {
+        // Postgres unique violation (23505) on client_uuid means this scan
+        // already landed in the DB on a prior attempt — most likely a network
+        // timeout that returned an apparent error but actually completed.
+        // Count as synced and drop from the queue rather than retrying forever.
+        if (error.code === '23505') { synced++; continue; }
+        throw error;
+      }
 
       // Cross-reference against active recalls — same as the online saveRecord path.
       // Without this, scans saved offline never get linked into scan_recall_matches
