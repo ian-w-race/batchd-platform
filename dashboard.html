@@ -3246,20 +3246,28 @@ async function launchDrill() {
     });
     if (distErr) throw distErr;
 
-    // Create acknowledgement records for all active stores
+    // Create acknowledgement records for all active stores.
+    // Errors here are critical: without acks, stores have no rows to act on,
+    // and the drill is in a half-published state (recall_event + distribution exist
+    // but no actionable per-store records). Surface to the catch so the user knows.
     const { data: stores } = await sb.from('stores').select('id, name').eq('organisation_id', _orgId).eq('active', true);
     if (stores?.length) {
       const acks = stores.map(s => ({
         recall_event_id: ev.id, organisation_id: _orgId,
         store_id: s.id, status: 'notified', created_at: new Date().toISOString(),
       }));
-      await sb.from('recall_acknowledgements').insert(acks);
+      const { error: acksErr } = await sb.from('recall_acknowledgements').insert(acks);
+      if (acksErr) throw acksErr;
     }
 
-    // Log in mock_recall_drills
-    await sb.from('mock_recall_drills').insert({
+    // Log in mock_recall_drills.
+    // CRITICAL: if this insert silently fails, the recall_event exists with
+    // is_drill=true but no row in mock_recall_drills — the active recall counter
+    // and other downstream consumers may not recognize it as a drill.
+    const { error: drillErr } = await sb.from('mock_recall_drills').insert({
       recall_event_id: ev.id, initiating_org_id: _orgId, retailer_org_id: _orgId,
     });
+    if (drillErr) throw drillErr;
 
     setMsg('✓ Drill launched — ' + (stores?.length||0) + ' store' + ((stores?.length||0)!==1?'s':'') + ' notified', true);
     setTimeout(() => {
@@ -5990,10 +5998,13 @@ async function fetchReportData(key) {
       return data || [];
     }
     case 'recalls': {
+      // Note: .limit() goes on each query inside the array, NOT on Promise.all
+      // (Promises don't have a .limit method — calling it throws TypeError and
+      // makes the entire recalls report unable to load).
       const [recallsRes, distRes] = await Promise.all([
-        sb.from('recalls').select('*').eq('organisation_id', _orgId).order('created_at', {ascending:false}),
-        sb.from('recall_distributions').select('recall_event_id, est_affected_units, distributed_at').eq('retailer_org_id', _orgId),
-      ]).limit(500);
+        sb.from('recalls').select('*').eq('organisation_id', _orgId).order('created_at', {ascending:false}).limit(500),
+        sb.from('recall_distributions').select('recall_event_id, est_affected_units, distributed_at').eq('retailer_org_id', _orgId).limit(500),
+      ]);
       let pushed = [];
       const distData = distRes.data || [];
       if (distData.length > 0) {
@@ -7201,11 +7212,17 @@ async function saveRecallSettings() {
   // This value is read by staff and store managers in the scanning app
   // and overrides their personal setting — ensuring compliance decisions
   // are set at org level, not per individual.
+  // Both writes are checked: a silent failure here would split state across
+  // users (their personal setting saved, but org default not), making the
+  // "set for all staff" toast a lie.
+  let orgErr = null;
   if (!error) {
-    await sb.from('organisations').update({ recall_lookback_days: days }).eq('id', _orgId);
+    const { error: oErr } = await sb.from('organisations').update({ recall_lookback_days: days }).eq('id', _orgId);
+    orgErr = oErr;
   }
-  if (error) { setMsg(error.message, false); }
-  else { setMsg(`✓ Lookback window set to ${days} days for all staff`, true); }
+  if (error)        { setMsg(error.message, false); }
+  else if (orgErr)  { setMsg('Personal setting saved, but org default failed: ' + orgErr.message, false); }
+  else              { setMsg(`✓ Lookback window set to ${days} days for all staff`, true); }
   if (btn) { btn.disabled=false; btn.textContent='Save'; }
 }
 
@@ -8008,8 +8025,12 @@ async function renderDashTriageDetail(el) {
 
 async function updateDashTriageStatus(id, newStatus) {
   try {
-    await sb.from('complaints').update({ status: newStatus }).eq('id', id);
-    await sb.from('complaint_audit_log').insert({ complaint_id: id, action: 'status_changed_to_' + newStatus, actor_label: 'Staff' });
+    // Both writes destructure { error } so RLS denials don't silently land
+    // a fake "status changed" outcome with the audit log out of sync.
+    const { error: updErr } = await sb.from('complaints').update({ status: newStatus }).eq('id', id);
+    if (updErr) throw updErr;
+    const { error: logErr } = await sb.from('complaint_audit_log').insert({ complaint_id: id, action: 'status_changed_to_' + newStatus, actor_label: 'Staff' });
+    if (logErr) throw logErr;
     renderDashTriageDetail(document.getElementById('main-content'));
   } catch(e) { showToast('Error: ' + e.message, 'error', 4000); }
 }
@@ -8262,16 +8283,28 @@ async function renderPartners() {
   }
 }
 
+// All trading_partners writes scope by retailer_id = _orgId so a forged or
+// guessed id can't flip another retailer's connection status or sharing setting.
 async function acceptPartner(id) {
-  const { error } = await sb.from('trading_partners').update({ status: 'active' }).eq('id', id);
+  const { data: updated, error } = await sb.from('trading_partners')
+    .update({ status: 'active' })
+    .eq('id', id)
+    .eq('retailer_id', _orgId)
+    .select('id');
   if (error) { showToast('Could not accept: ' + error.message, 'error', 4000); return; }
+  if (!updated || !updated.length) { showToast('Could not accept — partner not found in your organisation.', 'error', 4000); return; }
   renderPartners();
 }
 
 async function rejectPartner(id) {
   if (!confirm('Decline this connection request?')) return;
-  const { error } = await sb.from('trading_partners').update({ status: 'rejected' }).eq('id', id);
+  const { data: updated, error } = await sb.from('trading_partners')
+    .update({ status: 'rejected' })
+    .eq('id', id)
+    .eq('retailer_id', _orgId)
+    .select('id');
   if (error) { showToast('Could not decline: ' + error.message, 'error', 4000); return; }
+  if (!updated || !updated.length) { showToast('Could not decline — partner not found in your organisation.', 'error', 4000); return; }
   renderPartners();
 }
 
@@ -8279,11 +8312,18 @@ async function toggleScanIntelligence(partnerId, currentValue) {
   const newValue = !currentValue;
   const btn = document.getElementById('scan-intel-btn-' + partnerId);
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
-  const { error } = await sb.from('trading_partners')
+  const { data: updated, error } = await sb.from('trading_partners')
     .update({ share_scan_intelligence: newValue })
-    .eq('id', partnerId);
+    .eq('id', partnerId)
+    .eq('retailer_id', _orgId)
+    .select('id');
   if (error) {
     showToast('Could not update: ' + error.message, 'error', 3500);
+    if (btn) { btn.disabled = false; }
+    return;
+  }
+  if (!updated || !updated.length) {
+    showToast('Could not update — partner not found in your organisation.', 'error', 4000);
     if (btn) { btn.disabled = false; }
     return;
   }
@@ -9037,8 +9077,14 @@ async function submitDashInvestResponse(invId) {
 
   if (error) { showMsg('Error: ' + error.message, false); btn.disabled=false; btn.textContent='Submit response'; return; }
 
-  // Mark investigation as in_progress if still open
-  await sb.from('investigation_requests').update({ status: 'in_progress' }).eq('id', invId).eq('status', 'open');
+  // Mark investigation as in_progress if still open. Errors here aren't fatal
+  // for the user (their response is already submitted above), but log to console
+  // so the silent-failure pattern doesn't hide a broken status update.
+  const { error: invUpdErr } = await sb.from('investigation_requests')
+    .update({ status: 'in_progress' })
+    .eq('id', invId)
+    .eq('status', 'open');
+  if (invUpdErr) console.warn('[invest] status update to in_progress failed:', invUpdErr.message);
 
   document.getElementById('dash-invest-resp-modal').remove();
   showToast('Response submitted successfully', 'ok', 3000);
