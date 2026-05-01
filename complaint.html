@@ -79,17 +79,17 @@ textarea{resize:vertical;min-height:100px;line-height:1.5;}
       <div class="row">
         <div class="field">
           <label class="label" for="c-name" id="l-name">Full name</label>
-          <input id="c-name" type="text" autocomplete="name">
+          <input id="c-name" type="text" autocomplete="name" maxlength="100">
         </div>
         <div class="field">
           <label class="label" for="c-email" id="l-email">Email address</label>
           <div class="field-sub" id="sub-email">A reference number will be sent to this address</div>
-          <input id="c-email" type="email" autocomplete="email" placeholder="you@email.com">
+          <input id="c-email" type="email" autocomplete="email" placeholder="you@email.com" maxlength="254">
         </div>
       </div>
       <div class="field">
         <label class="label" for="c-phone" id="l-phone">Phone number <span class="opt" id="opt-text">(Optional)</span></label>
-        <input id="c-phone" type="tel" autocomplete="tel" id="ph-ph" placeholder="+47 123 45 678 or +1 555 000 0000">
+        <input id="c-phone" type="tel" autocomplete="tel" placeholder="+47 123 45 678 or +1 555 000 0000" maxlength="30">
       </div>
 
       <!-- Product -->
@@ -97,17 +97,17 @@ textarea{resize:vertical;min-height:100px;line-height:1.5;}
       <div class="row">
         <div class="field">
           <label class="label" for="c-product" id="l-product">Product name</label>
-          <input id="c-product" type="text" id="ph-product">
+          <input id="c-product" type="text" maxlength="200">
         </div>
         <div class="field">
           <label class="label" for="c-barcode" id="l-barcode">Barcode / EAN / UPC <span class="opt">(Optional)</span></label>
-          <input id="c-barcode" type="text" class="mono" id="ph-barcode">
+          <input id="c-barcode" type="text" class="mono" maxlength="50">
         </div>
       </div>
       <div class="row">
         <div class="field">
           <label class="label" for="c-lot" id="l-lot">Lot or batch number <span class="opt">(Optional)</span></label>
-          <input id="c-lot" type="text" class="mono" id="ph-lot">
+          <input id="c-lot" type="text" class="mono" maxlength="50">
         </div>
         <div class="field">
           <label class="label" for="c-bestbefore" id="l-bestbefore">Best before / use by date <span class="opt">(Optional)</span></label>
@@ -128,13 +128,13 @@ textarea{resize:vertical;min-height:100px;line-height:1.5;}
         </div>
         <div class="field">
           <label class="label" for="c-store" id="l-store">Store / retailer name</label>
-          <input id="c-store" type="text">
+          <input id="c-store" type="text" maxlength="150">
         </div>
       </div>
       <div class="row" id="city-state-row">
         <div class="field">
           <label class="label" for="c-city" id="l-city">City / town</label>
-          <input id="c-city" type="text">
+          <input id="c-city" type="text" maxlength="100">
         </div>
         <div class="field" id="state-row" style="display:none;">
           <label class="label" for="c-state" id="l-state">State / region</label>
@@ -146,7 +146,7 @@ textarea{resize:vertical;min-height:100px;line-height:1.5;}
       <div class="section-label" id="sec-details">What happened?</div>
       <div class="field">
         <label class="label" for="c-details" id="l-details">Description *</label>
-        <textarea id="c-details"></textarea>
+        <textarea id="c-details" maxlength="5000"></textarea>
       </div>
 
       <!-- Health signals -->
@@ -401,6 +401,11 @@ function updateStateField(code) {
   stateEl.innerHTML = `<option value="">${s.phState}</option>` + reg.opts.map(o => `<option value="${o}">${o}</option>`).join('');
 }
 
+// Cooldown timestamp — set after a successful submit so a frustrated clicker
+// can't spam the form. Pure UX hardening; real abuse protection lives in the
+// triage-complaint Netlify function (server side).
+let _lastSubmitAt = 0;
+
 async function submitComplaint() {
   const details = document.getElementById('c-details').value.trim();
   const country = document.getElementById('c-country').value;
@@ -410,10 +415,32 @@ async function submitComplaint() {
   if (!details) { errEl.textContent = s.required; errEl.style.display = 'block'; return; }
   if (!country) { errEl.textContent = s.countryRequired; errEl.style.display = 'block'; return; }
 
-  const btn = document.getElementById('c-submit');
-  btn.disabled = true; btn.innerHTML = `<span class="spinner"></span>${s.submitting}`;
+  // 5-second cooldown after successful submit
+  const sinceLast = Date.now() - _lastSubmitAt;
+  if (_lastSubmitAt && sinceLast < 5000) {
+    const wait = Math.ceil((5000 - sinceLast) / 1000);
+    errEl.textContent = (LANG === 'no'
+      ? `Vennligst vent ${wait} sek før du sender en ny rapport.`
+      : `Please wait ${wait}s before submitting another report.`);
+    errEl.style.display = 'block';
+    return;
+  }
 
   const email = document.getElementById('c-email').value.trim();
+  // Basic email format check — the only required-format field on the form.
+  // Browser's :invalid check is bypassed because submit goes via button onclick,
+  // not native form submit. Pattern is intentionally permissive (covers
+  // "anything@anything.tld") — server should still validate strictly.
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    errEl.textContent = (LANG === 'no'
+      ? 'E-postadressen ser ikke gyldig ut. Sjekk og prøv igjen.'
+      : "That email address doesn't look right — please check and try again.");
+    errEl.style.display = 'block';
+    return;
+  }
+
+  const btn = document.getElementById('c-submit');
+  btn.disabled = true; btn.innerHTML = `<span class="spinner"></span>${s.submitting}`;
   const hasProductVal = document.getElementById('c-hasproduct').value;
   const countryName = COUNTRIES.find(([c]) => c === country)?.[1] || country;
 
@@ -447,6 +474,7 @@ async function submitComplaint() {
     const data = await res.json();
     if (data.error) throw new Error(data.error);
 
+    _lastSubmitAt = Date.now();
     document.getElementById('form-view').style.display = 'none';
     document.getElementById('success-view').classList.add('show');
     document.getElementById('s-ref').textContent = s.sRef + ': ' + (data.complaint_number || '');
