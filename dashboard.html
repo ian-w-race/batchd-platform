@@ -10450,6 +10450,15 @@ function openConsumerCSVImport(mode) {
       const recallLot     = _consumerNotifCustomers[0]?._lot || '';
 
       if (isMatched) {
+        // INTENTIONALLY LENIENT MATCHING — do not tighten to the strict
+        // three-condition rule used everywhere else in the platform. This is
+        // CONSUMER NOTIFICATION (outreach), not active-recall counting (KPIs).
+        // Failure modes are asymmetric:
+        //   - False positive: customer notified about something they didn't buy.
+        //     Annoying, but no legal exposure. Most jurisdictions allow over-notification.
+        //   - False negative: real purchaser of recalled product is NOT notified.
+        //     Health risk + direct legal exposure (FSMA 204, EU 178/2002).
+        // Lenient matching deliberately favors over-notification on safety grounds.
         const rp = recallProduct.toLowerCase();
         const rl = recallLot.toLowerCase();
         const rowProduct = (row.product_name||'').toLowerCase();
