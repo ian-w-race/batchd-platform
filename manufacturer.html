@@ -4954,6 +4954,7 @@ async function saveMfrSettings() {
   const lang   = document.getElementById('mfr-set-lang')?.value || 'en';
   const msg    = document.getElementById('mfr-set-msg');
   if (!name) { showMfrMsg(msg, 'Organisation name is required.', 'error'); return; }
+  if (!_requireMfrAdmin(msg)) return;
   const { error } = await sb.from('organisations').update({ name, contact_email: email, region, language: lang }).eq('id', _orgId);
   if (error) { showMfrMsg(msg, 'Error: ' + error.message, 'error'); return; }
   _orgName = name;
@@ -4963,6 +4964,7 @@ async function saveMfrSettings() {
 
 async function saveMfrFrameworks() {
   const msg = document.getElementById('mfr-fw-msg');
+  if (!_requireMfrAdmin(msg)) return;
   const selected = [];
   if (_mfrMarkets.has('no')) selected.push('mattilsynet','eu_178');
   if (_mfrMarkets.has('us')) selected.push('fda_food','fsma_204','usda_fsis');
@@ -4975,9 +4977,24 @@ async function saveMfrCoordinator() {
   const name    = document.getElementById('mfr-coord-name')?.value.trim();
   const contact = document.getElementById('mfr-coord-contact')?.value.trim();
   const msg     = document.getElementById('mfr-coord-msg');
+  if (!_requireMfrAdmin(msg)) return;
   const { error } = await sb.from('organisations').update({ recall_coordinator_name: name, recall_coordinator_contact: contact }).eq('id', _orgId);
   if (error) { showMfrMsg(msg, 'Error: ' + error.message, 'error'); return; }
   showMfrMsg(msg, '✓ Coordinator saved', 'ok');
+}
+
+// Defence-in-depth role gate for org-wide settings writes. Manufacturer portal
+// admits mfr_admin, mfr_qa, and corp_admin roles; only mfr_admin and corp_admin
+// should be able to change org-wide settings (name, regulatory frameworks,
+// recall coordinator). This is client-side only — RLS / server-side checks
+// remain the actual security boundary, but this gives mfr_qa users a clear
+// rejection instead of an apparent successful save.
+function _requireMfrAdmin(msgEl) {
+  if (_userRole === 'mfr_admin' || _userRole === 'corp_admin') return true;
+  const text = 'Only manufacturer admins can change org-wide settings. Ask your admin to make this change.';
+  if (msgEl && typeof showMfrMsg === 'function') showMfrMsg(msgEl, text, 'error');
+  else if (typeof showToast === 'function') showToast(text, 'error', 4000);
+  return false;
 }
 
 function showMfrMsg(el, txt, type) {
@@ -6618,7 +6635,21 @@ async function renderIncidentTimeline() {
   const ev = eventRes.data;
   const acks = acksRes.data || [];
   const dists = distRes.data || [];
-  const invs = invRes.data || [];
+  // Filter investigations to those actually related to THIS recall.
+  // Without this, the timeline rendered EVERY investigation this manufacturer
+  // ever ran (mixed under one recall's timeline), which was a data-integrity
+  // issue, not a security one. An investigation is considered related when
+  // its lot_number matches the recall's lot_number (preferred), or — if the
+  // recall has no lot — when product_name matches.
+  const _allInvs = invRes.data || [];
+  const _evLot   = (ev?.lot_number     || '').toLowerCase().trim();
+  const _evProd  = (ev?.product_name   || '').toLowerCase().trim();
+  const invs = _allInvs.filter(inv => {
+    const iLot  = (inv.lot_number   || '').toLowerCase().trim();
+    const iProd = (inv.product_name || '').toLowerCase().trim();
+    if (_evLot) return iLot === _evLot;
+    return _evProd && iProd === _evProd;
+  });
   const complaints = complaintsRes.data || [];
   const shipments = shipmentsRes.data || [];
   if (!ev) { el.innerHTML = `<div style="color:var(--danger)">Recall event not found.</div>`; return; }
