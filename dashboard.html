@@ -2061,7 +2061,7 @@ async function renderOverview() {
       sb.from('scans').select('id, created_at, store_name, store_id, product_name, lot_number, barcode_number, removed_from_shelf_at, scanned_by, recall_resolved').eq('organisation_id', _orgId).gte('created_at', days30).order('created_at', {ascending:false}).limit(500),
       sb.from('trading_partners').select('id, status, organisations!trading_partners_manufacturer_id_fkey(id,name)').eq('retailer_id', _orgId),
       sb.from('shipments').select('id, lot_number, quantity, unit, shipped_at, stores(name), organisations!shipments_manufacturer_id_fkey(id,name), products(name)').eq('retailer_id', _orgId).order('shipped_at', {ascending:false}).limit(200),
-      sb.from('recall_acknowledgements').select('id, status, recall_event_id, store_id, created_at, acknowledged_at, organisation_id').eq('organisation_id', _orgId),
+      sb.from('recall_acknowledgements').select('id, status, recall_event_id, store_id, created_at, acknowledged_at, organisation_id, recall_events!inner(is_drill)').eq('organisation_id', _orgId),
       sb.from('recall_distributions').select('recall_event_id, distributed_at').eq('retailer_org_id', _orgId),
       // NOTE: removed_at is intentionally omitted — it is never written by app code
       // (pullFromShelf writes to scans.removed_from_shelf_at, not scan_recall_matches).
@@ -2181,8 +2181,10 @@ async function renderOverview() {
     // Per CLAUDE.md, mock drills never count toward active recall numbers.
     // Drill acks (intentionally untouched test data) would otherwise tank the
     // response rate and surface as fake "overdue" alerts on real-recall metrics.
-    const _drillEventIds = new Set(recallEvents.filter(e => e.is_drill).map(e => e.id));
-    const realAcks       = acks.filter(a => !_drillEventIds.has(a.recall_event_id));
+    // is_drill is pulled directly from the joined recall_events row in the ack
+    // query — using recallEvents wouldn't catch drills that lack a recall_distributions
+    // row for this org (which is most of them in practice).
+    const realAcks       = acks.filter(a => !a.recall_events?.is_drill);
     const totalAcks      = realAcks.length;
     const actioned       = realAcks.filter(a => a.status !== 'notified').length;
     const responseRate   = totalAcks > 0 ? Math.round((actioned / totalAcks) * 100) : 100;
