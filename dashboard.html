@@ -3270,6 +3270,10 @@ async function launchDrill() {
     if (drillErr) throw drillErr;
 
     setMsg('✓ Drill launched — ' + (stores?.length||0) + ' store' + ((stores?.length||0)!==1?'s':'') + ' notified', true);
+    // Update button to a clear "done" state immediately rather than leaving it
+    // disabled with "Launching…" until the timeout. Prevents user confusion if
+    // they dismiss the modal before the auto-close fires.
+    if (btn) { btn.textContent = '✓ Launched'; }
     setTimeout(() => {
       document.getElementById('drill-launcher-modal')?.remove();
       _recallsTab = 'active';
@@ -5365,7 +5369,11 @@ async function generateJointRecallReport(recallEventId, productName) {
     const [evRes, distRes, acksRes, orgRes] = await Promise.all([
       sb.from('recall_events').select('*').eq('id', recallEventId).single(),
       sb.from('recall_distributions').select('retailer_org_id, distributed_at, est_affected_units').eq('recall_event_id', recallEventId),
-      sb.from('recall_acknowledgements').select('*, stores(name)').eq('recall_event_id', recallEventId).order('created_at'),
+      // Scope to this org's acks only — the joint report is between this
+      // retailer and the manufacturer, not a multi-retailer summary. Without
+      // this filter, RLS gaps could leak other retailers' store names, ack
+      // timestamps, and units pulled into the rendered HTML output.
+      sb.from('recall_acknowledgements').select('*, stores(name)').eq('recall_event_id', recallEventId).eq('organisation_id', _orgId).order('created_at'),
       sb.from('organisations').select('id, name, contact_email, recall_coordinator_name, recall_coordinator_contact').eq('id', _orgId).single(),
     ]);
 
@@ -6318,7 +6326,12 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
       return;
     }
     const r = recalls[Math.min(_reportExposureIdx, recalls.length-1)];
-    const noticeText = `PRODUCT RECALL NOTICE\n\n${_orgName} is notifying customers of a recall affecting the following product:\n\nProduct: ${r.product_name}\nLot number: ${r.lot_number||'See packaging'}\n${r.barcode?'Barcode: '+r.barcode+'\n':''}\nReason: ${r.reason||'See below'}\n${r.description?'\nDetails:\n'+r.description+'\n':''}\nWhat to do:\nIf you have purchased this product, do not consume it. Return it to the place of purchase for a full refund.\n\nFor questions, contact us at ${_orgName}.\n\nIssued: ${fmtDash(new Date())}`;
+    // recall_events table uses `barcode`; recalls table uses `barcode_number`.
+    // Either field may be present depending on whether r is a pushed event or
+    // an internal recall — fall back across both so internal recalls don't
+    // silently drop the Barcode line in customer-facing notices.
+    const _bc = r.barcode || r.barcode_number || '';
+    const noticeText = `PRODUCT RECALL NOTICE\n\n${_orgName} is notifying customers of a recall affecting the following product:\n\nProduct: ${r.product_name}\nLot number: ${r.lot_number||'See packaging'}\n${_bc?'Barcode: '+_bc+'\n':''}\nReason: ${r.reason||'See below'}\n${r.description?'\nDetails:\n'+r.description+'\n':''}\nWhat to do:\nIf you have purchased this product, do not consume it. Return it to the place of purchase for a full refund.\n\nFor questions, contact us at ${_orgName}.\n\nIssued: ${fmtDash(new Date())}`;
 
     el.innerHTML = reportHeader('Exposure notice', 'Customer-facing recall notification template', 'exposure') +
       `${recalls.length > 1 ? `
@@ -6540,7 +6553,7 @@ async function downloadReport(key) {
           const exp = exposureForRecall(r.id);
           return [
             d ? fmtDash(d) : '',
-            r.product_name, r.lot_number, r.barcode||'',
+            r.product_name, r.lot_number, (r.barcode || r.barcode_number || ''),
             isPushed ? 'Manufacturer push' : (r.source||'Manual'),
             r.severity||'', r.reason||'', r.authority_reference||'',
             isPushed ? 'Active' : (r.active ? 'Active' : 'Resolved'),
@@ -6577,7 +6590,7 @@ async function downloadReport(key) {
     } else if (key === 'exposure') {
       downloadCSV(`batchd-exposure-notice-${date}.csv`,
         ['Product','Lot Number','Barcode','Severity','Reason','Description','Authority Reference','Published'],
-        data.map(r => [r.product_name, r.lot_number, r.barcode||'', r.severity||'', r.reason||'', r.description||'', r.authority_reference||'', r.published_at ? fmtDash(r.published_at) : ''])
+        data.map(r => [r.product_name, r.lot_number, (r.barcode || r.barcode_number || ''), r.severity||'', r.reason||'', r.description||'', r.authority_reference||'', r.published_at ? fmtDash(r.published_at) : ''])
       );
     } else if (key === 'fsma') {
       downloadCSV(`batchd-${isUS?'fsma204':'eu-traceability'}-${date}.csv`,
@@ -7894,10 +7907,15 @@ async function renderDashTriageDetail(el) {
 
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
   try {
+    // Scope each query to this org. The complaints table has receiving_org_id;
+    // its child tables (complaint_messages, complaint_audit_log) inherit org
+    // ownership through the parent. The !inner join filters child rows to
+    // those whose parent complaint belongs to _orgId — defence in depth on
+    // top of RLS so a forged complaint_id from another org returns nothing.
     const [compRes, msgsRes, logRes] = await Promise.all([
-      sb.from('complaints').select('*').eq('id', _dashTriageComplaint).single(),
-      sb.from('complaint_messages').select('*').eq('complaint_id', _dashTriageComplaint).order('created_at', {ascending:true}),
-      sb.from('complaint_audit_log').select('*').eq('complaint_id', _dashTriageComplaint).order('created_at', {ascending:true}),
+      sb.from('complaints').select('*').eq('id', _dashTriageComplaint).eq('receiving_org_id', _orgId).single(),
+      sb.from('complaint_messages').select('*, complaints!inner(receiving_org_id)').eq('complaint_id', _dashTriageComplaint).eq('complaints.receiving_org_id', _orgId).order('created_at', {ascending:true}),
+      sb.from('complaint_audit_log').select('*, complaints!inner(receiving_org_id)').eq('complaint_id', _dashTriageComplaint).eq('complaints.receiving_org_id', _orgId).order('created_at', {ascending:true}),
     ]);
     const c    = compRes.data;
     if (!c) throw new Error('Complaint not found');
@@ -8077,9 +8095,11 @@ async function renderEscalationSection(elId, complaintId, productName, lotNumber
   const el = document.getElementById(elId);
   if (!el) return;
 
-  // Fetch existing escalations and confirmed trading partners in parallel
+  // Fetch existing escalations and confirmed trading partners in parallel.
+  // The escalations query joins to the parent complaint and filters by
+  // receiving_org_id so a forged complaint_id from another org returns nothing.
   const [escRes, partRes] = await Promise.all([
-    sb.from('complaint_escalations').select('*, organisations!complaint_escalations_to_org_id_fkey(name)').eq('complaint_id', complaintId).order('escalated_at', {ascending:false}),
+    sb.from('complaint_escalations').select('*, organisations!complaint_escalations_to_org_id_fkey(name), complaints!inner(receiving_org_id)').eq('complaint_id', complaintId).eq('complaints.receiving_org_id', _orgId).order('escalated_at', {ascending:false}),
     sb.from('trading_partners').select('manufacturer_id, organisations!trading_partners_manufacturer_id_fkey(id, name, contact_email, recall_coordinator_name, recall_coordinator_contact)').eq('retailer_id', _orgId).eq('status', 'active'),
   ]);
   const escalations = escRes.data || [];
@@ -8810,8 +8830,14 @@ async function renderDashInvestigations() {
 
     let invs = [];
     if (mfrIds.length > 0) {
+      // Scope the nested investigation_responses join to this org's responses only.
+      // Without the .investigation_responses.retailer_org_id filter, the join
+      // returns every retailer's response on each shared investigation —
+      // exposing competing retailers' findings (issue_found flag, timestamps)
+      // for the same investigation.
       const { data } = await sb.from('investigation_requests')
         .select('*, investigation_responses(id, retailer_org_id, issue_found, submitted_at)')
+        .eq('investigation_responses.retailer_org_id', _orgId)
         .in('manufacturer_id', mfrIds).order('created_at', {ascending:false});
       invs = data || [];
     }
@@ -8964,6 +8990,24 @@ async function openDashInvestResponse(invId) {
 
   const { data: inv } = await sb.from('investigation_requests').select('*').eq('id', invId).single();
   if (!inv) { showToast('Investigation not found', 'error', 3000); return; }
+
+  // Defence in depth: only allow access if the user is either the manufacturer
+  // who created the investigation OR a retailer with an active trading
+  // partnership with that manufacturer. Without this check, RLS gaps could
+  // expose investigation details (potentially manufacturer-private fields) to
+  // a user who has no business relationship with the originating manufacturer.
+  if (inv.manufacturer_id !== _orgId) {
+    const { data: partnership } = await sb.from('trading_partners')
+      .select('id')
+      .eq('retailer_id', _orgId)
+      .eq('manufacturer_id', inv.manufacturer_id)
+      .eq('status', 'active')
+      .limit(1);
+    if (!partnership || !partnership.length) {
+      showToast("You don't have access to this investigation.", 'error', 4000);
+      return;
+    }
+  }
 
   const { data: stores } = await sb.from('stores').select('id,name').eq('organisation_id', _orgId).eq('active', true).order('name');
   _dashInvestPhotos = [];
