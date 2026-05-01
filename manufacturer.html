@@ -3151,10 +3151,16 @@ async function renderTriageDetail(el) {
 
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading complaint…</div>`;
   try {
+    // Scope each query to this manufacturer. The complaints table has
+    // receiving_org_id; its child tables (complaint_messages,
+    // complaint_audit_log) inherit org ownership through the parent.
+    // The !inner join filters child rows to those whose parent complaint
+    // belongs to _orgId — defence in depth on top of RLS so a forged
+    // complaint_id from another manufacturer returns nothing.
     const [compRes, msgsRes, logRes] = await Promise.all([
-      sb.from('complaints').select('*').eq('id', _triageComplaint).single(),
-      sb.from('complaint_messages').select('*').eq('complaint_id', _triageComplaint).order('created_at', { ascending: true }),
-      sb.from('complaint_audit_log').select('*').eq('complaint_id', _triageComplaint).order('created_at', { ascending: true })
+      sb.from('complaints').select('*').eq('id', _triageComplaint).eq('receiving_org_id', _orgId).single(),
+      sb.from('complaint_messages').select('*, complaints!inner(receiving_org_id)').eq('complaint_id', _triageComplaint).eq('complaints.receiving_org_id', _orgId).order('created_at', { ascending: true }),
+      sb.from('complaint_audit_log').select('*, complaints!inner(receiving_org_id)').eq('complaint_id', _triageComplaint).eq('complaints.receiving_org_id', _orgId).order('created_at', { ascending: true })
     ]);
 
     const c = compRes.data;
@@ -3616,8 +3622,16 @@ async function renderPatterns() {
 async function deleteMfrPattern(id, btn) {
   if (!confirm('Delete this learned pattern? The scanning app will re-learn it from future scans.')) return;
   btn.disabled = true; btn.textContent = '…';
-  const { error } = await sb.from('code_patterns').delete().eq('id', id);
-  if (error) { btn.disabled = false; btn.textContent = 'Delete'; showToast('Error: ' + error.message, 'error', 4000); return; }
+  // Scope by organisation_id so a forged pattern id can't delete another
+  // organisation's row. The READ at line 3505 deliberately pulls cross-org
+  // ("All other products in network" learning library) — this DELETE must NOT.
+  const { data: deleted, error } = await sb.from('code_patterns')
+    .delete()
+    .eq('id', id)
+    .eq('organisation_id', _orgId)
+    .select('id');
+  if (error)               { btn.disabled = false; btn.textContent = 'Delete'; showToast('Error: ' + error.message, 'error', 4000); return; }
+  if (!deleted || !deleted.length) { btn.disabled = false; btn.textContent = 'Delete'; showToast('Could not delete — pattern not found in your organisation.', 'error', 4000); return; }
   renderPatterns();
 }
 
@@ -6589,7 +6603,10 @@ async function renderIncidentTimeline() {
 
   const [eventRes, acksRes, distRes, invRes, complaintsRes, shipmentsRes] = await Promise.all([
     sb.from('recall_events').select('*').eq('id', _timelineRecallId).single(),
-    sb.from('recall_acknowledgements').select('*, organisations(name)').eq('recall_event_id', _timelineRecallId).order('updated_at', { ascending: true }),
+    // Same family of bug as the dashboard.html fixes — recall_acknowledgements
+    // table has no updated_at column. Ordering by it makes Supabase return
+    // data:null. Use created_at instead (real column on the table).
+    sb.from('recall_acknowledgements').select('*, organisations(name)').eq('recall_event_id', _timelineRecallId).order('created_at', { ascending: true }),
     sb.from('recall_distributions').select('*, organisations!recall_distributions_retailer_org_id_fkey(name)').eq('recall_event_id', _timelineRecallId),
     sb.from('investigation_requests').select('*, investigation_responses(id, submitted_at, retailer_org_id, issue_found, store_name)').eq('manufacturer_id', _orgId).order('created_at', { ascending: true }),
     // Scope by receiving_org_id — same PII-leak risk as the legal package
