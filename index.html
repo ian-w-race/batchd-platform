@@ -15528,8 +15528,19 @@ function applyManagerUI(isManager) {
   }
 }
 
-// Secret dev toggle: tap the version number 5× to become manager for testing
+// Secret dev toggle: tap the version number 5× to become manager for testing.
+// Gated to dev contexts only — running on localhost OR with ?dev=1 in the URL.
+// Without this gate, an end-user idly tapping the version number could surface
+// manager UI buttons that don't actually work (RLS still blocks the queries).
 (function() {
+  const _isDevContext = (() => {
+    const h = window.location.hostname;
+    if (h === 'localhost' || h === '127.0.0.1') return true;
+    try { return new URLSearchParams(window.location.search).has('dev'); }
+    catch (e) { return false; }
+  })();
+  if (!_isDevContext) return;
+
   let _taps = 0, _tapTimer;
   document.addEventListener('click', function(e) {
     const el = e.target.closest('[data-secret-manager]');
