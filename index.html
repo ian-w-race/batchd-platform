@@ -9563,7 +9563,9 @@ function renderRecallsList() {
 }
 
 async function toggleRecallActive(id, active) {
-  const { error } = await sb.from('recalls').update({ active }).eq('id', id);
+  // Stamp resolved_at when deactivating; clear it when reactivating.
+  const update = { active, resolved_at: active ? null : new Date().toISOString() };
+  const { error } = await sb.from('recalls').update(update).eq('id', id);
   if (error) { showToast('Could not update recall: ' + error.message, 'error', 4000); return; }
   loadRecallsList();
 }
@@ -16989,8 +16991,11 @@ async function mgrAddRecall() {
 
 async function mgrToggleRecall(id, active) {
   try {
+    // Stamp resolved_at when deactivating (this is when the recall was "resolved");
+    // clear it when reactivating so a re-deactivation gets a fresh timestamp.
+    const update = { active, resolved_at: active ? null : new Date().toISOString() };
     const { data: updated, error } = await sb.from('recalls')
-      .update({ active })
+      .update(update)
       .eq('id', id)
       .eq('organisation_id', _currentOrgId)
       .select('id');
