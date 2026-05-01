@@ -5515,6 +5515,24 @@ async function showApp(user) {
         window._managerStoreId   = member.store_id;
         window._managerStoreName = null;
       }
+    } else {
+      // No organisation membership row — invited user not yet added to an org,
+      // or a data inconsistency. Without _currentOrgId every downstream query
+      // either returns empty or fails. Block the app and route them back to admin.
+      document.getElementById('auth-view').innerHTML = `
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;padding:32px;text-align:center;gap:16px;">
+          <div style="font-size:40px;">🔗</div>
+          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:18px;">Not linked to an organisation</div>
+          <div style="font-size:13px;color:var(--muted);max-width:320px;line-height:1.6;">Your account isn't linked to a Batch'd organisation yet. Ask your administrator to add you to your store's organisation, then sign in again.</div>
+          <button onclick="sb.auth.signOut().then(()=>location.reload())"
+            style="margin-top:8px;padding:10px 20px;border-radius:8px;border:1px solid var(--border);background:none;color:var(--muted);font-family:'DM Mono',monospace;font-size:12px;cursor:pointer;">
+            Sign out
+          </button>
+        </div>`;
+      document.getElementById('auth-view').style.display = 'flex';
+      document.getElementById('main-app').style.display  = 'none';
+      await sb.auth.signOut();
+      return;
     }
 
     // Auto-populate user_settings on first login so recall prefs and region are set
@@ -17791,11 +17809,17 @@ async function _advanceLinkedAck(targetStatus) {
   const target  = ACK_STEPS.indexOf(targetStatus);
   if (target <= current) return; // already at or past this step
   try {
-    const update = {
-      status: targetStatus,
-      acknowledged_at: new Date().toISOString(),
-      acknowledged_by: currentUser?.id || null,
-    };
+    // Schema only has acknowledged_at as a transition timestamp — no
+    // disposed_at / confirmed_at columns. Only stamp acknowledged_at when
+    // we're actually entering the acknowledged step; other transitions
+    // update status only. Previously this overwrote acknowledged_at on
+    // every transition, so the field ended up holding the time of the
+    // LAST transition (often confirmed) instead of when acknowledged.
+    const update = { status: targetStatus };
+    if (targetStatus === 'acknowledged') {
+      update.acknowledged_at = new Date().toISOString();
+      update.acknowledged_by = currentUser?.id || null;
+    }
     const { data, error } = await sb.from('recall_acknowledgements')
       .update(update)
       .eq('id', _recallLinkedAck.id)

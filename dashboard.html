@@ -1520,7 +1520,7 @@ async function traceLot() {
       sb.from('shipments').select('id,lot_number,quantity,unit,shipped_at,reference_document,stores(name,address),organisations!shipments_manufacturer_id_fkey(name),products(name)').eq('retailer_id', _orgId).limit(200),
       sb.from('scans').select('id,product_name,lot_number,store_name,scanned_by,created_at,tlc_source').eq('organisation_id', _orgId).order('created_at',{ascending:false}).limit(500),
       sb.from('recall_events').select('id,product_name,lot_number,severity,reason,is_drill,published_at').order('published_at',{ascending:false}).limit(100),
-      sb.from('recall_acknowledgements').select('id,status,recall_event_id,updated_at,units_pulled,stores(name)').eq('organisation_id', _orgId),
+      sb.from('recall_acknowledgements').select('id,status,recall_event_id,created_at,acknowledged_at,units_pulled,stores(name)').eq('organisation_id', _orgId),
     ]);
 
     const shipments = (shipmentsRes.data||[]).filter(s => lotsMatch(s.lot_number, lotCode));
@@ -1641,7 +1641,7 @@ scans(id, product_name, lot_number, store_name, store_id, scanned_by, created_at
 complaints(id, complaint_number, product_name, lot_number, triage_level, status, created_at, receiving_org_id)
 shipments(id, lot_number, quantity, unit, shipped_at, retailer_id, manufacturer_id, store_id)
 recalls(id, product_name, lot_number, active, source, created_at, organisation_id)
-recall_acknowledgements(id, status, recall_event_id, store_id, updated_at, organisation_id)
+recall_acknowledgements(id, status, recall_event_id, store_id, created_at, acknowledged_at, organisation_id)
 stores(id, name, active, organisation_id)
 organisation_id for this user = "${_orgId}"`;
 
@@ -1738,7 +1738,7 @@ async function loadWeeklyDigest(containerEl) {
 
     const [scansRes, acksRes, complaintsRes, drillsRes, storesRes] = await Promise.all([
       sb.from('scans').select('id,store_name,lot_number,created_at').eq('organisation_id', _orgId).gte('created_at', days7).limit(500),
-      sb.from('recall_acknowledgements').select('id,status,updated_at').eq('organisation_id', _orgId).limit(200),
+      sb.from('recall_acknowledgements').select('id,status,created_at').eq('organisation_id', _orgId).limit(200),
       sb.from('complaints').select('id,product_name').eq('receiving_org_id', _orgId).gte('created_at', days7).limit(100),
       sb.from('mock_recall_drills').select('id').eq('retailer_org_id', _orgId).gte('created_at', days365).limit(1),
       sb.from('stores').select('id,name,active').eq('organisation_id', _orgId).eq('active', true).limit(50),
@@ -2059,7 +2059,7 @@ async function renderOverview() {
       sb.from('scans').select('id, created_at, store_name, store_id, product_name, lot_number, barcode_number, removed_from_shelf_at, scanned_by, recall_resolved').eq('organisation_id', _orgId).gte('created_at', days30).order('created_at', {ascending:false}).limit(500),
       sb.from('trading_partners').select('id, status, organisations!trading_partners_manufacturer_id_fkey(id,name)').eq('retailer_id', _orgId),
       sb.from('shipments').select('id, lot_number, quantity, unit, shipped_at, stores(name), organisations!shipments_manufacturer_id_fkey(id,name), products(name)').eq('retailer_id', _orgId).order('shipped_at', {ascending:false}).limit(200),
-      sb.from('recall_acknowledgements').select('id, status, recall_event_id, store_id, updated_at, organisation_id').eq('organisation_id', _orgId),
+      sb.from('recall_acknowledgements').select('id, status, recall_event_id, store_id, created_at, acknowledged_at, organisation_id').eq('organisation_id', _orgId),
       sb.from('recall_distributions').select('recall_event_id, distributed_at').eq('retailer_org_id', _orgId),
       // NOTE: removed_at is intentionally omitted — it is never written by app code
       // (pullFromShelf writes to scans.removed_from_shelf_at, not scan_recall_matches).
@@ -2179,7 +2179,10 @@ async function renderOverview() {
     const totalAcks    = acks.length;
     const actioned     = acks.filter(a => a.status !== 'notified').length;
     const responseRate = totalAcks > 0 ? Math.round((actioned / totalAcks) * 100) : 100;
-    const overdueAcks  = acks.filter(a => a.status === 'notified' && (now - new Date(a.updated_at)) > 4*3600000);
+    // For status='notified' rows, no transition has happened yet, so created_at
+    // is the correct "how long has this been waiting" timestamp. Schema has no
+    // updated_at column on this table — selecting it silently nulled the query.
+    const overdueAcks  = acks.filter(a => a.status === 'notified' && (now - new Date(a.created_at)) > 4*3600000);
 
     // ── Store health analysis ─────────────────────────────────
     const activeStores = stores.filter(s => s.active);
@@ -2287,7 +2290,7 @@ async function renderOverview() {
       const avgPerDay = historicScans.length / 90;
       return { store, avgPerDay: Math.round(avgPerDay * 10) / 10, expected7d: Math.round(avgPerDay * 7) };
     });
-    const overdueAcksAll = acks.filter(a => a.status === 'notified' && (Date.now() - new Date(a.updated_at)) > 4*3600000);
+    const overdueAcksAll = acks.filter(a => a.status === 'notified' && (Date.now() - new Date(a.created_at)) > 4*3600000);
 
     // Check for drill overdue - fetch from drills table
     const { data: recentDrills } = await sb.from('mock_recall_drills')
@@ -2354,7 +2357,7 @@ async function renderOverview() {
       ...overdueAcksAll.slice(0,3).map(a => ({
         level: 'high', icon: '⏱',
         title: `Recall response overdue`,
-        detail: `Store acknowledgement stuck at "notified" for ${Math.round((Date.now()-new Date(a.updated_at))/3600000)}h`,
+        detail: `Store acknowledgement stuck at "notified" for ${Math.round((Date.now()-new Date(a.created_at))/3600000)}h`,
         action: `showPanel('recalls')`, cta: 'View recalls',
       })),
       ...complaintClusters.map(g => ({
@@ -2645,7 +2648,7 @@ el.innerHTML = `
                   <div style="color:var(--text);font-weight:500;">${ev?.product_name || 'Recall'}</div>
                   <div style="color:var(--muted);">${store?.name || 'Unknown store'}</div>
                 </div>
-                <div style="font-size:10px;color:var(--warn);">${fmtTime(a.updated_at)}</div>
+                <div style="font-size:10px;color:var(--warn);">${fmtTime(a.created_at)}</div>
               </div>`;
             }).join('')}
             ${overdueAcks.length > 3 ? `<div style="font-size:11px;color:var(--warn);margin-top:6px;">+ ${overdueAcks.length-3} more</div>` : ''}
@@ -9071,7 +9074,7 @@ async function generateDrillReport(drillId) {
     let ackMap = {};
     if (evIds.length) {
       const { data: acksData } = await sb.from('recall_acknowledgements')
-        .select('recall_event_id, store_id, status, acknowledged_at, updated_at, stores(name)')
+        .select('recall_event_id, store_id, status, acknowledged_at, created_at, stores(name)')
         .in('recall_event_id', evIds)
         .eq('organisation_id', _orgId);
       (acksData||[]).forEach(a => {
@@ -9097,10 +9100,10 @@ async function generateDrillReport(drillId) {
       const pct       = total > 0 ? Math.round((confirmed/total)*100) : 0;
       const drillDate = new Date(d.created_at).toLocaleDateString(_dashLocale(), {day:'numeric',month:'long',year:'numeric'});
 
-      // Response time analysis
+      // Response time analysis: hours from row creation (notification) to acknowledgement.
       const responseTimes = acks
         .filter(a => a.acknowledged_at && a.created_at)
-        .map(a => (new Date(a.acknowledged_at) - new Date(a.updated_at)) / 3600000);
+        .map(a => (new Date(a.acknowledged_at) - new Date(a.created_at)) / 3600000);
       const avgHours = responseTimes.length
         ? (responseTimes.reduce((s,v) => s+v, 0) / responseTimes.length).toFixed(1)
         : '—';
@@ -9255,7 +9258,7 @@ async function generateDrillCertificate(recallEventId) {
     const [evRes, acksRes, orgRes, coordRes] = await Promise.all([
       sb.from('recall_events').select('*').eq('id', recallEventId).single(),
       sb.from('recall_acknowledgements')
-        .select('id, status, acknowledged_at, updated_at, stores(name)')
+        .select('id, status, acknowledged_at, created_at, stores(name)')
         .eq('recall_event_id', recallEventId)
         .eq('organisation_id', _orgId),
       sb.from('organisations').select('name, contact_email, region').eq('id', _orgId).single(),
