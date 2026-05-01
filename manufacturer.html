@@ -2589,8 +2589,15 @@ function mfrTriageTabBar(active, escCount) {
 }
 
 async function updateEscalationStatus(escId, newStatus) {
-  const { error } = await sb.from('complaint_escalations').update({ status: newStatus }).eq('id', escId);
-  if (error) { showToast('Error: ' + error.message, 'error', 3500); return; }
+  // Scope by to_org_id so a forged escId from another manufacturer's
+  // escalation can't be flipped via this path.
+  const { data: updated, error } = await sb.from('complaint_escalations')
+    .update({ status: newStatus })
+    .eq('id', escId)
+    .eq('to_org_id', _orgId)
+    .select('id');
+  if (error)               { showToast('Error: ' + error.message, 'error', 3500); return; }
+  if (!updated || !updated.length) { showToast('Could not update — escalation not found in your organisation.', 'error', 4000); return; }
   renderTriage();
 }
 
@@ -2627,10 +2634,12 @@ async function submitEscalationResponse(escId) {
   if (!notes) { setMsg('Please add a response note', false); return; }
   const btn = document.querySelector('#esc-response-modal button[onclick^="submitEscalationResponse"]');
   if (btn) { btn.disabled=true; btn.textContent='Sending…'; }
-  const { error } = await sb.from('complaint_escalations').update({
+  // Scope by to_org_id — same defence-in-depth as updateEscalationStatus.
+  const { data: updated, error } = await sb.from('complaint_escalations').update({
     manufacturer_notes: notes, status: 'resolved', resolved_at: new Date().toISOString(),
-  }).eq('id', escId);
+  }).eq('id', escId).eq('to_org_id', _orgId).select('id');
   if (error) { setMsg('Error: ' + error.message, false); if (btn) { btn.disabled=false; btn.textContent='Send & resolve →'; } return; }
+  if (!updated || !updated.length) { setMsg('Could not save — escalation not found in your organisation.', false); if (btn) { btn.disabled=false; btn.textContent='Send & resolve →'; } return; }
   setMsg('✓ Response sent', true);
   setTimeout(() => { document.getElementById('esc-response-modal')?.remove(); renderTriage(); }, 1000);
 }
@@ -3266,13 +3275,26 @@ async function renderTriageDetail(el) {
 
 async function updateTriageStatus(id, newStatus) {
   try {
-    await sb.from('complaints').update({ status: newStatus }).eq('id', id);
-    await sb.from('complaint_audit_log').insert({
+    // Scope by receiving_org_id so a forged complaint id from another
+    // manufacturer can't be flipped via this path. Both writes destructure
+    // { error } so silent RLS denials don't leave UI/DB out of sync.
+    const { data: updated, error: updErr } = await sb.from('complaints')
+      .update({ status: newStatus })
+      .eq('id', id)
+      .eq('receiving_org_id', _orgId)
+      .select('id');
+    if (updErr) throw updErr;
+    if (!updated || !updated.length) {
+      showToast('Could not update — complaint not found in your organisation.', 'error', 4000);
+      return;
+    }
+    const { error: logErr } = await sb.from('complaint_audit_log').insert({
       complaint_id: id,
       action: 'status_changed_to_' + newStatus,
       actor_id: _session?.user?.id || null,
       actor_label: 'Staff'
     });
+    if (logErr) throw logErr;
     renderTriageDetail(document.getElementById('main-content'));
   } catch(e) {
     showToast('Error updating status: ' + e.message, 'error', 4000);
@@ -3785,14 +3807,27 @@ async function saveProduct() {
   btn.disabled = true; btn.innerHTML = '<div class="spinner" style="border-top-color:#080f12;"></div> Saving…';
 
   try {
-    const payload = { name, barcode: barcode||null, description: desc||null, category: category||null, is_ftl: isFtl, manufacturer_id: _orgId };
-    let error;
+    // INSERT payload includes manufacturer_id (sets ownership on creation).
+    // UPDATE payload deliberately excludes manufacturer_id so a successful row
+    // hit on another manufacturer's product can never rebind ownership to this
+    // org. Update is also scoped by .eq('manufacturer_id', _orgId) for
+    // defence in depth, with a rows-affected guard to surface RLS denials.
+    const insertPayload = { name, barcode: barcode||null, description: desc||null, category: category||null, is_ftl: isFtl, manufacturer_id: _orgId };
+    const updatePayload = { name, barcode: barcode||null, description: desc||null, category: category||null, is_ftl: isFtl };
+    let error, updated;
     if (_editingProductId) {
-      ({ error } = await sb.from('products').update(payload).eq('id', _editingProductId));
+      ({ data: updated, error } = await sb.from('products')
+        .update(updatePayload)
+        .eq('id', _editingProductId)
+        .eq('manufacturer_id', _orgId)
+        .select('id'));
     } else {
-      ({ error } = await sb.from('products').insert(payload));
+      ({ error } = await sb.from('products').insert(insertPayload));
     }
     if (error) throw error;
+    if (_editingProductId && (!updated || !updated.length)) {
+      throw new Error('Could not save — product not found in your organisation.');
+    }
     closeProductForm();
     renderProducts();
   } catch(e) {
@@ -3962,8 +3997,17 @@ async function saveLot() {
 
 async function deleteLot(id) {
   if (!confirm('Delete this lot code? This cannot be undone.')) return;
-  const { error } = await sb.from('product_lots').delete().eq('id', id);
-  if (!error) renderLots();
+  // Scope by manufacturer_id so a forged lot id can't delete another
+  // manufacturer's row. Surface failures via toast instead of silently
+  // skipping the re-render.
+  const { data: deleted, error } = await sb.from('product_lots')
+    .delete()
+    .eq('id', id)
+    .eq('manufacturer_id', _orgId)
+    .select('id');
+  if (error)               { showToast('Could not delete: ' + error.message, 'error', 4000); return; }
+  if (!deleted || !deleted.length) { showToast('Could not delete — lot not found in your organisation.', 'error', 4000); return; }
+  renderLots();
 }
 
 function showLotMsg(txt, type) {
@@ -4456,7 +4500,14 @@ async function autoSynthesizeInvestigation(id, inv, responses) {
     const json = await res.json();
     const summary = (json.result || '').trim();
     if (summary) {
-      await sb.from('investigation_requests').update({ findings_summary: summary }).eq('id', id);
+      // Scope by manufacturer_id so a forged invId can't write findings_summary
+      // onto another manufacturer's investigation. Auto-synthesis is silent
+      // (background) so just log RLS denials without a user toast.
+      const { error: synthErr } = await sb.from('investigation_requests')
+        .update({ findings_summary: summary })
+        .eq('id', id)
+        .eq('manufacturer_id', _orgId);
+      if (synthErr) console.warn('[auto-synth] write failed:', synthErr.message);
       // Refresh the detail view if still visible
       const el = document.getElementById('main-content');
       if (el && _investId === id) renderInvestigationDetail(el, id);
@@ -4488,21 +4539,46 @@ async function generateInvestigationSummary(id) {
 
   const data = await res.json();
   if (data.summary) {
-    await sb.from('investigation_requests').update({ findings_summary: data.summary }).eq('id', id);
+    // Scope by manufacturer_id; surface RLS failures via toast.
+    const { data: updated, error } = await sb.from('investigation_requests')
+      .update({ findings_summary: data.summary })
+      .eq('id', id)
+      .eq('manufacturer_id', _orgId)
+      .select('id');
+    if (error) { showToast('Could not save summary: ' + error.message, 'error', 4000); return; }
+    if (!updated || !updated.length) { showToast('Could not save — investigation not found in your organisation.', 'error', 4000); return; }
     showToast('AI summary generated', 'ok', 2500);
     renderInvestigationDetail(document.getElementById('main-content'), id);
   }
 }
 
 async function closeInvestigation(id) {
-  await sb.from('investigation_requests').update({ status: 'closed' }).eq('id', id);
+  const { data: updated, error } = await sb.from('investigation_requests')
+    .update({ status: 'closed' })
+    .eq('id', id)
+    .eq('manufacturer_id', _orgId)
+    .select('id');
+  if (error)               { showToast('Could not close: ' + error.message, 'error', 4000); return; }
+  if (!updated || !updated.length) { showToast('Could not close — investigation not found in your organisation.', 'error', 4000); return; }
   renderInvestigationDetail(document.getElementById('main-content'), id);
 }
 
 async function escalateInvestigationToRecall(id) {
   const { data: inv } = await sb.from('investigation_requests').select('*').eq('id', id).single();
   if (!inv) return;
-  await sb.from('investigation_requests').update({ status: 'escalated', recall_escalated: true }).eq('id', id);
+  // Defence in depth: only let this manufacturer escalate their own
+  // investigations to recall.
+  if (inv.manufacturer_id !== _orgId) {
+    showToast("Could not escalate — you don't own this investigation.", 'error', 4000);
+    return;
+  }
+  const { data: updated, error } = await sb.from('investigation_requests')
+    .update({ status: 'escalated', recall_escalated: true })
+    .eq('id', id)
+    .eq('manufacturer_id', _orgId)
+    .select('id');
+  if (error)               { showToast('Could not escalate: ' + error.message, 'error', 4000); return; }
+  if (!updated || !updated.length) { showToast('Could not escalate — investigation not found in your organisation.', 'error', 4000); return; }
   showToast('Escalated — pre-filling Push Recall form', 'ok', 2500);
   // Pre-fill push recall form
   _pushDraft = {
@@ -5372,8 +5448,14 @@ async function generateLegalPackage(recallEventId) {
     sb.from('investigation_requests')
       .select('*, investigation_responses(*)')
       .eq('complaint_id', recallEventId),
+    // Scope by receiving_org_id so the legal package only contains complaints
+    // received by THIS manufacturer. Without this filter, an ILIKE on the first
+    // word of the product name would pull every other manufacturer's complaints
+    // about similarly-named products — exposing consumer PII (names, emails,
+    // phones, addresses, medical attention) cross-tenant.
     sb.from('complaints')
       .select('*')
+      .eq('receiving_org_id', _orgId)
       .or(`product_name.ilike.%${(await sb.from('recall_events').select('product_name').eq('id', recallEventId).single()).data?.product_name?.split(' ')[0] || 'x'}%`),
     sb.from('organisations').select('name, contact_email, recall_coordinator_name, recall_coordinator_contact, regulatory_frameworks').eq('id', _orgId).single(),
   ]);
@@ -5646,9 +5728,18 @@ async function generateCAP(recallId, product, lot) {
   const isUS = frameworks.includes('fda_food') || frameworks.includes('fsma_204');
   const isNO = frameworks.includes('mattilsynet');
 
-  // Save CAP data to recall_events
+  // Save CAP data to recall_events. Scoped by source_org_id so a forged
+  // recallId can't write CAP data onto another manufacturer's recall_event
+  // (CAP data is the regulator-facing payload — a misplaced write would be
+  // a serious data-integrity issue). Failures surface to the user via toast.
   const capData = { rootCauseType, rootCause, immediate, preventive, responsible, targetDate, fspNotes, generatedAt: new Date().toISOString() };
-  await sb.from('recall_events').update({ cap_data: capData }).eq('id', recallId);
+  const { data: capUpd, error: capErr } = await sb.from('recall_events')
+    .update({ cap_data: capData })
+    .eq('id', recallId)
+    .eq('source_org_id', _orgId)
+    .select('id');
+  if (capErr) { showToast('Could not save CAP data: ' + capErr.message, 'error', 5000); return; }
+  if (!capUpd || !capUpd.length) { showToast('Could not save CAP — recall not found in your organisation.', 'error', 5000); return; }
 
   const doc = `CORRECTIVE ACTION PLAN (CAP)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -6501,7 +6592,9 @@ async function renderIncidentTimeline() {
     sb.from('recall_acknowledgements').select('*, organisations(name)').eq('recall_event_id', _timelineRecallId).order('updated_at', { ascending: true }),
     sb.from('recall_distributions').select('*, organisations!recall_distributions_retailer_org_id_fkey(name)').eq('recall_event_id', _timelineRecallId),
     sb.from('investigation_requests').select('*, investigation_responses(id, submitted_at, retailer_org_id, issue_found, store_name)').eq('manufacturer_id', _orgId).order('created_at', { ascending: true }),
-    sb.from('complaints').select('*').ilike('product_name', '%' + (_timelineProduct||'').split(' ')[0] + '%').order('created_at', { ascending: true }).limit(10),
+    // Scope by receiving_org_id — same PII-leak risk as the legal package
+    // query: ILIKE on first word of product name pulls cross-tenant complaints.
+    sb.from('complaints').select('*').eq('receiving_org_id', _orgId).ilike('product_name', '%' + (_timelineProduct||'').split(' ')[0] + '%').order('created_at', { ascending: true }).limit(10),
     sb.from('shipments').select('*, stores(name), organisations!shipments_retailer_id_fkey(name)').eq('manufacturer_id', _orgId).ilike('lot_number', '%' + (eventRes.data?.lot_number||'N/A').slice(0,10) + '%').limit(20),
   ]);
 
@@ -7365,7 +7458,16 @@ async function obSearchRetailers() {
 async function obConnectRetailer(retailerId, retailerName, btn) {
   btn.disabled = true; btn.textContent = '✓ Sent';
   btn.style.cssText = 'background:var(--surface);border:1px solid rgba(52,211,153,0.3);color:var(--accent);border-radius:7px;padding:6px 12px;font-size:11px;font-weight:700;font-family:inherit;cursor:default;';
-  await sb.from('trading_partners').upsert({ manufacturer_id: _orgId, retailer_id: retailerId, status: 'pending' }, { onConflict: 'manufacturer_id,retailer_id' });
+  // Destructure { error } so an RLS denial doesn't fire a fake "✓ Sent" toast
+  // when the connection request never actually landed.
+  const { error } = await sb.from('trading_partners').upsert({ manufacturer_id: _orgId, retailer_id: retailerId, status: 'pending' }, { onConflict: 'manufacturer_id,retailer_id' });
+  if (error) {
+    btn.disabled = false;
+    btn.textContent = 'Connect';
+    btn.style.cssText = '';
+    showToast('Could not send connection request: ' + error.message, 'error', 4000);
+    return;
+  }
   showToast('Connection request sent to ' + retailerName, 'ok', 2500);
 }
 </script>
