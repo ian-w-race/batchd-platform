@@ -1738,14 +1738,16 @@ async function loadWeeklyDigest(containerEl) {
 
     const [scansRes, acksRes, complaintsRes, drillsRes, storesRes] = await Promise.all([
       sb.from('scans').select('id,store_name,lot_number,created_at').eq('organisation_id', _orgId).gte('created_at', days7).limit(500),
-      sb.from('recall_acknowledgements').select('id,status,created_at').eq('organisation_id', _orgId).limit(200),
+      sb.from('recall_acknowledgements').select('id,status,created_at,recall_events!inner(is_drill)').eq('organisation_id', _orgId).limit(200),
       sb.from('complaints').select('id,product_name').eq('receiving_org_id', _orgId).gte('created_at', days7).limit(100),
       sb.from('mock_recall_drills').select('id').eq('retailer_org_id', _orgId).gte('created_at', days365).limit(1),
       sb.from('stores').select('id,name,active').eq('organisation_id', _orgId).eq('active', true).limit(50),
     ]);
 
     const newScans     = (scansRes.data||[]).length;
-    const acks         = acksRes.data || [];
+    // Per CLAUDE.md, drills don't count toward active recall numbers — exclude
+    // them so stuck drill acks don't tank the headline response rate.
+    const acks         = (acksRes.data || []).filter(a => !a.recall_events?.is_drill);
     const actioned     = acks.filter(a => a.status !== 'notified').length;
     const responseRate = acks.length > 0 ? Math.round((actioned/acks.length)*100) : 100;
     const complaints   = complaintsRes.data || [];
@@ -2176,13 +2178,18 @@ async function renderOverview() {
     const exposedShipments   = shipments.filter(s => s.lot_number && relevantRecalls.some(r => lotsMatch(r.lot_number, s.lot_number)));
 
     // ── Acknowledgement analysis ──────────────────────────────
-    const totalAcks    = acks.length;
-    const actioned     = acks.filter(a => a.status !== 'notified').length;
-    const responseRate = totalAcks > 0 ? Math.round((actioned / totalAcks) * 100) : 100;
+    // Per CLAUDE.md, mock drills never count toward active recall numbers.
+    // Drill acks (intentionally untouched test data) would otherwise tank the
+    // response rate and surface as fake "overdue" alerts on real-recall metrics.
+    const _drillEventIds = new Set(recallEvents.filter(e => e.is_drill).map(e => e.id));
+    const realAcks       = acks.filter(a => !_drillEventIds.has(a.recall_event_id));
+    const totalAcks      = realAcks.length;
+    const actioned       = realAcks.filter(a => a.status !== 'notified').length;
+    const responseRate   = totalAcks > 0 ? Math.round((actioned / totalAcks) * 100) : 100;
     // For status='notified' rows, no transition has happened yet, so created_at
     // is the correct "how long has this been waiting" timestamp. Schema has no
     // updated_at column on this table — selecting it silently nulled the query.
-    const overdueAcks  = acks.filter(a => a.status === 'notified' && (now - new Date(a.created_at)) > 4*3600000);
+    const overdueAcks    = realAcks.filter(a => a.status === 'notified' && (now - new Date(a.created_at)) > 4*3600000);
 
     // ── Store health analysis ─────────────────────────────────
     const activeStores = stores.filter(s => s.active);
@@ -2290,7 +2297,7 @@ async function renderOverview() {
       const avgPerDay = historicScans.length / 90;
       return { store, avgPerDay: Math.round(avgPerDay * 10) / 10, expected7d: Math.round(avgPerDay * 7) };
     });
-    const overdueAcksAll = acks.filter(a => a.status === 'notified' && (Date.now() - new Date(a.created_at)) > 4*3600000);
+    const overdueAcksAll = realAcks.filter(a => a.status === 'notified' && (Date.now() - new Date(a.created_at)) > 4*3600000);
 
     // Check for drill overdue - fetch from drills table
     const { data: recentDrills } = await sb.from('mock_recall_drills')
