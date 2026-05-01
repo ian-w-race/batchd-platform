@@ -245,8 +245,9 @@ textarea.bwd-input{resize:vertical;min-height:80px;line-height:1.5;}
       + '</div>';
   }
 
-  function inp(id, type, ph, extra) {
-    return '<input class="bwd-input' + (extra||'') + '" id="' + id + '" type="' + type + '" placeholder="' + (ph||'') + '">';
+  function inp(id, type, ph, extra, max) {
+    return '<input class="bwd-input' + (extra||'') + '" id="' + id + '" type="' + type + '" placeholder="' + (ph||'') + '"'
+      + (max ? ' maxlength="' + max + '"' : '') + '>';
   }
 
   function sel(id, opts, defLabel) {
@@ -277,19 +278,19 @@ textarea.bwd-input{resize:vertical;min-height:80px;line-height:1.5;}
     // Contact
     '<div class="bwd-section">' + t.secContact + '</div>',
     '<div class="bwd-row">',
-      field('bwd-name', t.name, inp('bwd-name','text',t.namePh)),
-      field('bwd-email', t.email, inp('bwd-email','email','you@email.com'), t.emailSub),
+      field('bwd-name', t.name, inp('bwd-name','text',t.namePh, null, 100)),
+      field('bwd-email', t.email, inp('bwd-email','email','you@email.com', null, 254), t.emailSub),
     '</div>',
-    field('bwd-phone', t.phone, inp('bwd-phone','tel',t.phonePh), null, true),
+    field('bwd-phone', t.phone, inp('bwd-phone','tel',t.phonePh, null, 30), null, true),
 
     // Product
     '<div class="bwd-section">' + t.secProduct + '</div>',
     '<div class="bwd-row">',
-      field('bwd-product', t.product, inp('bwd-product','text',t.productPh)),
-      field('bwd-barcode', t.barcode, inp('bwd-barcode','text',t.barcodePh,' bwd-mono'), null, true),
+      field('bwd-product', t.product, inp('bwd-product','text',t.productPh, null, 200)),
+      field('bwd-barcode', t.barcode, inp('bwd-barcode','text',t.barcodePh,' bwd-mono', 50), null, true),
     '</div>',
     '<div class="bwd-row">',
-      field('bwd-lot', t.lot, inp('bwd-lot','text',t.lotPh,' bwd-mono'), null, true),
+      field('bwd-lot', t.lot, inp('bwd-lot','text',t.lotPh,' bwd-mono', 50), null, true),
       field('bwd-bestbefore', t.bestBefore, inp('bwd-bestbefore','date',''), null, true),
     '</div>',
     field('bwd-purchdate', t.purchaseDate, inp('bwd-purchdate','date',''), null, true),
@@ -298,8 +299,8 @@ textarea.bwd-input{resize:vertical;min-height:80px;line-height:1.5;}
     '<div class="bwd-section">' + t.secLocation + '</div>',
     field('bwd-country', t.country, countrySelect()),
     '<div class="bwd-row">',
-      field('bwd-store', t.store, inp('bwd-store','text',t.storePh)),
-      field('bwd-city', t.city, inp('bwd-city','text',t.cityPh)),
+      field('bwd-store', t.store, inp('bwd-store','text',t.storePh, null, 150)),
+      field('bwd-city', t.city, inp('bwd-city','text',t.cityPh, null, 100)),
     '</div>',
     '<div id="bwd-state-row">',
       '<div class="bwd-field"><label class="bwd-label" id="bwd-state-label">' + t.state + '</label>',
@@ -308,7 +309,7 @@ textarea.bwd-input{resize:vertical;min-height:80px;line-height:1.5;}
 
     // Details
     '<div class="bwd-section">' + t.secDetails + '</div>',
-    field('bwd-details', t.details, '<textarea class="bwd-input" id="bwd-details" placeholder="' + t.detailsPh + '"></textarea>'),
+    field('bwd-details', t.details, '<textarea class="bwd-input" id="bwd-details" placeholder="' + t.detailsPh + '" maxlength="5000"></textarea>'),
 
     // Health signals
     '<div class="bwd-section">' + t.secHealth + '</div>',
@@ -428,6 +429,11 @@ textarea.bwd-input{resize:vertical;min-height:80px;line-height:1.5;}
   document.addEventListener('keydown', function(e){ if (e.key === 'Escape' && isOpen) closeWidget(); });
 
   // ── Submit ─────────────────────────────────────────────────
+  // Cooldown timestamp — set after a successful submit so a frustrated clicker
+  // can't spam the form. Pure UX hardening; real abuse protection lives in the
+  // triage-complaint Netlify function (server side).
+  var _lastSubmitAt = 0;
+
   document.getElementById('bwd-submit').addEventListener('click', function() {
     var details = (document.getElementById('bwd-details').value || '').trim();
     var country = document.getElementById('bwd-country').value;
@@ -436,6 +442,28 @@ textarea.bwd-input{resize:vertical;min-height:80px;line-height:1.5;}
 
     if (!details) { errEl.textContent = t.required; errEl.style.display = 'block'; return; }
     if (!country) { errEl.textContent = t.countryRequired; errEl.style.display = 'block'; return; }
+
+    // 5-second cooldown after a successful submit
+    var sinceLast = Date.now() - _lastSubmitAt;
+    if (_lastSubmitAt && sinceLast < 5000) {
+      var wait = Math.ceil((5000 - sinceLast) / 1000);
+      errEl.textContent = (LANG === 'no'
+        ? 'Vennligst vent ' + wait + ' sek før du sender en ny rapport.'
+        : 'Please wait ' + wait + 's before submitting another report.');
+      errEl.style.display = 'block';
+      return;
+    }
+
+    // Basic email format check — submit goes via button click, not native form
+    // submit, so the browser's :invalid check is bypassed.
+    var emailVal = (document.getElementById('bwd-email').value || '').trim();
+    if (emailVal && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailVal)) {
+      errEl.textContent = (LANG === 'no'
+        ? 'E-postadressen ser ikke gyldig ut. Sjekk og prøv igjen.'
+        : "That email address doesn't look right — please check and try again.");
+      errEl.style.display = 'block';
+      return;
+    }
 
     var submitBtn = document.getElementById('bwd-submit');
     submitBtn.disabled = true; submitBtn.textContent = t.submitting;
@@ -476,6 +504,7 @@ textarea.bwd-input{resize:vertical;min-height:80px;line-height:1.5;}
     .then(function(r){ return r.json(); })
     .then(function(data) {
       if (data.error) throw new Error(data.error);
+      _lastSubmitAt = Date.now();
       document.getElementById('bwd-form').style.display = 'none';
       document.getElementById('bwd-success').classList.add('show');
       document.getElementById('bwd-s-ref').textContent = t.successRef + ': ' + (data.complaint_number || '');
