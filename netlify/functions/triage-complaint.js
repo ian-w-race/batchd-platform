@@ -361,6 +361,49 @@ exports.handler = async (event) => {
       return { statusCode: 400, headers, body: JSON.stringify({ error: 'Complaint text is required.' }) };
     }
 
+    // ── Wave 1 hardening: observability (CORS + IP logging) ────────
+    // CORS stays '*' to not break legit widget embeds on partner pages.
+    // We log the Origin and IP so future allowlist/rate-limit policy can be
+    // informed by real traffic patterns. SUPABASE_SERVICE_KEY bypasses RLS,
+    // so every defence in this function is the only defence — log accordingly.
+    const _origin = event.headers?.origin || event.headers?.Origin || event.headers?.referer || event.headers?.Referer || 'unknown';
+    const _clientIp = ((event.headers?.['x-forwarded-for'] || event.headers?.['X-Forwarded-For'] || '').split(',')[0] || '').trim() || 'unknown';
+    console.log('[triage-complaint] request from origin:', _origin, '| ip:', _clientIp);
+
+    // ── Wave 1 hardening: validate org_id ──────────────────────────
+    // The single CRITICAL audit finding from sweep #6: anyone could POST with
+    // a forged manufacturer_id/receiving_org_id and spam any org's triage queue.
+    // Null org_id is allowed (orphan complaints from the standalone page); but
+    // any non-null id must exist in organisations.
+    const _claimedOrgId = manufacturer_id || receiving_org_id;
+    if (_claimedOrgId) {
+      const _orgs = await sbQuery('organisations', { 'id=eq': _claimedOrgId, 'select': 'id', 'limit': '1' });
+      if (!_orgs.length) {
+        console.warn('[triage-complaint] rejected forged org_id:', _claimedOrgId, '| ip:', _clientIp, '| origin:', _origin);
+        return { statusCode: 400, headers, body: JSON.stringify({ error: 'Invalid organisation reference.' }) };
+      }
+    }
+
+    // ── Wave 1 hardening: customer_email rate limit ────────────────
+    // Reject if this email has submitted 5+ complaints in the last hour.
+    // Imperfect — attacker can rotate emails — but catches the most basic
+    // spam attacks (one user looping the form, one script with a fixed email).
+    // True IP-based rate limiting needs an ip_address column on complaints
+    // (deferred — Wave 1 doesn't include schema changes).
+    if (customer_email) {
+      const _oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      const _recent = await sbQuery('complaints', {
+        'customer_email=eq': customer_email,
+        'created_at=gte': _oneHourAgo,
+        'select': 'id',
+        'limit': '10'
+      });
+      if (_recent.length >= 5) {
+        console.warn('[triage-complaint] rate limit hit | email:', customer_email, '| count:', _recent.length, '| ip:', _clientIp);
+        return { statusCode: 429, headers, body: JSON.stringify({ error: 'Too many submissions from this email recently. Please try again in an hour or contact us directly.' }) };
+      }
+    }
+
     // 1. Insert complaint with all new fields
     const complaint = await sbInsert('complaints', {
       source: source || 'widget',
