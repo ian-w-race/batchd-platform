@@ -106,7 +106,7 @@ These additive policies do not modify existing manufacturer-scoped behavior.
 |-------|------|--------|
 | 1.1 | Schema: products table with trust tiers | ✅ Shipped |
 | 1.2 | Wire ZXing into Step 1 capture flow | ✅ Shipped |
-| 1.3 | Bounded fallback chain (1s timeout, parallel) | Pending |
+| 1.3 | Bounded fallback chain (1s timeout, parallel) | ✅ Shipped |
 | 1.4 | Unknown barcode flow | Pending |
 | 1.5 | Trust tier promotion mechanism | Pending |
 | 1.5 (UX) | Two-stage capture (barcode + lot code as distinct sessions) | Pending |
@@ -158,6 +158,50 @@ External API results are display-only. They populate the product name field for 
 - Trust tier promotion mechanism (3 scans / 2 orgs threshold) — Phase 1.5
 - Two-stage capture UX with explicit camera handoff between barcode and lot code — Phase 1.5 (UX)
 
+## Phase 1.3 — Bounded fallback chain (shipped)
+
+The product name lookup chain is now race-based instead of sequential. All six sources fire in parallel; first valid result wins.
+
+### Race architecture
+
+```
+                        lookupProductName(barcode)
+                                  │
+         ┌────────────────────────┼────────────────────────┐
+         ▼                        ▼                        ▼
+    ┌─────────┐             ┌─────────┐             ┌────────────┐
+    │ LOCAL   │             │ EXTERNAL │             │ EXTERNAL   │
+    │ (3)     │             │ (3)      │             │ (timeout)  │
+    │ no cap  │             │ 1s cap   │             │ resolves null
+    └────┬────┘             └─────┬────┘             └────────────┘
+         │                        │
+         │  products_public       │  Open Food Facts v2
+         │  code_patterns         │  Open Food Facts v0
+         │  scans                 │  UPC Item DB
+         │                        │
+         └───────── _firstValidName() ──────────┐
+                                                ▼
+                                  first non-empty name wins
+                                  (or null if all empty)
+```
+
+### Latency guarantees
+
+- **Happy path (barcode in `products_public`):** sub-100ms — local query wins the race well before external APIs even respond.
+- **Cold barcode (only in external DB):** capped at 1 second — external promises hit their `_lookupTimeout` ceiling and resolve null if slow.
+- **Unknown to all sources:** capped at 1 second — same timeout boundary, no longer waits for sequential fallbacks.
+
+### Helper primitives
+
+- `_lookupTimeout(promise, ms)` — wraps a promise with hard timeout, resolves null on timeout/error
+- `_firstValidName(promises)` — promise-race that resolves to the first non-empty product name string, or null if all resolve null
+
+### What Phase 1.3 deliberately defers
+
+- Tracking which source returned the result (needed for Phase 1.4 to write the right `source` enum value when promoting a result to `products`)
+- Auto-write of confirmed AI results to `products` — Phase 1.4
+- External API rate-limit / quota awareness (UPC Item DB free tier is 100 lookups/day) — revisit if pilot data shows it bites
+
 ## Migration history
 
 | Migration | Description | Date |
@@ -170,3 +214,4 @@ External API results are display-only. They populate the product name field for 
 |--------|-------------|------|
 | Phase 1.1 | Schema migration (no application code changes) | 2026-05-03 |
 | Phase 1.2 | Default to barcode mode, query products_public, auto-advance to Step 2, 3s fallback prompt, keep ZXing running on label fallback | 2026-05-03 |
+| Phase 1.3 | Refactor lookupProductName to race all sources in parallel; 1s hard timeout on each external API; first valid result wins | 2026-05-03 |

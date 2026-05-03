@@ -8045,126 +8045,169 @@ function normalizeBarcode(input) {
 }
 
 // ── PRODUCT NAME LOOKUP ───────────────────────────────────────
-// Trust-tier-aware lookup chain (Phase 1.2 of refactor v2).
-// Tries sources in order:
-// 0. products_public — cross-org canonical lookup (NEW). Returns instantly when
-//    any org on the platform has previously identified this barcode. This is the
-//    core network-effect path: every retailer's scan history compounds into
-//    everyone else's lookup speed.
-// 1. code_patterns — barcode seen before by THIS org's staff (per-org learning)
-// 2. scans — barcode seen before in THIS org's scan history
-// 3. Open Food Facts v2 (4M+ products, global, free)
-// 4. Open Food Facts v0 fallback
-// 5. UPC Item DB (good US/Canadian coverage)
+// Bounded fallback chain (Phase 1.3 of refactor v2).
 //
-// External API results (sources 3-5) are returned for display only. They do
-// NOT auto-write to products — that's a Phase 1.3 / 1.4 constraint per the
-// trust tier model. Only AI-confirmed or cross-org-validated entries get into
-// the canonical products table.
-async function lookupProductName(barcode) {
-  const normalized = normalizeBarcode(barcode);
+// All six sources race in parallel. Whichever returns a valid product name
+// FIRST wins. External APIs are each capped at a 1s hard timeout — they
+// never extend the user-visible identification latency beyond 1s on the
+// slow path, even when the network is misbehaving.
+//
+// Sources, with their trust tiers:
+//   - products_public (LOCAL)  — cross-org canonical lookup, source enum carried in DB
+//   - code_patterns   (LOCAL)  — this org's prior scans
+//   - scans           (LOCAL)  — this org's scan history
+//   - Open Food Facts v2 (EXTERNAL, capped 1s) — global free DB
+//   - Open Food Facts v0 (EXTERNAL, capped 1s) — older OFF endpoint
+//   - UPC Item DB        (EXTERNAL, capped 1s) — US/Canadian coverage
+//
+// External API results are display-only; they do NOT auto-write to products.
+// Promotion to the canonical products table requires explicit user confirmation
+// (Phase 1.4 unknown-barcode flow) gated by the trust tier model.
+//
+// In the long run external APIs are de-prioritized — as products_public fills
+// up via cross-org scanning, local hits dominate and external calls become rare.
 
-  // Source 0: products_public — cross-org canonical (NEW in Phase 1.2)
-  // Single-row lookup on the unique barcode_normalized index — fast.
-  if (normalized) {
-    try {
-      const { data: pp } = await sb.from('products_public')
-        .select('product_name')
-        .eq('barcode_normalized', normalized)
-        .limit(1);
-      if (pp && pp[0] && pp[0].product_name && pp[0].product_name.length > 1) {
-        return pp[0].product_name;
-      }
-    } catch(e) { /* continue to fallbacks */ }
-  }
+const EXTERNAL_API_TIMEOUT_MS = 1000;
 
-  // Source 1: code_patterns — barcode seen before by THIS org's staff
+// Wrap a promise with a hard timeout. Resolves to null if the promise hasn't
+// settled within `ms`. Used to cap external API latency.
+function _lookupTimeout(promise, ms) {
+  let timeoutId;
+  return Promise.race([
+    promise.then(v => { clearTimeout(timeoutId); return v; }, e => { clearTimeout(timeoutId); return null; }),
+    new Promise(resolve => { timeoutId = setTimeout(() => resolve(null), ms); }),
+  ]);
+}
+
+// Race a list of name-lookup promises. Resolves to the first valid product
+// name (non-empty string > 1 char). If all resolve to null, resolves to null.
+function _firstValidName(promises) {
+  return new Promise((resolve) => {
+    let pending = promises.length;
+    if (pending === 0) { resolve(null); return; }
+    let done = false;
+    const settle = (v) => { if (done) return; done = true; resolve(v); };
+
+    promises.forEach(p => {
+      p.then(name => {
+        if (done) return;
+        if (name && typeof name === 'string' && name.trim().length > 1) {
+          settle(name.trim().slice(0, 120));
+        } else if (--pending === 0) {
+          settle(null);
+        }
+      }).catch(() => {
+        if (!done && --pending === 0) settle(null);
+      });
+    });
+  });
+}
+
+// ── Individual source lookups (each returns a name or null) ───────────────
+
+async function _lookupProductsPublic(normalized) {
+  if (!normalized) return null;
   try {
-    const { data: cp } = await sb.from('code_patterns')
+    const { data } = await sb.from('products_public')
+      .select('product_name')
+      .eq('barcode_normalized', normalized)
+      .limit(1);
+    return data?.[0]?.product_name || null;
+  } catch(e) { return null; }
+}
+
+async function _lookupCodePatterns(barcode) {
+  try {
+    const { data } = await sb.from('code_patterns')
       .select('product_name')
       .eq('barcode_number', barcode)
       .order('scan_count', { ascending: false })
       .limit(1);
-    if (cp && cp[0] && cp[0].product_name && cp[0].product_name.length > 1) {
-      return cp[0].product_name;
-    }
-  } catch(e) { /* continue */ }
+    return data?.[0]?.product_name || null;
+  } catch(e) { return null; }
+}
 
-  // 0b: scans table — barcode seen before in org's scan history
-  if (_currentOrgId) {
-    try {
-      const { data: sc } = await sb.from('scans')
-        .select('product_name')
-        .eq('barcode_number', barcode)
-        .eq('organisation_id', _currentOrgId)
-        .not('product_name', 'is', null)
-        .order('created_at', { ascending: false })
-        .limit(1);
-      if (sc && sc[0] && sc[0].product_name && sc[0].product_name.length > 1) {
-        return sc[0].product_name;
-      }
-    } catch(e) { /* continue */ }
-  }
+async function _lookupScansHistory(barcode) {
+  if (!_currentOrgId) return null;
+  try {
+    const { data } = await sb.from('scans')
+      .select('product_name')
+      .eq('barcode_number', barcode)
+      .eq('organisation_id', _currentOrgId)
+      .not('product_name', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    return data?.[0]?.product_name || null;
+  } catch(e) { return null; }
+}
 
-  // Source 1: Open Food Facts v2 — faster, field-limited
+function _pickOffName(p) {
+  return (
+    p.product_name_no ||
+    p.product_name_en ||
+    p.product_name    ||
+    (p.brands && p.generic_name ? `${p.brands} ${p.generic_name}`.trim() : null) ||
+    p.brands || null
+  );
+}
+
+async function _lookupOpenFoodFactsV2(barcode) {
   try {
     const resp = await fetch(
       `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(barcode)}?fields=product_name,product_name_en,product_name_no,brands,generic_name`,
       { headers: { 'User-Agent': 'Batched-RecallTracker/1.0 (batchd-app.netlify.app)' } }
     );
-    if (resp.ok) {
-      const data = await resp.json();
-      if (data.status === 1 && data.product) {
-        const p = data.product;
-        const name =
-          p.product_name_no ||
-          p.product_name_en ||
-          p.product_name    ||
-          (p.brands && p.generic_name ? `${p.brands} ${p.generic_name}`.trim() : null) ||
-          p.brands || null;
-        if (name && name.trim().length > 1) return name.trim().slice(0, 120);
-      }
-    }
-  } catch(e) { console.warn('OFF v2 lookup failed:', e); }
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    if (data.status !== 1 || !data.product) return null;
+    return _pickOffName(data.product);
+  } catch(e) { return null; }
+}
 
-  // Source 2: Open Food Facts v0 (older endpoint, sometimes different results)
+async function _lookupOpenFoodFactsV0(barcode) {
   try {
     const resp = await fetch(
       `https://world.openfoodfacts.org/api/v0/product/${encodeURIComponent(barcode)}.json`,
       { headers: { 'User-Agent': 'Batched-RecallTracker/1.0' } }
     );
-    if (resp.ok) {
-      const data = await resp.json();
-      if (data.status === 1 && data.product) {
-        const p = data.product;
-        const name =
-          p.product_name_no ||
-          p.product_name_en ||
-          p.product_name    ||
-          (p.brands && p.generic_name ? `${p.brands} ${p.generic_name}`.trim() : null) ||
-          p.brands || null;
-        if (name && name.trim().length > 1) return name.trim().slice(0, 120);
-      }
-    }
-  } catch(e) { console.warn('OFF v0 lookup failed:', e); }
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    if (data.status !== 1 || !data.product) return null;
+    return _pickOffName(data.product);
+  } catch(e) { return null; }
+}
 
-  // Source 3: UPC Item DB — good for US/Canadian products not in OFF
+async function _lookupUpcItemDb(barcode) {
   try {
     const resp = await fetch(
       `https://api.upcitemdb.com/prod/trial/lookup?upc=${encodeURIComponent(barcode)}`,
       { headers: { 'User-Agent': 'Batched-RecallTracker/1.0' } }
     );
-    if (resp.ok) {
-      const data = await resp.json();
-      const item = data.items?.[0];
-      if (item) {
-        const name = item.title || item.brand || null;
-        if (name && name.trim().length > 1) return name.trim().slice(0, 120);
-      }
-    }
-  } catch(e) { console.warn('UPC Item DB lookup failed:', e); }
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const item = data.items?.[0];
+    return item?.title || item?.brand || null;
+  } catch(e) { return null; }
+}
 
-  return null;
+async function lookupProductName(barcode) {
+  const normalized = normalizeBarcode(barcode);
+
+  // Local sources — no timeout (Supabase is fast and capped by network anyway).
+  const localPromises = [
+    _lookupProductsPublic(normalized),
+    _lookupCodePatterns(barcode),
+    _lookupScansHistory(barcode),
+  ];
+
+  // External sources — each capped at a 1s hard timeout, run in parallel with locals.
+  const externalPromises = [
+    _lookupTimeout(_lookupOpenFoodFactsV2(barcode), EXTERNAL_API_TIMEOUT_MS),
+    _lookupTimeout(_lookupOpenFoodFactsV0(barcode), EXTERNAL_API_TIMEOUT_MS),
+    _lookupTimeout(_lookupUpcItemDb(barcode),       EXTERNAL_API_TIMEOUT_MS),
+  ];
+
+  return _firstValidName([...localPromises, ...externalPromises]);
 }
 
 // Keep old name as alias in case called elsewhere
