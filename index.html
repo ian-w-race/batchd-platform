@@ -7759,6 +7759,9 @@ function setPhase1Mode(mode) {
     // Only the barcode UI elements are hidden — the scanner stays alive.
     document.getElementById('p1-scan-line').style.display = 'none';
     document.getElementById('p1-barcode-frame').style.display = 'none';
+    // Clear any pending fallback timer too — otherwise it could fire while
+    // user is mid-label-scan and re-show the orange prompt unexpectedly.
+    _clearP1FallbackTimer();
     _hideP1FallbackPrompt();
     startProductCamera();
   }
@@ -7766,9 +7769,14 @@ function setPhase1Mode(mode) {
 
 let p1Html5QrScanner = null;
 
-// Phase 1.2 of refactor v2: 3-second fallback timer. If ZXing doesn't decode
-// anything within 3 seconds, surface a "Can't find a barcode?" prompt that
-// switches to label-photo identification. Cleared when ZXing detects.
+// Phase 1.2 of refactor v2: fallback timer. If ZXing doesn't decode anything
+// within FALLBACK_TIMEOUT_MS, surface a "Can't find a barcode?" prompt that
+// switches to label-photo identification. Cleared when ZXing detects or when
+// the user explicitly switches modes.
+//
+// Bumped from 3s to 5s after pilot testing — 3s felt too aggressive in real
+// store flow where users put down one product and pick up another between scans.
+const P1_FALLBACK_TIMEOUT_MS = 5000;
 let _p1FallbackTimer = null;
 function _showP1FallbackPrompt() {
   const el = document.getElementById('p1-barcode-fallback-prompt');
@@ -7794,9 +7802,9 @@ async function startP1BarcodeScanner() {
   document.getElementById('p1-barcode-result').style.display = 'none';
   _hideP1FallbackPrompt();
 
-  // Start 3s fallback timer — surface alternative if ZXing finds nothing.
+  // Start fallback timer — surface alternative if ZXing finds nothing within budget.
   _clearP1FallbackTimer();
-  _p1FallbackTimer = setTimeout(_showP1FallbackPrompt, 3000);
+  _p1FallbackTimer = setTimeout(_showP1FallbackPrompt, P1_FALLBACK_TIMEOUT_MS);
 
   // Attach stream to video element for display
   const vid = document.getElementById('p1-barcode-video');
