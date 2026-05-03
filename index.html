@@ -3368,9 +3368,11 @@
             <!-- Sliding toggle track -->
             <div id="p1-toggle-track" style="position:relative;display:flex;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:3px;gap:0;flex-shrink:0;">
               <!-- Sliding pill — JS positions it. Phase 1.2 of refactor v2:
-                   default initial position is RIGHT (over Barcode) so first
-                   paint matches the new barcode-first default mode. -->
-              <div id="p1-toggle-slider" style="position:absolute;top:3px;bottom:3px;right:3px;border-radius:7px;background:var(--accent);transition:transform 0.22s cubic-bezier(0.4,0,0.2,1),width 0.22s cubic-bezier(0.4,0,0.2,1);z-index:0;pointer-events:none;width:50%;"></div>
+                   anchored to right:3px so first paint shows over the Barcode
+                   button (which is now the default mode). The setPhase1Mode JS
+                   translates LEFT by the Label button's width when switching
+                   to label mode (see flipped translate math in setPhase1Mode). -->
+              <div id="p1-toggle-slider" style="position:absolute;top:3px;bottom:3px;right:3px;border-radius:7px;background:var(--accent);transition:transform 0.22s cubic-bezier(0.4,0,0.2,1),width 0.22s cubic-bezier(0.4,0,0.2,1);z-index:0;pointer-events:none;width:calc(50% - 3px);"></div>
               <button class="mode-btn" id="p1-mode-btn-label" onclick="setPhase1Mode('label')" style="position:relative;z-index:1;background:transparent;border:none;border-radius:7px;padding:7px 14px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:5px;white-space:nowrap;color:var(--muted);min-height:34px;cursor:pointer;flex:1;justify-content:center;">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
                 <span data-i18n="p1.photoLabel">Label</span>
@@ -7722,15 +7724,17 @@ function setPhase1Mode(mode) {
   // Update button text colours
   if (btnLabel)   btnLabel.style.color   = mode === 'label'   ? '#04120e' : 'var(--muted)';
   if (btnBarcode) btnBarcode.style.color = mode === 'barcode' ? '#04120e' : 'var(--muted)';
-  // Animate slider to the active button
+  // Animate slider to the active button.
+  // Phase 1.2 of refactor v2: slider is right-anchored (CSS right:3px) since
+  // Barcode is the default mode. Translate LEFT by the inactive (Label) button's
+  // width when switching to label mode; no translation in barcode mode (rest position).
   const slider = document.getElementById('p1-toggle-slider');
   if (slider) {
     const activeBtn = mode === 'label' ? btnLabel : btnBarcode;
     const inactiveBtn = mode === 'label' ? btnBarcode : btnLabel;
-    // Use offsetWidth for precise sizing; fallback to 50%
     requestAnimationFrame(() => {
       slider.style.width     = (activeBtn.offsetWidth) + 'px';
-      slider.style.transform = mode === 'label' ? 'translateX(0)' : 'translateX(' + (inactiveBtn.offsetWidth) + 'px)';
+      slider.style.transform = mode === 'barcode' ? 'translateX(0)' : 'translateX(-' + (inactiveBtn.offsetWidth) + 'px)';
     });
   }
   document.getElementById('p1-barcode-wrap').style.display = mode === 'barcode' ? 'flex' : 'none';
@@ -15602,8 +15606,10 @@ function initMode() {
   document.getElementById('barcode-result').style.display = 'none';
   document.getElementById('step2-sub').textContent = t('js.p2sub.ocr');
   // Phase 1.2 of refactor v2: start in barcode mode (ZXing-first identification).
-  // Label mode is the fallback when no barcode is detected within 3s.
-  setTimeout(() => setPhase1Mode('barcode'), 300);
+  // Don't actually call setPhase1Mode here — startP1BarcodeScanner needs camera
+  // permission which needs user gesture on iOS. The static HTML defaults already
+  // show barcode mode; setPhase1Mode runs from the auth flow once a user is
+  // present (which happens post-gesture from sign-in).
 }
 
 // ── MANAGER ROLE ─────────────────────────────────────────────
