@@ -330,6 +330,9 @@
 
   button, [role="button"] {
     cursor: pointer !important;
+    /* Eliminates iOS 300ms tap delay AND prevents accidental double-tap-zoom on buttons.
+       Critical for staff scanning with gloves in stores. */
+    touch-action: manipulation;
   }
 
   button {
@@ -860,7 +863,8 @@
   /* ── Toast notifications ── */
   .toast {
     position: fixed;
-    bottom: 90px;
+    /* Lift above iPhone home-indicator safe area */
+    bottom: calc(90px + env(safe-area-inset-bottom, 0px));
     left: 50%;
     transform: translateX(-50%) translateY(20px);
     background: var(--surface2);
@@ -870,7 +874,8 @@
     font-family: 'DM Mono', monospace;
     font-size: 12px;
     color: var(--text);
-    z-index: 1200;
+    /* Above terminology overlay (9500) and login-recall (997). Critical messages must always be visible. */
+    z-index: 9999;
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.2s, transform 0.2s;
@@ -988,7 +993,8 @@
 
   .lightbox-close {
     position: absolute;
-    top: 20px; right: 24px;
+    /* Clear iPhone notch — full-bleed lightbox would otherwise hide this under the notch */
+    top: max(20px, calc(env(safe-area-inset-top, 0px) + 8px)); right: 24px;
     background: rgba(0,0,0,0.5);
     border: 1px solid rgba(255,255,255,0.2);
     border-radius: 50%;
@@ -2323,7 +2329,8 @@
   .modal-body { padding: 20px 22px; display: flex; flex-direction: column; gap: 14px; }
   .modal-footer { padding: 14px 22px 20px; border-top: 1px solid var(--border); display: flex; gap: 8px; }
   .modal-footer .btn { flex: 1; justify-content: center; }
-  @media (max-width: 600px) { .modal-overlay { top: 52px; padding: 16px 12px 24px; } }
+  /* iPhone notch — modal must clear the safe-area top, not just the 52px header */
+  @media (max-width: 600px) { .modal-overlay { top: calc(52px + env(safe-area-inset-top, 0px)); padding: 16px 12px calc(24px + env(safe-area-inset-bottom, 0px)); } }
 
   .mobile-nav { display: none !important; } /* bottom nav removed - using hamburger drawer */
   .mobile-nav-inner { display: none !important; }
@@ -4641,8 +4648,8 @@
 
 
 <!-- Complaint Sheet — slide-up from scan card "Report Concern" button -->
-<div id="complaint-sheet" style="display:none;position:fixed;inset:0;z-index:800;background:var(--overlay);align-items:center;justify-content:center;padding:16px;" onclick="if(event.target===this)closeComplaintSheet()">
-  <div id="complaint-panel" style="width:100%;max-width:580px;background:var(--surface);border-radius:16px;border:1px solid var(--border);padding:0;transform:scale(0.96) translateY(8px);opacity:0;transition:transform 0.22s cubic-bezier(0.32,0.72,0,1),opacity 0.2s ease;max-height:88vh;display:flex;flex-direction:column;overflow-y:auto;">
+<div id="complaint-sheet" style="display:none;position:fixed;inset:0;z-index:800;background:var(--overlay);align-items:center;justify-content:center;padding:calc(16px + env(safe-area-inset-top,0px)) 16px calc(16px + env(safe-area-inset-bottom,0px));" onclick="if(event.target===this)closeComplaintSheet()">
+  <div id="complaint-panel" style="width:100%;max-width:580px;background:var(--surface);border-radius:16px;border:1px solid var(--border);padding:0;transform:scale(0.96) translateY(8px);opacity:0;transition:transform 0.22s cubic-bezier(0.32,0.72,0,1),opacity 0.2s ease;max-height:88dvh;display:flex;flex-direction:column;overflow-y:auto;">
     <div style="padding:16px 18px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-shrink:0;">
       <div>
         <div id="complaint-sheet-title" style="font-size:15px;font-weight:700;color:var(--text);"></div>
@@ -4715,8 +4722,8 @@
 </div>
 
 <!-- Recall Action Sheet — slide-up when tapping a recall match card -->
-<div id="recall-action-sheet" style="display:none;position:fixed;inset:0;z-index:800;background:var(--overlay);align-items:flex-start;justify-content:center;padding:80px 16px 16px;" onclick="if(event.target===this)closeRecallActionSheet()">
-  <div id="recall-action-panel" style="position:relative;width:100%;max-width:600px;background:var(--surface);border-radius:16px;border:1px solid var(--border);padding:0;transform:translateY(30px);opacity:0;transition:transform 0.25s cubic-bezier(0.32,0.72,0,1),opacity 0.25s ease;max-height:85vh;display:flex;flex-direction:column;">
+<div id="recall-action-sheet" style="display:none;position:fixed;inset:0;z-index:800;background:var(--overlay);align-items:flex-start;justify-content:center;padding:calc(80px + env(safe-area-inset-top,0px)) 16px calc(16px + env(safe-area-inset-bottom,0px));" onclick="if(event.target===this)closeRecallActionSheet()">
+  <div id="recall-action-panel" style="position:relative;width:100%;max-width:600px;background:var(--surface);border-radius:16px;border:1px solid var(--border);padding:0;transform:translateY(30px);opacity:0;transition:transform 0.25s cubic-bezier(0.32,0.72,0,1),opacity 0.25s ease;max-height:85dvh;display:flex;flex-direction:column;">
 
 
 
@@ -4977,7 +4984,7 @@
       <div id="qar-msg" style="font-size:12px;min-height:18px;font-family:'DM Mono',monospace;"></div>
     </div>
     <div class="modal-footer">
-      <button onclick="submitQuickAddRecall()" class="btn btn-primary" style="flex:1;justify-content:center;background:var(--danger);border-color:var(--danger);">
+      <button id="qar-submit" onclick="submitQuickAddRecall()" class="btn btn-primary" style="flex:1;justify-content:center;background:var(--danger);border-color:var(--danger);">
         <span data-i18n="recall.addBtn">+ Add Recall</span>
       </button>
       <button class="btn btn-ghost" onclick="closeQuickAddRecall()" data-i18n="action.cancel">Cancel</button>
@@ -5423,7 +5430,7 @@ async function initAuth() {
           document.getElementById('login-screen').style.display = 'flex';
           document.getElementById('login-screen').classList.remove('hidden');
           document.getElementById('login-screen').innerHTML = `
-            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:32px;text-align:center;gap:16px;background:var(--bg);">
+            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100dvh;padding:32px;text-align:center;gap:16px;background:var(--bg);">
               <div style="font-size:40px;">🔒</div>
               <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:18px;color:var(--text);">Account deactivated</div>
               <div style="font-size:13px;color:var(--muted);max-width:300px;line-height:1.6;">Your account has been deactivated. Contact your administrator to restore access.</div>
@@ -5505,7 +5512,7 @@ async function showApp(user) {
       // Deactivated members cannot use the scanning app
       if (member.active === false) {
         document.getElementById('auth-view').innerHTML = `
-          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;padding:32px;text-align:center;gap:16px;">
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60dvh;padding:32px;text-align:center;gap:16px;">
             <div style="font-size:40px;">🔒</div>
             <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:18px;">Account deactivated</div>
             <div style="font-size:13px;color:var(--muted);max-width:300px;line-height:1.6;">Your account has been deactivated by your organisation administrator. Contact them to restore access.</div>
@@ -5531,7 +5538,7 @@ async function showApp(user) {
       // or a data inconsistency. Without _currentOrgId every downstream query
       // either returns empty or fails. Block the app and route them back to admin.
       document.getElementById('auth-view').innerHTML = `
-        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;padding:32px;text-align:center;gap:16px;">
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60dvh;padding:32px;text-align:center;gap:16px;">
           <div style="font-size:40px;">🔗</div>
           <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:18px;">Not linked to an organisation</div>
           <div style="font-size:13px;color:var(--muted);max-width:320px;line-height:1.6;">Your account isn't linked to a Batch'd organisation yet. Ask your administrator to add you to your store's organisation, then sign in again.</div>
@@ -6075,9 +6082,14 @@ function stbCollapseAll() {
   document.getElementById('stb-qty-sq')?.classList.remove('stb-active');
 }
 
-// Collapse pills when tapping elsewhere
+// Collapse pills when tapping elsewhere — but NOT if the user is currently
+// editing inside one of the panels (otherwise mistaps near the edge dismiss
+// the iOS keyboard mid-typing). Excluding active focus inside .stb-panel
+// prevents that case.
 document.addEventListener('click', function(e) {
-  if (!e.target.closest('.stb-sq') && !e.target.closest('.stb-panel')) stbCollapseAll();
+  if (e.target.closest('.stb-sq') || e.target.closest('.stb-panel')) return;
+  if (document.activeElement && document.activeElement.closest('.stb-panel')) return;
+  stbCollapseAll();
 });
 
 function stbUpdateStore(storeName) {
@@ -8456,7 +8468,11 @@ async function saveRecord() {
   const batchNum = ''; // field-batch removed from UI
   const notesVal       = document.getElementById('field-notes').value.trim();
   const shelfLocation  = document.getElementById('field-shelf-location').value.trim();
-  const quantity       = parseInt(document.getElementById('field-quantity').value, 10) || 1;
+  // Strict integer validation — rejects "1e5", "-5", "1.5", "abc" etc.
+  // parseInt was silently coercing these to wrong/garbage values.
+  const _qtyRaw  = document.getElementById('field-quantity').value.trim();
+  const _qtyNum  = Number(_qtyRaw);
+  const quantity = (Number.isInteger(_qtyNum) && _qtyNum >= 1 && _qtyNum <= 999) ? _qtyNum : null;
   const storeName      = document.getElementById('field-store').value;
 
   if (!productBlob && phase1Mode === 'label' && !_lotUnavailable) return setMsg('⚠ ' + (currentLang==='no' ? 'Ta et produktbilde først.' : 'Please capture a product photo first.'), 'warn');
@@ -8473,12 +8489,11 @@ async function saveRecord() {
   }
   if (!storeName) return setMsg('⚠ ' + (currentLang==='no' ? 'Velg en butikk før du lagrer.' : 'Please select a store before saving.'), 'warn');
 
-  const quantityVal = parseInt(document.getElementById('field-quantity').value, 10);
-  if (!quantityVal || quantityVal < 1) {
-    // Highlight the qty field
+  // Strict integer validation — same rules as `quantity` above.
+  if (quantity == null) {
     const qtyInput = document.getElementById('field-quantity');
     if (qtyInput) { qtyInput.style.borderColor = 'rgba(255,92,92,0.5)'; qtyInput.focus(); }
-    return setMsg('⚠ Please enter the number of units being placed on the shelf.', 'warn');
+    return setMsg('⚠ ' + (currentLang==='no' ? 'Antall må være et helt tall mellom 1 og 999.' : 'Quantity must be a whole number between 1 and 999.'), 'warn');
   }
 
   const btn = document.getElementById('btn-save');
@@ -10475,11 +10490,17 @@ async function submitQuickAddRecall() {
 
   msgEl.style.color='var(--muted)'; msgEl.textContent=currentLang==='no'?'Registrerer tilbakekalling…':'Filing recall…';
 
+  // Disable submit button to prevent double-tap creating duplicate recall rows.
+  // Without lot, the duplicate check below is skipped — so two rapid taps were
+  // inserting two recall rows + double-firing sweepScansForRecall.
+  const _qarBtn = document.getElementById('qar-submit');
+  if (_qarBtn) _qarBtn.disabled = true;
+
   try {
     // Duplicate check
     if (lot) {
       const { data: existing } = await sb.from('recalls').select('id').ilike('product_name', product).eq('lot_number', lot).eq('active', true).eq('organisation_id', _currentOrgId).limit(1);
-      if (existing?.length) { msgEl.style.color='var(--warn)'; msgEl.textContent='~ This product + lot is already an active recall.'; return; }
+      if (existing?.length) { msgEl.style.color='var(--warn)'; msgEl.textContent='~ This product + lot is already an active recall.'; if (_qarBtn) _qarBtn.disabled = false; return; }
     }
 
     const { data: newRecall, error } = await sb.from('recalls').insert({
@@ -10524,6 +10545,7 @@ async function submitQuickAddRecall() {
     checkActiveRecalls();
   } catch(e) {
     msgEl.style.color='var(--danger)'; msgEl.textContent='✗ Failed: ' + e.message;
+    if (_qarBtn) _qarBtn.disabled = false;
   }
 }
 
@@ -12449,11 +12471,14 @@ function extractExpiryFromText(text) {
 let _manualEditPending = false;
 
 function onQtyInput() {
-  const val = parseInt(document.getElementById('field-quantity').value, 10);
   const input = document.getElementById('field-quantity');
+  const raw = input.value.trim();
+  const num = Number(raw);
+  // Only treat as valid if it's a positive integer in range — same rules as saveRecord.
+  const val = (Number.isInteger(num) && num >= 1 && num <= 999) ? num : null;
   const badge = document.getElementById('qty-required-badge');
   const wrap  = document.getElementById('field-quantity-wrap');
-  if (val >= 1) {
+  if (val != null) {
     input.style.borderColor = 'rgba(52,211,153,0.4)';
     input.style.background  = '';
     if (badge) badge.style.display = 'none';
@@ -17306,9 +17331,13 @@ async function mgrAcknowledgeEscalated(scanId, btn) {
 // as high-confidence training data.
 
 function openLotEdit(scanId) {
-  // Close any other open editors first
+  // Close any other open editors first.
+  // Editor CONTAINERS have IDs like "lot-edit-{scanId}".
+  // Inner inputs/messages have IDs like "lot-edit-lot-{scanId}", "lot-edit-name-{scanId}",
+  // "lot-edit-shelf-{scanId}", "lot-edit-expiry-{scanId}", "lot-edit-msg-{scanId}",
+  // "lot-edit-batch-{scanId}". Skip those — only collapse the containers.
   document.querySelectorAll('[id^="lot-edit-"]').forEach(el => {
-    if (!el.id.includes('lot-') && !el.id.includes('batch-') && !el.id.includes('msg-')) {
+    if (!/^lot-edit-(lot|name|shelf|expiry|msg|batch)-/.test(el.id)) {
       el.style.display = 'none';
     }
   });
@@ -17334,7 +17363,9 @@ function cancelLotEdit(scanId) {
   if (lotInput)   lotInput.value   = r.lot_number     || '';
   if (nameInput)  nameInput.value  = r.product_name   || '';
   if (shelfInput) shelfInput.value = r.shelf_location || '';
-  if (expiryInput) expiryInput.value = r.notes?.match(/EXPIRY:([^|]+)/)?.[1]?.trim() || '';
+  // Expiry lives in its own column on the scans table — not regex'd from notes.
+  // Reading from notes was leaving the field blank on every cancel.
+  if (expiryInput) expiryInput.value = r.expiry_date || '';
 }
 
 async function saveLotEdit(scanId) {
