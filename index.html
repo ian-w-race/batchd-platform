@@ -9843,13 +9843,21 @@ async function loadHistory() {
   _cachedActiveRecalls = recallsRes.data || [];
   buildStoreDropdown();
   applyFilters();
-  checkActiveRecalls();
+  // Pass already-fetched recalls so checkActiveRecalls doesn't re-query for the same data.
+  // Saves ~200-500ms on every history-page open.
+  checkActiveRecalls(_cachedActiveRecalls);
 }
 
 // ── AUTO RECALL CHECK ────────────────────────────────────────
-async function checkActiveRecalls() {
+// `cachedRecalls` (optional) lets callers that just fetched active recalls
+// (e.g. loadHistory) pass them in directly, avoiding a duplicate Supabase query.
+// When omitted, falls back to fetching them itself for callers that don't have
+// the data on hand (tab-focus refresh, lookback setting save, etc.).
+async function checkActiveRecalls(cachedRecalls = null) {
   try {
-    const { data } = await sb.from('recalls').select('*').eq('active', true).eq('organisation_id', _currentOrgId);
+    const data = cachedRecalls
+      ? cachedRecalls
+      : (await sb.from('recalls').select('*').eq('active', true).eq('organisation_id', _currentOrgId)).data;
     if (!data || !data.length) { document.getElementById('auto-recall-banner').style.display = 'none'; return; }
 
     // Deduplicate by product_name + lot_number
