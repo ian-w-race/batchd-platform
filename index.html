@@ -3367,13 +3367,15 @@
           <div class="mode-toggle" id="p1-mode-toggle">
             <!-- Sliding toggle track -->
             <div id="p1-toggle-track" style="position:relative;display:flex;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:3px;gap:0;flex-shrink:0;">
-              <!-- Sliding pill — JS positions it -->
-              <div id="p1-toggle-slider" style="position:absolute;top:3px;bottom:3px;left:3px;border-radius:7px;background:var(--accent);transition:transform 0.22s cubic-bezier(0.4,0,0.2,1),width 0.22s cubic-bezier(0.4,0,0.2,1);z-index:0;pointer-events:none;width:50%;"></div>
-              <button class="mode-btn active" id="p1-mode-btn-label" onclick="setPhase1Mode('label')" style="position:relative;z-index:1;background:transparent;border:none;border-radius:7px;padding:7px 14px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:5px;white-space:nowrap;color:#04120e;min-height:34px;cursor:pointer;flex:1;justify-content:center;">
+              <!-- Sliding pill — JS positions it. Phase 1.2 of refactor v2:
+                   default initial position is RIGHT (over Barcode) so first
+                   paint matches the new barcode-first default mode. -->
+              <div id="p1-toggle-slider" style="position:absolute;top:3px;bottom:3px;right:3px;border-radius:7px;background:var(--accent);transition:transform 0.22s cubic-bezier(0.4,0,0.2,1),width 0.22s cubic-bezier(0.4,0,0.2,1);z-index:0;pointer-events:none;width:50%;"></div>
+              <button class="mode-btn" id="p1-mode-btn-label" onclick="setPhase1Mode('label')" style="position:relative;z-index:1;background:transparent;border:none;border-radius:7px;padding:7px 14px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:5px;white-space:nowrap;color:var(--muted);min-height:34px;cursor:pointer;flex:1;justify-content:center;">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
                 <span data-i18n="p1.photoLabel">Label</span>
               </button>
-              <button class="mode-btn" id="p1-mode-btn-barcode" onclick="setPhase1Mode('barcode')" style="position:relative;z-index:1;background:transparent;border:none;border-radius:7px;padding:7px 14px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:5px;white-space:nowrap;color:var(--muted);min-height:34px;cursor:pointer;flex:1;justify-content:center;">
+              <button class="mode-btn active" id="p1-mode-btn-barcode" onclick="setPhase1Mode('barcode')" style="position:relative;z-index:1;background:transparent;border:none;border-radius:7px;padding:7px 14px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:5px;white-space:nowrap;color:#04120e;min-height:34px;cursor:pointer;flex:1;justify-content:center;">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9V5a2 2 0 0 1 2-2h4M3 15v4a2 2 0 0 0 2 2h4M21 9V5a2 2 0 0 0-2-2h-4M21 15v4a2 2 0 0 1-2 2h-4"/><line x1="7" y1="12" x2="7" y2="12.01"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="17" y1="12" x2="17" y2="12.01"/></svg>
                 <span data-i18n="p1.scanBarcode">GS-1/Barcode</span>
               </button>
@@ -3382,7 +3384,7 @@
           </div>
 
           <!-- Label photo (PRIMARY — shown by default) -->
-          <div id="p1-label-wrap" style="display:flex;flex-direction:column;width:100%;">
+          <div id="p1-label-wrap" style="display:none;flex-direction:column;width:100%;">
             <div class="camera-wrap" id="product-cam-wrap" style="width:100%;">
               <div class="camera-placeholder" id="product-placeholder">
                 <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
@@ -3414,7 +3416,7 @@
           </div>
 
           <!-- Barcode scanner (SECONDARY — hidden by default) -->
-          <div id="p1-barcode-wrap" style="display:none;width:100%;">
+          <div id="p1-barcode-wrap" style="display:flex;width:100%;">
             <div class="camera-wrap" id="p1-cam-wrap" style="width:100%;">
 
               <div class="camera-placeholder" id="p1-placeholder">
@@ -15599,8 +15601,9 @@ function initMode() {
   document.getElementById('field-barcode-wrap').style.display = 'none';
   document.getElementById('barcode-result').style.display = 'none';
   document.getElementById('step2-sub').textContent = t('js.p2sub.ocr');
-  // Phase 1: start in label (photo) mode — works on everything
-  setTimeout(() => setPhase1Mode('label'), 300);
+  // Phase 1.2 of refactor v2: start in barcode mode (ZXing-first identification).
+  // Label mode is the fallback when no barcode is detected within 3s.
+  setTimeout(() => setPhase1Mode('barcode'), 300);
 }
 
 // ── MANAGER ROLE ─────────────────────────────────────────────
