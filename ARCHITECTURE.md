@@ -105,7 +105,7 @@ These additive policies do not modify existing manufacturer-scoped behavior.
 | Phase | Goal | Status |
 |-------|------|--------|
 | 1.1 | Schema: products table with trust tiers | ✅ Shipped |
-| 1.2 | Wire ZXing into Step 1 capture flow | Pending |
+| 1.2 | Wire ZXing into Step 1 capture flow | ✅ Shipped |
 | 1.3 | Bounded fallback chain (1s timeout, parallel) | Pending |
 | 1.4 | Unknown barcode flow | Pending |
 | 1.5 | Trust tier promotion mechanism | Pending |
@@ -130,8 +130,43 @@ The following architectural patterns are structurally identifiable in the codeba
 - **Barcode-derived identity constraining OCR validation**: barcode → product → format pattern → constrained OCR call → output validated against pattern. *Claim scaffolding location TBD as Phase 4 ships.*
 - **Recall trigger workflow on cross-org lot code recognition**: cross-org scan history queryable by lot code pattern enables instant impacted-inventory identification during recall events. *Claim scaffolding location TBD as recall flow integrates with new tier model.*
 
+## Phase 1.2 — ZXing-first product identification (shipped)
+
+The scanner now defaults to barcode mode. ZXing decodes any barcode in view, looks it up against `products_public` first (cross-org instant identification), and auto-advances to Step 2 with a brief toast confirmation. The previous "second barcode prompt" UX is removed in favor of direct progression.
+
+### Lookup chain (in order)
+
+```
+products_public  ──▶  code_patterns  ──▶  scans  ──▶  Open Food Facts  ──▶  UPC Item DB
+   (NEW)            (org's history)   (org's       (external,           (external,
+                                       history)     4M+ products)        US/Canada)
+```
+
+The `products_public` view query is a single-row exact match on the unique `barcode_normalized` index — sub-100ms when the barcode is in our database.
+
+External API results are display-only. They populate the product name field for confirmation but do NOT auto-write to `products`. Promotion to the canonical table happens in Phase 1.4 (unknown barcode flow) with explicit user confirmation, gated by the trust tier model.
+
+### Fallback UX
+
+- 3-second timer: if ZXing finds no barcode within 3 seconds, surface a "Can't find a barcode? Tap to identify by photo" prompt that switches to AI label scan.
+- ZXing keeps decoding in the background even after switching to label mode. If a barcode comes into view during AI label capture, the scanner auto-switches back to barcode mode (deterministic identification beats AI guess, per plan).
+
+### What Phase 1.2 deliberately defers
+
+- Bounded fallback chain with 1s hard timeout and parallel external API calls — Phase 1.3
+- Unknown barcode "new product" flow that writes back to `products` with `source = 'ai_extracted_unverified'` — Phase 1.4
+- Trust tier promotion mechanism (3 scans / 2 orgs threshold) — Phase 1.5
+- Two-stage capture UX with explicit camera handoff between barcode and lot code — Phase 1.5 (UX)
+
 ## Migration history
 
 | Migration | Description | Date |
 |-----------|-------------|------|
 | `001_products_trust_tier.sql` | Phase 1.1 schema: trust tier columns on products, products_public view, scanner-org RLS policies | 2026-05-03 |
+
+## Code change history
+
+| Commit | Description | Date |
+|--------|-------------|------|
+| Phase 1.1 | Schema migration (no application code changes) | 2026-05-03 |
+| Phase 1.2 | Default to barcode mode, query products_public, auto-advance to Step 2, 3s fallback prompt, keep ZXing running on label fallback | 2026-05-03 |

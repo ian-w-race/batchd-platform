@@ -3429,6 +3429,15 @@
 
               <div class="scan-line" id="p1-scan-line" style="display:none;"></div>
               <div class="camera-frame" id="p1-barcode-frame" style="display:none;"></div>
+
+            <!-- Phase 1.2 of refactor v2: 3-second fallback prompt.
+                 Hidden by default; surfaced by startP1BarcodeScanner via setTimeout
+                 if no barcode is detected within 3s. Tapping switches to label-photo
+                 fallback while ZXing keeps decoding in the background. -->
+            <div id="p1-barcode-fallback-prompt" style="display:none;margin-top:10px;padding:10px 14px;background:rgba(245,166,35,0.06);border:1px solid rgba(245,166,35,0.25);border-radius:10px;text-align:center;">
+              <div style="font-size:12px;color:var(--muted);margin-bottom:8px;" data-i18n="p1.noBarcodeFound">Can't find a barcode?</div>
+              <button onclick="setPhase1Mode('label')" class="btn btn-ghost" style="font-size:12px;padding:7px 14px;justify-content:center;" data-i18n="p1.switchToLabel">Tap to identify by photo</button>
+            </div>
               <div class="analyzing-overlay" id="p1-analyzing" style="display:none;">
                 <div class="spinner"></div>
                 <span id="p1-analyzing-text">Looking up product…</span>
@@ -7227,7 +7236,7 @@ function cancelScan() {
   }
   currentPhase = 1;
   // Restart phase 1 camera
-  setTimeout(() => setPhase1Mode(phase1Mode || 'label'), 80);
+  setTimeout(() => setPhase1Mode(phase1Mode || 'barcode'), 80);
   document.querySelector('.flow-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
@@ -7692,7 +7701,11 @@ function retakeProduct() {
 }
 
 // ── PHASE 1 BARCODE MODE ─────────────────────────────────────
-let phase1Mode = 'label'; // label is the reliable default; barcode is the fast-track option
+// Phase 1.2 of refactor v2: barcode is now the default. ZXing reads the barcode
+// for deterministic identification via products_public; AI label scan is the
+// fallback (surfaced via "Can't find barcode?" prompt after 3s, or instant
+// switch back when ZXing finds a code in the label-mode video stream).
+let phase1Mode = 'barcode';
 let p1ZXingControls = null;
 let p1DetectedBarcode = null;
 let _prefetchedPattern = null;
@@ -7732,12 +7745,35 @@ function setPhase1Mode(mode) {
     p1DetectedBarcode = null;
     startP1BarcodeScanner();
   } else {
-    stopP1BarcodeScanner();
+    // Phase 1.2 of refactor v2: when falling back to label mode, keep the
+    // ZXing decoder running in the background. If a barcode comes into view
+    // during AI label capture, handleP1BarcodeDetected will auto-switch us
+    // back to barcode mode (deterministic identification beats AI guess).
+    // Only the barcode UI elements are hidden — the scanner stays alive.
+    document.getElementById('p1-scan-line').style.display = 'none';
+    document.getElementById('p1-barcode-frame').style.display = 'none';
+    _hideP1FallbackPrompt();
     startProductCamera();
   }
 }
 
 let p1Html5QrScanner = null;
+
+// Phase 1.2 of refactor v2: 3-second fallback timer. If ZXing doesn't decode
+// anything within 3 seconds, surface a "Can't find a barcode?" prompt that
+// switches to label-photo identification. Cleared when ZXing detects.
+let _p1FallbackTimer = null;
+function _showP1FallbackPrompt() {
+  const el = document.getElementById('p1-barcode-fallback-prompt');
+  if (el) el.style.display = 'block';
+}
+function _hideP1FallbackPrompt() {
+  const el = document.getElementById('p1-barcode-fallback-prompt');
+  if (el) el.style.display = 'none';
+}
+function _clearP1FallbackTimer() {
+  if (_p1FallbackTimer) { clearTimeout(_p1FallbackTimer); _p1FallbackTimer = null; }
+}
 
 async function startP1BarcodeScanner() {
   const stream = await getSharedStream();
@@ -7749,6 +7785,11 @@ async function startP1BarcodeScanner() {
   document.getElementById('p1-scan-line').style.display = 'block';
   document.getElementById('p1-barcode-frame').style.display = 'block';
   document.getElementById('p1-barcode-result').style.display = 'none';
+  _hideP1FallbackPrompt();
+
+  // Start 3s fallback timer — surface alternative if ZXing finds nothing.
+  _clearP1FallbackTimer();
+  _p1FallbackTimer = setTimeout(_showP1FallbackPrompt, 3000);
 
   // Attach stream to video element for display
   const vid = document.getElementById('p1-barcode-video');
@@ -7842,11 +7883,22 @@ function stopP1BarcodeScanner() {
     try { p1ZXingControls.stop(); } catch(e) {}
     p1ZXingControls = null;
   }
+  _clearP1FallbackTimer();
+  _hideP1FallbackPrompt();
   document.getElementById('p1-scan-line').style.display = 'none';
   document.getElementById('p1-barcode-frame').style.display = 'none';
 }
 
 async function handleP1BarcodeDetected(barcode) {
+  // Phase 1.2: ZXing found something — clear the 3s fallback timer.
+  // If we were in label-fallback mode (with ZXing still running in background),
+  // switch back to barcode mode for visual consistency.
+  _clearP1FallbackTimer();
+  _hideP1FallbackPrompt();
+  if (phase1Mode === 'label') {
+    setPhase1Mode('barcode');
+  }
+
   document.getElementById('p1-barcode-result').style.display = 'block';
   document.getElementById('p1-barcode-value').textContent = barcode;
   document.getElementById('p1-product-found').textContent = '';
@@ -7946,8 +7998,23 @@ async function handleP1BarcodeDetected(barcode) {
   // ── Standard 1D barcode (no lot encoded) ──────────────────
   if (productName) {
     _prefetchedPattern = _prefetchedPattern || await lookupLearnedPattern(productName, barcode, null, null);
-    // Feature 3: prompt employee to check for secondary barcode with lot code
-    showSecondBarcodePrompt();
+
+    // Phase 1.2 of refactor v2: auto-advance to Step 2 with toast confirmation.
+    // Replaces the previous "show second barcode prompt" detour. Two-stage
+    // capture UX (Phase 1.5) will reintroduce explicit camera handoff between
+    // steps with brand-specific lot location hints.
+    showToast(
+      currentLang === 'no'
+        ? `✓ Identifisert: ${productName}`
+        : `✓ Identified: ${productName}`,
+      'success', 2500
+    );
+    setTimeout(() => {
+      dismissSecondBarcode();
+      stopP1BarcodeScanner();
+      currentPhase = 1; // reset so goToPhase(2) runs its validation
+      goToPhase(2);
+    }, 600);
   } else {
     showToast('Barcode not in database — switching to label photo for identification.', 'warn', 4000);
     document.getElementById('p1-product-notfound').style.display = 'none';
@@ -7956,16 +8023,56 @@ async function handleP1BarcodeDetected(barcode) {
   }
 }
 
-// ── PRODUCT NAME LOOKUP ───────────────────────────────────────
-// Tries multiple sources in order:
-// 1. Open Food Facts v2 (4M+ products, global)
-// 2. Open Food Facts v0 fallback
-// 3. UPC Item DB (good US/Canadian coverage, no key needed)
-async function lookupProductName(barcode) {
-  // Source 0: Batch'd own databases — instant, covers repeat scans of any product
-  // including Norwegian products not indexed in Open Food Facts.
+// ── BARCODE NORMALIZATION ─────────────────────────────────────
+// Mirror of the SQL normalize_barcode() function in migrations/001.
+// Standard GS1 convention: 12-digit UPC and 13-digit EAN with leading zero
+// represent the same product. Normalize to the 13-digit form so cross-system
+// matches succeed regardless of capture format.
+function normalizeBarcode(input) {
+  if (input == null) return null;
+  const cleaned = String(input).replace(/\s/g, '');
+  if (cleaned.length === 0) return null;
+  if (cleaned.length === 12 && /^\d{12}$/.test(cleaned)) {
+    return '0' + cleaned;
+  }
+  return cleaned;
+}
 
-  // 0a: code_patterns — barcode seen before by THIS org's staff
+// ── PRODUCT NAME LOOKUP ───────────────────────────────────────
+// Trust-tier-aware lookup chain (Phase 1.2 of refactor v2).
+// Tries sources in order:
+// 0. products_public — cross-org canonical lookup (NEW). Returns instantly when
+//    any org on the platform has previously identified this barcode. This is the
+//    core network-effect path: every retailer's scan history compounds into
+//    everyone else's lookup speed.
+// 1. code_patterns — barcode seen before by THIS org's staff (per-org learning)
+// 2. scans — barcode seen before in THIS org's scan history
+// 3. Open Food Facts v2 (4M+ products, global, free)
+// 4. Open Food Facts v0 fallback
+// 5. UPC Item DB (good US/Canadian coverage)
+//
+// External API results (sources 3-5) are returned for display only. They do
+// NOT auto-write to products — that's a Phase 1.3 / 1.4 constraint per the
+// trust tier model. Only AI-confirmed or cross-org-validated entries get into
+// the canonical products table.
+async function lookupProductName(barcode) {
+  const normalized = normalizeBarcode(barcode);
+
+  // Source 0: products_public — cross-org canonical (NEW in Phase 1.2)
+  // Single-row lookup on the unique barcode_normalized index — fast.
+  if (normalized) {
+    try {
+      const { data: pp } = await sb.from('products_public')
+        .select('product_name')
+        .eq('barcode_normalized', normalized)
+        .limit(1);
+      if (pp && pp[0] && pp[0].product_name && pp[0].product_name.length > 1) {
+        return pp[0].product_name;
+      }
+    } catch(e) { /* continue to fallbacks */ }
+  }
+
+  // Source 1: code_patterns — barcode seen before by THIS org's staff
   try {
     const { data: cp } = await sb.from('code_patterns')
       .select('product_name')
@@ -14670,6 +14777,8 @@ const TRANSLATIONS = {
     'step.badge1': 'Step 1/3', 'step.badge2': 'Step 2/3', 'step.badge3': 'Step 3/3',
     'p1.cameraHintLabel': "Hold product in front of camera — Batch'd will identify it automatically",
     'p1.cameraHintBarcode': 'Hold steady · 15-30cm from barcode · align with frame',
+    'p1.noBarcodeFound': "Can't find a barcode?",
+    'p1.switchToLabel': 'Tap to identify by photo',
     'p1.confirmRight': "✓ That's right", 'p1.retakeBtn': 'Retake',
     'p2.backBtn': '← Step 1',
     'hist.addNote': '🔒 Add Note',
@@ -14918,6 +15027,8 @@ const TRANSLATIONS = {
     'step.badge1': 'Steg 1/3', 'step.badge2': 'Steg 2/3', 'step.badge3': 'Steg 3/3',
     'p1.cameraHintLabel': 'Hold produktet foran kameraet — Batch\'d identifiserer det automatisk',
     'p1.cameraHintBarcode': 'Hold stødig · 15-30cm fra strekkoden · rett mot rammen',
+    'p1.noBarcodeFound': 'Finner ikke strekkoden?',
+    'p1.switchToLabel': 'Trykk for å identifisere med bilde',
     'p1.confirmRight': '✓ Det stemmer', 'p1.retakeBtn': 'Ta på nytt',
     'p2.backBtn': '← Steg 1',
     'hist.addNote': '🔒 Legg til notat',
