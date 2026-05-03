@@ -7598,11 +7598,18 @@ let sharedStream = null;
 async function getSharedStream() {
   if (sharedStream && sharedStream.active) return sharedStream;
   try {
+    // Phase 1.2 fixup #6 (Option A): bump resolution and request higher frame rate.
+    // - 2560x1440 (was 1920x1080) gives more pixels for tiny barcodes
+    // - 60fps (was browser default ~30fps) gives barcode detectors more frames per
+    //   second to attempt decoding — meaningfully improves catch rate on motion blur
+    // Browsers gracefully downgrade if the device can't satisfy these — `ideal` is
+    // a hint, not a hard requirement. Hard fail only happens with min/max constraints.
     sharedStream = await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: { ideal: 'environment' },
-        width:  { ideal: 1920 },
-        height: { ideal: 1080 },
+        width:     { ideal: 2560 },
+        height:    { ideal: 1440 },
+        frameRate: { ideal: 60 },
       }
     });
     // Apply continuous autofocus after stream starts (ignored silently if unsupported)
@@ -7790,6 +7797,90 @@ function _clearP1FallbackTimer() {
   if (_p1FallbackTimer) { clearTimeout(_p1FallbackTimer); _p1FallbackTimer = null; }
 }
 
+// ── NATIVE BARCODE DETECTOR (Phase 1.2 fixup #6 Option B) ─────────────────
+// Modern browsers (iOS Safari 17+, Chrome on Android) ship a hardware-accelerated
+// BarcodeDetector that's significantly faster and more accurate than ZXing-js.
+// When available, we use it as the primary scanner. ZXing remains as the fallback
+// for browsers that don't support it (older iOS, some desktop browsers).
+let _p1NativeDetector = null;
+let _p1NativeDetectInterval = null;
+
+// Helper: capture the current video frame as productBlob for the history thumbnail.
+// Shared by both BarcodeDetector and ZXing detection paths so we have one place
+// to maintain the frame-capture logic.
+async function _captureP1ProductFrame(vid) {
+  if (!vid || vid.readyState < 2 || vid.videoWidth <= 0) return;
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width  = vid.videoWidth;
+    canvas.height = vid.videoHeight;
+    canvas.getContext('2d').drawImage(vid, 0, 0);
+    productBlob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.82));
+    const imgEl = document.getElementById('product-captured');
+    if (imgEl && productBlob) {
+      imgEl.src = URL.createObjectURL(productBlob);
+      imgEl.style.display = 'block';
+    }
+  } catch(e) { console.warn('P1 frame capture failed:', e); }
+}
+
+async function startP1NativeBarcodeDetection(vid) {
+  if (!('BarcodeDetector' in window)) return false;
+
+  try {
+    const supported = await BarcodeDetector.getSupportedFormats();
+    const wanted = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code', 'data_matrix'];
+    const formats = wanted.filter(f => supported.includes(f));
+    if (formats.length === 0) return false;
+
+    _p1NativeDetector = new BarcodeDetector({ formats });
+
+    let lastCode = null;
+    let lastCodeTime = 0;
+    let detecting = false; // prevent overlapping detect() calls
+
+    _p1NativeDetectInterval = setInterval(async () => {
+      if (!_p1NativeDetector || !vid || vid.readyState < 2 || p1DetectedBarcode || detecting) return;
+      detecting = true;
+      try {
+        const barcodes = await _p1NativeDetector.detect(vid);
+        if (barcodes && barcodes.length > 0) {
+          const code = barcodes[0].rawValue;
+          if (code) {
+            const now = Date.now();
+            // Same debounce as ZXing path — require same code twice within 700ms
+            if (code === lastCode && now - lastCodeTime < 700) {
+              if (!p1DetectedBarcode) {
+                p1DetectedBarcode = code;
+                await _captureP1ProductFrame(vid);
+                stopP1BarcodeScanner();
+                await handleP1BarcodeDetected(code);
+              }
+            } else {
+              lastCode = code;
+              lastCodeTime = now;
+            }
+          }
+        }
+      } catch(e) { /* detector failed this frame, retry next interval */ }
+      detecting = false;
+    }, 150); // ~6.6 fps polling — balances responsiveness vs CPU
+
+    return true;
+  } catch(e) {
+    console.warn('[P1 scanner] BarcodeDetector init failed:', e);
+    return false;
+  }
+}
+
+function stopP1NativeBarcodeDetection() {
+  if (_p1NativeDetectInterval) {
+    clearInterval(_p1NativeDetectInterval);
+    _p1NativeDetectInterval = null;
+  }
+  _p1NativeDetector = null;
+}
+
 async function startP1BarcodeScanner() {
   const stream = await getSharedStream();
   if (!stream) return;
@@ -7817,6 +7908,17 @@ async function startP1BarcodeScanner() {
     try { await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch(e) {}
   }
   checkTorchSupport();
+
+  // Phase 1.2 fixup #6 (Option B): try native BarcodeDetector first.
+  // If supported on this device, use it as the primary scanner — significantly
+  // faster and more accurate than ZXing-js because it runs in native/GPU code.
+  // ZXing remains the fallback for browsers that don't support BarcodeDetector.
+  const nativeStarted = await startP1NativeBarcodeDetection(vid);
+  if (nativeStarted) {
+    console.log('[P1 scanner] Using native BarcodeDetector');
+    return;
+  }
+  console.log('[P1 scanner] BarcodeDetector unavailable — falling back to ZXing');
 
   if (!window.ZXing) { console.error('ZXing not loaded'); return; }
 
@@ -7890,6 +7992,8 @@ async function _startHtml5QrP1(stream) {
 }
 
 function stopP1BarcodeScanner() {
+  // Stop the native detector polling loop (Phase 1.2 fixup #6 Option B)
+  stopP1NativeBarcodeDetection();
   if (p1Html5QrScanner) {
     try { p1Html5QrScanner.stop(); } catch(e) {}
     p1Html5QrScanner = null;
