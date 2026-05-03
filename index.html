@@ -7253,6 +7253,17 @@ function goToPhase(n) {
     dismissSecondBarcode();
     stopP1BarcodeScanner();
     if (phase1Mode === 'label' && !productBlob) { showToast('Please capture a product photo first.', 'warn', 3500); return; }
+
+    // Phase 1.4 of refactor v2: write unknown-barcode product back to products
+    // for cross-org reuse. The user just confirmed the product name (validated
+    // above as non-empty) — this is the moment of truth where their identification
+    // becomes durable. Fire-and-forget; failure is silent (RLS / unique violation
+    // / network / etc are all OK to swallow — worst case is the product gets
+    // re-identified on the next scan, no user-facing degradation).
+    if (_unknownBarcodeForWrite) {
+      _writeUnknownProductToCatalog(_unknownBarcodeForWrite, name);
+      _unknownBarcodeForWrite = null;
+    }
   }
   // Validate phase 2 → 3
   if (n === 3) {
@@ -7722,6 +7733,13 @@ let p1ZXingControls = null;
 let p1DetectedBarcode = null;
 let _prefetchedPattern = null;
 let _gs1FullCapture = null; // set when a GS1 DL or GS1-128 with lot is scanned in Phase 1
+// Phase 1.4 of refactor v2: tracks a barcode that was decoded but not found in
+// any database (products_public, code_patterns, scans, OFF, UPC Item DB).
+// When the user proceeds past Step 1 with a confirmed product name from the
+// label-fallback flow, this barcode + name pair gets written to products_public
+// with source = 'ai_extracted_unverified' so the next scan of the same barcode
+// (by anyone, any org) is instant. Cleared after write or on resetForm.
+let _unknownBarcodeForWrite = null;
 
 function setPhase1Mode(mode) {
   phase1Mode = mode;
@@ -8043,8 +8061,17 @@ async function handleP1BarcodeDetected(barcode) {
     // Recall pre-screen at product identification time
     checkStep1RecallWarning(productName, lookupCode);
   } else if (!gs1.lot) {
-    // No product found and no lot in the code — standard fallback
-    showToast('Barcode not in database — switching to label photo for identification.', 'warn', 4000);
+    // Phase 1.4 of refactor v2: unknown barcode — track for write-back to
+    // products_public after the user confirms an AI-identified name from the
+    // label-fallback flow. This is how the cross-org product database gets
+    // bootstrapped for products no external DB knew about.
+    _unknownBarcodeForWrite = barcode;
+    showToast(
+      currentLang === 'no'
+        ? '✨ Nytt produkt — Batch\'d identifiserer det via etiketten'
+        : '✨ New product — let me identify it via the label',
+      'info', 4000
+    );
     document.getElementById('p1-product-notfound').style.display = 'none';
     document.getElementById('field-product-name').placeholder = 'AI will identify from label…';
     setTimeout(() => setPhase1Mode('label'), 1200);
@@ -8135,7 +8162,14 @@ async function handleP1BarcodeDetected(barcode) {
       goToPhase(2);
     }, 600);
   } else {
-    showToast('Barcode not in database — switching to label photo for identification.', 'warn', 4000);
+    // Phase 1.4: same unknown-barcode write-back as the !gs1.lot branch above.
+    _unknownBarcodeForWrite = barcode;
+    showToast(
+      currentLang === 'no'
+        ? '✨ Nytt produkt — Batch\'d identifiserer det via etiketten'
+        : '✨ New product — let me identify it via the label',
+      'info', 4000
+    );
     document.getElementById('p1-product-notfound').style.display = 'none';
     document.getElementById('field-product-name').placeholder = 'AI will identify from label…';
     setTimeout(() => setPhase1Mode('label'), 1200);
@@ -8301,6 +8335,53 @@ async function _lookupUpcItemDb(barcode) {
     const item = data.items?.[0];
     return item?.title || item?.brand || null;
   } catch(e) { return null; }
+}
+
+// Phase 1.4 of refactor v2: write a newly-identified product back to the
+// canonical products table. Called when an unknown barcode (not in any local
+// source AND not in any external API) gets identified via the AI label-fallback
+// flow and the user confirms the name by proceeding to Step 2.
+//
+// Trust tier: source = 'ai_extracted_unverified' since this is single-source
+// data, not yet cross-validated. Phase 1.5 will auto-promote to
+// 'retailer_validated' once N other orgs confirm the same barcode → name pair.
+//
+// Failure is silent — worst case is the product needs to be re-identified on
+// the next scan, which is no worse than today's behavior.
+async function _writeUnknownProductToCatalog(barcode, productName) {
+  if (!barcode || !productName) return;
+  const normalized = normalizeBarcode(barcode);
+  if (!normalized || productName.trim().length < 2) return;
+  if (!_currentOrgId) return;
+
+  try {
+    const { error } = await sb.from('products').insert({
+      barcode: barcode,                   // legacy column for manufacturer.html compat
+      barcode_normalized: normalized,     // canonical key used by products_public
+      name: productName.trim().slice(0, 200),
+      source: 'ai_extracted_unverified',
+      created_by_org_id: _currentOrgId,
+      published: true,
+      // manufacturer_id intentionally null — this is a scanner-created entry.
+      // Phase 1.5 will define a manufacturer claim flow for these rows.
+    });
+
+    if (error) {
+      // 23505 = unique_violation. Most common cause: another org wrote the
+      // same barcode between our lookup miss and this insert. Not an error
+      // from the user's perspective — the catalog is now populated either way.
+      if (error.code === '23505') {
+        console.log('[products] Barcode', normalized, 'already added concurrently — skipping write');
+        return;
+      }
+      console.warn('[products] Write failed for', normalized, ':', error.message);
+      return;
+    }
+
+    console.log('[products] New unknown-barcode product written:', normalized, '→', productName);
+  } catch(e) {
+    console.warn('[products] Write threw:', e);
+  }
 }
 
 async function lookupProductName(barcode) {
@@ -9184,6 +9265,8 @@ function resetForm() {
   p1DetectedBarcode = null;
   _prefetchedPattern = null;
   _gs1FullCapture = null;
+  // Phase 1.4: clear unknown-barcode write state so the next scan starts fresh
+  _unknownBarcodeForWrite = null;
   // Phase 1.2 of refactor v2: every new scan resets to barcode mode (the default).
   // Without this, if the previous scan ended in label-fallback mode, the next scan
   // would start in label mode too — defeating the whole barcode-first design.

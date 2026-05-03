@@ -107,7 +107,7 @@ These additive policies do not modify existing manufacturer-scoped behavior.
 | 1.1 | Schema: products table with trust tiers | ✅ Shipped |
 | 1.2 | Wire ZXing into Step 1 capture flow | ✅ Shipped |
 | 1.3 | Bounded fallback chain (1s timeout, parallel) | ✅ Shipped |
-| 1.4 | Unknown barcode flow | Pending |
+| 1.4 | Unknown barcode flow + cross-org write-back | ✅ Shipped |
 | 1.5 | Trust tier promotion mechanism | Pending |
 | 1.5 (UX) | Two-stage capture (barcode + lot code as distinct sessions) | Pending |
 | 2 | Bootstrap migration via `products_pending` staging | Pending |
@@ -202,11 +202,88 @@ The product name lookup chain is now race-based instead of sequential. All six s
 - Auto-write of confirmed AI results to `products` — Phase 1.4
 - External API rate-limit / quota awareness (UPC Item DB free tier is 100 lookups/day) — revisit if pilot data shows it bites
 
+## Phase 1.4 — Unknown barcode flow + cross-org write-back (shipped)
+
+This is where the trust-tier model starts paying off — every previously-unknown barcode that an org identifies via the AI label-scan fallback now becomes part of the cross-org `products_public` lookup forever.
+
+### Flow
+
+```
+ZXing decodes barcode  →  lookupProductName misses all 6 sources
+                                 │
+                                 ▼
+                  Toast: "✨ New product — let me identify it via the label"
+                                 │
+                                 ▼
+                       Auto-switch to label-photo mode
+                                 │
+                                 ▼
+                  AI identifies product from label image
+                                 │
+                                 ▼
+                 User confirms / edits the suggested name
+                                 │
+                                 ▼
+                User taps "Step 2" (advances past Step 1)
+                                 │
+                                 ▼
+              ┌──────────────────────────────────────────────┐
+              │  _writeUnknownProductToCatalog(barcode, name) │
+              │                                              │
+              │  INSERT INTO products (                      │
+              │    barcode_normalized, name,                 │
+              │    source = 'ai_extracted_unverified',       │
+              │    created_by_org_id = current org,          │
+              │    manufacturer_id = NULL,                   │
+              │    published = true                          │
+              │  )                                           │
+              └──────────────────────────────────────────────┘
+                                 │
+                                 ▼
+                Next scan of same barcode (any org, any user)
+                       hits products_public instantly.
+                              No AI call.
+```
+
+### Trust tier this writes
+
+`source = 'ai_extracted_unverified'` — single-source identification, not yet cross-validated. Phase 1.5 defines auto-promotion rules to `retailer_validated` once N independent orgs confirm the same barcode → name pair.
+
+### Failure handling
+
+- **Unique constraint violation** (another org wrote the same barcode concurrently between our lookup miss and our INSERT): logged, swallowed silently. Catalog is now populated either way.
+- **RLS rejection** (caller doesn't have org membership): logged, swallowed silently. Worst case: product needs re-identification next scan.
+- **Network failure**: logged, swallowed silently.
+
+User-facing impact of any failure: zero. The scan completes normally; the only loss is the next scan of this barcode also has to use AI fallback. No worse than the old behavior.
+
+### Migration 002 — auto-normalize trigger
+
+Phase 1.4 added a Postgres BEFORE INSERT/UPDATE trigger that auto-populates `barcode_normalized` from `barcode` whenever a row is created or `barcode` is changed. This was a Phase 1.1 omission that became blocking for 1.4 — without it, manufacturer-created products (which only set `barcode`, not `barcode_normalized`) would have NULL `barcode_normalized` and be invisible to scanner lookup.
+
+The trigger is defensive: it only writes if `barcode_normalized` is missing, so explicit callers (like Phase 1.4's `_writeUnknownProductToCatalog`) can still set both columns directly.
+
+### What Phase 1.4 deliberately defers
+
+- Trust-tier promotion mechanism (3 scans / 2 orgs auto-promotes `ai_extracted_unverified` → `retailer_validated`) — Phase 1.5
+- Manufacturer claim flow (allow a manufacturer to claim ownership of an unverified entry) — Phase 1.5
+- Two-stage capture UX (explicit camera handoff between barcode capture and lot code capture, brand-specific lot location hints) — Phase 1.5 (UX)
+- Bootstrap migration with US grocery products from Open Food Facts — Phase 2
+
+### US-market notes
+
+This phase is the foundation for solving the "external API coverage gap" problem in any market. For the US specifically:
+
+- UPC Item DB has good US coverage but a 100/day free tier limit. Phase 1.4 means we stop hitting that API for any product anyone has already identified — the catalog covers the gap once a product is known.
+- FSMA 204 compliance is fundamentally about cross-org product traceability. The trust-tier `source` enum on `products` is the structural piece that makes "this product was identified by 3 different retailers" meaningfully different from "this product was guessed once by AI."
+- Pilot users (US retailers) will identify common US grocery products organically through normal scanning. After ~2-4 weeks of pilot, `products_public` should cover the most common SKUs at participating stores, dropping external API dependency to near-zero for repeat scans.
+
 ## Migration history
 
 | Migration | Description | Date |
 |-----------|-------------|------|
 | `001_products_trust_tier.sql` | Phase 1.1 schema: trust tier columns on products, products_public view, scanner-org RLS policies | 2026-05-03 |
+| `002_products_normalize_barcode_trigger.sql` | Phase 1.4 schema: BEFORE INSERT/UPDATE trigger that auto-populates barcode_normalized. Retrofits a Phase 1.1 omission. | 2026-05-03 |
 
 ## Code change history
 
@@ -215,3 +292,4 @@ The product name lookup chain is now race-based instead of sequential. All six s
 | Phase 1.1 | Schema migration (no application code changes) | 2026-05-03 |
 | Phase 1.2 | Default to barcode mode, query products_public, auto-advance to Step 2, 3s fallback prompt, keep ZXing running on label fallback | 2026-05-03 |
 | Phase 1.3 | Refactor lookupProductName to race all sources in parallel; 1s hard timeout on each external API; first valid result wins | 2026-05-03 |
+| Phase 1.4 | Track unknown barcodes through label-fallback flow; write back to products_public with source = 'ai_extracted_unverified' on Step 1→2 transition; new "✨ New product" toast; auto-normalize trigger via migration 002 | 2026-05-03 |
