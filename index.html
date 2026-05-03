@@ -12214,14 +12214,27 @@ async function snapOcr() {
     snapOcr._clearCountdown = () => { clearInterval(_cdInterval); if (_countdownEl) _countdownEl.textContent = ''; };
   }
 
-  // ── CASCADE C: Sonnet with tesseract context ──────────────────
+   // ── CASCADE C: Sonnet with tesseract context ──────────────────
   // Pass tesseractText so extractCodesFromImage can:
   //   1. Prepend it to the prompt (Sonnet sees the text, not just the image)
   //   2. Apply brand rules to it as a post-processing fallback
-  const [r1, r2] = await Promise.all([
-    extractCodesFromImage(blob1, preLearn, tesseractText).catch(() => null),
-    extractCodesFromImage(blob2, preLearn, null).catch(() => null),
-  ]);
+  //
+  // CONDITIONAL PASS 2: Pass 1 always runs; Pass 2 only runs if Pass 1
+  // didn't return high confidence. Saves ~50% of Sonnet calls on the
+  // common case (most scans return high confidence on the first frame).
+  // Trade-off: low-confidence scans become sequential (~+800ms) instead
+  // of parallel — but for those scans the extra time buys an extra read,
+  // which is what we want anyway when confidence is low.
+  const r1 = await extractCodesFromImage(blob1, preLearn, tesseractText).catch(() => null);
+
+  let r2 = null;
+  const _pass1HighConf = r1?.code_a && r1.confidence === 'high';
+  if (!_pass1HighConf && blob2) {
+    console.log('[snapOcr] Pass 1 not high-confidence — running Pass 2 for consensus');
+    r2 = await extractCodesFromImage(blob2, preLearn, null).catch(() => null);
+  } else if (_pass1HighConf) {
+    console.log('[snapOcr] Pass 1 high-confidence — skipping Pass 2 (~1 Sonnet call saved)');
+  }
 
   // ── CONSENSUS RESOLUTION ──────────────────────────────────
   const norm = r => normaliseForFuzzy(r?.code_a || '');
