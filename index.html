@@ -7239,8 +7239,9 @@ function cancelScan() {
     }
   }
   currentPhase = 1;
-  // Restart phase 1 camera
-  setTimeout(() => setPhase1Mode(phase1Mode || 'barcode'), 80);
+  // Restart phase 1 camera. Always barcode mode — Phase 1.2 of refactor v2.
+  // (resetForm() also resets phase1Mode='barcode' as a safety net.)
+  setTimeout(() => setPhase1Mode('barcode'), 80);
   document.querySelector('.flow-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
@@ -9071,6 +9072,10 @@ function resetForm() {
   p1DetectedBarcode = null;
   _prefetchedPattern = null;
   _gs1FullCapture = null;
+  // Phase 1.2 of refactor v2: every new scan resets to barcode mode (the default).
+  // Without this, if the previous scan ended in label-fallback mode, the next scan
+  // would start in label mode too — defeating the whole barcode-first design.
+  phase1Mode = 'barcode';
   document.getElementById('p1-barcode-result').style.display = 'none';
   document.getElementById('p1-product-found').textContent = '';
   document.getElementById('p1-product-notfound').style.display = 'none';
