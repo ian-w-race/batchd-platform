@@ -2606,8 +2606,11 @@
     }
 
     /* ── PHASE 2 — mobile layout ── */
-    /* Hide packaging guide (too early / inaccurate) */
-    body.scan-active #lot-location-hint { display: none !important; }
+    /* Phase 1.5.2 of refactor v2: lot location hint is now USER guidance.
+       The previous "too early / inaccurate" comment dates from when this hint
+       fed the AI Pass 0 localization model. Per plan v2 the hint is repurposed
+       for direct user guidance; showLocationHint() already gates on data
+       quality (only shows when learned-pattern or brand knowledge exists). */
     body.scan-active #gs1-full-capture-banner { display: none !important; }
 
     /* Phase 2 body — scrollable so OCR results + form fields + nav are all reachable */
@@ -9363,6 +9366,8 @@ function resetForm() {
   // Phase 1.5 UX: hide the confirmation panel if it was visible
   const confPanel = document.getElementById('p1-confirmation-wrap');
   if (confPanel) confPanel.style.display = 'none';
+  // Phase 1.5.3: defensive cleanup of Step 2 background sanity check
+  stopP2BackgroundSanityCheck();
   // Phase 1.2 of refactor v2: every new scan resets to barcode mode (the default).
   // Without this, if the previous scan ended in label-fallback mode, the next scan
   // would start in label mode too — defeating the whole barcode-first design.
@@ -12337,6 +12342,82 @@ async function startOcrCamera() {
   document.getElementById('btn-snap-ocr').style.display = 'flex';
   document.getElementById('btn-retake-barcode').style.display = 'none';
   document.getElementById('barcode-captured').style.display = 'none';
+
+  // Phase 1.5.3 of refactor v2: background sanity check while user frames
+  // the lot code. If the camera picks up a barcode that doesn't match the
+  // one identified at Step 1, soft-prompt "Did you switch packages?"
+  const expectedBarcode = document.getElementById('field-barcode')?.value?.trim();
+  if (expectedBarcode) startP2BackgroundSanityCheck(vid, expectedBarcode);
+}
+
+// ── PHASE 1.5.3: BACKGROUND BARCODE SANITY CHECK (Step 2) ─────────────────
+// While the user is framing the lot code in Step 2, run a low-frequency
+// BarcodeDetector poll in the background. If a barcode comes into view that's
+// DIFFERENT from the one identified at Step 1, soft-prompt the user — most
+// common reason is they accidentally picked up a different package or are
+// pointing at the wrong product entirely.
+//
+// Skipped silently on browsers without BarcodeDetector support — it's a
+// nice-to-have safety net, not a load-bearing feature.
+let _p2SanityDetector = null;
+let _p2SanityInterval = null;
+let _p2SanityLastWarn = 0;
+const P2_SANITY_WARN_DEDUP_MS = 8000;
+
+async function startP2BackgroundSanityCheck(vid, expectedBarcode) {
+  // Tear down any prior instance — re-entry is fine
+  stopP2BackgroundSanityCheck();
+  if (!('BarcodeDetector' in window)) return;
+  if (!vid || !expectedBarcode) return;
+  const expectedNormalized = normalizeBarcode(expectedBarcode);
+  if (!expectedNormalized) return;
+
+  try {
+    const supported = await BarcodeDetector.getSupportedFormats();
+    const wanted = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'qr_code', 'data_matrix'];
+    const formats = wanted.filter(f => supported.includes(f));
+    if (formats.length === 0) return;
+
+    _p2SanityDetector = new BarcodeDetector({ formats });
+    let detecting = false;
+
+    // ~1.25 fps polling — much slower than Step 1's primary detector since
+    // this is just a sanity check, not the main identification path.
+    _p2SanityInterval = setInterval(async () => {
+      if (!_p2SanityDetector || !vid || vid.readyState < 2 || detecting) return;
+      detecting = true;
+      try {
+        const barcodes = await _p2SanityDetector.detect(vid);
+        if (barcodes && barcodes.length > 0) {
+          const detected = normalizeBarcode(barcodes[0].rawValue);
+          if (detected && detected !== expectedNormalized) {
+            const now = Date.now();
+            // Dedupe so we don't spam the user with a warn toast every 800ms
+            if (now - _p2SanityLastWarn > P2_SANITY_WARN_DEDUP_MS) {
+              _p2SanityLastWarn = now;
+              showToast(
+                currentLang === 'no'
+                  ? '⚠ Et annet produkt sett — byttet du pakke?'
+                  : '⚠ Different product detected — did you switch packages?',
+                'warn',
+                5000
+              );
+            }
+          }
+        }
+      } catch(e) { /* silent — sanity check is best-effort */ }
+      detecting = false;
+    }, 800);
+  } catch(e) { /* init failed; sanity check is best-effort */ }
+}
+
+function stopP2BackgroundSanityCheck() {
+  if (_p2SanityInterval) {
+    clearInterval(_p2SanityInterval);
+    _p2SanityInterval = null;
+  }
+  _p2SanityDetector = null;
+  _p2SanityLastWarn = 0;
 }
 
 // ── PHOTO QUALITY CHECK ──────────────────────────────────────
@@ -12600,6 +12681,10 @@ function _prewarmOcr() {
 }
 
 async function snapOcr() {
+  // Phase 1.5.3: stop the background sanity check — user is capturing now,
+  // we don't need ongoing barcode detection on the live stream.
+  stopP2BackgroundSanityCheck();
+
   // ── MULTI-FRAME TEMPORAL CONSENSUS ───────────────────────────
   // Captures 2 frames 250ms apart then runs OCR on both in parallel.
   // Total added time: ~250ms for frame collection (imperceptible vs 1.5-3s OCR).
