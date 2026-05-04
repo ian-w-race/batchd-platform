@@ -164,18 +164,22 @@ function buildOffSearchUrl({ country, pageSize, page }) {
     page: String(page),
     sort_by: 'unique_scans_n',  // popularity proxy
   });
-  // Use the country-specific OFF subdomain, NOT world.openfoodfacts.org.
-  // The world endpoint with countries_tags filter returns products *sold in* the
-  // country (often as imports — Moroccan / EU products with US distribution),
-  // not products *primarily for* that market. The subdomain scopes the dataset
-  // to products primarily distributed in that country.
-  // Map our country param to the subdomain prefix.
-  const subdomain = country.startsWith('en:united-states') ? 'us'
-                   : country.startsWith('en:united-kingdom') ? 'uk'
-                   : country.startsWith('en:france') ? 'fr'
-                   : country.startsWith('en:germany') ? 'de'
-                   : 'world'; // fallback to global with countries_tags filter
-  return `https://${subdomain}.openfoodfacts.org/api/v2/search?${params.toString()}`;
+  // Note: we use world.openfoodfacts.org and rely on barcode-prefix filtering
+  // in stageProducts() rather than OFF's country filter. Empirically, both
+  // the countries_tags=en:united-states param AND the us.openfoodfacts.org
+  // subdomain return mixed-region products (Moroccan, EU, etc) when sorted by
+  // popularity — OFF's "country" tag is whether a product is sold in a country,
+  // not whether it's primarily for that market. Barcode-prefix filtering
+  // (GTIN-13 starting with 0 or 1 = US/Canada UPC-A) is more reliable.
+  return `https://world.openfoodfacts.org/api/v2/search?${params.toString()}`;
+}
+
+// US/Canada products use UPC-A barcodes which normalize to GTIN-13 starting
+// with '0'. Some additional US/Canada ranges start with '1'. Anything else is
+// non-US (3xx France, 4xx Germany, 50xx UK, 70 Norway, 611 Morocco, etc).
+function isUSorCanadaBarcode(normalizedBarcode) {
+  if (!normalizedBarcode || normalizedBarcode.length !== 13) return false;
+  return normalizedBarcode.startsWith('0') || normalizedBarcode.startsWith('1');
 }
 
 async function fetchExistingBarcodes() {
@@ -228,6 +232,14 @@ async function stageProducts(offProducts, existingBarcodes) {
 
     const normalized = normalizeBarcode(barcode);
     if (!normalized) { skipped++; continue; }
+
+    // US/Canada barcode prefix filter — see isUSorCanadaBarcode rationale above.
+    // OFF's popularity sort returns many international products globally, so we
+    // post-filter to keep only US/Canadian-prefixed barcodes.
+    if (!isUSorCanadaBarcode(normalized)) {
+      skipped++;
+      continue;
+    }
 
     if (existingBarcodes.has(normalized)) {
       skipped++;
