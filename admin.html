@@ -795,6 +795,14 @@ async function resetDemo(orgId) {
     await sb.from('stores').delete().eq('organisation_id', orgId);
     await sb.from('organisation_members').delete().eq('organisation_id', orgId);
     await sb.from('invitations').delete().eq('organisation_id', orgId);
+    // Phase 1.4 follow-up: clean up scanner-created products tied to this demo
+    // org. Defensive .neq prevents this from ever deleting a manufacturer-
+    // registered product that somehow has created_by_org_id = this org.
+    await sb.from('products').delete().eq('created_by_org_id', orgId).neq('source', 'manufacturer_registered');
+    // Phase 2a follow-up: any bootstrap-staged entries created by this org's scanner.
+    await sb.from('products_pending').delete().eq('created_by_org_id', orgId);
+    // Phase 3 follow-up: telemetry rows from this org.
+    await sb.from('scan_telemetry').delete().eq('organisation_id', orgId);
     msgEl.textContent = '✓ Demo data reset successfully.';
     msgEl.className = 'msg success';
     msgEl.style.display = 'block';

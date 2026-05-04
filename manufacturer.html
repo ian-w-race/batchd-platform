@@ -3507,9 +3507,14 @@ async function renderPatterns() {
 
   // Get patterns for products belonging to this manufacturer's org
   // Patterns are keyed by product_name/product_key — match against our products
+  // Pre-existing bug fix: products has no organisation_id column — only manufacturer_id.
+  // The wrong column name silently failed (Supabase returned an error and productsRes.data
+  // was undefined → myProducts was always empty → none of the manufacturer's products
+  // ever appeared under "your products" in the patterns panel — they all landed in
+  // "All other products in network").
   const [patternsRes, productsRes] = await Promise.all([
     sb.from('code_patterns').select('*').order('scan_count', { ascending: false }),
-    sb.from('products').select('name, barcode').eq('organisation_id', _orgId),
+    sb.from('products').select('name, barcode').eq('manufacturer_id', _orgId),
   ]);
 
   const allPatterns = patternsRes.data || [];
@@ -3845,9 +3850,26 @@ async function saveProduct() {
     closeProductForm();
     renderProducts();
   } catch(e) {
-    showProductMsg(e.message || 'Could not save product.', 'error');
+    showProductMsg(_translateProductInsertError(e), 'error');
     btn.disabled = false; btn.innerHTML = 'Save product';
   }
+}
+
+// Phase 1.4 follow-up: translate the products UNIQUE-on-barcode_normalized
+// constraint violation into a user-facing message. After Phase 1.4 shipped,
+// scanner orgs can pre-create products at lower trust tiers (Phase 1.4
+// unknown-barcode flow). When a manufacturer later tries to register the
+// same barcode in their portal, the INSERT fails on the unique index.
+// Without this helper, the user saw raw Postgres text like
+// 'duplicate key value violates unique constraint "products_barcode_normalized_unique"'.
+function _translateProductInsertError(error) {
+  if (!error) return null;
+  const code = String(error.code || '');
+  const msg = String(error.message || '').toLowerCase();
+  if (code === '23505' || msg.includes('barcode_normalized_unique') || msg.includes('duplicate key value')) {
+    return 'A product with this barcode already exists in the network. Contact support to claim it.';
+  }
+  return error.message || 'Could not save product.';
 }
 
 function showProductMsg(txt, type) {
@@ -7470,7 +7492,7 @@ async function obSaveProduct() {
   const showMsg = (txt, ok) => { msg.style.display='block'; msg.style.background=ok?'rgba(52,211,153,0.1)':'rgba(255,92,92,0.1)'; msg.style.color=ok?'var(--accent)':'var(--danger)'; msg.style.border=`1px solid ${ok?'rgba(52,211,153,0.3)':'rgba(255,92,92,0.3)'}`; msg.textContent=txt; };
   if (!name) { showMsg('Product name required.', false); return; }
   const { data, error } = await sb.from('products').insert({ name, barcode, category: cat||null, manufacturer_id: _orgId }).select('id').single();
-  if (error) { showMsg('Error: ' + error.message, false); return; }
+  if (error) { showMsg(_translateProductInsertError(error), false); return; }
   window._mfrObProductId = data.id;
   msg.style.display = 'none';
   if (saved) { saved.style.display='block'; saved.textContent = `✓ "${name}" registered successfully!`; }
@@ -8069,7 +8091,7 @@ function importProducts() {
         category: row.category || null,
         is_ftl:  row.is_ftl?.toLowerCase() === 'yes' || row.is_ftl === 'true',
       });
-      return { error: error?.message };
+      return { error: error ? _translateProductInsertError(error) : undefined };
     },
     onComplete: 'renderProducts()',
   });
