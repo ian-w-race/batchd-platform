@@ -3486,7 +3486,8 @@
             </div>
             <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:6px;" data-i18n="p1.gotIt">Got it</div>
             <div id="p1-confirmation-name" style="font-size:18px;font-weight:700;color:var(--text);margin-bottom:6px;line-height:1.3;max-width:90%;"></div>
-            <div id="p1-confirmation-source" style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;margin-bottom:24px;"></div>
+            <div id="p1-confirmation-source" style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;margin-bottom:16px;"></div>
+            <img id="p1-confirmation-photo" alt="" style="display:none;width:140px;height:140px;object-fit:cover;border-radius:12px;border:1px solid var(--border);margin-bottom:24px;cursor:pointer;" onclick="openLightbox(this.src)" />
             <button onclick="continueFromP1Confirmation()" class="btn btn-primary" style="min-width:220px;justify-content:center;margin-bottom:10px;">
               <span data-i18n="p1.continueToLot">Continue to lot code →</span>
             </button>
@@ -7421,6 +7422,14 @@ function populateReview() {
     reviewImg.src = captured.src;
     reviewImg.style.display = 'block';
     reviewPlaceholder.style.display = 'none';
+  } else {
+    // When the current scan has no captured photo, explicitly clear the
+    // thumbnail. Without this reset, the <img> element would retain its
+    // src from the previous scan and show that scan's photo on this
+    // scan's review screen.
+    reviewImg.removeAttribute('src');
+    reviewImg.style.display = 'none';
+    reviewPlaceholder.style.display = 'flex';
   }
 
   // Text fields
@@ -7895,6 +7904,23 @@ function showP1Confirmation(productName, sourceLabel) {
   document.getElementById('p1-confirmation-name').textContent = productName;
   const sourceEl = document.getElementById('p1-confirmation-source');
   if (sourceEl) sourceEl.textContent = sourceLabel || '';
+
+  // Surface the captured frame so staff can verify the right product was
+  // photographed before continuing. Uses the Phase 1 capture stored in
+  // #product-captured (populated by _captureP1ProductFrame on barcode
+  // detection, or by the manual label-snap flow).
+  const photoEl = document.getElementById('p1-confirmation-photo');
+  const captured = document.getElementById('product-captured');
+  if (photoEl) {
+    if (captured && captured.src && captured.style.display !== 'none') {
+      photoEl.src = captured.src;
+      photoEl.style.display = 'block';
+    } else {
+      photoEl.removeAttribute('src');
+      photoEl.style.display = 'none';
+    }
+  }
+
   const panel = document.getElementById('p1-confirmation-wrap');
   if (panel) panel.style.display = 'flex';
 
@@ -15031,6 +15057,23 @@ function parseGS1(raw) {
       _deriveGS1SemanticFields(result);
       return result;
     }
+  }
+
+  // ── Plain GTIN guard ──────────────────────────────────────
+  // EAN-8 / UPC-A / EAN-13 / GTIN-14 are pure product identifiers with NO
+  // embedded Application Identifiers. The AI parser below would otherwise
+  // mis-read coincidental digit substrings (e.g. "10" in the middle of a
+  // 13-digit EAN) as a lot code AI and invent a false TLC. A real GS1-128
+  // payload either uses human-readable parens — "(10)ABC123" — or a raw
+  // FNC1 sentinel (\x1D / ]C1 / ]d2 / ]e0). If neither is present and the
+  // value is just 8/12/13/14 digits, treat it as a plain GTIN.
+  const _FNC1 = String.fromCharCode(29);
+  const _stripped = String(raw).replace(/^\]C1|^\]d2|^\]e0/i, '');
+  const _hasParens = /\(\d{2,4}\)/.test(raw);
+  const _hasFNC1   = raw.indexOf(_FNC1) !== -1;
+  if (!_hasParens && !_hasFNC1 && /^(?:\d{8}|\d{12}|\d{13}|\d{14})$/.test(_stripped)) {
+    result.gtin = _stripped;
+    return result;
   }
 
   const AI_LENGTHS = {
