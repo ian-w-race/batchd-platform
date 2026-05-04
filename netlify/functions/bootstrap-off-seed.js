@@ -164,7 +164,18 @@ function buildOffSearchUrl({ country, pageSize, page }) {
     page: String(page),
     sort_by: 'unique_scans_n',  // popularity proxy
   });
-  return `https://world.openfoodfacts.org/api/v2/search?${params.toString()}`;
+  // Use the country-specific OFF subdomain, NOT world.openfoodfacts.org.
+  // The world endpoint with countries_tags filter returns products *sold in* the
+  // country (often as imports — Moroccan / EU products with US distribution),
+  // not products *primarily for* that market. The subdomain scopes the dataset
+  // to products primarily distributed in that country.
+  // Map our country param to the subdomain prefix.
+  const subdomain = country.startsWith('en:united-states') ? 'us'
+                   : country.startsWith('en:united-kingdom') ? 'uk'
+                   : country.startsWith('en:france') ? 'fr'
+                   : country.startsWith('en:germany') ? 'de'
+                   : 'world'; // fallback to global with countries_tags filter
+  return `https://${subdomain}.openfoodfacts.org/api/v2/search?${params.toString()}`;
 }
 
 async function fetchExistingBarcodes() {
