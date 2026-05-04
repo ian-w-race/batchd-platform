@@ -2780,8 +2780,11 @@
     }
     body.scan-active #phase-2 .btn-row .btn-primary svg { display: inline-block !important; }
 
-    /* Form fields below camera — compact padding */
-    body.scan-active #phase-2 .flow-phase-body > div:not(.mode-toggle):not(.btn-row),
+    /* Form fields below camera — compact padding.
+       #lot-location-hint is excluded because the card has its own internal
+       padding (10px 14px) and provides its own horizontal margin via inline
+       style — applying 0 10px here would crush the card content. */
+    body.scan-active #phase-2 .flow-phase-body > div:not(.mode-toggle):not(.btn-row):not(#lot-location-hint),
     body.scan-active #phase-2 .flow-phase-body > .field {
       padding: 0 10px !important;
       flex-shrink: 0 !important;
@@ -3523,21 +3526,6 @@
           </button>
         </div>
 
-        <!-- Location hint card — shown when a learned pattern or brand hint is available -->
-        <div id="lot-location-hint" style="display:none;margin:0 0 0;padding:10px 14px;background:rgba(52,211,153,0.07);border:1px solid rgba(52,211,153,0.2);border-radius:10px;margin:8px 16px 0;">
-          <div style="display:flex;align-items:flex-start;gap:10px;">
-            <span id="lot-hint-icon" style="font-size:10px;font-family:'DM Mono',monospace;letter-spacing:0.06em;text-transform:uppercase;flex-shrink:0;padding:2px 6px;border-radius:4px;background:rgba(52,211,153,0.15);color:var(--accent);margin-top:2px;"></span>
-            <div style="flex:1;min-width:0;">
-              <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
-                <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.07em;color:var(--accent);font-family:'DM Mono',monospace;" id="lot-hint-label">Where to look</div>
-                <span style="font-size:10px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.06em;padding:2px 7px;border-radius:3px;background:rgba(245,166,35,0.15);color:var(--warn);border:1px solid rgba(245,166,35,0.3);">ALPHA</span>
-              </div>
-              <div style="font-size:12.5px;color:var(--text);line-height:1.5;" id="lot-hint-text"></div>
-              <div style="font-size:10px;color:var(--muted);margin-top:5px;line-height:1.4;">This guide is still learning — hints may be inaccurate until Batch'd has seen more scans of this product. Always verify the code on the packaging.</div>
-            </div>
-          </div>
-        </div>
-
         <!-- GS1 Digital Link / GS1-128 full-capture banner — shown when lot was read directly from barcode -->
         <div id="gs1-full-capture-banner" style="display:none;margin:10px 16px 0;padding:12px 14px;background:rgba(52,211,153,0.08);border:1px solid rgba(52,211,153,0.3);border-radius:10px;color:var(--accent);"></div>
 
@@ -3562,6 +3550,17 @@
                 <span data-i18n="p2.barcodeScan">GS-1/Barcode</span>
               </button>
             </div>
+          </div>
+
+          <!-- Location hint card — shown when a learned pattern or brand hint is available.
+               Positioned here (after the tab row, before the camera) so the guidance
+               sits with the capture controls it relates to, not above the tabs. -->
+          <div id="lot-location-hint" style="display:none;margin:8px 10px 0;padding:10px 14px;background:rgba(52,211,153,0.07);border:1px solid rgba(52,211,153,0.2);border-radius:10px;">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+              <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.07em;color:var(--accent);font-family:'DM Mono',monospace;" id="lot-hint-label">Where to look</div>
+              <span style="font-size:10px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.06em;padding:2px 7px;border-radius:3px;background:rgba(245,166,35,0.15);color:var(--warn);border:1px solid rgba(245,166,35,0.3);">ALPHA</span>
+            </div>
+            <div style="font-size:12.5px;color:var(--text);line-height:1.5;" id="lot-hint-text"></div>
           </div>
 
           <!-- Camera viewport (shared) -->
@@ -8614,34 +8613,43 @@ function showLocationHint(learnedCtx, productName) {
   const card  = document.getElementById('lot-location-hint');
   const textEl  = document.getElementById('lot-hint-text');
   const labelEl = document.getElementById('lot-hint-label');
-  const iconEl  = document.getElementById('lot-hint-icon');
-  let hintText = null, label = 'Where to look', icon = 'LOCATION';
+  let hintText = null, label = 'Where to look';
 
   if (learnedCtx && learnedCtx.labelHint) {
+    // Suppress user-learned hints below the confidence floor — a single prior
+    // scan carries essentially no signal. Brand-sourced hints come from
+    // hardcoded brand knowledge and stay visible at any count.
+    const isBrand = learnedCtx.source === 'brand';
+    const cnt = learnedCtx.scanCount || 1;
+    if (!isBrand && cnt < 3) { card.style.display = 'none'; return; }
+
     hintText = learnedCtx.labelHint;
-    if (learnedCtx.source === 'brand') {
+    if (isBrand) {
       const brand = extractBrand(productName);
       label = `Brand guide${brand ? ' — ' + brand : ''}`;
-      icon = 'BRAND';
     } else {
-      const cnt = learnedCtx.scanCount || 1;
-      label = `Learned — ${cnt} previous scan${cnt!==1?'s':''}`;
-      icon = 'LEARNED';
+      label = `Learned — ${cnt} previous scans`;
     }
   } else if (learnedCtx && learnedCtx.lotFormat) {
     hintText = `Lot format: ${learnedCtx.lotFormat}`;
-    icon = 'FORMAT'; label = 'Known format';
+    label = 'Known format';
   }
 
   if (!hintText) {
     const tip = getPackagingTip(productName);
-    if (tip) { hintText = tip.tip; icon = tip.icon; label = 'Packaging guide'; }
+    if (tip) { hintText = tip.tip; label = 'Packaging guide'; }
   }
 
   if (!hintText) { card.style.display = 'none'; return; }
+
+  // Strip a trailing "Format: …" sentence from the stored label hint —
+  // GS1 / spec jargon doesn't help frontline staff, and historical learn
+  // writes appended it automatically (see label_hint builder below, now
+  // also updated to stop appending it for new learns).
+  hintText = hintText.replace(/\s*Format:\s*[^.]*\.?\s*$/i, '').trim();
+
   textEl.textContent  = hintText;
   labelEl.textContent = label;
-  iconEl.textContent  = icon;
   card.style.display  = 'block';
 }
 
@@ -14027,10 +14035,10 @@ async function saveLearnedPattern(productName, barcodeNumber, codeA, codeB, lotI
       if (loc.length <= 80) parts.push(loc);
     }
 
-    // 3. Format — what to look for
-    if (lotFormat) {
-      parts.push(`Format: ${lotFormat}`);
-    }
+    // The lot format is intentionally NOT appended here. lotFormat is still
+    // stored on its own column (lot_format) for downstream OCR validation,
+    // but staff-facing hints don't need GS1 spec jargon — surface only the
+    // actionable "where to look" guidance.
 
     const labelHint = parts.length ? parts.join('. ') + '.' : null;
 
