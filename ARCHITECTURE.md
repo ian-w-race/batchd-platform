@@ -110,7 +110,7 @@ These additive policies do not modify existing manufacturer-scoped behavior.
 | 1.4 | Unknown barcode flow + cross-org write-back | ✅ Shipped |
 | 1.5 | Trust tier promotion mechanism (auto promotion only; manufacturer claim flow deferred) | ✅ Shipped |
 | 1.5 (UX) | Two-stage capture (barcode + lot code as distinct sessions) | ✅ Shipped (1.5.1, 1.5.2, 1.5.3, 1.5.4) |
-| 2 | Bootstrap migration via `products_pending` staging | 🔨 Partial — Phase 2a (schema + bootstrap from existing data) shipped; Phase 2b (Open Food Facts US seed via Netlify function) pending |
+| 2 | Bootstrap migration via `products_pending` staging | ✅ Shipped (2a SQL helpers + 2b Netlify OFF seed function) |
 | 3 | Production validation gate (1-week telemetry) | Pending |
 | 4 | OCR pipeline collapse (5 calls → 1 call) | Pending |
 | 5 | Pattern learning repurposed (code_patterns trust tiers) | Pending |
@@ -365,9 +365,54 @@ products_pending
 
 When multiple bootstrap sources stage different names for the same barcode (e.g., code_patterns has "Gilde Bacon 150g" but scans has "Bacon 150g Gilde"), the bootstrap function flags them as conflicts via `conflict_with_pending_ids` and adds a `[⚠ CONFLICT: ...]` note to staging_notes. **No automatic merging** per plan — reviewer manually picks the canonical entry.
 
-### What Phase 2a deliberately defers (→ Phase 2b)
+## Phase 2b — Open Food Facts US seed (shipped)
 
-- **Open Food Facts US seed**: a Netlify function that fetches popular US grocery products from OFF and stages them with `bootstrap_source = 'open_food_facts'`, `source = 'external_api'`. Same review workflow applies. Ships separately because it requires HTTP calls that don't fit cleanly in a Postgres migration.
+`netlify/functions/bootstrap-off-seed.js` is a one-time-ish bootstrap function that fetches popular US grocery products from Open Food Facts and stages them in `products_pending`.
+
+### Why a Netlify function (not a SQL migration)
+
+OFF is an external HTTP API that's awkward to call from inside Postgres. The function uses `SUPABASE_SERVICE_KEY` to INSERT directly, bypassing RLS on `products_pending`.
+
+### Auth
+
+Requires `X-Admin-Token` header matching the `BOOTSTRAP_ADMIN_TOKEN` env var (set in Netlify with "Contains secret values" enabled). Use a long random string. Rotate by changing the env var; old token stops working immediately.
+
+### Invocation
+
+```bash
+curl -X POST -H "X-Admin-Token: <secret>" \
+  "https://app.batchdapp.com/.netlify/functions/bootstrap-off-seed?max_pages=5"
+```
+
+Or from browser DevTools console while on app.batchdapp.com:
+
+```js
+await fetch('/.netlify/functions/bootstrap-off-seed?max_pages=5', {
+  method: 'POST',
+  headers: { 'X-Admin-Token': '<secret>' }
+}).then(r => r.json())
+```
+
+### Quality filters & confidence
+
+- Skip if barcode missing or length < 6
+- Skip if `product_name_en || product_name` missing or length < 3
+- Skip if barcode already exists in `products` (canonical) or unreviewed `products_pending`
+- Compose `displayName` as "Brand Product" when brand isn't already in the product name
+- All staged rows: `bootstrap_source = 'open_food_facts'`, `source = 'external_api'`, `confidence_score = 0.6`
+
+### Pagination + safety bounds
+
+- `max_pages` clamped to [1, 10] (each page is ~1-2s OFF + ~1s Supabase ≈ 20-30s for 10 pages — fits Netlify timeout)
+- `page_size` clamped to [10, 200] (default 100)
+- 500ms delay between OFF requests (be respectful to a community-funded free API)
+- Sort by `unique_scans_n` (OFF popularity proxy) so we get common products first
+
+For more coverage than 10 pages, run the function multiple times — the dedup step ensures repeated runs don't double-stage the same products.
+
+### Trust tier rules apply
+
+OFF-seeded entries enter at `source = 'external_api'`. Once promoted to `products`, they're eligible for the Phase 1.5 auto-promotion to `retailer_validated` after 3 confirming scans from 2+ orgs. The bootstrap and the network-effect mechanism reinforce each other.
 
 ### US-market notes
 
@@ -398,3 +443,4 @@ This phase is the foundation for solving the "external API coverage gap" problem
 | Phase 1.5 UX (1.5.1 + 1.5.4) | Explicit "Got it — [Product Name]" confirmation handoff after barcode identification. Replaces the Phase 1.2 auto-advance setTimeout. Two buttons: "Continue to lot code" (advances to Step 2) and "Wrong product? Start over" (resets state, switches to label mode for fresh AI identification). GS1-with-lot path still auto-skips (lot is encoded in the barcode itself, no second scan needed). | 2026-05-04 |
 | Phase 1.5 UX (1.5.2 + 1.5.3) | Re-enable lot location hint at Step 2 (removes CSS rule that was unconditionally hiding it; existing showLocationHint already gates on data quality — brand knowledge from getPackagingTip OR learned-pattern data from code_patterns). Plus background BarcodeDetector poll on Step 2 camera stream — if a barcode different from the Step 1 identification appears in frame, soft-prompt "Did you switch packages?" Skipped silently on browsers without BarcodeDetector. | 2026-05-04 |
 | Phase 2a | Bootstrap migration staging table + helper functions via migration 004. Schema-only deploy; bootstrap is opt-in (Ian runs `SELECT bootstrap_products_pending();` when ready, then reviews and promotes per-row). No client code changes. | 2026-05-04 |
+| Phase 2b | Open Food Facts US seed via netlify/functions/bootstrap-off-seed.js. Authenticated via X-Admin-Token header against BOOTSTRAP_ADMIN_TOKEN env var. Bounded pagination (max 10 pages × 200 products/page = 2000 max per run), idempotent dedup against products + products_pending. Stages OFF data with source='external_api', confidence_score=0.6 for manual review. | 2026-05-04 |
