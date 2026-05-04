@@ -110,7 +110,7 @@ These additive policies do not modify existing manufacturer-scoped behavior.
 | 1.4 | Unknown barcode flow + cross-org write-back | ✅ Shipped |
 | 1.5 | Trust tier promotion mechanism (auto promotion only; manufacturer claim flow deferred) | ✅ Shipped |
 | 1.5 (UX) | Two-stage capture (barcode + lot code as distinct sessions) | ✅ Shipped (1.5.1, 1.5.2, 1.5.3, 1.5.4) |
-| 2 | Bootstrap migration via `products_pending` staging | Pending |
+| 2 | Bootstrap migration via `products_pending` staging | 🔨 Partial — Phase 2a (schema + bootstrap from existing data) shipped; Phase 2b (Open Food Facts US seed via Netlify function) pending |
 | 3 | Production validation gate (1-week telemetry) | Pending |
 | 4 | OCR pipeline collapse (5 calls → 1 call) | Pending |
 | 5 | Pattern learning repurposed (code_patterns trust tiers) | Pending |
@@ -329,6 +329,46 @@ The data flywheel turns. Every scan inserted into `scans` automatically checks w
 - **Two-stage capture UX** (Phase 1.5 major): explicit camera handoff between barcode capture and lot code capture, with brand-specific lot location hints surfaced as user guidance instead of model guidance.
 - **Demotion / dispute mechanism**: if a `retailer_validated` product is later flagged as wrong (e.g., 3 orgs all confirmed a typo), there's no demotion path. Out of scope for now.
 
+## Phase 2 — Bootstrap migration (Phase 2a shipped; 2b pending)
+
+Plan v2 §2.1 calls for a staging table that buffers bootstrap data before promotion to `products`. Migration 004 (Phase 2a) ships:
+
+### Schema: `products_pending`
+
+```
+products_pending
+  ├─ id, barcode, barcode_normalized, name, category, ...    (mirror of products)
+  ├─ source                       (trust tier of the staged entry)
+  ├─ bootstrap_source             (where it came from: code_patterns | scans | manufacturer | open_food_facts | manual)
+  ├─ confidence_score             (0.00-1.00; informs review prioritization)
+  ├─ staging_notes                (why this row exists; what to verify)
+  ├─ conflict_with_pending_ids    (other pending rows with same barcode but different name)
+  ├─ staged_at, reviewed_at, promoted_at, rejected_at        (review lifecycle timestamps)
+  └─ promoted_to_product_id       (link to the products row, if promoted)
+```
+
+### Helper functions
+
+- `bootstrap_products_pending()` — pulls distinct barcode→name pairs from `code_patterns` and `scans` that aren't already in `products`, stages them. Quality filters: non-null barcode, non-empty name, length ≥ 6 chars on barcode. Confidence scoring: `code_patterns` rows get 0.5-0.95 based on scan count + confidence_level; `scans` rows get a flat 0.4 (lower since they weren't validated to a learned pattern).
+- `promote_pending_to_products(uuid)` — promotes ONE row with a race-condition guard against duplicate barcodes.
+- `reject_pending(uuid, text)` — marks a row rejected with reason (kept for 30+ days per plan §2.3 reversibility requirement).
+
+### Workflow
+
+1. Ian applies migration 004 (creates schema, no data movement)
+2. When ready, Ian runs `SELECT bootstrap_products_pending();` once → returns counts of rows staged from each source + conflicts flagged
+3. Ian reviews via `SELECT * FROM products_pending WHERE reviewed_at IS NULL ORDER BY confidence_score DESC;`
+4. Per-row decisions: `SELECT promote_pending_to_products(...)` or `SELECT reject_pending(...)`
+5. After review, products_pending entries persist with provenance for 30+ days (rollback safety)
+
+### Conflict handling per plan §2.3
+
+When multiple bootstrap sources stage different names for the same barcode (e.g., code_patterns has "Gilde Bacon 150g" but scans has "Bacon 150g Gilde"), the bootstrap function flags them as conflicts via `conflict_with_pending_ids` and adds a `[⚠ CONFLICT: ...]` note to staging_notes. **No automatic merging** per plan — reviewer manually picks the canonical entry.
+
+### What Phase 2a deliberately defers (→ Phase 2b)
+
+- **Open Food Facts US seed**: a Netlify function that fetches popular US grocery products from OFF and stages them with `bootstrap_source = 'open_food_facts'`, `source = 'external_api'`. Same review workflow applies. Ships separately because it requires HTTP calls that don't fit cleanly in a Postgres migration.
+
 ### US-market notes
 
 This phase is the foundation for solving the "external API coverage gap" problem in any market. For the US specifically:
@@ -344,6 +384,7 @@ This phase is the foundation for solving the "external API coverage gap" problem
 | `001_products_trust_tier.sql` | Phase 1.1 schema: trust tier columns on products, products_public view, scanner-org RLS policies | 2026-05-03 |
 | `002_products_normalize_barcode_trigger.sql` | Phase 1.4 schema: BEFORE INSERT/UPDATE trigger that auto-populates barcode_normalized. Retrofits a Phase 1.1 omission. | 2026-05-03 |
 | `003_trust_tier_promotion.sql` | Phase 1.5 schema: AFTER INSERT trigger on scans that auto-promotes products from ai_extracted_unverified / external_api → retailer_validated when 3+ scans from 2+ orgs confirm the same barcode→name pair. Plus functional index for performance. | 2026-05-04 |
+| `004_products_pending_bootstrap.sql` | Phase 2a schema: products_pending staging table + RLS + auto-normalize trigger + bootstrap_products_pending() / promote_pending_to_products(uuid) / reject_pending(uuid, text) helper functions. Bootstrap is NOT auto-run — Ian explicitly triggers via `SELECT bootstrap_products_pending();` when ready. | 2026-05-04 |
 
 ## Code change history
 
@@ -356,3 +397,4 @@ This phase is the foundation for solving the "external API coverage gap" problem
 | Phase 1.5 | Trust tier auto-promotion via migration 003 (database trigger). 3 scans from 2 orgs confirming same barcode→name pair → silently promotes from ai_extracted_unverified / external_api to retailer_validated. No client code changes — purely database-level. | 2026-05-04 |
 | Phase 1.5 UX (1.5.1 + 1.5.4) | Explicit "Got it — [Product Name]" confirmation handoff after barcode identification. Replaces the Phase 1.2 auto-advance setTimeout. Two buttons: "Continue to lot code" (advances to Step 2) and "Wrong product? Start over" (resets state, switches to label mode for fresh AI identification). GS1-with-lot path still auto-skips (lot is encoded in the barcode itself, no second scan needed). | 2026-05-04 |
 | Phase 1.5 UX (1.5.2 + 1.5.3) | Re-enable lot location hint at Step 2 (removes CSS rule that was unconditionally hiding it; existing showLocationHint already gates on data quality — brand knowledge from getPackagingTip OR learned-pattern data from code_patterns). Plus background BarcodeDetector poll on Step 2 camera stream — if a barcode different from the Step 1 identification appears in frame, soft-prompt "Did you switch packages?" Skipped silently on browsers without BarcodeDetector. | 2026-05-04 |
+| Phase 2a | Bootstrap migration staging table + helper functions via migration 004. Schema-only deploy; bootstrap is opt-in (Ian runs `SELECT bootstrap_products_pending();` when ready, then reviews and promotes per-row). No client code changes. | 2026-05-04 |
