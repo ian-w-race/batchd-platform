@@ -108,7 +108,7 @@ These additive policies do not modify existing manufacturer-scoped behavior.
 | 1.2 | Wire ZXing into Step 1 capture flow | ✅ Shipped |
 | 1.3 | Bounded fallback chain (1s timeout, parallel) | ✅ Shipped |
 | 1.4 | Unknown barcode flow + cross-org write-back | ✅ Shipped |
-| 1.5 | Trust tier promotion mechanism | Pending |
+| 1.5 | Trust tier promotion mechanism (auto promotion only; manufacturer claim flow deferred) | ✅ Shipped |
 | 1.5 (UX) | Two-stage capture (barcode + lot code as distinct sessions) | Pending |
 | 2 | Bootstrap migration via `products_pending` staging | Pending |
 | 3 | Production validation gate (1-week telemetry) | Pending |
@@ -270,6 +270,65 @@ The trigger is defensive: it only writes if `barcode_normalized` is missing, so 
 - Two-stage capture UX (explicit camera handoff between barcode capture and lot code capture, brand-specific lot location hints) — Phase 1.5 (UX)
 - Bootstrap migration with US grocery products from Open Food Facts — Phase 2
 
+## Phase 1.5 — Trust tier auto-promotion (shipped)
+
+The data flywheel turns. Every scan inserted into `scans` automatically checks whether the product it references now meets the cross-org confirmation threshold; if so, that product's trust tier silently promotes from `ai_extracted_unverified` (or `external_api`) to `retailer_validated`.
+
+### Promotion rule
+
+- **From** `ai_extracted_unverified` OR `external_api`
+- **To** `retailer_validated`
+- **When** at least 3 scans confirm the same `barcode_normalized` AND same `product_name`, across at least 2 distinct organizations.
+
+### Architecture
+
+```
+                       INSERT INTO scans
+                              │
+                              ▼
+                ┌──────────────────────────────┐
+                │ AFTER INSERT trigger:        │
+                │ promote_product_trust_tier   │
+                │ _on_scan()                   │
+                │                              │
+                │ 1. normalize_barcode(NEW)    │
+                │ 2. find product by normalized│
+                │    where source IN unverified│
+                │    or external_api           │
+                │ 3. COUNT scans matching      │
+                │    barcode + name + org      │
+                │ 4. if ≥3 scans + ≥2 orgs:    │
+                │      UPDATE products         │
+                │      SET source = 'retailer_ │
+                │          validated'          │
+                └──────────────────────────────┘
+                              │
+                              ▼
+              All future lookups now see this product
+              at the higher trust tier — same data,
+              now structurally distinguished as
+              cross-org-confirmed.
+```
+
+### Why a database trigger
+
+- **Atomic**: promotion check runs in the same transaction as the scan insert; no race conditions.
+- **Source-agnostic**: works regardless of how the scan was inserted (UI save, offline queue replay, future API integrations).
+- **Defensible**: the four-tier model is structurally enforced in the database, not just by client convention. Per plan v2 patent strategy, attorneys can point to the trigger function source as proof of structural enforcement.
+- **Performance**: amortized cost per scan is one indexed COUNT — supported by a new functional index `scans_barcode_normalized_for_promotion` on `(normalize_barcode(barcode_number), product_name)`.
+
+### Trust tier guarantees
+
+- `manufacturer_registered` is **never** auto-promoted from or downgraded to. The only way in is the (deferred) manufacturer claim flow.
+- `retailer_validated` is **never** demoted. Once cross-org consensus exists, it's permanent.
+- `ai_extracted_unverified` and `external_api` are equally promotion-eligible — both represent single-source identifications awaiting cross-validation.
+
+### What Phase 1.5 deliberately defers
+
+- **Manufacturer claim flow**: a manufacturer logging into manufacturer.html and claiming a barcode that already has a non-manufacturer entry. Includes conflict resolution (manufacturer's data takes precedence; prior `created_by_org_id` and scan history preserved; original creator notified). Deferred to a later phase — lower priority than scanner-side US-pilot work.
+- **Two-stage capture UX** (Phase 1.5 major): explicit camera handoff between barcode capture and lot code capture, with brand-specific lot location hints surfaced as user guidance instead of model guidance.
+- **Demotion / dispute mechanism**: if a `retailer_validated` product is later flagged as wrong (e.g., 3 orgs all confirmed a typo), there's no demotion path. Out of scope for now.
+
 ### US-market notes
 
 This phase is the foundation for solving the "external API coverage gap" problem in any market. For the US specifically:
@@ -284,6 +343,7 @@ This phase is the foundation for solving the "external API coverage gap" problem
 |-----------|-------------|------|
 | `001_products_trust_tier.sql` | Phase 1.1 schema: trust tier columns on products, products_public view, scanner-org RLS policies | 2026-05-03 |
 | `002_products_normalize_barcode_trigger.sql` | Phase 1.4 schema: BEFORE INSERT/UPDATE trigger that auto-populates barcode_normalized. Retrofits a Phase 1.1 omission. | 2026-05-03 |
+| `003_trust_tier_promotion.sql` | Phase 1.5 schema: AFTER INSERT trigger on scans that auto-promotes products from ai_extracted_unverified / external_api → retailer_validated when 3+ scans from 2+ orgs confirm the same barcode→name pair. Plus functional index for performance. | 2026-05-04 |
 
 ## Code change history
 
@@ -293,3 +353,4 @@ This phase is the foundation for solving the "external API coverage gap" problem
 | Phase 1.2 | Default to barcode mode, query products_public, auto-advance to Step 2, 3s fallback prompt, keep ZXing running on label fallback | 2026-05-03 |
 | Phase 1.3 | Refactor lookupProductName to race all sources in parallel; 1s hard timeout on each external API; first valid result wins | 2026-05-03 |
 | Phase 1.4 | Track unknown barcodes through label-fallback flow; write back to products_public with source = 'ai_extracted_unverified' on Step 1→2 transition; new "✨ New product" toast; auto-normalize trigger via migration 002 | 2026-05-03 |
+| Phase 1.5 | Trust tier auto-promotion via migration 003 (database trigger). 3 scans from 2 orgs confirming same barcode→name pair → silently promotes from ai_extracted_unverified / external_api to retailer_validated. No client code changes — purely database-level. | 2026-05-04 |
