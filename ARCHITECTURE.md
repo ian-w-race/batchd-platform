@@ -111,7 +111,7 @@ These additive policies do not modify existing manufacturer-scoped behavior.
 | 1.5 | Trust tier promotion mechanism (auto promotion only; manufacturer claim flow deferred) | ✅ Shipped |
 | 1.5 (UX) | Two-stage capture (barcode + lot code as distinct sessions) | ✅ Shipped (1.5.1, 1.5.2, 1.5.3, 1.5.4) |
 | 2 | Bootstrap migration via `products_pending` staging | ✅ Shipped (2a SQL helpers + 2b Netlify OFF seed function) |
-| 3 | Production validation gate (1-week telemetry) | Pending |
+| 3 | Production validation gate (1-week telemetry) | ✅ Shipped — observation period begins on first scan after deploy |
 | 4 | OCR pipeline collapse (5 calls → 1 call) | Pending |
 | 5 | Pattern learning repurposed (code_patterns trust tiers) | Pending |
 | 6 | Defensibility documentation | In progress (this doc) |
@@ -414,6 +414,34 @@ For more coverage than 10 pages, run the function multiple times — the dedup s
 
 OFF-seeded entries enter at `source = 'external_api'`. Once promoted to `products`, they're eligible for the Phase 1.5 auto-promotion to `retailer_validated` after 3 confirming scans from 2+ orgs. The bootstrap and the network-effect mechanism reinforce each other.
 
+## Phase 3 — Production validation gate (shipped)
+
+The plan's "do not skip" risk-management phase. Adds telemetry to track ZXing's identification success rate over a one-week observation window before any Phase 4 OCR pipeline collapse work.
+
+### What's instrumented
+
+`scan_telemetry` table populated client-side from `index.html` on every Step 1 → Step 2 advance. Per-row:
+
+- `path`: `'zxing_success'` or `'ai_fallback'` (the two-bucket validation gate metric)
+- `ai_fallback_reason`: sub-detail when `path = 'ai_fallback'` — `'zxing_decoded_but_unknown'` (ZXing read the barcode but no DB had it), `'zxing_failed_then_prompt'` (ZXing couldn't decode in 5s), `'user_manual_toggle'` (user explicitly chose label mode)
+- `time_to_identification_ms`: scan start → product confirmed
+- `external_apis_timed_out`: whether any external API hit the 1s cap during the lookup chain
+- `organisation_id`, `user_agent`, `created_at`
+
+### Observation period
+
+Plan v2 calls for at least one full week of pilot scanning. After that:
+
+- Run the validation gate query (in `migrations/005_scan_telemetry.sql` reference queries)
+- If `zxing_success` rate ≥ 80% → proceed to Phase 4 (OCR pipeline collapse)
+- If lower → investigate before simplifying OCR. Possible causes: barcode decoding regressions, lookup chain failures, etc.
+
+### What Phase 3 deliberately does NOT do
+
+- **No changes to the OCR pipeline.** Phase 4 is gated on this telemetry. Touching OCR before collecting the data would defeat the purpose of the gate.
+- **No alerting / dashboards.** Pilot scale is small; the SQL queries in migration 005 are sufficient. Alerting can come later.
+- **No event-level details on which lookup source returned the result.** That refinement (helpful for tuning the lookup chain) is deferred to Phase 5 (pattern learning repurposed).
+
 ### US-market notes
 
 This phase is the foundation for solving the "external API coverage gap" problem in any market. For the US specifically:
@@ -430,6 +458,7 @@ This phase is the foundation for solving the "external API coverage gap" problem
 | `002_products_normalize_barcode_trigger.sql` | Phase 1.4 schema: BEFORE INSERT/UPDATE trigger that auto-populates barcode_normalized. Retrofits a Phase 1.1 omission. | 2026-05-03 |
 | `003_trust_tier_promotion.sql` | Phase 1.5 schema: AFTER INSERT trigger on scans that auto-promotes products from ai_extracted_unverified / external_api → retailer_validated when 3+ scans from 2+ orgs confirm the same barcode→name pair. Plus functional index for performance. | 2026-05-04 |
 | `004_products_pending_bootstrap.sql` | Phase 2a schema: products_pending staging table + RLS + auto-normalize trigger + bootstrap_products_pending() / promote_pending_to_products(uuid) / reject_pending(uuid, text) helper functions. Bootstrap is NOT auto-run — Ian explicitly triggers via `SELECT bootstrap_products_pending();` when ready. | 2026-05-04 |
+| `005_scan_telemetry.sql` | Phase 3 schema: scan_telemetry table + RLS for the production validation gate. Schema-only; client-side instrumentation in index.html populates it. Includes 5 reference queries for the validation gate (overall ZXing success rate, timing percentiles, AI fallback breakdown, external API health, per-org breakdown). | 2026-05-04 |
 
 ## Code change history
 
@@ -444,3 +473,4 @@ This phase is the foundation for solving the "external API coverage gap" problem
 | Phase 1.5 UX (1.5.2 + 1.5.3) | Re-enable lot location hint at Step 2 (removes CSS rule that was unconditionally hiding it; existing showLocationHint already gates on data quality — brand knowledge from getPackagingTip OR learned-pattern data from code_patterns). Plus background BarcodeDetector poll on Step 2 camera stream — if a barcode different from the Step 1 identification appears in frame, soft-prompt "Did you switch packages?" Skipped silently on browsers without BarcodeDetector. | 2026-05-04 |
 | Phase 2a | Bootstrap migration staging table + helper functions via migration 004. Schema-only deploy; bootstrap is opt-in (Ian runs `SELECT bootstrap_products_pending();` when ready, then reviews and promotes per-row). No client code changes. | 2026-05-04 |
 | Phase 2b | Open Food Facts US seed via netlify/functions/bootstrap-off-seed.js. Authenticated via X-Admin-Token header against BOOTSTRAP_ADMIN_TOKEN env var. Bounded pagination (max 10 pages × 200 products/page = 2000 max per run), idempotent dedup against products + products_pending. Stages OFF data with source='external_api', confidence_score=0.6 for manual review. | 2026-05-04 |
+| Phase 3 | Scanner-side telemetry instrumentation: tracks scan start time, ZXing decode time, lookup success, external API timeouts. Fires _logScanTelemetry() on Step 1 → Step 2 advance, INSERTing one row per identification attempt into scan_telemetry. Schema in migration 005. Validation gate query reference in the migration file. | 2026-05-04 |

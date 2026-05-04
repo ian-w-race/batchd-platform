@@ -7292,6 +7292,11 @@ function goToPhase(n) {
       _writeUnknownProductToCatalog(_unknownBarcodeForWrite, name);
       _unknownBarcodeForWrite = null;
     }
+
+    // Phase 3 telemetry: log this scan's identification path. Fire-and-forget.
+    // Logged on Step 1 → Step 2 advance so we capture all completed identifications,
+    // including ones the user later abandons (i.e., never reaches Save).
+    _logScanTelemetry();
   }
   // Validate phase 2 → 3
   if (n === 3) {
@@ -7769,6 +7774,18 @@ let _gs1FullCapture = null; // set when a GS1 DL or GS1-128 with lot is scanned 
 // (by anyone, any org) is instant. Cleared after write or on resetForm.
 let _unknownBarcodeForWrite = null;
 
+// ── PHASE 3 TELEMETRY STATE ────────────────────────────────────────────────
+// Tracks the current scan's path through identification (ZXing vs AI fallback)
+// + timing. Logged to scan_telemetry on Step 1 → Step 2 advance. Cleared on
+// resetForm. See migration 005_scan_telemetry.sql for the schema and the
+// validation gate query reference.
+let _telScanStartedAt = null;        // when a fresh Phase 1 scan began
+let _telZxingDecodedAt = null;       // when ZXing decoded (null if it never did)
+let _telLookupSucceeded = false;     // did lookupProductName return a name?
+let _telExternalApisTimedOut = null; // null until we know; true/false after a lookup with externals
+let _telAiFallbackReason = null;     // 'zxing_decoded_but_unknown' | 'zxing_failed_then_prompt' | 'user_manual_toggle'
+let _telLogged = false;              // dedup guard — only log once per scan
+
 function setPhase1Mode(mode) {
   phase1Mode = mode;
   // Phase 1.5 UX: if the confirmation panel is up and user manually toggles
@@ -7838,6 +7855,12 @@ let _p1FallbackTimer = null;
 function _showP1FallbackPrompt() {
   const el = document.getElementById('p1-barcode-fallback-prompt');
   if (el) el.style.display = 'block';
+  // Phase 3 telemetry: if the user ends up at AI fallback after this prompt
+  // appeared (i.e., ZXing didn't decode in time), tag the reason. This is a
+  // tentative tag — only sticks if the user actually proceeds to label mode.
+  // If they later switch back to barcode and ZXing decodes, _telZxingDecodedAt
+  // gets set and this tag becomes irrelevant for the path determination.
+  if (_telAiFallbackReason == null) _telAiFallbackReason = 'zxing_failed_then_prompt';
 }
 function _hideP1FallbackPrompt() {
   const el = document.getElementById('p1-barcode-fallback-prompt');
@@ -8005,6 +8028,10 @@ async function startP1BarcodeScanner() {
   const stream = await getSharedStream();
   if (!stream) return;
 
+  // Phase 3 telemetry: mark the moment a fresh Phase 1 scan began (only if
+  // we're not already mid-scan — startP1BarcodeScanner can re-fire on toggle).
+  if (_telScanStartedAt == null) _telScanStartedAt = Date.now();
+
   // Show UI
   document.getElementById('p1-placeholder').style.display = 'none';
   document.getElementById('p1-video-wrap').style.display = 'block';
@@ -8137,6 +8164,8 @@ async function handleP1BarcodeDetected(barcode) {
   if (phase1Mode === 'label') {
     setPhase1Mode('barcode');
   }
+  // Phase 3 telemetry: ZXing decoded — mark the path
+  if (_telZxingDecodedAt == null) _telZxingDecodedAt = Date.now();
 
   document.getElementById('p1-barcode-result').style.display = 'block';
   document.getElementById('p1-barcode-value').textContent = barcode;
@@ -8168,6 +8197,8 @@ async function handleP1BarcodeDetected(barcode) {
     // label-fallback flow. This is how the cross-org product database gets
     // bootstrapped for products no external DB knew about.
     _unknownBarcodeForWrite = barcode;
+    // Phase 3 telemetry: ZXing read a barcode but lookup found nothing
+    _telAiFallbackReason = 'zxing_decoded_but_unknown';
     showToast(
       currentLang === 'no'
         ? '✨ Nytt produkt — Batch\'d identifiserer det via etiketten'
@@ -8480,6 +8511,38 @@ async function _writeUnknownProductToCatalog(barcode, productName) {
   }
 }
 
+// ── PHASE 3 TELEMETRY LOGGER ────────────────────────────────────────────────
+// Fired from goToPhase(2) when the user successfully advances past Step 1
+// with an identified product name. Determines path (ZXing vs AI fallback) +
+// timing from the module-level _tel* state, INSERTs one row into scan_telemetry.
+// Fire-and-forget — failure doesn't affect the scan flow.
+async function _logScanTelemetry() {
+  if (_telLogged) return;
+  _telLogged = true;
+  try {
+    const now = Date.now();
+    const timeMs = _telScanStartedAt ? (now - _telScanStartedAt) : null;
+    const isZxingSuccess = _telZxingDecodedAt != null && _telLookupSucceeded;
+    const path = isZxingSuccess ? 'zxing_success' : 'ai_fallback';
+
+    let aiFallbackReason = null;
+    if (path === 'ai_fallback') {
+      aiFallbackReason = _telAiFallbackReason || (
+        _telZxingDecodedAt != null ? 'zxing_decoded_but_unknown' : 'user_manual_toggle'
+      );
+    }
+
+    await sb.from('scan_telemetry').insert({
+      organisation_id: _currentOrgId || null,
+      path,
+      ai_fallback_reason: aiFallbackReason,
+      time_to_identification_ms: timeMs,
+      external_apis_timed_out: _telExternalApisTimedOut,
+      user_agent: (navigator.userAgent || '').slice(0, 500),
+    });
+  } catch(e) { /* silent — telemetry is best-effort */ }
+}
+
 async function lookupProductName(barcode) {
   const normalized = normalizeBarcode(barcode);
 
@@ -8491,13 +8554,28 @@ async function lookupProductName(barcode) {
   ];
 
   // External sources — each capped at a 1s hard timeout, run in parallel with locals.
+  // Wrapped to track timeout occurrences for Phase 3 telemetry.
+  let _externalsTimedOut = false;
+  const _trackTimeout = (p) => p.then(v => {
+    if (v == null) _externalsTimedOut = true; // could be timeout OR null result; collapse for now
+    return v;
+  });
   const externalPromises = [
-    _lookupTimeout(_lookupOpenFoodFactsV2(barcode), EXTERNAL_API_TIMEOUT_MS),
-    _lookupTimeout(_lookupOpenFoodFactsV0(barcode), EXTERNAL_API_TIMEOUT_MS),
-    _lookupTimeout(_lookupUpcItemDb(barcode),       EXTERNAL_API_TIMEOUT_MS),
+    _trackTimeout(_lookupTimeout(_lookupOpenFoodFactsV2(barcode), EXTERNAL_API_TIMEOUT_MS)),
+    _trackTimeout(_lookupTimeout(_lookupOpenFoodFactsV0(barcode), EXTERNAL_API_TIMEOUT_MS)),
+    _trackTimeout(_lookupTimeout(_lookupUpcItemDb(barcode),       EXTERNAL_API_TIMEOUT_MS)),
   ];
 
-  return _firstValidName([...localPromises, ...externalPromises]);
+  const result = await _firstValidName([...localPromises, ...externalPromises]);
+
+  // Phase 3 telemetry: track lookup outcome
+  _telLookupSucceeded = (result != null && result.length > 1);
+  // _externalsTimedOut is approximate — we count nulls from timeout-wrapped externals.
+  // If a local source already returned a hit, externals may not have settled yet,
+  // so this is a best-effort signal, not authoritative.
+  _telExternalApisTimedOut = _externalsTimedOut;
+
+  return result;
 }
 
 // Keep old name as alias in case called elsewhere
@@ -9363,6 +9441,13 @@ function resetForm() {
   _gs1FullCapture = null;
   // Phase 1.4: clear unknown-barcode write state so the next scan starts fresh
   _unknownBarcodeForWrite = null;
+  // Phase 3 telemetry: reset all tracking state for the next scan
+  _telScanStartedAt = null;
+  _telZxingDecodedAt = null;
+  _telLookupSucceeded = false;
+  _telExternalApisTimedOut = null;
+  _telAiFallbackReason = null;
+  _telLogged = false;
   // Phase 1.5 UX: hide the confirmation panel if it was visible
   const confPanel = document.getElementById('p1-confirmation-wrap');
   if (confPanel) confPanel.style.display = 'none';
