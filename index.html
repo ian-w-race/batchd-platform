@@ -3467,6 +3467,31 @@
             </div>
           </div>
 
+          <!-- Phase 1.5 of refactor v2: explicit "Got it" confirmation handoff between
+               product identification and lot code capture. Per plan: barcode and lot
+               code are usually on different sides of packaging — the user physically
+               reorients the package between the two scans. The deliberate pause here
+               acknowledges that physical reality and gives users a "wrong product?"
+               escape hatch before committing to lot code capture.
+               Hidden by default; shown by showP1Confirmation(). Replaces what was
+               previously a 600ms setTimeout auto-advance to Step 2. -->
+          <div id="p1-confirmation-wrap" style="display:none;width:100%;flex-direction:column;align-items:center;padding:32px 16px 24px;text-align:center;">
+            <div style="width:80px;height:80px;border-radius:50%;background:rgba(52,211,153,0.15);border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;margin-bottom:20px;">
+              <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="20 6 9 17 4 12"/>
+              </svg>
+            </div>
+            <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:6px;" data-i18n="p1.gotIt">Got it</div>
+            <div id="p1-confirmation-name" style="font-size:18px;font-weight:700;color:var(--text);margin-bottom:6px;line-height:1.3;max-width:90%;"></div>
+            <div id="p1-confirmation-source" style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;margin-bottom:24px;"></div>
+            <button onclick="continueFromP1Confirmation()" class="btn btn-primary" style="min-width:220px;justify-content:center;margin-bottom:10px;">
+              <span data-i18n="p1.continueToLot">Continue to lot code →</span>
+            </button>
+            <button onclick="dismissP1ConfirmationAsWrong()" class="btn btn-ghost" style="font-size:12px;color:var(--muted);min-width:220px;justify-content:center;">
+              <span data-i18n="p1.wrongProduct">Wrong product? Start over</span>
+            </button>
+          </div>
+
           <div class="field">
             <label data-i18n="p1.productName">Product Name</label> <span style="color:var(--danger);font-size:10px;" data-i18n="label.required">*required</span>
             <input type="text" id="field-product-name" data-i18n-placeholder="scan.productPlaceholder" placeholder="Photograph the label — AI will fill this in…" class="field-required" oninput="onProductNameInput()" />
@@ -7743,6 +7768,10 @@ let _unknownBarcodeForWrite = null;
 
 function setPhase1Mode(mode) {
   phase1Mode = mode;
+  // Phase 1.5 UX: if the confirmation panel is up and user manually toggles
+  // mode, hide the panel — they're explicitly overriding the identification.
+  const confPanel = document.getElementById('p1-confirmation-wrap');
+  if (confPanel) confPanel.style.display = 'none';
   const btnLabel   = document.getElementById('p1-mode-btn-label');
   const btnBarcode = document.getElementById('p1-mode-btn-barcode');
   btnBarcode.classList.toggle('active', mode === 'barcode');
@@ -7813,6 +7842,76 @@ function _hideP1FallbackPrompt() {
 }
 function _clearP1FallbackTimer() {
   if (_p1FallbackTimer) { clearTimeout(_p1FallbackTimer); _p1FallbackTimer = null; }
+}
+
+// ── PHASE 1.5 UX: "GOT IT" CONFIRMATION HANDOFF ────────────────────────────
+// Per plan v2: barcode and lot code are usually on different sides of packaging.
+// The user physically reorients the package between scans. This explicit
+// confirmation step gives a clear ending to identification + a "wrong product?"
+// escape hatch before camera flips to lot code mode.
+//
+// Shown by: handleP1BarcodeDetected after a plain-1D barcode identification
+// (NOT shown for the GS1-with-lot path — that already auto-skips Step 2 since
+// the lot is encoded in the barcode itself).
+//
+// Dismissed by: continueFromP1Confirmation (advance to Step 2) or
+// dismissP1ConfirmationAsWrong (reset Step 1, switch to label mode).
+
+function showP1Confirmation(productName, sourceLabel) {
+  // Stop the camera scanner — identification is done, no more decoding needed
+  stopP1BarcodeScanner();
+
+  // Hide both camera modes
+  document.getElementById('p1-barcode-wrap').style.display = 'none';
+  document.getElementById('p1-label-wrap').style.display = 'none';
+
+  // Populate and show the confirmation panel
+  document.getElementById('p1-confirmation-name').textContent = productName;
+  const sourceEl = document.getElementById('p1-confirmation-source');
+  if (sourceEl) sourceEl.textContent = sourceLabel || '';
+  const panel = document.getElementById('p1-confirmation-wrap');
+  if (panel) panel.style.display = 'flex';
+
+  // Make sure product name field is filled (used by goToPhase(2) validation)
+  setProductNameFilled(productName);
+}
+
+function continueFromP1Confirmation() {
+  document.getElementById('p1-confirmation-wrap').style.display = 'none';
+  // currentPhase reset so goToPhase(2) runs its validation
+  currentPhase = 1;
+  goToPhase(2);
+}
+
+function dismissP1ConfirmationAsWrong() {
+  document.getElementById('p1-confirmation-wrap').style.display = 'none';
+
+  // Clear identification state so the user starts fresh
+  document.getElementById('field-product-name').value = '';
+  document.getElementById('field-product-name').classList.remove('auto-filled');
+  document.getElementById('field-product-name').classList.add('field-required');
+  productBlob = null;
+  const captured = document.getElementById('product-captured');
+  if (captured) { captured.style.display = 'none'; captured.src = ''; }
+  document.getElementById('p1-product-found').textContent = '';
+  document.getElementById('p1-barcode-result').style.display = 'none';
+  document.getElementById('field-barcode').value = '';
+  document.getElementById('field-lot').value = '';
+  document.getElementById('field-lot').classList.remove('auto-filled');
+  p1DetectedBarcode = null;
+  _prefetchedPattern = null;
+  _gs1FullCapture = null;
+  _unknownBarcodeForWrite = null;
+
+  // Most common reason for "wrong product" is barcode lookup error — switch to
+  // label mode so the AI can identify from the front of the package instead.
+  setPhase1Mode('label');
+  showToast(
+    currentLang === 'no'
+      ? 'Bytt til etikettbilde for ny identifisering'
+      : 'Switched to label photo for fresh identification',
+    'info', 3000
+  );
 }
 
 // ── NATIVE BARCODE DETECTOR (Phase 1.2 fixup #6 Option B) ─────────────────
@@ -8145,22 +8244,16 @@ async function handleP1BarcodeDetected(barcode) {
   if (productName) {
     _prefetchedPattern = _prefetchedPattern || await lookupLearnedPattern(productName, barcode, null, null);
 
-    // Phase 1.2 of refactor v2: auto-advance to Step 2 with toast confirmation.
-    // Replaces the previous "show second barcode prompt" detour. Two-stage
-    // capture UX (Phase 1.5) will reintroduce explicit camera handoff between
-    // steps with brand-specific lot location hints.
-    showToast(
-      currentLang === 'no'
-        ? `✓ Identifisert: ${productName}`
-        : `✓ Identified: ${productName}`,
-      'success', 2500
+    // Phase 1.5 UX of refactor v2: explicit "Got it" handoff replaces the
+    // 600ms auto-advance from Phase 1.2. The user gets a clear ending to
+    // identification, can confirm or override with "wrong product?", then
+    // proceeds deliberately to lot code capture (which often requires
+    // physically reorienting the package).
+    dismissSecondBarcode();
+    showP1Confirmation(
+      productName,
+      currentLang === 'no' ? `Strekkode: ${barcode}` : `Barcode: ${barcode}`
     );
-    setTimeout(() => {
-      dismissSecondBarcode();
-      stopP1BarcodeScanner();
-      currentPhase = 1; // reset so goToPhase(2) runs its validation
-      goToPhase(2);
-    }, 600);
   } else {
     // Phase 1.4: same unknown-barcode write-back as the !gs1.lot branch above.
     _unknownBarcodeForWrite = barcode;
@@ -9267,6 +9360,9 @@ function resetForm() {
   _gs1FullCapture = null;
   // Phase 1.4: clear unknown-barcode write state so the next scan starts fresh
   _unknownBarcodeForWrite = null;
+  // Phase 1.5 UX: hide the confirmation panel if it was visible
+  const confPanel = document.getElementById('p1-confirmation-wrap');
+  if (confPanel) confPanel.style.display = 'none';
   // Phase 1.2 of refactor v2: every new scan resets to barcode mode (the default).
   // Without this, if the previous scan ended in label-fallback mode, the next scan
   // would start in label mode too — defeating the whole barcode-first design.
@@ -15028,6 +15124,9 @@ const TRANSLATIONS = {
     'p1.cameraHintBarcode': 'Hold steady · 15-30cm from barcode · align with frame',
     'p1.noBarcodeFound': "Can't find a barcode?",
     'p1.switchToLabel': 'Tap to identify by photo',
+    'p1.gotIt': 'Got it',
+    'p1.continueToLot': 'Continue to lot code →',
+    'p1.wrongProduct': 'Wrong product? Start over',
     'p1.confirmRight': "✓ That's right", 'p1.retakeBtn': 'Retake',
     'p2.backBtn': '← Step 1',
     'hist.addNote': '🔒 Add Note',
@@ -15278,6 +15377,9 @@ const TRANSLATIONS = {
     'p1.cameraHintBarcode': 'Hold stødig · 15-30cm fra strekkoden · rett mot rammen',
     'p1.noBarcodeFound': 'Finner ikke strekkoden?',
     'p1.switchToLabel': 'Trykk for å identifisere med bilde',
+    'p1.gotIt': 'Identifisert',
+    'p1.continueToLot': 'Fortsett til partikode →',
+    'p1.wrongProduct': 'Feil produkt? Start på nytt',
     'p1.confirmRight': '✓ Det stemmer', 'p1.retakeBtn': 'Ta på nytt',
     'p2.backBtn': '← Steg 1',
     'hist.addNote': '🔒 Legg til notat',

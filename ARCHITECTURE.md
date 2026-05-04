@@ -109,7 +109,7 @@ These additive policies do not modify existing manufacturer-scoped behavior.
 | 1.3 | Bounded fallback chain (1s timeout, parallel) | ✅ Shipped |
 | 1.4 | Unknown barcode flow + cross-org write-back | ✅ Shipped |
 | 1.5 | Trust tier promotion mechanism (auto promotion only; manufacturer claim flow deferred) | ✅ Shipped |
-| 1.5 (UX) | Two-stage capture (barcode + lot code as distinct sessions) | Pending |
+| 1.5 (UX) | Two-stage capture (barcode + lot code as distinct sessions) | 🔨 Partial — 1.5.1 + 1.5.4 shipped; 1.5.2 (brand hints) + 1.5.3 (sanity check) pending |
 | 2 | Bootstrap migration via `products_pending` staging | Pending |
 | 3 | Production validation gate (1-week telemetry) | Pending |
 | 4 | OCR pipeline collapse (5 calls → 1 call) | Pending |
@@ -354,3 +354,4 @@ This phase is the foundation for solving the "external API coverage gap" problem
 | Phase 1.3 | Refactor lookupProductName to race all sources in parallel; 1s hard timeout on each external API; first valid result wins | 2026-05-03 |
 | Phase 1.4 | Track unknown barcodes through label-fallback flow; write back to products_public with source = 'ai_extracted_unverified' on Step 1→2 transition; new "✨ New product" toast; auto-normalize trigger via migration 002 | 2026-05-03 |
 | Phase 1.5 | Trust tier auto-promotion via migration 003 (database trigger). 3 scans from 2 orgs confirming same barcode→name pair → silently promotes from ai_extracted_unverified / external_api to retailer_validated. No client code changes — purely database-level. | 2026-05-04 |
+| Phase 1.5 UX (1.5.1 + 1.5.4) | Explicit "Got it — [Product Name]" confirmation handoff after barcode identification. Replaces the Phase 1.2 auto-advance setTimeout. Two buttons: "Continue to lot code" (advances to Step 2) and "Wrong product? Start over" (resets state, switches to label mode for fresh AI identification). GS1-with-lot path still auto-skips (lot is encoded in the barcode itself, no second scan needed). | 2026-05-04 |
