@@ -7540,7 +7540,15 @@ async function snapProduct() {
   const vid = document.getElementById('product-video');
   if (!vid.srcObject || vid.paused) { await startProductCamera(); return; }
 
-  // Draw BOTH canvases synchronously while the video frame is still live.
+  // FREEZE the video and surface the analyzing overlay BEFORE any heavy work.
+  // pause() is synchronous and leaves the last frame on screen on iOS Safari.
+  // The encoding + network round-trip can take 1-3 seconds; without this
+  // freeze the live camera kept playing during all of it and the capture
+  // felt unresponsive — user couldn't tell whether their tap registered.
+  vid.pause();
+  document.getElementById('product-analyzing').style.display = 'flex';
+
+  // Draw BOTH canvases synchronously from the now-frozen frame.
   // 1. Full-res display canvas — used for the thumbnail shown to the user.
   const canvas = document.createElement('canvas');
   canvas.width = vid.videoWidth; canvas.height = vid.videoHeight;
@@ -7571,8 +7579,8 @@ async function snapProduct() {
   document.getElementById('btn-snap-product').style.display = 'none';
   document.getElementById('btn-retake-product').style.display = 'flex';
 
-  document.getElementById('product-analyzing').style.display = 'flex';
-  // apiBlob is already correctly sized — preprocessImage not needed
+  // (analyzing overlay was already shown above — leaving it up across the
+  //  network call so the user's spinner experience is uninterrupted.)
   const name = await identifyProduct(apiBlob);
   document.getElementById('product-analyzing').style.display = 'none';
   setProductNameFilled(name);
@@ -12382,36 +12390,59 @@ async function snapRawCluster() {
     return;
   }
 
-  const canvas = document.createElement('canvas');
-  canvas.width  = vid.videoWidth;
-  canvas.height = vid.videoHeight;
-  canvas.getContext('2d').drawImage(vid, 0, 0);
-  // Quality 0.95 (up from 0.88) — inkjet text on packaging needs the extra
-  // pixel fidelity. Substitution errors (e.g. "10" misread as "14") track
-  // closely with capture quality at this character size. Payload size grows
-  // ~20% but Sonnet's vision pipeline benefits visibly.
-  const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.95));
-  if (!blob) {
-    showToast(currentLang === 'no' ? 'Klarte ikke å fange bildet — prøv igjen.' : 'Could not capture image — please try again.', 'warn', 3000);
-    return;
-  }
-
-  // Stash the blob in the existing barcodeBlob slot so submitScan's photo
-  // upload pipeline picks it up unchanged (uploads to scan-photos as
-  // {ts}_lotcode.jpg → barcode_photo_url).
-  barcodeBlob = blob;
-
-  const url = URL.createObjectURL(blob);
-  const thumb = document.getElementById('p2-captured-thumb');
-  if (thumb) thumb.src = url;
-
-  // Show analyzing overlay during the API round-trip
+  // FREEZE the video and surface the analyzing overlay BEFORE any heavy work.
+  // pause() is synchronous and leaves the last frame on screen on iOS Safari
+  // — the user sees an instant "capture happened" response. Encoding two
+  // canvases + the network round-trip can take 2-4 seconds; without this
+  // freeze the live camera kept playing and the whole flow felt unresponsive.
+  vid.pause();
   const analyzing = document.getElementById('ocr-analyzing');
   if (analyzing) analyzing.style.display = 'flex';
 
+  // Two-canvas pattern, mirroring snapProduct:
+  //   - dispCanvas: full resolution for the thumbnail and storage upload
+  //   - apiCanvas: downsized to 1920px for the AI call (faster encoding,
+  //     smaller payload). Inkjet text at typical scan distance occupies
+  //     ~57px of height at 1920 — comfortably above Sonnet's reading floor.
+  const dispCanvas = document.createElement('canvas');
+  dispCanvas.width  = vid.videoWidth;
+  dispCanvas.height = vid.videoHeight;
+  dispCanvas.getContext('2d').drawImage(vid, 0, 0);
+
+  const apiW = Math.min(1920, vid.videoWidth);
+  const apiH = Math.round(vid.videoHeight * (apiW / vid.videoWidth));
+  const apiCanvas = document.createElement('canvas');
+  apiCanvas.width  = apiW;
+  apiCanvas.height = apiH;
+  apiCanvas.getContext('2d').drawImage(vid, 0, 0, apiW, apiH);
+
+  // Encode in parallel — total time = max(t1, t2) instead of t1 + t2.
+  // 0.92 for the thumbnail (good visual preservation), 0.95 for the API
+  // payload (Sonnet's pipeline benefits from the extra fidelity on tiny
+  // inkjet glyphs).
+  const [dispBlob, apiBlob] = await Promise.all([
+    new Promise(r => dispCanvas.toBlob(r, 'image/jpeg', 0.92)),
+    new Promise(r => apiCanvas.toBlob(r, 'image/jpeg', 0.95)),
+  ]);
+
+  if (!dispBlob || !apiBlob) {
+    showToast(currentLang === 'no' ? 'Klarte ikke å fange bildet — prøv igjen.' : 'Could not capture image — please try again.', 'warn', 3000);
+    if (analyzing) analyzing.style.display = 'none';
+    return;
+  }
+
+  // Stash the display-quality blob in barcodeBlob so submitScan's existing
+  // photo upload pipeline picks it up (uploads to scan-photos as
+  // {ts}_lotcode.jpg → barcode_photo_url).
+  barcodeBlob = dispBlob;
+
+  const url = URL.createObjectURL(dispBlob);
+  const thumb = document.getElementById('p2-captured-thumb');
+  if (thumb) thumb.src = url;
+
   let raw = '';
   try {
-    raw = await extractRawClusterFromImage(blob);
+    raw = await extractRawClusterFromImage(apiBlob);
   } catch (e) {
     console.warn('extract_raw_cluster failed:', e);
     showToast(currentLang === 'no' ? 'AI-lesing feilet — du kan skrive partikoden manuelt.' : 'AI read failed — you can type the lot manually.', 'warn', 3500);
