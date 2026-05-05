@@ -107,27 +107,33 @@ exports.handler = async (event) => {
         // verbatim, no parsing. Substring matching at recall time depends on
         // character-level fidelity, so use Sonnet rather than Haiku.
         //
-        // Prompt is intentionally aggressive about completeness — the most
-        // common failure mode is omission (e.g. dropping an asterisk-prefixed
-        // segment like "*1599" because it looked like metadata), not bad
-        // guesses. Explicit instructions to include EVERY character and to
-        // guess rather than skip directly counter that failure mode.
+        // Prompt is intentionally aggressive about completeness — the failure
+        // modes seen in pilot testing are all omission:
+        //   1) dropping an asterisk-prefixed segment (e.g. "*1599") that
+        //      looked like trailing metadata
+        //   2) reading only the top line of a 2-line stacked cluster (e.g.
+        //      capturing "06.06.26*1599" but skipping "10:48-7" beneath it)
+        // The prompt directly names both failure modes and tells the model
+        // they are wrong. Stating that "returning only one of two lines is
+        // wrong" works better than describing the desired behavior.
         model = MODEL_SONNET;
-        maxTokens = 160;
+        maxTokens = 200;
         prompt = [
-          'Find the inkjet-printed character cluster containing date and lot information on this food packaging — typically a single line or stacked group of digits, dots, slashes, asterisks, colons, dashes, and possibly letters, printed near the bottom, side, or back of the pack.',
+          'You are reading an inkjet-printed lot/date cluster from food packaging. This is for product traceability — every character matters because it will be substring-matched against recall records. Missing characters means missing recalls.',
           '',
-          'Return EVERY character you can see in that cluster, exactly as printed, in the order it appears (left-to-right; for stacked layouts, top line first then bottom line, separated by a single space).',
+          'Find the inkjet-printed character cluster: a sequence of digits, dots, slashes, asterisks, colons, dashes, and sometimes letters, printed near the bottom, side, or back of the pack.',
           '',
-          'CRITICAL RULES:',
-          '- Include ALL separator characters: * . / - : space',
-          '- If you see digits or letters separated by an asterisk, slash, or symbol, include both sides. Do NOT assume the trailing portion is metadata to skip.',
-          '- If a character is faint, partially obscured, or you are not 100% sure what it is, include your best guess. Omitting characters is worse than guessing wrong — the user will verify and edit.',
-          '- Do NOT parse the result. Do NOT separate it into date / lot / time fields. Do NOT normalize formats. Do NOT skip characters that look "extra" or out of place.',
+          'Return EVERY character you can see, exactly as printed, in reading order:',
+          '- Single-line cluster: read left-to-right.',
+          '- Stacked / multi-line cluster (2 or more lines): read top line first, then the next line(s), separated by a single space. Read EVERY line — even if a line looks shorter, fainter, or less prominent than another. Multi-line clusters very often have 2 lines (e.g. "06.06.26*1599" on top, "10:48-7" below). RETURNING ONLY ONE OF TWO LINES IS WRONG.',
+          '- Include ALL separator characters (* . / - : space) and ALL segments. Do NOT assume an asterisk-prefixed or trailing portion is metadata to skip.',
+          '- If a character is faint, partially obscured, or uncertain: include your best guess. NEVER skip a character because you are unsure — the user will verify and edit.',
+          '',
+          'Do NOT parse the result. Do NOT split into date / lot / time fields. Do NOT normalize formats.',
           '',
           'Return ONE single raw string with the verbatim text. No labels, no JSON, no commentary.',
           '',
-          'If you see multiple inkjet clusters, return the one most likely to be the lot/date cluster (usually the longest sequence near the expiry date). If you cannot read any inkjet-printed characters at all, return an empty string.',
+          'If you see multiple unrelated inkjet clusters in the image, return only the lot/date cluster (usually the longest sequence near the expiry date). If you cannot read any inkjet-printed characters at all, return an empty string.',
         ].join('\n');
         break;
       }
