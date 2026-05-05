@@ -3369,30 +3369,18 @@
         </div>
         <div class="flow-phase-body">
 
-          <!-- Controls row — OUTSIDE both wraps so it persists when switching modes -->
+          <!-- Header bar — phase title (left) + step badge (right). The mode
+               toggle that previously lived here was removed when Phase 1 became
+               label-only; the #p1-mode-toggle id and class are kept because
+               scan-active CSS targets them for the bar layout (grid + border-bottom). -->
           <div class="mode-toggle" id="p1-mode-toggle">
-            <!-- Sliding toggle track -->
-            <div id="p1-toggle-track" style="position:relative;display:flex;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:3px;gap:0;flex-shrink:0;">
-              <!-- Sliding pill — JS positions it. Phase 1.2 of refactor v2:
-                   anchored to right:3px so first paint shows over the Barcode
-                   button (which is now the default mode). The setPhase1Mode JS
-                   translates LEFT by the Label button's width when switching
-                   to label mode (see flipped translate math in setPhase1Mode). -->
-              <div id="p1-toggle-slider" style="position:absolute;top:3px;bottom:3px;right:3px;border-radius:7px;background:var(--accent);transition:transform 0.22s cubic-bezier(0.4,0,0.2,1),width 0.22s cubic-bezier(0.4,0,0.2,1);z-index:0;pointer-events:none;width:calc(50% - 3px);"></div>
-              <button class="mode-btn" id="p1-mode-btn-label" onclick="setPhase1Mode('label')" style="position:relative;z-index:1;background:transparent;border:none;border-radius:7px;padding:7px 14px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:5px;white-space:nowrap;color:var(--muted);min-height:34px;cursor:pointer;flex:1;justify-content:center;">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-                <span data-i18n="p1.photoLabel">Label</span>
-              </button>
-              <button class="mode-btn active" id="p1-mode-btn-barcode" onclick="setPhase1Mode('barcode')" style="position:relative;z-index:1;background:transparent;border:none;border-radius:7px;padding:7px 14px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:5px;white-space:nowrap;color:#04120e;min-height:34px;cursor:pointer;flex:1;justify-content:center;">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9V5a2 2 0 0 1 2-2h4M3 15v4a2 2 0 0 0 2 2h4M21 9V5a2 2 0 0 0-2-2h-4M21 15v4a2 2 0 0 1-2 2h-4"/><line x1="7" y1="12" x2="7" y2="12.01"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="17" y1="12" x2="17" y2="12.01"/></svg>
-                <span data-i18n="p1.scanBarcode">GS-1/Barcode</span>
-              </button>
-            </div>
+            <div style="font-size:13px;font-weight:700;color:var(--text);min-width:0;" data-i18n="p1.title">Identify Product</div>
             <span id="p1-step-badge" data-i18n="step.badge1" style="flex-shrink:0;padding:8px 14px;min-height:36px;box-sizing:border-box;display:inline-flex;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-family:'DM Mono',monospace;font-size:11px;font-weight:700;letter-spacing:0.05em;color:var(--text);white-space:nowrap;">Step 1/3</span>
           </div>
 
-          <!-- Label photo (PRIMARY — shown by default) -->
-          <div id="p1-label-wrap" style="display:none;flex-direction:column;width:100%;">
+          <!-- Label photo — Phase 1 is now label-only since the barcode mode
+               was removed in the raw-capture rebuild. Always visible. -->
+          <div id="p1-label-wrap" style="display:flex;flex-direction:column;width:100%;">
             <div class="camera-wrap" id="product-cam-wrap" style="width:100%;">
               <div class="camera-placeholder" id="product-placeholder">
                 <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
@@ -3421,82 +3409,6 @@
               <button class="btn btn-primary" id="btn-snap-product" onclick="snapProduct()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg><span data-i18n="action.capture"> Capture</span></button>
               <button class="btn btn-ghost" id="btn-retake-product" onclick="retakeProduct()" style="display:none;" data-i18n="action.retake">↩ Retake</button>
             </div>
-          </div>
-
-          <!-- Barcode scanner (SECONDARY — hidden by default) -->
-          <div id="p1-barcode-wrap" style="display:flex;width:100%;">
-            <div class="camera-wrap" id="p1-cam-wrap" style="width:100%;">
-
-              <div class="camera-placeholder" id="p1-placeholder">
-                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 9V5a2 2 0 0 1 2-2h4M3 15v4a2 2 0 0 0 2 2h4M21 9V5a2 2 0 0 0-2-2h-4M21 15v4a2 2 0 0 1-2 2h-4"/><line x1="7" y1="12" x2="7" y2="12.01"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="17" y1="12" x2="17" y2="12.01"/></svg>
-                Starting camera…
-              </div>
-              <div id="p1-video-wrap" style="display:none;position:relative;width:100%;height:100%;">
-                <video id="p1-barcode-video" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;display:block;"></video>
-                <canvas id="p1-barcode-overlay" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;"></canvas>
-                <button onclick="toggleTorch()" id="p1-torch-btn" style="display:none;position:absolute;bottom:10px;right:10px;background:rgba(8,15,18,0.7);border:1px solid rgba(255,255,255,0.2);border-radius:8px;color:#fff;font-size:18px;width:38px;height:38px;cursor:pointer;align-items:center;justify-content:center;" title="Toggle flashlight"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6H6L4 16h16L18 6z"/><path d="M12 16v4"/><path d="M9 20h6"/><circle cx="12" cy="10" r="2"/></svg></button>
-              </div>
-
-              <div class="scan-line" id="p1-scan-line" style="display:none;"></div>
-              <div class="camera-frame" id="p1-barcode-frame" style="display:none;"></div>
-              <div class="analyzing-overlay" id="p1-analyzing" style="display:none;">
-                <div class="spinner"></div>
-                <span id="p1-analyzing-text">Looking up product…</span>
-              </div>
-            </div>
-
-            <!-- Phase 1.2 of refactor v2: 3-second fallback prompt.
-                 Sibling of p1-cam-wrap (NOT inside) — camera-wrap has overflow:hidden
-                 and aspect-ratio constraint, which would clip this prompt if nested. -->
-            <div id="p1-barcode-fallback-prompt" style="display:none;margin-top:10px;padding:10px 14px;background:rgba(245,166,35,0.06);border:1px solid rgba(245,166,35,0.25);border-radius:10px;text-align:center;">
-              <div style="font-size:12px;color:var(--muted);margin-bottom:8px;" data-i18n="p1.noBarcodeFound">Can't find a barcode?</div>
-              <button onclick="setPhase1Mode('label')" class="btn btn-ghost" style="font-size:12px;padding:7px 14px;justify-content:center;" data-i18n="p1.switchToLabel">Tap to identify by photo</button>
-            </div>
-
-            <div id="p1-barcode-result" style="display:none;margin-top:8px;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;font-size:13px;">
-              <div style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;">Barcode detected</div>
-              <div id="p1-barcode-value" style="font-family:'DM Mono',monospace;font-size:13px;color:var(--accent);font-weight:600;"></div>
-              <div id="p1-product-found" style="margin-top:6px;font-size:13px;color:var(--text);"></div>
-              <div id="p1-product-notfound" style="display:none;margin-top:6px;font-size:12px;color:var(--muted);">Not found in database — please enter name below or switch to Label Photo.</div>
-              <!-- Second barcode prompt — shown after EAN scan -->
-              <div id="p1-second-barcode-prompt" style="display:none;margin-top:10px;padding:8px 10px;background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.25);border-radius:8px;">
-                <div style="font-size:11px;color:var(--accent);font-weight:600;margin-bottom:4px;">Check for a second barcode</div>
-                <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">Some products have a secondary GS1-128 or DataMatrix barcode that encodes the lot number. Check the back, side, or bottom of the packaging.</div>
-                <div style="display:flex;gap:6px;">
-                  <button onclick="startSecondBarcodeScanner()" class="btn btn-ghost" style="flex:1;justify-content:center;font-size:11px;padding:6px 10px;gap:5px;">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="4" height="16"/><rect x="7" y="4" width="2" height="16"/><rect x="10" y="4" width="4" height="16"/><rect x="15" y="4" width="1" height="16"/></svg>
-                    Scan second barcode
-                  </button>
-                  <button onclick="dismissSecondBarcode()" class="btn btn-ghost" style="padding:6px 10px;font-size:11px;color:var(--muted);">Skip</button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Phase 1.5 of refactor v2: explicit "Got it" confirmation handoff between
-               product identification and lot code capture. Per plan: barcode and lot
-               code are usually on different sides of packaging — the user physically
-               reorients the package between the two scans. The deliberate pause here
-               acknowledges that physical reality and gives users a "wrong product?"
-               escape hatch before committing to lot code capture.
-               Hidden by default; shown by showP1Confirmation(). Replaces what was
-               previously a 600ms setTimeout auto-advance to Step 2. -->
-          <div id="p1-confirmation-wrap" style="display:none;width:100%;flex-direction:column;align-items:center;padding:32px 16px 24px;text-align:center;">
-            <div style="width:80px;height:80px;border-radius:50%;background:rgba(52,211,153,0.15);border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;margin-bottom:20px;">
-              <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="20 6 9 17 4 12"/>
-              </svg>
-            </div>
-            <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:6px;" data-i18n="p1.gotIt">Got it</div>
-            <div id="p1-confirmation-name" style="font-size:18px;font-weight:700;color:var(--text);margin-bottom:6px;line-height:1.3;max-width:90%;"></div>
-            <div id="p1-confirmation-source" style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;margin-bottom:16px;"></div>
-            <img id="p1-confirmation-photo" alt="" style="display:none;width:140px;height:140px;object-fit:cover;border-radius:12px;border:1px solid var(--border);margin-bottom:24px;cursor:pointer;" onclick="openLightbox(this.src)" />
-            <button onclick="continueFromP1Confirmation()" class="btn btn-primary" style="min-width:220px;justify-content:center;margin-bottom:10px;">
-              <span data-i18n="p1.continueToLot">Continue to lot code →</span>
-            </button>
-            <button onclick="dismissP1ConfirmationAsWrong()" class="btn btn-ghost" style="font-size:12px;color:var(--muted);min-width:220px;justify-content:center;">
-              <span data-i18n="p1.wrongProduct">Wrong product? Start over</span>
-            </button>
           </div>
 
           <div class="field">
@@ -7267,9 +7179,8 @@ function cancelScan() {
     }
   }
   currentPhase = 1;
-  // Restart phase 1 camera. Always barcode mode — Phase 1.2 of refactor v2.
-  // (resetForm() also resets phase1Mode='barcode' as a safety net.)
-  setTimeout(() => setPhase1Mode('barcode'), 80);
+  // Restart Phase 1 camera. Label-only since the raw-capture rebuild.
+  setTimeout(() => setPhase1Mode('label'), 80);
   document.querySelector('.flow-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
@@ -7769,7 +7680,7 @@ function retakeProduct() {
 // for deterministic identification via products_public; AI label scan is the
 // fallback (surfaced via "Can't find barcode?" prompt after 3s, or instant
 // switch back when ZXing finds a code in the label-mode video stream).
-let phase1Mode = 'barcode';
+let phase1Mode = 'label';
 let p1ZXingControls = null;
 let p1DetectedBarcode = null;
 let _prefetchedPattern = null;
@@ -7795,58 +7706,14 @@ let _telAiFallbackReason = null;     // 'zxing_decoded_but_unknown' | 'zxing_fai
 let _telLogged = false;              // dedup guard — only log once per scan
 
 function setPhase1Mode(mode) {
-  phase1Mode = mode;
-  // Phase 1.5 UX: if the confirmation panel is up and user manually toggles
-  // mode, hide the panel — they're explicitly overriding the identification.
-  const confPanel = document.getElementById('p1-confirmation-wrap');
-  if (confPanel) confPanel.style.display = 'none';
-  const btnLabel   = document.getElementById('p1-mode-btn-label');
-  const btnBarcode = document.getElementById('p1-mode-btn-barcode');
-  btnBarcode.classList.toggle('active', mode === 'barcode');
-  btnLabel.classList.toggle('active', mode === 'label');
-  // Update button text colours
-  if (btnLabel)   btnLabel.style.color   = mode === 'label'   ? '#04120e' : 'var(--muted)';
-  if (btnBarcode) btnBarcode.style.color = mode === 'barcode' ? '#04120e' : 'var(--muted)';
-  // Animate slider to the active button.
-  // Phase 1.2 of refactor v2: slider is right-anchored (CSS right:3px) since
-  // Barcode is the default mode. Translate LEFT by the inactive (Label) button's
-  // width when switching to label mode; no translation in barcode mode (rest position).
-  const slider = document.getElementById('p1-toggle-slider');
-  if (slider) {
-    const activeBtn = mode === 'label' ? btnLabel : btnBarcode;
-    const inactiveBtn = mode === 'label' ? btnBarcode : btnLabel;
-    requestAnimationFrame(() => {
-      slider.style.width     = (activeBtn.offsetWidth) + 'px';
-      slider.style.transform = mode === 'barcode' ? 'translateX(0)' : 'translateX(-' + (inactiveBtn.offsetWidth) + 'px)';
-    });
-  }
-  document.getElementById('p1-barcode-wrap').style.display = mode === 'barcode' ? 'flex' : 'none';
-  document.getElementById('p1-label-wrap').style.display   = mode === 'label'   ? 'flex' : 'none';
-  // Swap hint text below camera — use i18n keys
-  const _hint = document.getElementById('btn-next-1-hint');
-  if (_hint) {
-    const hintKey = mode === 'barcode' ? 'p1.cameraHintBarcode' : 'p1.cameraHintLabel';
-    _hint.setAttribute('data-i18n', hintKey);
-    _hint.textContent = t(hintKey);
-  }
-  if (mode === 'barcode') {
-    stopP1BarcodeScanner();
-    p1DetectedBarcode = null;
-    startP1BarcodeScanner();
-  } else {
-    // Phase 1.2 of refactor v2: when falling back to label mode, keep the
-    // ZXing decoder running in the background. If a barcode comes into view
-    // during AI label capture, handleP1BarcodeDetected will auto-switch us
-    // back to barcode mode (deterministic identification beats AI guess).
-    // Only the barcode UI elements are hidden — the scanner stays alive.
-    document.getElementById('p1-scan-line').style.display = 'none';
-    document.getElementById('p1-barcode-frame').style.display = 'none';
-    // Clear any pending fallback timer too — otherwise it could fire while
-    // user is mid-label-scan and re-show the orange prompt unexpectedly.
-    _clearP1FallbackTimer();
-    _hideP1FallbackPrompt();
-    startProductCamera();
-  }
+  // Phase 1 became label-only in the raw-capture rebuild — barcode scanning
+  // is gone. The function is kept (rather than deleted) because many callers
+  // pass 'barcode' or `phase1Mode` and would otherwise need rewriting; here
+  // we coerce everything to label and start the product camera.
+  phase1Mode = 'label';
+  const wrap = document.getElementById('p1-label-wrap');
+  if (wrap) wrap.style.display = 'flex';
+  startProductCamera();
 }
 
 let p1Html5QrScanner = null;
@@ -9482,19 +9349,12 @@ function resetForm() {
   _telExternalApisTimedOut = null;
   _telAiFallbackReason = null;
   _telLogged = false;
-  // Phase 1.5 UX: hide the confirmation panel if it was visible
-  const confPanel = document.getElementById('p1-confirmation-wrap');
-  if (confPanel) confPanel.style.display = 'none';
   // Phase 1.5.3: defensive cleanup of Step 2 background sanity check
   stopP2BackgroundSanityCheck();
-  // Phase 1.2 of refactor v2: every new scan resets to barcode mode (the default).
-  // Without this, if the previous scan ended in label-fallback mode, the next scan
-  // would start in label mode too — defeating the whole barcode-first design.
-  phase1Mode = 'barcode';
-  document.getElementById('p1-barcode-result').style.display = 'none';
-  document.getElementById('p1-product-found').textContent = '';
-  document.getElementById('p1-product-notfound').style.display = 'none';
-  document.getElementById('lot-location-hint').style.display = 'none';
+  // Raw-capture rebuild: Phase 1 is label-only — keep phase1Mode pinned.
+  phase1Mode = 'label';
+  const _hint = document.getElementById('lot-location-hint');
+  if (_hint) _hint.style.display = 'none';
 
   // Clear product state
   productBlob = null;
@@ -9503,7 +9363,7 @@ function resetForm() {
   document.getElementById('field-product-name').value = '';
   document.getElementById('field-product-name').classList.remove('auto-filled');
   document.getElementById('field-product-name').classList.add('field-required');
-  document.getElementById('field-product-name').placeholder = 'Scan barcode or photograph label…';
+  document.getElementById('field-product-name').placeholder = 'Photograph the label — AI will identify it…';
   document.getElementById('btn-next-1').disabled = true;
   document.getElementById('btn-retake-product').style.display = 'none';
 
