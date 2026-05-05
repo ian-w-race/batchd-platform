@@ -1731,7 +1731,7 @@ async function loadWeeklyDigest(containerEl) {
       sb.from('scans').select('id,store_name,lot_number,created_at').eq('organisation_id', _orgId).gte('created_at', days7).limit(500),
       sb.from('recall_acknowledgements').select('id,status,created_at,recall_events!inner(is_drill)').eq('organisation_id', _orgId).limit(200),
       sb.from('complaints').select('id,product_name').eq('receiving_org_id', _orgId).gte('created_at', days7).limit(100),
-      sb.from('mock_recall_drills').select('id').eq('retailer_org_id', _orgId).gte('created_at', days365).limit(1),
+      sb.from('mock_recall_drills').select('id').eq('initiating_org_id', _orgId).gte('created_at', days365).limit(1),
       sb.from('stores').select('id,name,active').eq('organisation_id', _orgId).eq('active', true).limit(50),
     ]);
 
@@ -1822,7 +1822,7 @@ async function checkOnboardingStatus() {
       sb.from('stores').select('id').eq('organisation_id', _orgId).limit(1),
       sb.from('trading_partners').select('id').eq('retailer_id', _orgId).eq('status', 'active').limit(1),
       sb.from('scans').select('id').eq('organisation_id', _orgId).limit(1),
-      sb.from('mock_recall_drills').select('id').eq('retailer_org_id', _orgId).limit(1),
+      sb.from('mock_recall_drills').select('id').eq('initiating_org_id', _orgId).limit(1),
       sb.from('user_settings').select('recall_coordinator_name').eq('user_id', (await sb.auth.getUser()).data?.user?.id).single(),
     ]);
     const steps = [
@@ -1862,7 +1862,7 @@ async function renderOnboarding() {
       sb.from('stores').select('id, name').eq('organisation_id', _orgId).limit(5),
       sb.from('trading_partners').select('id, organisations!trading_partners_manufacturer_id_fkey(name)').eq('retailer_id', _orgId).eq('status', 'active').limit(3),
       sb.from('scans').select('id').eq('organisation_id', _orgId).limit(1),
-      sb.from('mock_recall_drills').select('id, created_at').eq('retailer_org_id', _orgId).order('created_at', {ascending:false}).limit(1),
+      sb.from('mock_recall_drills').select('id, created_at').eq('initiating_org_id', _orgId).order('created_at', {ascending:false}).limit(1),
       sb.from('user_settings').select('recall_coordinator_name, recall_coordinator_contact').eq('user_id', (await sb.auth.getUser()).data?.user?.id).single(),
       sb.from('organisations').select('name, contact_email, region').eq('id', _orgId).single(),
     ]);
@@ -2046,7 +2046,7 @@ async function renderOverview() {
       sb.from('trading_partners').select('id, status, organisations!trading_partners_manufacturer_id_fkey(id,name)').eq('retailer_id', _orgId),
       sb.from('shipments').select('id, lot_number, quantity, unit, shipped_at, stores(name), organisations!shipments_manufacturer_id_fkey(id,name), products(name)').eq('retailer_id', _orgId).order('shipped_at', {ascending:false}).limit(200),
       sb.from('recall_acknowledgements').select('id, status, recall_event_id, store_id, created_at, acknowledged_at, organisation_id, recall_events!inner(is_drill)').eq('organisation_id', _orgId),
-      sb.from('recall_distributions').select('recall_event_id, distributed_at').eq('retailer_org_id', _orgId),
+      sb.from('recall_distributions').select('recall_event_id, distributed_at').eq('initiating_org_id', _orgId),
       // NOTE: removed_at is intentionally omitted — it is never written by app code
       // (pullFromShelf writes to scans.removed_from_shelf_at, not scan_recall_matches).
       // Selecting it would cause a silent Supabase error, returning data:null and
@@ -2297,7 +2297,7 @@ async function renderOverview() {
     // Check for drill overdue - fetch from drills table
     const { data: recentDrills } = await sb.from('mock_recall_drills')
       .select('id, created_at')
-      .eq('retailer_org_id', _orgId)
+      .eq('initiating_org_id', _orgId)
       .gte('created_at', new Date(Date.now() - 365 * 86400000).toISOString())
       .limit(1);
     const drillOverdue = !recentDrills?.length;
@@ -2737,7 +2737,7 @@ async function renderRecalls() {
   const acks    = acksRes.data   || [];
 
   const { data: distData } = await sb.from('recall_distributions')
-    .select('recall_event_id, est_affected_units, distributed_at').eq('retailer_org_id', _orgId);
+    .select('recall_event_id, est_affected_units, distributed_at').eq('initiating_org_id', _orgId);
 
   let pushed = [];
   const orgNameMap = {};
@@ -3255,7 +3255,13 @@ async function launchDrill() {
     // is_drill=true but no row in mock_recall_drills — the active recall counter
     // and other downstream consumers may not recognize it as a drill.
     const { error: drillErr } = await sb.from('mock_recall_drills').insert({
-      recall_event_id: ev.id, initiating_org_id: _orgId, retailer_org_id: _orgId,
+      // retailer_org_id removed — column doesn't exist on the live schema
+      // (Postgres 42703). The four SELECTs around the codebase that
+      // previously filtered on retailer_org_id now use initiating_org_id,
+      // which is the column that actually exists. For self-initiated drills
+      // (the only path here), initiating_org_id == retailer's org so the
+      // semantics are identical.
+      recall_event_id: ev.id, initiating_org_id: _orgId,
     });
     if (drillErr) throw drillErr;
 
@@ -3872,7 +3878,7 @@ async function renderShipments() {
     sb.from('recalls').select('lot_number, product_name, active').eq('organisation_id', _orgId).eq('active', true),
     sb.from('recall_distributions')
       .select('recall_event_id, recall_events!inner(lot_number, product_name, is_drill)')
-      .eq('retailer_org_id', _orgId),
+      .eq('initiating_org_id', _orgId),
   ]).limit(200);
 
   const list       = shipRes.data || [];
@@ -4889,7 +4895,7 @@ async function loadComplianceData(el) {
       .limit(2000),
     sb.from('stores').select('id, name, active').eq('organisation_id', _orgId),
     sb.from('recall_acknowledgements').select('status, acknowledged_at, created_at, recall_event_id').eq('organisation_id', _orgId),
-    sb.from('mock_recall_drills').select('id, created_at, recall_event_id').eq('retailer_org_id', _orgId).gte('created_at', days365).order('created_at', {ascending:false}),
+    sb.from('mock_recall_drills').select('id, created_at, recall_event_id').eq('initiating_org_id', _orgId).gte('created_at', days365).order('created_at', {ascending:false}),
     sb.from('trading_partners').select('status').eq('retailer_id', _orgId),
     sb.from('organisations').select('recall_coordinator_name, recall_coordinator_contact, recall_lookback_days').eq('id', _orgId).single(),
   ]);
@@ -5775,7 +5781,7 @@ async function renderReports() {
   try {
     // Lightweight summary queries for card stats
     let scansQ = sb.from('scans').select('id, lot_number, store_name, scanned_by, recall_resolved, created_at', { count: 'exact' }).eq('organisation_id', _orgId);
-    let distQ  = sb.from('recall_distributions').select('recall_event_id').eq('retailer_org_id', _orgId);
+    let distQ  = sb.from('recall_distributions').select('recall_event_id').eq('initiating_org_id', _orgId);
     let storesQ = sb.from('stores').select('id, name, active').eq('organisation_id', _orgId);
     let complaintsQ = sb.from('complaints').select('id, triage_level').eq('receiving_org_id', _orgId);
     let srmQ   = sb.from('scan_recall_matches').select('recall_id, quantity, store_name').eq('organisation_id', _orgId);
@@ -6039,7 +6045,7 @@ async function fetchReportData(key) {
       // makes the entire recalls report unable to load).
       const [recallsRes, distRes] = await Promise.all([
         sb.from('recalls').select('*').eq('organisation_id', _orgId).order('created_at', {ascending:false}).limit(500),
-        sb.from('recall_distributions').select('recall_event_id, est_affected_units, distributed_at').eq('retailer_org_id', _orgId).limit(500),
+        sb.from('recall_distributions').select('recall_event_id, est_affected_units, distributed_at').eq('initiating_org_id', _orgId).limit(500),
       ]);
       let pushed = [];
       const distData = distRes.data || [];
@@ -6088,7 +6094,7 @@ async function fetchReportData(key) {
       });
     }
     case 'exposure': {
-      const distRes = await sb.from('recall_distributions').select('recall_event_id').eq('retailer_org_id', _orgId);
+      const distRes = await sb.from('recall_distributions').select('recall_event_id').eq('initiating_org_id', _orgId);
       const ids = [...new Set((distRes.data || []).map(d => d.recall_event_id))];
       if (ids.length === 0) return [];
       const { data } = await sb.from('recall_events').select('*').in('id', ids).eq('is_drill', false).order('published_at', {ascending:false});
@@ -6771,7 +6777,7 @@ async function runLotCheck(immediate = false) {
       sb.from('recalls').select('*').eq('active', true).eq('organisation_id', _orgId).limit(200),
       sb.from('recall_distributions')
         .select('recall_event_id, recall_events!inner(id,product_name,lot_number,reason,severity,is_drill)')
-        .eq('retailer_org_id', _orgId)
+        .eq('initiating_org_id', _orgId)
         .eq('recall_events.is_drill', false),
     ]);
 
@@ -8682,7 +8688,7 @@ async function renderDashInvestigations() {
       invs = data || [];
     }
 
-    const { data: myResponses } = await sb.from('investigation_responses').select('investigation_id').eq('retailer_org_id', _orgId);
+    const { data: myResponses } = await sb.from('investigation_responses').select('investigation_id').eq('initiating_org_id', _orgId);
     const myResponseIds = new Set((myResponses||[]).map(r => r.investigation_id));
 
     let orgNames = {};
@@ -9026,7 +9032,7 @@ async function generateDrillReport(drillId) {
     // Fetch all drills or a specific one
     let drillsQuery = sb.from('mock_recall_drills')
       .select('id, created_at, recall_event_id, initiating_org_id')
-      .eq('retailer_org_id', _orgId)
+      .eq('initiating_org_id', _orgId)
       .order('created_at', { ascending: false });
     if (drillId) drillsQuery = drillsQuery.eq('id', drillId);
     else drillsQuery = drillsQuery.gte('created_at', new Date(Date.now() - 365*86400000).toISOString());
@@ -9941,7 +9947,7 @@ async function renderConsumerNotification() {
     // Load active recalls distributed to this org
     const { data: dists } = await sb.from('recall_distributions')
       .select('recall_event_id, distributed_at')
-      .eq('retailer_org_id', _orgId);
+      .eq('initiating_org_id', _orgId);
 
     let recallEvents = [];
     if (dists?.length) {
