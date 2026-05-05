@@ -1,12 +1,13 @@
 // netlify/functions/ocr.js
 // Batch'd AI OCR proxy — calls Anthropic API directly via fetch (no SDK dependency)
-// Tasks: identify_product | read_barcode | localise_lot | extract_codes
+// Tasks: identify_product | read_barcode | localise_lot | extract_codes | extract_raw_cluster
 //
 // Speed strategy:
-//   - localise_lot     -> haiku (fast localisation pass — only used for stored crops)
-//   - extract_codes    -> sonnet (lot code reading needs visual reasoning)
-//   - identify_product -> haiku (fast; staff can correct; lot code is what matters)
-//   - read_barcode     -> haiku
+//   - localise_lot        -> haiku (fast localisation pass — only used for stored crops)
+//   - extract_codes       -> sonnet (lot code reading needs visual reasoning)
+//   - extract_raw_cluster -> sonnet (verbatim inkjet character cluster — accuracy drives recall substring matching)
+//   - identify_product    -> haiku (fast; staff can correct; lot code is what matters)
+//   - read_barcode        -> haiku
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const MODEL_HAIKU  = 'claude-haiku-4-5-20251001';
@@ -98,6 +99,16 @@ exports.handler = async (event) => {
         model = useHaiku ? MODEL_HAIKU : MODEL_SONNET;
         maxTokens = useHaiku ? 300 : 400;
         prompt = extra.prompt || 'Extract lot codes from this food packaging. Return JSON with lot, expiry, lot_confidence fields.';
+        break;
+      }
+
+      case 'extract_raw_cluster': {
+        // Capture-everything-match-later flow: read the inkjet date/lot cluster
+        // verbatim, no parsing. Substring matching at recall time depends on
+        // character-level fidelity, so use Sonnet rather than Haiku.
+        model = MODEL_SONNET;
+        maxTokens = 120;
+        prompt = 'Look at this image of food packaging. Find all text that appears to be a date, lot code, batch number, production time, or line code — these are typically found together as a cluster of inkjet-printed characters near the bottom or back of the pack. Return ALL characters you can read from that cluster as a single raw string, exactly as printed. Do not label them, do not separate them into fields, do not interpret them. Just return the raw string. If you see multiple clusters, return the one most likely to be the lot/date cluster. If you cannot read anything, return an empty string.';
         break;
       }
 
