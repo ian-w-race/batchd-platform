@@ -3547,15 +3547,15 @@
 
           <!-- Hidden bridge inputs — keep the existing field IDs alive so submitScan,
                populateReview, resetForm and the recall code paths read/write without
-               throwing. Chunk 3 removes these along with their dependent code paths. -->
+               throwing. field-tlc-source / field-reference-doc / field-supplier were
+               retired in the retailer-only pivot — those code paths already use
+               optional chaining so removing them is safe. The remaining four are
+               still read unguarded from a few legacy code paths; chunk 5 will sweep. -->
           <div style="display:none;" aria-hidden="true">
             <input type="text" id="field-barcode" />
             <input type="text" id="field-lot" />
             <input type="text" id="field-expiry" />
             <input type="checkbox" id="lot-unavailable-toggle" />
-            <input type="text" id="field-tlc-source" />
-            <input type="text" id="field-reference-doc" />
-            <input type="text" id="field-supplier" />
           </div>
         </div>
       </div>
@@ -3650,24 +3650,17 @@
             <input type="text" id="field-notes" placeholder="e.g. End-cap display, 2 facings…" />
           </div>
 
-          <!-- Supplier field: hidden on mobile, available on desktop for EU Art.18 traceability -->
-          <div class="field" id="field-supplier-wrap">
-            <label>Supplier <span id="supplier-field-label" style="color:var(--muted);font-size:10px;">optional — FSMA 204 / EU Art. 18</span></label>
-            <input type="text" id="field-supplier" placeholder="e.g. ASKO, Norgesgruppen, Tine…" autocorrect="off" onfocus="showSupplierSuggestions()" onblur="setTimeout(hideSupplierSuggestions,200)" />
-          </div>
+          <!-- Supplier field, FSMA KDE block (TLC Source + Reference Document),
+               and the supplier-suggestions popover all removed in the retailer-
+               only pivot. Same reasoning across all three: staff don't reliably
+               know who supplied each unit / which PO it arrived on, and bad
+               data here creates a false sense of compliance. The supplier_name,
+               tlc_source, and reference_document columns stay on the scans
+               table — they're nullable and harmless — and existing read paths
+               (history cards, exports, audit views) keep displaying them for
+               legacy rows that have data. New scans write null. The FTL badge
+               at the top of this phase stays as a display-only indicator. -->
 
-          <!-- The FSMA 204 KDE block (TLC Source + Reference Document #) was
-               removed in the raw-capture rebuild. Both KDEs are intentionally
-               sourced from the manufacturer-portal shipment linkage rather than
-               from staff capture — staff don't reliably know the PO number or
-               which distributor supplied a given lot, and bad data here creates
-               a false sense of compliance. The FTL badge stays at the top of
-               this phase as a display-only indicator that the product requires
-               full KDE compliance, but the KDEs arrive from the supply-chain
-               side. updateFtlBadge still references #p3-fsma-kde via null-guard,
-               so removing the element here is safe. -->
-
-          <div id="supplier-suggestions" style="display:none;position:absolute;z-index:50;background:var(--surface);border:1px solid var(--border);border-radius:8px;width:100%;box-shadow:0 4px 12px rgba(0,0,0,0.15);max-height:160px;overflow-y:auto;font-size:12px;font-family:'DM Mono',monospace;"></div>
           <div id="save-msg" style="min-height:20px;"></div>
 
           <button class="btn-next" onclick="saveRecord()" id="btn-save" style="background:var(--accent);" data-i18n="p3.confirmPlace">
