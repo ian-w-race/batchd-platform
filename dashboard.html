@@ -2084,7 +2084,10 @@ async function renderOverview() {
     if (dists.length > 0) {
       const evIds = [...new Set(dists.map(d => d.recall_event_id))];
       const { data: evs } = await sb.from('recall_events')
-        .select('id, product_name, lot_number, barcode, reason, severity, is_drill, published_at, created_at, is_recalled, source_org_id')
+        // is_recalled removed from the SELECT — column doesn't exist on the
+        // live schema and was producing a 400 on every overview load. Was
+        // never read from the result anyway. (chunk-6B-postship hotfix)
+        .select('id, product_name, lot_number, barcode, reason, severity, is_drill, published_at, created_at, source_org_id')
         .in('id', evIds);
 
       // Get manufacturer names
@@ -2100,7 +2103,13 @@ async function renderOverview() {
     // ── Also fetch any self-managed recalls for this org ──
     // Exclude pushed recalls (already in relevantRecalls) to avoid duplicates
     const { data: ownRecallsRaw } = await sb.from('recalls')
-      .select('id, product_name, lot_number, barcode_number, active, source, created_at, reason, is_pushed, recall_event_id')
+      // is_pushed and recall_event_id removed from the SELECT — neither
+      // column exists on the live recalls schema and the SELECT was 400-ing.
+      // The filters at lines below that referenced them (`r.is_pushed ||
+      // r.recall_event_id`) were already no-ops since both fields resolved
+      // to undefined; explicit `false` placeholders preserve that behavior
+      // without the SELECT failure. (chunk-6B-postship hotfix)
+      .select('id, product_name, lot_number, barcode_number, active, source, created_at, reason')
       .eq('organisation_id', _orgId)
       .eq('active', true).limit(300);
     // Feed sources — imported from FDA/RASFF/Mattilsynet daily feeds.
