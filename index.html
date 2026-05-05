@@ -3440,7 +3440,7 @@
         <div class="flow-phase-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;">
           <div>
             <div class="flow-phase-title" data-i18n="p2.title">Lot Code Capture</div>
-            <div class="flow-phase-sub" id="step2-sub" data-i18n="p2.captureGuide">Point at the date and lot area</div>
+            <div class="flow-phase-sub" id="step2-sub" data-i18n="p2.captureGuide">Align the lot code inside the box</div>
           </div>
           <button onclick="cancelScan()" class="cancel-scan-btn" title="Cancel and start over">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg>
@@ -3458,7 +3458,7 @@
           <!-- Header bar: capture instructions on the left, Step 2/3 badge auto-injected on the right via #p2-mode-toggle::after CSS -->
           <div class="mode-toggle" id="p2-mode-toggle">
             <div style="min-width:0;">
-              <div data-i18n="p2.captureGuide" style="font-size:13px;font-weight:700;color:var(--text);line-height:1.3;">Point at the date and lot area</div>
+              <div data-i18n="p2.captureGuide" style="font-size:13px;font-weight:700;color:var(--text);line-height:1.3;">Align the lot code inside the box</div>
               <div data-i18n="p2.captureSubGuide" style="margin-top:2px;font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;line-height:1.4;">Usually near the bottom or back of the pack</div>
             </div>
           </div>
@@ -3476,6 +3476,15 @@
               <div id="barcode-video-wrap" style="display:none;position:relative;width:100%;height:100%;">
                 <video id="barcode-video" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;display:block;"></video>
               </div>
+              <!-- Phase 2 capture-region guide. Defines the visible target for the
+                   user AND the actual crop bounds applied to the API blob in
+                   snapRawCluster. Inset values MUST stay in sync with the
+                   `cropFrac` constants in that function — otherwise the user is
+                   framing relative to a different region than the AI ends up
+                   reading. The guide stays visible at all times (it's just a
+                   thin border), the analyzing overlay obscures it during AI
+                   processing. -->
+              <div id="p2-frame-guide" style="display:none;position:absolute;top:30%;bottom:30%;left:10%;right:10%;border:2px solid var(--accent);border-radius:8px;pointer-events:none;box-shadow:0 0 0 1px rgba(8,15,18,0.6);"></div>
               <div class="camera-frame" id="barcode-frame" style="display:none;"></div>
               <img id="barcode-captured" class="captured-img" style="display:none;" alt="" />
               <div class="analyzing-overlay" id="ocr-analyzing">
@@ -12277,6 +12286,11 @@ async function startOcrCamera() {
   // (still used as the Phase 2 camera bootstrap) keeps working.
   const _frame = document.getElementById('barcode-frame');
   if (_frame) _frame.style.display = 'block';
+  // Phase 2 capture-region guide — show it whenever the camera is live so the
+  // user sees the alignment target. It stays in lock-step with the cropFrac
+  // constants used in snapRawCluster's API-canvas crop.
+  const _p2Guide = document.getElementById('p2-frame-guide');
+  if (_p2Guide) _p2Guide.style.display = 'block';
   const _snapOld = document.getElementById('btn-snap-ocr');
   if (_snapOld) _snapOld.style.display = 'flex';
   const _retakeOld = document.getElementById('btn-retake-barcode');
@@ -12399,22 +12413,33 @@ async function snapRawCluster() {
   const analyzing = document.getElementById('ocr-analyzing');
   if (analyzing) analyzing.style.display = 'flex';
 
-  // Two-canvas pattern, mirroring snapProduct:
-  //   - dispCanvas: full resolution for the thumbnail and storage upload
-  //   - apiCanvas: downsized to 1920px for the AI call (faster encoding,
-  //     smaller payload). Inkjet text at typical scan distance occupies
-  //     ~57px of height at 1920 — comfortably above Sonnet's reading floor.
+  // Two-canvas pattern:
+  //   - dispCanvas: full frame at native resolution for the thumbnail in the
+  //     confirm state and the storage upload. Users see context (the package,
+  //     the area around the lot text) when verifying.
+  //   - apiCanvas: cropped to the visible frame guide region. Smaller payload
+  //     means faster encoding, faster transfer, and (most importantly) fewer
+  //     vision tokens for Sonnet to chew through. The crop preserves native
+  //     pixel density inside the region — text doesn't get blurrier, just
+  //     less surrounding background.
+  //
+  // The cropFrac values MUST stay in sync with the inset percentages on
+  // #p2-frame-guide in the HTML — otherwise the user is framing relative to
+  // a different region than the AI ends up reading.
   const dispCanvas = document.createElement('canvas');
   dispCanvas.width  = vid.videoWidth;
   dispCanvas.height = vid.videoHeight;
   dispCanvas.getContext('2d').drawImage(vid, 0, 0);
 
-  const apiW = Math.min(1920, vid.videoWidth);
-  const apiH = Math.round(vid.videoHeight * (apiW / vid.videoWidth));
+  const cropFrac = { x: 0.10, y: 0.30, w: 0.80, h: 0.40 };
+  const srcX = Math.floor(vid.videoWidth  * cropFrac.x);
+  const srcY = Math.floor(vid.videoHeight * cropFrac.y);
+  const srcW = Math.floor(vid.videoWidth  * cropFrac.w);
+  const srcH = Math.floor(vid.videoHeight * cropFrac.h);
   const apiCanvas = document.createElement('canvas');
-  apiCanvas.width  = apiW;
-  apiCanvas.height = apiH;
-  apiCanvas.getContext('2d').drawImage(vid, 0, 0, apiW, apiH);
+  apiCanvas.width  = srcW;
+  apiCanvas.height = srcH;
+  apiCanvas.getContext('2d').drawImage(vid, srcX, srcY, srcW, srcH, 0, 0, srcW, srcH);
 
   // Encode in parallel — total time = max(t1, t2) instead of t1 + t2.
   // 0.92 for the thumbnail (good visual preservation), 0.95 for the API
@@ -15194,7 +15219,7 @@ const TRANSLATIONS = {
     'p2.title': 'Lot Code Capture',
     'p2.sub': 'Find the best-before date — the lot code is printed right next to it. Frame both together, 20-25cm away, camera flat-on.',
     // Raw-capture rebuild — Phase 2 keys for the new single-photo flow
-    'p2.captureGuide': 'Point at the date and lot area',
+    'p2.captureGuide': 'Align the lot code inside the box',
     'p2.captureSubGuide': 'Usually near the bottom or back of the pack',
     'p2.reading': 'Reading text…',
     'p2.captured': 'Captured',
@@ -15616,7 +15641,7 @@ const TRANSLATIONS = {
     'p2.title': 'Partikodefangst',
     'p2.sub': 'Finn best-før datoen — partinummeret er trykket rett ved siden av den. Ta bildet av begge, 20-25cm unna, kameraet flatt mot pakningen.',
     // Råfangst-omarbeidelse — Fase 2 nøkler for den nye enkeltfoto-flyten
-    'p2.captureGuide': 'Sikt mot dato- og partikodefeltet',
+    'p2.captureGuide': 'Plasser partikoden inne i boksen',
     'p2.captureSubGuide': 'Vanligvis nederst eller på baksiden av pakken',
     'p2.reading': 'Leser tekst…',
     'p2.captured': 'Fanget',
