@@ -3494,6 +3494,13 @@
             <button onclick="skipLotCapture()" id="btn-skip-lot" style="background:none;border:none;color:var(--muted);font-size:12px;text-decoration:underline;cursor:pointer;padding:10px;text-align:center;align-self:center;font-family:'Figtree',sans-serif;">
               <span data-i18n="p2.noLotCode">No lot code on this product</span>
             </button>
+            <!-- Back to Step 1 — for when the user realises they identified
+                 the wrong product and needs to redo the label scan. Returning
+                 to Phase 1 re-shows the confirmation overlay so they can
+                 re-confirm or retake the product photo. -->
+            <button onclick="goToPhase(1)" id="btn-back-to-step1" style="background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;padding:6px 10px 12px;text-align:center;align-self:center;font-family:'Figtree',sans-serif;">
+              <span data-i18n="p2.backToStep1">← Back to product</span>
+            </button>
           </div>
 
           <!-- CONFIRM STATE — captured thumbnail + verbatim string (editable) + buttons -->
@@ -7197,7 +7204,23 @@ function goToPhase(n) {
   if (n === 1) {
     p1DetectedBarcode = null;
     _prefetchedPattern = null;
-    setTimeout(() => setPhase1Mode(phase1Mode), 100);
+
+    // If we're returning to Phase 1 with a product already captured (i.e. the
+    // user tapped "Back to product" from Phase 2), re-show the AI-identified
+    // confirmation overlay so they can re-confirm or retake. Without this
+    // they'd land on the captured photo with no buttons to advance.
+    const _existingName  = document.getElementById('field-product-name').value.trim();
+    const _captured      = document.getElementById('product-captured');
+    const _confirmOver   = document.getElementById('product-confirm-overlay');
+    const _confirmName   = document.getElementById('product-confirm-name');
+    if (_existingName && productBlob && _captured && _captured.src && _confirmOver && _confirmName) {
+      _confirmName.textContent = _existingName;
+      _confirmOver.style.display = 'flex';
+      // Fall through — we don't restart the camera, the captured photo is
+      // already visible behind the overlay and tapping Retake will restart it.
+    } else {
+      setTimeout(() => setPhase1Mode(phase1Mode), 100);
+    }
   } else if (n === 2) {
     // Raw-capture rebuild: reset Phase 2 state and bring up the live camera.
     // The old multi-pass OCR pipeline (localisation, learned crops, GS1 banner,
@@ -15144,6 +15167,7 @@ const TRANSLATIONS = {
     'p2.verifyHint': 'Compare with the package — edit anything missing or wrong before continuing.',
     'p2.looksGood': 'Looks good',
     'p2.noLotCode': 'No lot code on this product',
+    'p2.backToStep1': '← Back to product',
     'p2.visualOcr': 'Visual OCR', 'p2.barcodeScan': 'GS-1/Barcode',
     'p2.confirm': 'Confirm & Review →', 'p2.swap': '⇄ Swap Lot & Batch (TLC)',
     // Phase 3
@@ -15565,6 +15589,7 @@ const TRANSLATIONS = {
     'p2.verifyHint': 'Sammenlign med pakken — rediger alt som mangler eller er feil før du fortsetter.',
     'p2.looksGood': 'Ser bra ut',
     'p2.noLotCode': 'Ingen partikode på dette produktet',
+    'p2.backToStep1': '← Tilbake til produkt',
     'p2.visualOcr': 'Visuell OCR', 'p2.barcodeScan': 'GS-1/Strekkode',
     'p2.confirm': 'Bekreft & se gjennom →', 'p2.swap': '⇄ Bytt parti og batch',
     // Phase 3
