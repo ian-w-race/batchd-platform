@@ -3425,12 +3425,22 @@
         </div>
       </div>
 
-      <!-- ── Phase 2: Lot & Batch ── -->
+      <!-- ── Phase 2: Lot Code Capture (raw-capture rebuild) ── -->
+      <!-- Replaces the prior multi-pass OCR pipeline. The user takes one photo
+           of the date/lot region; Claude returns the inkjet-printed character
+           cluster verbatim; the user confirms or edits, then proceeds. No
+           parsing, no field-splitting — substring matching at recall time
+           runs against the raw string.
+           Camera plumbing (#barcode-cam-wrap, #barcode-video, #barcode-captured,
+           #ocr-analyzing) kept under the same IDs so existing CSS continues
+           to apply and startOcrCamera() still works. The hidden bridge inputs
+           at the bottom (field-lot, field-expiry, etc.) are kept until chunk 3
+           rewrites the dependent code in submitScan / populateReview / resetForm. -->
       <div class="flow-phase" id="phase-2">
         <div class="flow-phase-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;">
           <div>
-            <div class="flow-phase-title" data-i18n="p2.title">Lot Code (TLC)</div>
-            <div class="flow-phase-sub" id="step2-sub" data-i18n="p2.sub">Find the best-before date — the lot code is printed right next to it. Frame both together, 20-25cm away, camera flat-on.</div>
+            <div class="flow-phase-title" data-i18n="p2.title">Lot Code Capture</div>
+            <div class="flow-phase-sub" id="step2-sub" data-i18n="p2.captureGuide">Point at the date and lot area</div>
           </div>
           <button onclick="cancelScan()" class="cancel-scan-btn" title="Cancel and start over">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg>
@@ -3438,177 +3448,87 @@
           </button>
         </div>
 
-        <!-- GS1 Digital Link / GS1-128 full-capture banner — shown when lot was read directly from barcode -->
-        <div id="gs1-full-capture-banner" style="display:none;margin:10px 16px 0;padding:12px 14px;background:rgba(52,211,153,0.08);border:1px solid rgba(52,211,153,0.3);border-radius:10px;color:var(--accent);"></div>
-
         <div class="flow-phase-body">
 
-          <!-- Recall pre-screening warning — populated by checkStep1RecallWarning() when product identified -->
+          <!-- Recall pre-screening warning — populated by checkStep1RecallWarning(); chunk 4 will revamp -->
           <div id="p2-recall-warning" style="display:none;margin-bottom:12px;padding:12px 14px;background:rgba(245,166,35,0.08);border:1.5px solid rgba(245,166,35,0.45);border-radius:10px;">
             <div id="p2-recall-warning-text"></div>
           </div>
 
-          <!-- Mode toggle -->
+          <!-- Header bar: capture instructions on the left, Step 2/3 badge auto-injected on the right via #p2-mode-toggle::after CSS -->
           <div class="mode-toggle" id="p2-mode-toggle">
-            <div id="p2-toggle-track" style="position:relative;display:flex;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:3px;gap:0;flex-shrink:0;">
-              <!-- Sliding pill — JS positions it on setMode() -->
-              <div id="p2-toggle-slider" style="position:absolute;top:3px;bottom:3px;left:3px;border-radius:7px;background:var(--accent);transition:transform 0.22s cubic-bezier(0.4,0,0.2,1),width 0.22s cubic-bezier(0.4,0,0.2,1);z-index:0;pointer-events:none;width:50%;"></div>
-              <button class="mode-btn active" id="mode-btn-ocr" onclick="setMode('ocr')" style="position:relative;z-index:1;background:transparent;border:none;border-radius:7px;padding:7px 14px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:5px;white-space:nowrap;color:#04120e;min-height:34px;cursor:pointer;flex:1;justify-content:center;">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 8h3m0 0V7m0 1v1M7 12h10M7 16h10"/></svg>
-                <span data-i18n="p2.visualOcr">Visual OCR</span>
+            <div style="min-width:0;">
+              <div data-i18n="p2.captureGuide" style="font-size:13px;font-weight:700;color:var(--text);line-height:1.3;">Point at the date and lot area</div>
+              <div data-i18n="p2.captureSubGuide" style="margin-top:2px;font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;line-height:1.4;">Usually near the bottom or back of the pack</div>
+            </div>
+          </div>
+
+          <!-- CAPTURE STATE — live camera + Capture button + skip link -->
+          <div id="p2-capture-state" style="display:flex;flex-direction:column;width:100%;">
+            <div class="camera-wrap" id="barcode-cam-wrap">
+              <div class="camera-placeholder" id="barcode-placeholder">
+                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                  <circle cx="12" cy="13" r="4"/>
+                </svg>
+                <span data-i18n="js.startingCamera">Starting camera…</span>
+              </div>
+              <div id="barcode-video-wrap" style="display:none;position:relative;width:100%;height:100%;">
+                <video id="barcode-video" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;display:block;"></video>
+              </div>
+              <div class="camera-frame" id="barcode-frame" style="display:none;"></div>
+              <img id="barcode-captured" class="captured-img" style="display:none;" alt="" />
+              <div class="analyzing-overlay" id="ocr-analyzing">
+                <div class="spinner"></div>
+                <span id="ocr-analyzing-text" data-i18n="p2.reading">Reading text…</span>
+              </div>
+            </div>
+
+            <div class="btn-row">
+              <button class="btn btn-primary" id="btn-snap-raw" onclick="snapRawCluster()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                <span data-i18n="action.capture"> Capture</span>
               </button>
-              <button class="mode-btn" id="mode-btn-barcode" onclick="setMode('barcode')" style="position:relative;z-index:1;background:transparent;border:none;border-radius:7px;padding:7px 14px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:5px;white-space:nowrap;color:var(--muted);min-height:34px;cursor:pointer;flex:1;justify-content:center;">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9V5a2 2 0 0 1 2-2h4M3 15v4a2 2 0 0 0 2 2h4M21 9V5a2 2 0 0 0-2-2h-4M21 15v4a2 2 0 0 1-2 2h-4"/><line x1="7" y1="12" x2="7" y2="12.01"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="17" y1="12" x2="17" y2="12.01"/></svg>
-                <span data-i18n="p2.barcodeScan">GS-1/Barcode</span>
+            </div>
+
+            <button onclick="skipLotCapture()" id="btn-skip-lot" style="background:none;border:none;color:var(--muted);font-size:12px;text-decoration:underline;cursor:pointer;padding:10px;text-align:center;align-self:center;font-family:'Figtree',sans-serif;">
+              <span data-i18n="p2.noLotCode">No lot code on this product</span>
+            </button>
+          </div>
+
+          <!-- CONFIRM STATE — captured thumbnail + verbatim string (editable) + buttons -->
+          <div id="p2-confirm-state" style="display:none;flex-direction:column;width:100%;gap:14px;padding:8px 10px 0;box-sizing:border-box;">
+            <img id="p2-captured-thumb" src="" alt="" style="width:100%;max-width:300px;align-self:center;border-radius:12px;border:1px solid var(--border);object-fit:cover;cursor:pointer;max-height:180px;" onclick="openLightbox(this.src)" />
+
+            <div>
+              <label style="display:block;font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:6px;">
+                <span data-i18n="p2.captured">Captured</span>
+              </label>
+              <input type="text" id="field-raw-capture" style="width:100%;font-family:'DM Mono',monospace;font-size:18px;font-weight:600;letter-spacing:0.04em;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:14px 16px;box-sizing:border-box;" placeholder="—" autocorrect="off" autocapitalize="characters" spellcheck="false" />
+              <div style="margin-top:6px;font-size:11px;color:var(--muted);" data-i18n="p2.editHint">Edit if anything's wrong</div>
+            </div>
+
+            <div class="btn-row">
+              <button class="btn btn-primary" onclick="confirmRawCapture()">
+                <span data-i18n="p2.looksGood">Looks good</span>
+              </button>
+              <button class="btn btn-ghost" onclick="retakeRawCapture()">
+                <span data-i18n="action.retake">↩ Retake</span>
               </button>
             </div>
           </div>
 
-          <!-- Location hint card — shown when a learned pattern or brand hint is available.
-               Positioned here (after the tab row, before the camera) so the guidance
-               sits with the capture controls it relates to, not above the tabs. -->
-          <div id="lot-location-hint" style="display:none;margin:8px 10px 0;padding:10px 14px;background:rgba(52,211,153,0.07);border:1px solid rgba(52,211,153,0.2);border-radius:10px;">
-            <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
-              <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.07em;color:var(--accent);font-family:'DM Mono',monospace;" id="lot-hint-label">Where to look</div>
-              <span style="font-size:10px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.06em;padding:2px 7px;border-radius:3px;background:rgba(245,166,35,0.15);color:var(--warn);border:1px solid rgba(245,166,35,0.3);">ALPHA</span>
-            </div>
-            <div style="font-size:12.5px;color:var(--text);line-height:1.5;" id="lot-hint-text"></div>
-          </div>
-
-          <!-- Camera viewport (shared) -->
-          <div class="camera-wrap" id="barcode-cam-wrap">
-            <div class="camera-placeholder" id="barcode-placeholder">
-              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <path d="M3 9V5a2 2 0 0 1 2-2h4M3 15v4a2 2 0 0 0 2 2h4M21 9V5a2 2 0 0 0-2-2h-4M21 15v4a2 2 0 0 1-2 2h-4"/>
-                <line x1="7" y1="12" x2="7" y2="12.01"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="17" y1="12" x2="17" y2="12.01"/>
-              </svg>
-              Starting camera…
-            </div>
-            <div id="barcode-video-wrap" style="display:none;position:relative;width:100%;height:100%;">
-              <video id="barcode-video" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;display:block;"></video>
-              <canvas id="barcode-overlay" style="position:absolute;inset:0;width:100%;height:100%;"></canvas>
-            </div>
-            <div class="scan-line" id="scan-line" style="display:none;"></div>
-            <div class="camera-frame" id="barcode-frame" style="display:none;"></div>
-            <img id="barcode-captured" class="captured-img" style="display:none;" / alt="">
-
-            <!-- Region confirmation overlay — shown on medium/low confidence reads -->
-            <div id="region-confirm-overlay" style="display:none;position:relative;width:100%;border-radius:12px;overflow:hidden;background:#000;margin-bottom:8px;">
-              <img id="region-confirm-img" style="width:100%;display:block;" / alt="">
-              <canvas id="region-confirm-canvas" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;"></canvas>
-              <div id="region-confirm-badge" style="position:absolute;bottom:10px;left:50%;transform:translateX(-50%);background:var(--overlay);border:1px solid var(--accent);border-radius:20px;padding:5px 14px;font-family:'DM Mono',monospace;font-size:13px;font-weight:700;color:var(--accent);white-space:nowrap;"></div>
-            </div>
-            <div id="region-confirm-bar" style="display:none;margin-bottom:10px;">
-              <div style="font-size:11px;color:var(--muted);text-align:center;margin-bottom:8px;" id="region-confirm-label">AI found this code — does it look right?</div>
-              <div style="display:flex;gap:8px;">
-                <button onclick="confirmRegion()" class="btn btn-primary" style="flex:1;justify-content:center;gap:6px;">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-                  Looks right
-                </button>
-                <button onclick="retakeBarcode()" class="btn btn-ghost" style="flex:1;justify-content:center;gap:6px;color:var(--warn);border-color:var(--warn);">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.24"/></svg>
-                  Retake
-                </button>
-              </div>
-            </div>
-
-            <div class="analyzing-overlay" id="ocr-analyzing">
-              <div class="spinner"></div>
-              <span id="ocr-analyzing-text">AI scanning label…</span>
-              <span id="ocr-countdown" style="font-family:'DM Mono',monospace;font-size:11px;color:var(--accent);margin-left:6px;opacity:0.8;"></span>
-            </div>
-            <div class="analyzing-overlay" id="barcode-ai-analyzing">
-              <div class="spinner"></div>
-              AI reading barcode…
-            </div>
-          </div>
-
-          <!-- Barcode detected result -->
-          <div id="barcode-result" class="barcode-result" style="display:none;">
-            <span data-i18n="scan.detectedBarcode">Detected Barcode</span>
-            <div id="barcode-value">—</div>
-            <div id="gs1-parsed" style="display:none;margin-top:10px;flex-direction:column;gap:6px;"></div>
-          </div>
-
-          <!-- OCR result panel -->
-          <div class="ocr-result" id="ocr-result">
-            <div class="ocr-result-title" id="ocr-result-title">✦ AI found the following — confirm or edit below</div>
-            <div class="ocr-fields">
-              <div class="ocr-field">
-                <label><span data-i18n="field.lotNumber">Lot Code (TLC)</span> <span style="color:var(--danger);font-size:10px;" data-i18n="label.required">*required</span></label>
-                <div class="ocr-val" id="ocr-lot-display">—</div>
-                <div id="ocr-lot-badge"></div>
-                <div id="ocr-pattern-chip" style="display:none;margin-top:5px;font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);letter-spacing:0.04em;"></div>
-              </div>
-
-            </div>
-            <div class="swap-row">
-              <div class="swap-hint" id="swap-hint"></div>
-            </div>
-            <div class="ocr-raw" id="ocr-raw-text"></div>
-            <!-- Post-failure contextual guidance — populated by renderOcrResult -->
-            <div id="ocr-guidance" style="display:none;margin-top:8px;padding:10px 12px;border-radius:8px;background:rgba(245,166,35,0.07);border:1px solid rgba(245,166,35,0.2);font-size:11px;line-height:1.6;color:var(--text);font-family:'DM Mono',monospace;">
-              <div id="ocr-guidance-text"></div>
-            </div>
-          </div>
-
-          <!-- Buttons -->
-          <div class="btn-row">
-            <button class="btn btn-primary mode-barcode" id="btn-snap-barcode" onclick="snapBarcode()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg><span data-i18n="action.capture"> Capture</span></button>
-            <button class="btn btn-ghost mode-barcode" id="btn-ai-barcode" onclick="snapAiBarcode()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><path d="M8 15h.01M12 15h.01M16 15h.01"/></svg><span data-i18n="action.aiRead"> AI Read</span></button>
-            <button class="btn btn-primary mode-ocr" id="btn-snap-ocr" onclick="snapOcr()" ontouchstart="_prewarmOcr()" onmousedown="_prewarmOcr()" style="display:none;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg><span data-i18n="action.snapAnalyse"> Snap &amp; Analyse</span></button>
-            <button class="btn btn-ghost" id="btn-retake-barcode" onclick="retakeBarcode()" style="display:none;">↩ Retake</button>
-          </div>
-
-          <!-- Editable fields -->
-          <div style="display:flex;flex-direction:column;gap:10px;">
-            <div class="field" id="field-barcode-wrap" style="display:none;">
-              <label><span data-i18n="field.barcodeNumber">Barcode Number</span> <span style="color:var(--muted);font-size:10px;" data-i18n="label.optional">optional</span></label>
-              <input type="text" id="field-barcode" placeholder="Detected automatically…" />
-            </div>
-            <div style="display:grid;grid-template-columns:1fr;gap:10px;" id="lot-batch-grid">
-              <div class="field" id="lot-field-wrap">
-                <label style="display:flex;align-items:center;justify-content:space-between;">
-                  <span id="lot-field-label"><span data-i18n="field.lotNumber">Lot Code (TLC)</span> <span id="lot-required-badge" style="color:var(--danger);font-size:10px;" data-i18n="label.required">*required</span></span>
-                  <span id="lot-confidence-dot" style="display:none;font-size:10px;font-family:'DM Mono',monospace;padding:2px 7px;border-radius:20px;letter-spacing:0.04em;"></span>
-                </label>
-                <div id="lot-format-hint" style="display:none;font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);padding:3px 6px;background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.2);border-radius:5px;margin-bottom:4px;"></div>
-                <input type="text" id="field-lot" placeholder="e.g. L2024-0581" oninput="onLotFieldEdit()" autocapitalize="characters" autocorrect="off" spellcheck="false" />
-              </div>
-
-              <!-- Expiry / Best Before field — shown when OCR finds a date, or always editable -->
-              <div class="field" id="field-expiry-wrap">
-                <label>
-                  <span id="expiry-label-text" data-i18n="scan.bestBefore">Best Before / Expiry</span>
-                  <span style="color:var(--muted);font-size:10px;" data-i18n="label.optional">optional</span>
-                </label>
-                <input type="text" id="field-expiry" autocorrect="off" autocapitalize="off"
-                  style="font-family:'DM Mono',monospace;letter-spacing:0.04em;" />
-              </div>
-
-              <!-- LOT UNAVAILABLE toggle -->
-              <div id="lot-unavailable-section" style="background:rgba(245,166,35,0.06);border:1px solid rgba(245,166,35,0.25);border-radius:10px;padding:8px 12px;display:flex;align-items:center;gap:10px;cursor:pointer;" onclick="toggleLotUnavailable()">
-                <div style="position:relative;flex-shrink:0;">
-                  <input type="checkbox" id="lot-unavailable-toggle" style="opacity:0;position:absolute;width:0;height:0;pointer-events:none;" />
-                  <div id="lot-unavail-track" style="width:40px;height:22px;border-radius:11px;background:rgba(245,166,35,0.2);border:1px solid rgba(245,166,35,0.4);transition:all 0.2s;position:relative;">
-                    <div id="lot-unavail-thumb" style="position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:var(--warn);transition:transform 0.2s;"></div>
-                  </div>
-                </div>
-                <div>
-                  <div id="lot-unavail-label" style="font-size:11px;font-weight:700;color:var(--warn);letter-spacing:0.06em;text-transform:uppercase;font-family:'DM Mono',monospace;" data-i18n="scan.lotUnavail">Lot Code Unavailable</div>
-                  <div id="lot-unavail-sub" style="font-size:10px;color:var(--muted);margin-top:1px;" data-i18n="scan.lotUnavailSub">Not printed or unreadable — expiry date required instead</div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="phase-nav-bar">
-            <button onclick="goToPhase(1)" data-i18n="p2.backBtn" class="phase-nav-back">
-              ← Step 1
-            </button>
-            <button class="btn-next phase-nav-next" id="btn-next-2" onclick="goToPhase(3)">
-              <span data-i18n="p2.confirm">Confirm & Review →</span>
-            </button>
+          <!-- Hidden bridge inputs — keep the existing field IDs alive so submitScan,
+               populateReview, resetForm and the recall code paths read/write without
+               throwing. Chunk 3 removes these along with their dependent code paths. -->
+          <div style="display:none;" aria-hidden="true">
+            <input type="text" id="field-barcode" />
+            <input type="text" id="field-lot" />
+            <input type="text" id="field-expiry" />
+            <input type="checkbox" id="lot-unavailable-toggle" />
+            <input type="text" id="field-tlc-source" />
+            <input type="text" id="field-reference-doc" />
+            <input type="text" id="field-supplier" />
           </div>
         </div>
       </div>
@@ -5331,6 +5251,13 @@ let productBlob = null;
 let barcodeBlob = null;
 let _lotUnavailable = false; // true when user marks lot as unavailable
 let detectedBarcode = null;
+// Raw-capture rebuild: verbatim character cluster from the date/lot region of
+// the package, exactly as Claude's extract_raw_cluster task returned it (and
+// possibly user-edited in the confirm screen). Null when the user used the
+// "No lot code on this product" skip path. Substring-matched against active
+// recalls — never parsed into fields. See snapRawCluster / confirmRawCapture
+// / skipLotCapture below.
+let _rawCapture = null;
 let allRecords = [];
 let _cachedActiveRecalls = []; // loaded with history, refreshed on loadHistory
 let recallLookbackDays = 180; // default 6 months; managers can set 30–365 days
@@ -7211,35 +7138,14 @@ function goToPhase(n) {
   }
   // Validate phase 2 → 3
   if (n === 3) {
-    if (phase1Mode === 'label' && !barcodeBlob && !_lotUnavailable) {
-      showToast(currentLang === 'no' ? 'Ta et bilde av parti-/batchkoden først.' : 'Please capture the lot/batch photo first.', 'warn', 3500);
-      return;
-    }
-    const lot = document.getElementById('field-lot').value.trim();
-    const lotUnavail = document.getElementById('lot-unavailable-toggle')?.checked;
-    // When lot unavailable, expiry is required before proceeding
-    if (lotUnavail) {
-      const expiryChk = document.getElementById('field-expiry')?.value.trim();
-      if (!expiryChk) {
-        const ef = document.getElementById('field-expiry');
-        if (ef) { ef.style.borderColor = 'rgba(255,92,92,0.6)'; ef.focus(); setTimeout(()=>{ef.style.borderColor='';},3000); }
-        showToast(t('scan.expiryRequired'), 'warn', 4000);
-        return;
-      }
-    }
-    if (!lotUnavail && !lot) {
-      // Highlight the lot field visually
-      const lotField = document.getElementById('field-lot');
-      if (lotField) {
-        lotField.style.borderColor = 'rgba(255,92,92,0.6)';
-        lotField.style.background  = 'rgba(255,92,92,0.04)';
-        lotField.focus();
-        setTimeout(() => { lotField.style.borderColor = ''; lotField.style.background = ''; }, 3000);
-      }
-      showToast(t('scan.lotRequired'), 'warn', 4000);
-      return;
-    }
-    // Store check — highlight the store pill visually if missing
+    // Raw-capture rebuild: lot/expiry/photo are all optional at this point —
+    // the user either confirmed a raw string (any value, including empty) or
+    // explicitly chose "No lot code on this product". The substring recall
+    // matcher tolerates a null raw_capture; FSMA 204 compliance for FTL
+    // products comes from the manufacturer-portal shipment linkage, not from
+    // staff capture.
+
+    // Store check — FSMA 204 requires receiving location at every CTE.
     if (!document.getElementById('field-store').value) {
       const pill = document.getElementById('stb-store-pill');
       if (pill) {
@@ -7282,44 +7188,18 @@ function goToPhase(n) {
     _prefetchedPattern = null;
     setTimeout(() => setPhase1Mode(phase1Mode), 100);
   } else if (n === 2) {
-    // Show location hint from prefetched pattern or brand knowledge
-    const productName = document.getElementById('field-product-name').value.trim();
-    const barcode = document.getElementById('field-store').value ? document.getElementById('field-barcode').value.trim() : document.getElementById('field-barcode').value.trim();
-    (async () => {
-      const ctx = _prefetchedPattern ||
-        await lookupLearnedPattern(productName, barcode || null, null, null);
-      showLocationHint(ctx, productName);
-    })();
-
-    // ── GS1 Digital Link banner ────────────────────────────
-    // If Phase 1 captured a full TLC from barcode, show confirmation banner
-    // instead of prompting the camera again
-    const gs1Banner = document.getElementById('gs1-full-capture-banner');
-    if (_gs1FullCapture && _gs1FullCapture.lot) {
-      if (gs1Banner) {
-        const expiryPart = _gs1FullCapture.expiry ? ` · ${currentLang==='no'?'Best før':'Exp'}: ${_gs1FullCapture.expiry}` : '';
-        const typePart = _gs1FullCapture.isDigitalLink ? 'GS1 Digital Link' : 'GS1-128';
-        gs1Banner.innerHTML = `
-          <div style="display:flex;align-items:flex-start;gap:10px;">
-            <div style="font-size:18px;line-height:1;flex-shrink:0;">✓</div>
-            <div>
-              <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:2px;">${typePart} — ${currentLang==='no'?'Partinummer kodet i strekkoden':'Lot code captured from barcode'}</div>
-              <div style="font-size:11px;color:var(--text);font-family:'DM Mono',monospace;margin-bottom:1px;">${currentLang==='no'?'Parti':'Lot'}: <strong>${esc(_gs1FullCapture.lot)}</strong>${expiryPart}</div>
-              <div style="font-size:10px;color:var(--muted);margin-top:3px;">${currentLang==='no'?'Bekreft eller rediger feltene nedenfor':'Confirm or edit the fields below — no photo needed'}</div>
-            </div>
-          </div>`;
-        gs1Banner.style.display = 'block';
-      }
-      // Don't start camera — lot is already filled, camera not needed
-      return;
-    } else {
-      if (gs1Banner) gs1Banner.style.display = 'none';
-    }
-
-    setTimeout(() => {
-      if (currentMode === 'barcode') startBarcodeScanner();
-      else startOcrCamera();
-    }, 100);
+    // Raw-capture rebuild: reset Phase 2 state and bring up the live camera.
+    // The old multi-pass OCR pipeline (localisation, learned crops, GS1 banner,
+    // brand hint cards, mode toggle) is gone — there's only one capture path
+    // now: snap photo → extract_raw_cluster → user confirms.
+    _rawCapture = null;
+    barcodeBlob = null;
+    const _input = document.getElementById('field-raw-capture');
+    if (_input) _input.value = '';
+    const _thumb = document.getElementById('p2-captured-thumb');
+    if (_thumb) _thumb.removeAttribute('src');
+    _showP2CaptureState();
+    setTimeout(() => { startOcrCamera().catch(() => {}); }, 100);
   }
 }
 
@@ -8956,7 +8836,13 @@ async function saveRecord() {
   const payload = {
     product_name:    productName,
     barcode_number:  barcodeNum  || null,
-    lot_number:      lotUnavailSave ? null : (lotNum || null),
+    // Raw-capture rebuild: lot_number is the verbatim raw_capture string (the
+    // brief mandates lot_number = raw_capture to preserve the existing column
+    // for FSMA 204 compliance). Null when the user used the "No lot code"
+    // skip path. lotUnavailSave is always false now — the toggle is gone —
+    // but kept in the read-side for offline-queue replays of pre-rebuild scans.
+    lot_number:      _rawCapture || (lotUnavailSave ? null : (lotNum || null)),
+    raw_capture:     _rawCapture || null,
     batch_number:    null,
     store_name:      storeName   || null,
     store_id:        _currentStoreId || null,
@@ -8967,17 +8853,21 @@ async function saveRecord() {
     supplier_name:   supplierVal || null,
     organisation_id: _currentOrgId || null,
     retain_until:    _retainUntil,
-    // FSMA 204 (USA) KDEs
+    // FSMA 204 KDEs — TLC source and reference document are now sourced from
+    // the manufacturer-portal shipment linkage rather than from staff capture
+    // (the fields are gone from Phase 3). Read-side optional chaining means
+    // these resolve to null cleanly post-chunk-3 when the bridge inputs go.
     reference_document: (document.getElementById('field-reference-doc')?.value.trim()) || null,
     tlc_source:         (document.getElementById('field-tlc-source')?.value.trim()) || null,
     is_ftl:             _ftlResult.isFtl || false,
     ftl_category:       _ftlResult.category || null,
-    // Expiry date — captured from OCR or manual entry, stored for traceability
+    // Expiry date — best-effort ISO date pulled out of raw_capture by
+    // extractBestBefore() at confirm time. Null when no date was detectable.
     expiry_date:        expiryVal || null,
-    // Full visible text captured by OCR — stored as searchable fallback for recall matching.
-    // Enables matching against production codes, plant numbers, and other metadata
-    // that appears on packaging alongside the lot code.
-    label_text:         (ocrState?.raw || '').slice(0, 600) || null,
+    // label_text mirrors raw_capture going forward — the old multi-field OCR
+    // pipeline that populated ocrState.raw is gone. Kept (instead of removed)
+    // because existing fallback recall matching reads label_text.
+    label_text:         (_rawCapture || ocrState?.raw || '').slice(0, 600) || null,
     // Idempotency key — generated client-side so network retries can't create
     // duplicate scan rows. Backed by UNIQUE constraint on scans.client_uuid.
     // Generated here (not at insert time) so the offline queue path stores the
@@ -9376,6 +9266,15 @@ function resetForm() {
   ocrState = null;
   barcodeBlob = null;
   detectedBarcode = null;
+  // Raw-capture rebuild: clear the verbatim string + its editable input
+  // between scans so a stale capture from the previous scan can't bleed
+  // into the next one.
+  _rawCapture = null;
+  const _rawInput = document.getElementById('field-raw-capture');
+  if (_rawInput) _rawInput.value = '';
+  const _p2Thumb = document.getElementById('p2-captured-thumb');
+  if (_p2Thumb) _p2Thumb.removeAttribute('src');
+  if (typeof _showP2CaptureState === 'function') _showP2CaptureState();
   document.getElementById('field-barcode').value = '';
   document.getElementById('field-lot').value = '';
   // field-batch removed from UI
@@ -9415,8 +9314,13 @@ function resetForm() {
   _manualEditPending = false;
   document.getElementById('barcode-captured').style.display = 'none';
   document.getElementById('barcode-captured').src = '';
-  document.getElementById('ocr-result').classList.remove('visible');
-  document.getElementById('barcode-result').classList.remove('visible');
+  // ocr-result and barcode-result were the old OCR pipeline UI panels —
+  // removed in the raw-capture rebuild. Null-guard so resetForm doesn't
+  // throw on the active scan path between scans.
+  const _ocrPanel = document.getElementById('ocr-result');
+  if (_ocrPanel) _ocrPanel.classList.remove('visible');
+  const _barcodePanel = document.getElementById('barcode-result');
+  if (_barcodePanel) _barcodePanel.classList.remove('visible');
   document.getElementById('pre-placement-recall-alert').style.display = 'none';
   stopZXing();
 
@@ -12322,9 +12226,15 @@ async function startOcrCamera() {
   await vid.play().catch(() => {});
   document.getElementById('barcode-placeholder').style.display = 'none';
   document.getElementById('barcode-video-wrap').style.display = 'block';
-  document.getElementById('barcode-frame').style.display = 'block';
-  document.getElementById('btn-snap-ocr').style.display = 'flex';
-  document.getElementById('btn-retake-barcode').style.display = 'none';
+  // The barcode-mode frame and the legacy snap-ocr / retake-barcode buttons
+  // were removed in the raw-capture rebuild. Null-guard so this function
+  // (still used as the Phase 2 camera bootstrap) keeps working.
+  const _frame = document.getElementById('barcode-frame');
+  if (_frame) _frame.style.display = 'block';
+  const _snapOld = document.getElementById('btn-snap-ocr');
+  if (_snapOld) _snapOld.style.display = 'flex';
+  const _retakeOld = document.getElementById('btn-retake-barcode');
+  if (_retakeOld) _retakeOld.style.display = 'none';
   document.getElementById('barcode-captured').style.display = 'none';
 
   // Phase 1.5.3 of refactor v2: background sanity check while user frames
@@ -12402,6 +12312,155 @@ function stopP2BackgroundSanityCheck() {
   }
   _p2SanityDetector = null;
   _p2SanityLastWarn = 0;
+}
+
+// ── PHASE 2: RAW CLUSTER CAPTURE ───────────────────────────────────────────
+// Capture-everything-match-later flow. The user photographs the date/lot
+// region; Claude's extract_raw_cluster task returns the inkjet-printed
+// character cluster verbatim; the user reads/edits/confirms or skips.
+// We make NO attempt to parse or label what we capture — substring matching
+// at recall time runs against the raw string. The only structured value we
+// derive is a best-effort ISO date (extractBestBefore), and that lives in
+// the existing expiry_date column purely for human-readable display.
+
+function _showP2CaptureState() {
+  const cap = document.getElementById('p2-capture-state');
+  const conf = document.getElementById('p2-confirm-state');
+  if (cap) cap.style.display = 'flex';
+  if (conf) conf.style.display = 'none';
+}
+
+function _showP2ConfirmState() {
+  const cap = document.getElementById('p2-capture-state');
+  const conf = document.getElementById('p2-confirm-state');
+  if (cap) cap.style.display = 'none';
+  if (conf) conf.style.display = 'flex';
+}
+
+async function snapRawCluster() {
+  const vid = document.getElementById('barcode-video');
+  if (!vid || !vid.srcObject || vid.paused || vid.readyState < 2 || vid.videoWidth <= 0) {
+    showToast(currentLang === 'no' ? 'Kameraet er ikke klart — prøv igjen.' : 'Camera not ready — try again in a moment.', 'warn', 3000);
+    return;
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width  = vid.videoWidth;
+  canvas.height = vid.videoHeight;
+  canvas.getContext('2d').drawImage(vid, 0, 0);
+  const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.88));
+  if (!blob) {
+    showToast(currentLang === 'no' ? 'Klarte ikke å fange bildet — prøv igjen.' : 'Could not capture image — please try again.', 'warn', 3000);
+    return;
+  }
+
+  // Stash the blob in the existing barcodeBlob slot so submitScan's photo
+  // upload pipeline picks it up unchanged (uploads to scan-photos as
+  // {ts}_lotcode.jpg → barcode_photo_url).
+  barcodeBlob = blob;
+
+  const url = URL.createObjectURL(blob);
+  const thumb = document.getElementById('p2-captured-thumb');
+  if (thumb) thumb.src = url;
+
+  // Show analyzing overlay during the API round-trip
+  const analyzing = document.getElementById('ocr-analyzing');
+  if (analyzing) analyzing.style.display = 'flex';
+
+  let raw = '';
+  try {
+    raw = await extractRawClusterFromImage(blob);
+  } catch (e) {
+    console.warn('extract_raw_cluster failed:', e);
+    showToast(currentLang === 'no' ? 'AI-lesing feilet — du kan skrive partikoden manuelt.' : 'AI read failed — you can type the lot manually.', 'warn', 3500);
+  }
+
+  if (analyzing) analyzing.style.display = 'none';
+
+  const input = document.getElementById('field-raw-capture');
+  if (input) {
+    input.value = raw || '';
+  }
+
+  _showP2ConfirmState();
+
+  // Focus and select the text so the user can immediately edit if needed —
+  // run after the state swap so the input is actually visible/focusable.
+  if (input) {
+    setTimeout(() => { input.focus(); input.select(); }, 50);
+  }
+}
+
+async function extractRawClusterFromImage(blob) {
+  const b64 = await blobToBase64(blob);
+  const resp = await callOcrFunction('extract_raw_cluster', b64);
+  // Anthropic response shape: { content: [{ type: 'text', text: '...' }, ...], ... }
+  const text = (resp && resp.content && resp.content[0] && resp.content[0].text) || '';
+  return String(text).trim();
+}
+
+function confirmRawCapture() {
+  const input = document.getElementById('field-raw-capture');
+  const val = input ? input.value.trim() : '';
+  _rawCapture = val || null;
+
+  // Bridge to the existing field-lot / field-expiry plumbing so populateReview
+  // and submitScan keep working without per-call modifications. Chunk 3 will
+  // remove these bridge writes when the dependent code paths are simplified.
+  const lotEl = document.getElementById('field-lot');
+  if (lotEl) lotEl.value = _rawCapture || '';
+  const expiryEl = document.getElementById('field-expiry');
+  if (expiryEl) expiryEl.value = extractBestBefore(_rawCapture) || '';
+
+  goToPhase(3);
+}
+
+function retakeRawCapture() {
+  _rawCapture = null;
+  barcodeBlob = null;
+  const input = document.getElementById('field-raw-capture');
+  if (input) input.value = '';
+  const thumb = document.getElementById('p2-captured-thumb');
+  if (thumb) thumb.removeAttribute('src');
+  _showP2CaptureState();
+  // Re-engage the camera if it was torn down or the stream paused
+  startOcrCamera().catch(() => {});
+}
+
+function skipLotCapture() {
+  _rawCapture = null;
+  barcodeBlob = null;
+  const lotEl = document.getElementById('field-lot');
+  if (lotEl) lotEl.value = '';
+  const expiryEl = document.getElementById('field-expiry');
+  if (expiryEl) expiryEl.value = '';
+  goToPhase(3);
+}
+
+// extractBestBefore — pure JS, no API. Best-effort ISO date pulled from the
+// raw character cluster. Tries DD.MM.YY, DD.MM.YYYY, MM/DD/YY, MM/DD/YYYY,
+// YYYY-MM-DD. Returns null if no date pattern matches. Stored in the
+// existing expiry_date column for review-screen display only — never used
+// for recall matching, which runs on raw_capture verbatim.
+function extractBestBefore(rawString) {
+  if (!rawString) return null;
+  const ddmmyy = rawString.match(/\b(\d{2})\.(\d{2})\.(\d{2})\b/);
+  if (ddmmyy) {
+    const year = parseInt(ddmmyy[3], 10) + 2000;
+    return `${year}-${ddmmyy[2]}-${ddmmyy[1]}`;
+  }
+  const ddmmyyyy = rawString.match(/\b(\d{2})\.(\d{2})\.(\d{4})\b/);
+  if (ddmmyyyy) {
+    return `${ddmmyyyy[3]}-${ddmmyyyy[2]}-${ddmmyyyy[1]}`;
+  }
+  const mmddyy = rawString.match(/\b(\d{2})\/(\d{2})\/(\d{2,4})\b/);
+  if (mmddyy) {
+    const year = mmddyy[3].length === 2 ? parseInt(mmddyy[3], 10) + 2000 : parseInt(mmddyy[3], 10);
+    return `${year}-${mmddyy[1]}-${mmddyy[2]}`;
+  }
+  const iso = rawString.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  return null;
 }
 
 // ── PHOTO QUALITY CHECK ──────────────────────────────────────
@@ -15059,8 +15118,16 @@ const TRANSLATIONS = {
     'p1.photoLabel': 'Label', 'p1.scanBarcode': 'GS-1/Barcode',
     'p1.productName': 'Product Name', 'p1.confirm': 'Confirm & Continue →',
     // Phase 2
-    'p2.title': 'Lot Code (TLC)',
+    'p2.title': 'Lot Code Capture',
     'p2.sub': 'Find the best-before date — the lot code is printed right next to it. Frame both together, 20-25cm away, camera flat-on.',
+    // Raw-capture rebuild — Phase 2 keys for the new single-photo flow
+    'p2.captureGuide': 'Point at the date and lot area',
+    'p2.captureSubGuide': 'Usually near the bottom or back of the pack',
+    'p2.reading': 'Reading text…',
+    'p2.captured': 'Captured',
+    'p2.editHint': 'Edit if anything’s wrong',
+    'p2.looksGood': 'Looks good',
+    'p2.noLotCode': 'No lot code on this product',
     'p2.visualOcr': 'Visual OCR', 'p2.barcodeScan': 'GS-1/Barcode',
     'p2.confirm': 'Confirm & Review →', 'p2.swap': '⇄ Swap Lot & Batch (TLC)',
     // Phase 3
@@ -15471,8 +15538,16 @@ const TRANSLATIONS = {
     'hist.addNote': '🔒 Legg til notat',
     'p1.productName': 'Produktnavn', 'p1.confirm': 'Bekreft & fortsett →',
     // Phase 2
-    'p2.title': 'Partinummer & batch',
+    'p2.title': 'Partikodefangst',
     'p2.sub': 'Finn best-før datoen — partinummeret er trykket rett ved siden av den. Ta bildet av begge, 20-25cm unna, kameraet flatt mot pakningen.',
+    // Råfangst-omarbeidelse — Fase 2 nøkler for den nye enkeltfoto-flyten
+    'p2.captureGuide': 'Sikt mot dato- og partikodefeltet',
+    'p2.captureSubGuide': 'Vanligvis nederst eller på baksiden av pakken',
+    'p2.reading': 'Leser tekst…',
+    'p2.captured': 'Fanget',
+    'p2.editHint': 'Rediger hvis noe er feil',
+    'p2.looksGood': 'Ser bra ut',
+    'p2.noLotCode': 'Ingen partikode på dette produktet',
     'p2.visualOcr': 'Visuell OCR', 'p2.barcodeScan': 'GS-1/Strekkode',
     'p2.confirm': 'Bekreft & se gjennom →', 'p2.swap': '⇄ Bytt parti og batch',
     // Phase 3
