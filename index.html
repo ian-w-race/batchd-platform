@@ -3504,8 +3504,19 @@
               <label style="display:block;font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:6px;">
                 <span data-i18n="p2.captured">Captured</span>
               </label>
+              <!-- Verify-against-package warning — the entire raw-capture design
+                   relies on the user catching AI omissions/substitutions before
+                   confirming. Styled as a warning callout (not muted hint text)
+                   to make sure it's actually read. -->
+              <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:10px;padding:9px 11px;background:rgba(245,166,35,0.08);border:1px solid rgba(245,166,35,0.3);border-radius:8px;color:var(--warn);font-size:12px;line-height:1.4;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" style="flex-shrink:0;margin-top:1px;">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                  <line x1="12" y1="9" x2="12" y2="13"/>
+                  <circle cx="12" cy="17" r="0.5" fill="currentColor"/>
+                </svg>
+                <span data-i18n="p2.verifyHint" style="font-weight:600;">Compare with the package — edit anything missing or wrong before continuing.</span>
+              </div>
               <input type="text" id="field-raw-capture" style="width:100%;font-family:'DM Mono',monospace;font-size:18px;font-weight:600;letter-spacing:0.04em;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:14px 16px;box-sizing:border-box;" placeholder="—" autocorrect="off" autocapitalize="characters" spellcheck="false" />
-              <div style="margin-top:6px;font-size:11px;color:var(--muted);" data-i18n="p2.editHint">Edit if anything's wrong</div>
             </div>
 
             <div class="btn-row">
@@ -12348,7 +12359,11 @@ async function snapRawCluster() {
   canvas.width  = vid.videoWidth;
   canvas.height = vid.videoHeight;
   canvas.getContext('2d').drawImage(vid, 0, 0);
-  const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.88));
+  // Quality 0.95 (up from 0.88) — inkjet text on packaging needs the extra
+  // pixel fidelity. Substitution errors (e.g. "10" misread as "14") track
+  // closely with capture quality at this character size. Payload size grows
+  // ~20% but Sonnet's vision pipeline benefits visibly.
+  const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.95));
   if (!blob) {
     showToast(currentLang === 'no' ? 'Klarte ikke å fange bildet — prøv igjen.' : 'Could not capture image — please try again.', 'warn', 3000);
     return;
@@ -15126,6 +15141,7 @@ const TRANSLATIONS = {
     'p2.reading': 'Reading text…',
     'p2.captured': 'Captured',
     'p2.editHint': 'Edit if anything’s wrong',
+    'p2.verifyHint': 'Compare with the package — edit anything missing or wrong before continuing.',
     'p2.looksGood': 'Looks good',
     'p2.noLotCode': 'No lot code on this product',
     'p2.visualOcr': 'Visual OCR', 'p2.barcodeScan': 'GS-1/Barcode',
@@ -15546,6 +15562,7 @@ const TRANSLATIONS = {
     'p2.reading': 'Leser tekst…',
     'p2.captured': 'Fanget',
     'p2.editHint': 'Rediger hvis noe er feil',
+    'p2.verifyHint': 'Sammenlign med pakken — rediger alt som mangler eller er feil før du fortsetter.',
     'p2.looksGood': 'Ser bra ut',
     'p2.noLotCode': 'Ingen partikode på dette produktet',
     'p2.visualOcr': 'Visuell OCR', 'p2.barcodeScan': 'GS-1/Strekkode',
