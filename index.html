@@ -7205,22 +7205,25 @@ function goToPhase(n) {
     p1DetectedBarcode = null;
     _prefetchedPattern = null;
 
-    // If we're returning to Phase 1 with a product already captured (i.e. the
-    // user tapped "Back to product" from Phase 2), re-show the AI-identified
-    // confirmation overlay so they can re-confirm or retake. Without this
-    // they'd land on the captured photo with no buttons to advance.
-    const _existingName  = document.getElementById('field-product-name').value.trim();
-    const _captured      = document.getElementById('product-captured');
-    const _confirmOver   = document.getElementById('product-confirm-overlay');
-    const _confirmName   = document.getElementById('product-confirm-name');
-    if (_existingName && productBlob && _captured && _captured.src && _confirmOver && _confirmName) {
-      _confirmName.textContent = _existingName;
-      _confirmOver.style.display = 'flex';
-      // Fall through — we don't restart the camera, the captured photo is
-      // already visible behind the overlay and tapping Retake will restart it.
-    } else {
-      setTimeout(() => setPhase1Mode(phase1Mode), 100);
+    // Phase 1 always starts fresh — clear any previously-captured product photo
+    // and identified name so the live camera shows. The user reaches Phase 1
+    // via three paths: app init, post-submission resetForm, or "Back to product"
+    // from Phase 2. In all three cases the right state is "blank slate, take a
+    // new photo." Trying to preserve the prior confirmation overlay on the
+    // back-from-Phase-2 path produced a visible layout shift (overlay covers
+    // ~30% of the viewport, looks different from the live-camera state).
+    productBlob = null;
+    const _capt = document.getElementById('product-captured');
+    if (_capt) { _capt.style.display = 'none'; _capt.src = ''; }
+    const _over = document.getElementById('product-confirm-overlay');
+    if (_over) _over.style.display = 'none';
+    const _nameField = document.getElementById('field-product-name');
+    if (_nameField) {
+      _nameField.value = '';
+      _nameField.classList.remove('auto-filled');
+      _nameField.classList.add('field-required');
     }
+    setTimeout(() => setPhase1Mode(phase1Mode), 100);
   } else if (n === 2) {
     // Raw-capture rebuild: reset Phase 2 state and bring up the live camera.
     // The old multi-pass OCR pipeline (localisation, learned crops, GS1 banner,
@@ -7528,9 +7531,10 @@ async function startProductCamera() {
 }
 
 async function snapProduct() {
-  // Trigger tesseract init now — user will spend 2-3s reviewing product name,
-  // giving the worker time to initialize before they tap to Step 2
-  if (!_tesseractReady && !_tesseractLoading) initTesseract();
+  // (The old tesseract prewarm here is gone — Phase 2 OCR is now server-side
+  // via the extract_raw_cluster task, so the ~5-10MB Tesseract.js worker is
+  // never loaded for normal scans. Removing the kick-off saves the main-thread
+  // contention that was happening at the exact moment the user tapped Capture.)
 
   stopAutoCapture();
   const vid = document.getElementById('product-video');
