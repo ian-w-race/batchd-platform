@@ -5283,6 +5283,23 @@ let _rawCapture = null;
 let allRecords = [];
 let _cachedActiveRecalls = []; // loaded with history, refreshed on loadHistory
 let recallLookbackDays = 180; // default 6 months; managers can set 30–365 days
+// In-memory recall match log for debugging — NOT persisted. Each entry:
+//   { scan_id, recall_id, match_type: 'red'|'orange'|'none', matched_on: 'substring'|'barcode'|'product_name_only'|null, ts }
+// Capped at 500 entries with FIFO eviction so the array can't grow unbounded.
+const _recallMatchLog = [];
+const _RECALL_MATCH_LOG_CAP = 500;
+function _logRecallMatch(scan, recall, matchType, matchedOn) {
+  _recallMatchLog.push({
+    scan_id:    scan?.id || null,
+    recall_id:  recall?.id || null,
+    match_type: matchType || 'none',
+    matched_on: matchedOn || null,
+    ts:         Date.now(),
+  });
+  if (_recallMatchLog.length > _RECALL_MATCH_LOG_CAP) {
+    _recallMatchLog.splice(0, _recallMatchLog.length - _RECALL_MATCH_LOG_CAP);
+  }
+}
 let activeStoreFilter = null;
 let recallMode = false;
 let currentUser = null;
@@ -7007,7 +7024,7 @@ async function loadMultiStoreOverview() {
   output.style.display = 'block';
 
   try {
-    let query = sb.from('scans').select('store_name, product_name, lot_number, barcode_number, created_at, removed_from_shelf_at, scanned_by, recall_resolved').eq('organisation_id', _currentOrgId).order('created_at', { ascending: false });
+    let query = sb.from('scans').select('store_name, product_name, lot_number, barcode_number, raw_capture, created_at, removed_from_shelf_at, scanned_by, recall_resolved').eq('organisation_id', _currentOrgId).order('created_at', { ascending: false });
     if (from) query = query.gte('created_at', from);
     if (to)   { const td = new Date(to); td.setHours(23,59,59,999); query = query.lte('created_at', td.toISOString()); }
     const { data, error } = await query;
@@ -7342,16 +7359,19 @@ async function checkPrePlacementRecall() {
   alertEl.style.display = 'none';
 
   const productName = document.getElementById('field-product-name').value.trim();
-  const lotNum      = document.getElementById('field-lot').value.trim();
-  const barcodeNum  = document.getElementById('field-barcode').value.trim();
+  const barcodeNum  = document.getElementById('field-barcode')?.value.trim() || '';
 
   try {
-    // Check both recall sources: manual/FDA/RASFF recalls + manufacturer-pushed recall_events
+    // Check both recall sources: manual/FDA/Mattilsynet recalls + manufacturer-pushed recall_events.
+    // The recall_events / manufacturer-push arm is preserved on the read side
+    // for legacy data — the manufacturer portal itself is retired in the
+    // retailer-only pivot, but pushed recalls already in the DB still need
+    // to surface here.
     const [recallsRes, eventsRes] = await Promise.all([
-      sb.from('recalls').select('product_name, lot_number, batch_number, barcode_number, description, source').eq('active', true).eq('organisation_id', _currentOrgId),
+      sb.from('recalls').select('id, product_name, lot_number, batch_number, barcode_number, description, source').eq('active', true).eq('organisation_id', _currentOrgId),
       _currentOrgId
         ? sb.from('recall_distributions')
-            .select('recall_event_id, recall_events!inner(product_name, lot_number, barcode, reason, is_drill)')
+            .select('recall_event_id, recall_events!inner(id, product_name, lot_number, barcode, reason, is_drill)')
             .eq('retailer_org_id', _currentOrgId)
             .eq('recall_events.is_drill', false)
         : Promise.resolve({ data: [] }),
@@ -7364,6 +7384,7 @@ async function checkPrePlacementRecall() {
       _seenEvIds2.add(d.recall_event_id); return true;
     });
     const pushedRecalls = _uniqueDist2.map(d => ({
+      id:             d.recall_events.id,
       product_name:   d.recall_events.product_name,
       lot_number:     d.recall_events.lot_number,
       barcode_number: d.recall_events.barcode,
@@ -7374,23 +7395,36 @@ async function checkPrePlacementRecall() {
     const recalls = [...(recallsRes.data || []), ...pushedRecalls];
     if (!recalls.length) return;
 
-    // Strict three-condition rule: exact lot OR exact barcode match only.
-    // Substring matching here was producing false positives (e.g. recall lot "C12"
-    // matched scan lot "ABC123") and the first-word product fallback was matching
-    // every scan of a similarly-named product. See comment in matchScanAgainstRecalls.
-    const lotInput     = lotNum.toLowerCase().trim();
-    const barcodeInput = barcodeNum.toLowerCase().trim();
-    const matches = recalls.filter(r => {
-      const rLot     = (r.lot_number     || '').toLowerCase().trim();
-      const rBarcode = (r.barcode_number || '').toLowerCase().trim();
-      return (rLot && lotInput && rLot === lotInput) ||
-             (rBarcode && barcodeInput && rBarcode === barcodeInput);
-    });
+    // Build a synthetic scanRecord for the matcher. Sources truth from
+    // _rawCapture (chunk 2's verbatim Phase 2 string) rather than from the
+    // legacy field-lot bridge — _rawCapture is canonical.
+    const scanRecord = {
+      id:             null, // not yet inserted
+      product_name:   productName,
+      raw_capture:    _rawCapture || null,
+      lot_number:     _rawCapture || null,
+      barcode_number: barcodeNum || null,
+    };
 
-    if (!matches.length) return;
+    // Two-tier classification — red (substring or barcode hit) vs orange
+    // (product-only match). Per brief: red blocks the save flow; orange
+    // surfaces a warning but doesn't block.
+    const reds = [];
+    const oranges = [];
+    for (const r of recalls) {
+      const { level } = recallMatchLevel(scanRecord, r);
+      if (level === 'exact') reds.push(r);
+      else if (level === 'possible') oranges.push(r);
+    }
 
-    // Build warning message
-    const lines = matches.map(r => {
+    if (!reds.length && !oranges.length) return;
+
+    const isNo = currentLang === 'no';
+    const showRed = reds.length > 0;
+    const matchesToRender = showRed ? reds : oranges;
+
+    // Build per-recall description lines
+    const lines = matchesToRender.map(r => {
       const parts = [];
       if (r.product_name) parts.push(`<strong>${esc(r.product_name)}</strong>`);
       if (r.lot_number)   parts.push(`Lot: <strong style="font-family:'DM Mono',monospace;">${esc(r.lot_number)}</strong>`);
@@ -7399,19 +7433,37 @@ async function checkPrePlacementRecall() {
       return `${parts.join(' · ')} ${src}`;
     });
 
-    textEl.innerHTML = lines.join('<br>') +
-      `<div style="margin-top:10px;padding:8px 10px;background:rgba(255,92,92,0.1);border-radius:6px;font-size:11px;color:var(--danger);font-weight:600;">
-        Do NOT place this item on the shelf. Set it aside and notify your manager immediately.
-      </div>`;
+    if (showRed) {
+      // Red — confirmed lot match. Style the alert in danger colour and swap
+      // the save button to the recall-acknowledgement state.
+      alertEl.style.background = 'rgba(255,92,92,0.08)';
+      alertEl.style.borderColor = 'rgba(255,92,92,0.5)';
+      const rawShown = _rawCapture ? `<div style="margin-top:8px;font-size:11px;color:var(--muted);">${isNo ? 'Fanget' : 'Captured'}: <span style="font-family:'DM Mono',monospace;color:var(--text);">${esc(_rawCapture)}</span></div>` : '';
+      textEl.innerHTML = lines.join('<br>') + rawShown +
+        `<div style="margin-top:10px;padding:8px 10px;background:rgba(255,92,92,0.1);border-radius:6px;font-size:11px;color:var(--danger);font-weight:600;">
+          ${isNo ? 'IKKE plasser på hylla. Sett til side og varsle leder umiddelbart.' : 'Do NOT place this item on the shelf. Set it aside and notify your manager immediately.'}
+        </div>`;
+      const saveBtn = document.getElementById('btn-save');
+      if (saveBtn) {
+        saveBtn.style.background = 'var(--danger)';
+        saveBtn.textContent = t('js.logRecallItem');
+      }
+    } else {
+      // Orange — same product family is under recall but the captured lot
+      // string didn't substring-match (or no lot was captured). User can
+      // still proceed; we just want them to verify their stock.
+      alertEl.style.background = 'rgba(245,166,35,0.08)';
+      alertEl.style.borderColor = 'rgba(245,166,35,0.5)';
+      textEl.innerHTML = lines.join('<br>') +
+        `<div style="margin-top:10px;padding:8px 10px;background:rgba(245,166,35,0.12);border-radius:6px;font-size:11px;color:var(--warn);font-weight:600;line-height:1.5;">
+          ${isNo
+            ? 'MULIG TREFF — produktet er under tilbakekall. Sjekk lageret — partikoden kan være forskjellig.'
+            : 'POSSIBLE MATCH — this product is under recall. Check your stock — the lot may differ.'}
+        </div>`;
+    }
+
     alertEl.style.display = 'block';
-
-    // Scroll to top of phase 3 so the alert is visible
     document.getElementById('phase-3').scrollIntoView({ behavior: 'smooth', block: 'start' });
-
-    // Also disable the save button — employee must acknowledge before proceeding
-    const saveBtn = document.getElementById('btn-save');
-    saveBtn.style.background = 'var(--danger)';
-    saveBtn.textContent = t('js.logRecallItem');
 
   } catch(e) { console.warn('Pre-placement recall check failed:', e); }
 }
@@ -8748,33 +8800,34 @@ function stopStream(stream) {
 // inside the Postgres sweep function.
 // ═══════════════════════════════════════════════════════════════
 
-// Called after a scan is saved. Checks all active recalls and
-// writes a match row for each hit. Non-blocking — fires and forgets.
+// Called after a scan is saved. Checks all active recalls and writes a
+// match row for each hit. Non-blocking — fires and forgets.
+//
+// Raw-capture rebuild: matching delegates to recallMatchLevel so the post-
+// save sweep stays in lockstep with the pre-placement check (single source
+// of truth for what counts as a recall hit). Only 'exact' (red) hits are
+// written to scan_recall_matches — 'possible' (orange) is informational
+// for staff but doesn't pin a scan to a specific recall in the DB.
 async function matchScanAgainstRecalls(scanId, scanData) {
   if (!scanId || !_cachedActiveRecalls || !_cachedActiveRecalls.length) return;
 
-  const lot     = (scanData.lot_number     || '').toLowerCase().trim();
-  const barcode = (scanData.barcode_number || '').toLowerCase().trim();
-  const product = (scanData.product_name   || '').toLowerCase().trim();
-  if (!lot && !barcode) return;
+  // Build a scanRecord-shaped object for recallMatchLevel. id is set so
+  // _recallMatchLog entries can be traced back to a real DB row.
+  const scanRecord = {
+    id:             scanId,
+    product_name:   scanData.product_name   || null,
+    lot_number:     scanData.lot_number     || null,
+    barcode_number: scanData.barcode_number || null,
+    raw_capture:    scanData.raw_capture    || null,
+  };
 
   const rows = [];
   const seenRecallIds = new Set();
 
   for (const r of _cachedActiveRecalls) {
     if (!r.id || seenRecallIds.has(r.id)) continue;
-    const rLot     = (r.lot_number     || '').toLowerCase().trim();
-    const rBarcode = (r.barcode_number || '').toLowerCase().trim();
-    const rProduct = (r.product_name   || '').toLowerCase().trim();
-
-    let matchType = null;
-    if (rLot && lot && rLot === lot)           matchType = 'exact_lot';
-    else if (rBarcode && barcode && rBarcode === barcode) matchType = 'exact_barcode';
-    // NOTE: product_name fallback removed — recalls without a lot number are too broad
-    // to match reliably. A recall missing a lot code should not auto-match every scan
-    // of a similarly-named product (e.g. a Mattilsynet recall titled
-    // "Coop tilbakekaller X" would match ALL Coop-brand scans via first-word matching).
-    if (!matchType) continue;
+    const { level, matched_on } = recallMatchLevel(scanRecord, r);
+    if (level !== 'exact') continue; // only red hits get persisted
 
     seenRecallIds.add(r.id);
     rows.push({
@@ -8783,8 +8836,12 @@ async function matchScanAgainstRecalls(scanId, scanData) {
       recall_source:    r.source || 'manual',
       recall_product:   r.product_name || null,
       recall_lot:       r.lot_number   || null,
-      match_type:       matchType,
-      match_confidence: matchType === 'product_name' ? 'medium' : 'high',
+      // match_type values keep their pre-rebuild names so existing rows
+      // and downstream consumers (analytics, sweep replays, dashboards)
+      // stay compatible. Substring hits on raw_capture map to 'exact_lot';
+      // legacy barcode hits stay 'exact_barcode'.
+      match_type:       matched_on === 'barcode' ? 'exact_barcode' : 'exact_lot',
+      match_confidence: 'high',
       organisation_id:  _currentOrgId,
       store_name:       scanData.store_name || null,
       store_id:         scanData.store_id   || null,
@@ -9013,6 +9070,10 @@ async function saveRecord() {
           lot_number: lotNum || null,
           barcode_number: barcodeNum || null,
           product_name: productName,
+          // raw_capture is the canonical search target for the substring
+          // match in recallMatchLevel — passing it through keeps the post-
+          // save sweep in lockstep with the pre-placement check.
+          raw_capture: _rawCapture || null,
           store_name: storeName || null,
           store_id: _currentStoreId || null,
           scanned_by: currentUser?.email || null,
@@ -9217,6 +9278,10 @@ async function _syncOfflineQueueImpl() {
             lot_number:     item.payload?.lot_number     || null,
             barcode_number: item.payload?.barcode_number || null,
             product_name:   item.payload?.product_name   || null,
+            // raw_capture mirrors the online saveRecord path so the substring
+            // match in recallMatchLevel works the same on offline-queued scans
+            // as live ones.
+            raw_capture:    item.payload?.raw_capture    || null,
             store_name:     item.payload?.store_name     || null,
             store_id:       item.payload?.store_id       || null,
             scanned_by:     item.payload?.scanned_by     || null,
@@ -9584,7 +9649,7 @@ async function checkRecallsOnLogin(silent = false) {
     // an active-recall alert — already-pulled lots should not trigger a login warning.
     const cutoff = new Date(Date.now() - recallLookbackDays * 24 * 60 * 60 * 1000).toISOString();
     const { data: recentScans } = await sb.from('scans')
-      .select('id,product_name,lot_number,batch_number,barcode_number,store_name,created_at')
+      .select('id,product_name,lot_number,batch_number,barcode_number,raw_capture,store_name,created_at')
       .eq('organisation_id', _currentOrgId)
       .is('removed_from_shelf_at', null)
       .gte('created_at', cutoff)
@@ -9592,41 +9657,46 @@ async function checkRecallsOnLogin(silent = false) {
 
     if (!recentScans || !recentScans.length) return;
 
-    // Build exact-match Sets from scan history — same approach as loadRecallsView.
-    // Using exact lot/barcode matching avoids false positives from fuzzy product
-    // name matching (which caused the badge to show 2 when only 1 recall is real).
-    const scannedLots     = new Set(recentScans.map(r => (r.lot_number    ||'').toLowerCase().trim()).filter(Boolean));
-    const scannedBarcodes = new Set(recentScans.map(r => (r.barcode_number||'').toLowerCase().trim()).filter(Boolean));
+    // Raw-capture rebuild: switched from exact lot/barcode Sets to recallMatchLevel.
+    // The Set-based equality match no longer fires for new scans because
+    // lot_number is now the full verbatim raw string (e.g. "06.06.26*1599 10:48-7"),
+    // not the parsed lot fragment a recall record carries. recallMatchLevel does
+    // the case-insensitive substring match on raw_capture (with lot_number
+    // fallback for legacy data) plus product fuzzy-matching.
+    //
+    // O(scans × recalls) instead of O(recalls) Set lookup, but at pilot scale
+    // (hundreds of scans, dozens of recalls) the difference is negligible and
+    // the correctness gain is essential.
 
     loginRecallMatches = [];
     const _matchDedupeMap = new Map();
 
     for (const recall of uniqueRecalls) {
-      const rLot     = (recall.lot_number     || '').toLowerCase().trim();
-      const rBarcode = (recall.barcode_number || '').toLowerCase().trim();
-
-      // Exact lot OR exact barcode match — same logic as loadRecallsView
-      const lotHit     = rLot     && scannedLots.has(rLot);
-      const barcodeHit = rBarcode && scannedBarcodes.has(rBarcode);
-      if (!lotHit && !barcodeHit) continue;
-
-      // Find which scans actually matched
-      const matchedScans = recentScans.filter(r =>
-        (rLot     && (r.lot_number     ||'').toLowerCase().trim() === rLot)     ||
-        (rBarcode && (r.barcode_number ||'').toLowerCase().trim() === rBarcode)
-      );
+      let exactCount = 0;
+      let possibleCount = 0;
+      const matchedScans = [];
+      for (const s of recentScans) {
+        const { level } = recallMatchLevel(s, recall);
+        if (level === 'exact') {
+          exactCount++;
+          matchedScans.push(s);
+        } else if (level === 'possible') {
+          possibleCount++;
+        }
+      }
+      if (exactCount === 0 && possibleCount === 0) continue;
 
       const match = {
         recall,
-        count:         matchedScans.length,
-        exactCount:    matchedScans.length,
-        possibleCount: 0,
+        count:         exactCount + possibleCount,
+        exactCount,
+        possibleCount,
         stores: [...new Set(matchedScans.map(m => m.store_name).filter(Boolean))]
       };
 
       // Deduplicate by product+lot key — same as loadRecallsView
       const dedupKey = ((recall.product_name||'').toLowerCase().trim())
-                     + '|' + rLot;
+                     + '|' + ((recall.lot_number||'').toLowerCase().trim());
       if (!_matchDedupeMap.has(dedupKey)) {
         _matchDedupeMap.set(dedupKey, match);
       } else if (recall.source === 'manufacturer_push') {
@@ -9649,33 +9719,37 @@ async function checkRecallsOnLogin(silent = false) {
     // recall_events don't trigger the DB sweep (only recalls table does).
     // For any pushed recall that matched scans, persist those matches now.
     // Fire-and-forget — doesn't block the login flow.
+    //
+    // Raw-capture rebuild: switched the per-scan filter from exact equality
+    // to recallMatchLevel. Only 'exact' (red) hits get persisted to
+    // scan_recall_matches — 'possible' (orange) is informational only.
     (async () => {
       try {
         for (const m of loginRecallMatches) {
           if (m.recall.source !== 'manufacturer_push' || !m.recall.id) continue;
-          // Upsert match rows for each matched scan
-          const rowsToInsert = m.stores.length > 0
-            ? recentScans.filter(s => {
-                const sLot     = (s.lot_number     ||'').toLowerCase().trim();
-                const sBarcode = (s.barcode_number ||'').toLowerCase().trim();
-                const rLot     = (m.recall.lot_number     ||'').toLowerCase().trim();
-                const rBarcode = (m.recall.barcode_number ||'').toLowerCase().trim();
-                return (rLot && sLot === rLot) || (rBarcode && sBarcode === rBarcode);
-              }).map(s => ({
+          if (m.exactCount === 0) continue; // only red hits persist
+
+          const rowsToInsert = recentScans
+            .map(s => {
+              const { level, matched_on } = recallMatchLevel(s, m.recall);
+              if (level !== 'exact') return null;
+              return {
                 scan_id:         s.id,
                 recall_id:       m.recall.id,
                 recall_source:   'manufacturer_push',
                 recall_product:  m.recall.product_name || null,
                 recall_lot:      m.recall.lot_number   || null,
-                match_type:      (m.recall.lot_number && (s.lot_number||'').toLowerCase().trim() === (m.recall.lot_number||'').toLowerCase().trim()) ? 'exact_lot' : 'exact_barcode',
+                match_type:      matched_on === 'barcode' ? 'exact_barcode' : 'exact_lot',
                 match_confidence:'high',
                 organisation_id: _currentOrgId,
                 store_name:      s.store_name || null,
                 scanned_by:      s.scanned_by || null,
                 placed_at:       s.created_at || null,
                 quantity:        s.quantity || 1,
-              }))
-            : [];
+              };
+            })
+            .filter(Boolean);
+
           if (rowsToInsert.length) {
             await sb.from('scan_recall_matches').upsert(rowsToInsert, {
               onConflict: 'scan_id,recall_id', ignoreDuplicates: true,
@@ -10294,14 +10368,13 @@ async function checkActiveRecalls(cachedRecalls = null) {
 
     let matchedRecalls = [];
     for (const recall of uniqueData) {
-      let exactCount = 0, possibleCount = 0, rawCount = 0;
+      let exactCount = 0, possibleCount = 0;
       for (const r of recentRecords) {
         const { level } = recallMatchLevel(r, recall);
         if (level === 'exact') exactCount++;
         else if (level === 'possible') possibleCount++;
-        else if (level === 'raw') rawCount++;
       }
-      if (exactCount || possibleCount || rawCount) matchedRecalls.push({ recall, exactCount, possibleCount, rawCount });
+      if (exactCount || possibleCount) matchedRecalls.push({ recall, exactCount, possibleCount });
     }
 
     if (!matchedRecalls.length) { document.getElementById('auto-recall-banner').style.display = 'none'; return; }
@@ -10314,7 +10387,6 @@ async function checkActiveRecalls(cachedRecalls = null) {
       const parts = [];
       if (m.exactCount)   parts.push(`<strong style="color:var(--danger)">${m.exactCount===1?t('hist.exactMatches',{n:1}):t('hist.exactMatchesPlural',{n:m.exactCount})}</strong>`);
       if (m.possibleCount) parts.push(`<strong style="color:var(--warn)">${m.possibleCount===1?t('hist.possibleMatches',{n:1}):t('hist.possibleMatchesPlural',{n:m.possibleCount})}</strong>`);
-      if (m.rawCount)     parts.push(`<strong style="color:var(--warn)">${m.rawCount} metadata match${m.rawCount!==1?'es':''} — verify lot manually</strong>`);
       const lotPart = m.recall.lot_number ? ` for lot <strong>${esc(m.recall.lot_number)}</strong>` : '';
       return parts.join(' · ') + lotPart + (m.recall.description ? `: ${esc(m.recall.description.slice(0,80))}` : '');
     }).join('<br>');
@@ -10718,57 +10790,77 @@ function lotMatchLevel(scanLot, recallLot) {
 // Returns { level: 'exact'|'possible'|'raw'|null, recall }
 // 'raw' = recall lot code found in the full captured label text, not the parsed lot field.
 //         Surfaces as a warning requiring staff verification — not a confirmed match.
+// Raw-capture rebuild: two-tier match.
+//   'exact'    → red alert. Recall lot identifier is a case-insensitive
+//                substring of scan.raw_capture, OR exact barcode match
+//                (legacy compat for pre-rebuild scans). Product fuzzy-match
+//                is required as a gate so recalls don't match unrelated
+//                products that happen to share a digit sequence.
+//   'possible' → orange alert. Product fuzzy-matches but the lot identifier
+//                isn't a substring of raw_capture, OR raw_capture is null
+//                (skip-path scans + legacy scans without raw_capture).
+//                Lookback-window filtering is applied by callers when
+//                iterating over allRecords (recallLookbackDays).
+//   null       → no match.
+//
+// Substring match uses character-level case-insensitive comparison — NOT
+// fuzzy. Fuzzy normalisation (OCR-confusion 0/O, 1/I, etc.) is intentionally
+// dropped here because raw_capture is the verbatim string the user reviewed
+// and confirmed; fuzzy-fudging it would re-introduce false positives the
+// "capture-everything-match-later" design is meant to avoid.
+//
+// The legacy 'raw' tier (recall lot found in label_text) is gone — the new
+// raw_capture column subsumes it. Old scans with label_text but no
+// raw_capture will fall to 'possible' on product match alone, which is
+// acceptable: pilot data, no compliance regression.
 function recallMatchLevel(scanRecord, recall) {
-  const productMatch = fuzzyProductMatch(recall.product_name, scanRecord.product_name);
-  if (!productMatch) return { level: null };
+  if (!fuzzyProductMatch(recall.product_name, scanRecord.product_name)) {
+    _logRecallMatch(scanRecord, recall, 'none', null);
+    return { level: null };
+  }
 
-  // Barcode exact match — strongest signal
+  // Red — exact barcode match (legacy compat). Kept because pre-rebuild
+  // scans have barcode_number populated; new scans always have it null.
   if (recall.barcode_number && scanRecord.barcode_number &&
-      recall.barcode_number === scanRecord.barcode_number) {
-    return { level: 'exact', recall };
+      recall.barcode_number.toLowerCase().trim() === scanRecord.barcode_number.toLowerCase().trim()) {
+    _logRecallMatch(scanRecord, recall, 'red', 'barcode');
+    return { level: 'exact', recall, matched_on: 'barcode' };
   }
 
-  // Lot number fuzzy match — primary traceability field
-  if (recall.lot_number && scanRecord.lot_number) {
-    const level = lotMatchLevel(scanRecord.lot_number, recall.lot_number);
-    if (level) return { level, recall };
-  }
-
-  // Product name only match (no lot on recall)
-  if (!recall.lot_number && recall.product_name && productMatch) {
-    return { level: 'possible', recall };
-  }
-
-  // ── RAW TEXT FALLBACK ─────────────────────────────────────────
-  // The recall has a lot code but it wasn't found in the parsed lot field.
-  // Search the full captured label text — could be a production code, line
-  // code, or other metadata that the recall authority is using as identifier.
-  // Only surfaces as 'raw' — never promotes to 'exact' or 'possible'.
-  // Requires product name match AND recall lot at least 3 chars to avoid noise.
-  if (recall.lot_number && recall.lot_number.length >= 3 && scanRecord.label_text) {
-    const labelLow  = scanRecord.label_text.toLowerCase();
-    const recallLot = recall.lot_number.toLowerCase().trim();
-    const recallNorm = normaliseForFuzzy(recallLot);
-    // Check raw substring match
-    if (labelLow.includes(recallLot)) return { level: 'raw', recall };
-    // Check normalised match (handles OCR confusion in the raw text)
-    if (recallNorm.length >= 3 && normaliseForFuzzy(labelLow).includes(recallNorm)) {
-      return { level: 'raw', recall };
+  // Red — recall lot is a substring of scan.raw_capture (case-insensitive).
+  // The brief mandates raw_capture as the search field; lot_number on new
+  // scans is set equal to raw_capture by submitScan, so the fallback to
+  // lot_number below is functionally identical for new data and a
+  // partial-credit lifeline for legacy scans where raw_capture is null.
+  if (recall.lot_number) {
+    const recallLotLow = recall.lot_number.toLowerCase().trim();
+    if (recallLotLow) {
+      const rawLow = (scanRecord.raw_capture || scanRecord.lot_number || '').toLowerCase();
+      if (rawLow && rawLow.includes(recallLotLow)) {
+        _logRecallMatch(scanRecord, recall, 'red', 'substring');
+        return { level: 'exact', recall, matched_on: 'substring' };
+      }
     }
   }
 
-  return { level: null };
+  // Orange — product fuzzy-matches but no lot substring confirmed. Includes:
+  //   - recalls without a lot identifier (product-only recall)
+  //   - skip-path scans (raw_capture null)
+  //   - legacy scans where the captured lot doesn't match the recalled lot
+  _logRecallMatch(scanRecord, recall, 'orange', 'product_name_only');
+  return { level: 'possible', recall, matched_on: 'product_name_only' };
 }
 
-// Check a scan record against ALL active recalls
-// Returns highest level found: 'exact' | 'possible' | 'raw' | null
+// Check a scan record against ALL active recalls.
+// Returns highest level found: 'exact' (red) | 'possible' (orange) | null.
+// 'raw' was retired in the raw-capture rebuild — recallMatchLevel no longer
+// emits it, so the branch was dead.
 function checkRecordAgainstRecalls(scanRecord, recalls) {
   let best = null;
   for (const recall of recalls) {
     const { level } = recallMatchLevel(scanRecord, recall);
     if (level === 'exact') return 'exact';
     if (level === 'possible') best = 'possible';
-    else if (level === 'raw' && best !== 'possible') best = 'raw';
   }
   return best;
 }
@@ -10971,7 +11063,7 @@ async function runQuickCheck() {
     const cutoff = new Date(Date.now() - 180 * 86400000).toISOString();
     const [scansRes, recallsRes, eventRecallsRes] = await Promise.all([
       sb.from('scans')
-        .select('id,product_name,lot_number,barcode_number,store_name,store_id,quantity,created_at,removed_from_shelf_at,recall_resolved,scanned_by,label_text')
+        .select('id,product_name,lot_number,barcode_number,raw_capture,store_name,store_id,quantity,created_at,removed_from_shelf_at,recall_resolved,scanned_by,label_text')
         .eq('organisation_id', _currentOrgId)
         .gte('created_at', cutoff)
         .order('created_at', { ascending: false })
@@ -16467,7 +16559,7 @@ async function loadMgrData() {
     const orgId        = _currentOrgId || null;
 
     let scansQuery = sb.from('scans')
-      .select('id,product_name,lot_number,barcode_number,store_name,store_id,quantity,created_at,removed_from_shelf_at,recall_resolved,manager_escalated,scanned_by,is_ftl,supplier_name,reference_document')
+      .select('id,product_name,lot_number,barcode_number,raw_capture,store_name,store_id,quantity,created_at,removed_from_shelf_at,recall_resolved,manager_escalated,scanned_by,is_ftl,supplier_name,reference_document')
       .order('created_at', { ascending: false })
       .limit(500);
     if (orgId) scansQuery = scansQuery.eq('organisation_id', orgId);
@@ -17169,18 +17261,22 @@ function checkStep1RecallWarning(productName, barcodeNum) {
 
   if (!_cachedActiveRecalls || !_cachedActiveRecalls.length) return;
 
-  const nameLower    = (productName  || '').toLowerCase().trim();
-  const barcodeClean = (barcodeNum   || '').toLowerCase().trim();
+  const barcodeClean = (barcodeNum || '').toLowerCase().trim();
 
+  // Raw-capture rebuild: use fuzzyProductMatch (the canonical match function
+  // shared with recallMatchLevel) instead of the old "first long word" rule.
+  // The old rule fired the warning on every Coop-brand scan when a Coop-X
+  // recall was active, which was noisy. fuzzyProductMatch combines exact
+  // substring match (both directions, with brand-stopword stripping) and a
+  // shared-meaningful-words check, so it requires actual product overlap
+  // not just a brand collision.
   const matches = _cachedActiveRecalls.filter(r => {
-    // Exact barcode match — strongest signal
+    // Exact barcode match — strongest signal, kept for legacy data
     if (r.barcode_number && barcodeClean &&
         r.barcode_number.toLowerCase().trim() === barcodeClean) return true;
-    // Product name match — first meaningful word must appear in scan product
-    if (r.product_name && nameLower) {
-      const rWords = r.product_name.toLowerCase().trim().split(/\s+/);
-      const firstLong = rWords.find(w => w.length >= 4) || rWords[0] || '';
-      if (firstLong.length >= 4 && nameLower.includes(firstLong)) return true;
+    // Product fuzzy match
+    if (r.product_name && productName && fuzzyProductMatch(r.product_name, productName)) {
+      return true;
     }
     return false;
   });
@@ -20210,7 +20306,7 @@ async function loadRecallsView() {
     // Limit to 1000 most recent — enough for accurate recall matching, prevents hang on large tables
     const scansResult = await withTimeout(
       sb.from('scans')
-        .select('product_name, lot_number, barcode_number, store_id, store_name')
+        .select('id, product_name, lot_number, barcode_number, raw_capture, store_id, store_name')
         .eq('organisation_id', orgId)
         .is('removed_from_shelf_at', null)
         .order('created_at', { ascending: false })
@@ -20219,17 +20315,11 @@ async function loadRecallsView() {
     );
     const scans = scansResult.data || [];
 
-    const scannedLots     = new Set();
-    const scannedBarcodes = new Set();
-    const scannedWords    = new Set(); // significant words from product names
-
-    scans.forEach(s => {
-      if (s.lot_number)     scannedLots.add(s.lot_number.toLowerCase().trim());
-      if (s.barcode_number) scannedBarcodes.add(s.barcode_number.toLowerCase().trim());
-      if (s.product_name) {
-        s.product_name.toLowerCase().split(/\s+/).filter(w => w.length > 3).forEach(w => scannedWords.add(w));
-      }
-    });
+    // Raw-capture rebuild: the prior exact-lot Set lookup no longer works
+    // because new scans store the verbatim raw cluster in lot_number, not
+    // the parsed lot fragment. matchesOrgHistory below now delegates to
+    // recallMatchLevel (substring on raw_capture + product fuzzy) so the
+    // Recalls drawer surfaces hits consistently with the rest of the app.
 
     // Step 2: fetch active recalls (manual + Mattilsynet/FDA feed) + manufacturer-pushed recalls
     const [recallsRes, eventsRes] = await withTimeout(Promise.all([
@@ -20250,14 +20340,15 @@ async function loadRecallsView() {
 
     const allRecalls = [...pushedRecalls, ...manualRecalls];
 
-    // Step 3: cross-reference — only show if this org has scanned something matching
+    // Step 3: cross-reference — surface a recall in the drawer if any on-shelf
+    // scan matches it at level 'exact' (red) per recallMatchLevel. 'possible'
+    // (orange) is excluded here intentionally: the drawer counts confirmed
+    // active recalls, and a product-name-only match isn't a confirmation.
     function matchesOrgHistory(r) {
-      // STRICT: exact lot OR exact barcode match only.
-      // A recall targets specific lot codes. Product-name matching is NEVER correct.
-      const rLot     = (r.lot_number || '').toLowerCase().trim();
-      const rBarcode = (r.barcode_number || '').toLowerCase().trim();
-      if (rLot && scannedLots.has(rLot)) return true;
-      if (rBarcode && scannedBarcodes.has(rBarcode)) return true;
+      for (const s of scans) {
+        const { level } = recallMatchLevel(s, r);
+        if (level === 'exact') return true;
+      }
       return false;
     }
 
