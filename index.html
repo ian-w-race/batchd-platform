@@ -3608,12 +3608,16 @@
 
           <hr class="divider" />
 
-          <div style="display:grid;grid-template-columns:1fr;gap:10px;">
-            <div class="review-row">
-              <div class="review-label" data-i18n="field.lotNumber">Lot Code (TLC)</div>
-              <div class="review-value" id="review-lot">—</div>
-            </div>
-
+          <!-- Captured raw cluster — read-only display of the verbatim string
+               from Phase 2. Replaces the prior "Lot Code (TLC)" review row.
+               If null (user took the "No lot code on this product" skip path),
+               the value swaps to a muted "No lot captured" placeholder. The
+               separate Best Before row from the old design is gone — that
+               value is still stored in expiry_date for the database, derived
+               via extractBestBefore, but isn't surfaced to staff. -->
+          <div id="review-captured-row" style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;">
+            <div style="font-size:10px;font-family:'DM Mono',monospace;letter-spacing:0.07em;text-transform:uppercase;color:var(--muted);margin-bottom:6px;" data-i18n="p3.captured">Captured</div>
+            <div id="review-captured-value" style="font-family:'DM Mono',monospace;font-size:14px;font-weight:600;color:var(--text);word-break:break-all;line-height:1.4;">—</div>
           </div>
 
           <div class="review-row" id="review-barcode-row" style="display:none;">
@@ -3652,18 +3656,16 @@
             <input type="text" id="field-supplier" placeholder="e.g. ASKO, Norgesgruppen, Tine…" autocorrect="off" onfocus="showSupplierSuggestions()" onblur="setTimeout(hideSupplierSuggestions,200)" />
           </div>
 
-          <!-- FSMA 204 (USA) KDE fields — shown only for FTL products -->
-          <div id="p3-fsma-kde" style="display:none;border-top:1px solid rgba(59,130,246,0.2);padding-top:12px;margin-top:4px;">
-            <div style="font-size:10px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.07em;color:var(--info);margin-bottom:8px;">FSMA 204 (USA) REQUIRED KDEs</div>
-            <div class="field">
-              <label>Reference Document # <span style="color:var(--muted);font-size:10px;">PO / Bill of Lading / Delivery Note</span></label>
-              <input type="text" id="field-reference-doc" placeholder="e.g. PO-2024-8811, BOL-441203" autocorrect="off" autocapitalize="characters" />
-            </div>
-            <div class="field">
-              <label>TLC Source <span style="color:var(--muted);font-size:10px;">Entity that assigned the lot code</span></label>
-              <input type="text" id="field-tlc-source" placeholder="e.g. Lerøy Seafood AS, Del Monte Fresh Produce" autocorrect="off" />
-            </div>
-          </div>
+          <!-- The FSMA 204 KDE block (TLC Source + Reference Document #) was
+               removed in the raw-capture rebuild. Both KDEs are intentionally
+               sourced from the manufacturer-portal shipment linkage rather than
+               from staff capture — staff don't reliably know the PO number or
+               which distributor supplied a given lot, and bad data here creates
+               a false sense of compliance. The FTL badge stays at the top of
+               this phase as a display-only indicator that the product requires
+               full KDE compliance, but the KDEs arrive from the supply-chain
+               side. updateFtlBadge still references #p3-fsma-kde via null-guard,
+               so removing the element here is safe. -->
 
           <div id="supplier-suggestions" style="display:none;position:absolute;z-index:50;background:var(--surface);border:1px solid var(--border);border-radius:8px;width:100%;box-shadow:0 4px 12px rgba(0,0,0,0.15);max-height:160px;overflow-y:auto;font-size:12px;font-family:'DM Mono',monospace;"></div>
           <div id="save-msg" style="min-height:20px;"></div>
@@ -3672,8 +3674,8 @@
             ✓ Confirm Shelf Placement
           </button>
 
-          <button class="btn-next" onclick="goToPhase(2)" id="btn-edit-lot" data-i18n="p3.editLot">
-            ← Edit Lot Code (TLC) / Expiry Date
+          <button class="btn-next" onclick="goToPhase(2)" id="btn-edit-lot" data-i18n="p3.back">
+            ← Back
           </button>
 
         </div>
@@ -7271,37 +7273,42 @@ function populateReview() {
   // Text fields
   const name     = document.getElementById('field-product-name').value.trim();
   const store    = document.getElementById('field-store').value;
-  const lot      = document.getElementById('field-lot').value.trim();
-  const batch    = ''; // field-batch removed from UI
-  const barcode  = document.getElementById('field-barcode').value.trim();
+  const barcode  = document.getElementById('field-barcode')?.value.trim() || '';
 
   document.getElementById('review-product-name').textContent = name  || '—';
   document.getElementById('review-store').textContent        = store || 'Not set';
-  const isLotUnavail = document.getElementById('lot-unavailable-toggle')?.checked;
-  const expiryRev  = document.getElementById('field-expiry')?.value.trim();
-  document.getElementById('review-lot').textContent  = isLotUnavail
-    ? (currentLang === 'no' ? 'Partinummer utilgjengelig' : 'Lot number unavailable')
-    : (lot || '—');
-  document.getElementById('review-lot').className = 'review-value' + ((lot || isLotUnavail) ? '' : ' empty');
-  // Show expiry in review if present
-  let reviewExpiryRow = document.getElementById('review-expiry-row');
-  if (!reviewExpiryRow) {
-    // Create expiry row dynamically if it doesn't exist yet
-    reviewExpiryRow = document.createElement('div');
-    reviewExpiryRow.id = 'review-expiry-row';
-    reviewExpiryRow.className = 'review-row';
-    reviewExpiryRow.innerHTML = '<span class="review-label" id="review-expiry-label">Best Before</span><span class="review-value" id="review-expiry"></span>';
-    const reviewLotRow = document.getElementById('review-lot')?.closest('.review-row');
-    if (reviewLotRow) reviewLotRow.parentNode.insertBefore(reviewExpiryRow, reviewLotRow.nextSibling);
+
+  // Captured chip — replaces the old "Lot Code (TLC)" review row plus the
+  // dynamically-created Best Before row. Sources from _rawCapture (the verbatim
+  // string the user confirmed in Phase 2) rather than field-lot, since
+  // _rawCapture is the canonical truth and field-lot is only kept as a hidden
+  // bridge for resetForm / submitScan compat. When _rawCapture is null (skip
+  // path), the chip shows a muted "No lot captured" placeholder.
+  const capturedEl = document.getElementById('review-captured-value');
+  if (capturedEl) {
+    if (_rawCapture) {
+      capturedEl.textContent = _rawCapture;
+      capturedEl.style.color = 'var(--text)';
+      capturedEl.style.fontStyle = 'normal';
+      capturedEl.style.fontWeight = '600';
+    } else {
+      capturedEl.textContent = t('p3.noLotCaptured');
+      capturedEl.style.color = 'var(--muted)';
+      capturedEl.style.fontStyle = 'italic';
+      capturedEl.style.fontWeight = '400';
+    }
   }
-  if (expiryRev) {
-    document.getElementById('review-expiry').textContent = expiryRev;
-    document.getElementById('review-expiry-label').textContent = currentLang === 'no' ? 'Best før' : 'Best Before';
-    reviewExpiryRow.style.display = '';
-  } else {
-    reviewExpiryRow.style.display = 'none';
-  }
-  // batch field removed from UI
+
+  // The dynamic review-expiry-row from the prior design is gone — the brief
+  // mandates that best_before is stored silently (in expiry_date) and not
+  // shown to staff. Defensively remove any legacy row left over from a scan
+  // that ran on the previous version of this code.
+  const _staleExpiryRow = document.getElementById('review-expiry-row');
+  if (_staleExpiryRow) _staleExpiryRow.remove();
+
+  // (Best Before display logic removed — the value is still stored in
+  // expiry_date for the database via extractBestBefore at confirm time, but
+  // it's not shown on the review screen per the raw-capture rebuild brief.)
 
 
   // Barcode
@@ -7313,11 +7320,15 @@ function populateReview() {
     barcodeRow.style.display = 'none';
   }
 
-  // Photos — lot code scan photo shown below the lot code row
+  // Photos — lot code scan photo shown below the lot code row.
+  // The display-check on barcode-captured was dropped in the raw-capture
+  // rebuild: the element now always has display:none (photo display moved
+  // into the Phase 2 confirm state via #p2-captured-thumb), but its src is
+  // still the canonical source for the Phase 3 review thumbnail.
   const photosEl = document.getElementById('review-photos');
   photosEl.innerHTML = '';
   const barcodeCapImg = document.getElementById('barcode-captured');
-  if (barcodeCapImg.src && barcodeCapImg.style.display !== 'none') {
+  if (barcodeCapImg && barcodeCapImg.src) {
     const label = document.createElement('div');
     label.style.cssText = 'font-size:9px;font-family:\'DM Mono\',monospace;letter-spacing:0.07em;color:var(--muted);text-transform:uppercase;margin-bottom:3px;';
     label.textContent = currentLang === 'no' ? 'Partikode-skanning' : 'Lot code scan';
@@ -12464,6 +12475,13 @@ async function snapRawCluster() {
   const url = URL.createObjectURL(dispBlob);
   const thumb = document.getElementById('p2-captured-thumb');
   if (thumb) thumb.src = url;
+  // Also set the legacy #barcode-captured src so Phase 3's populateReview
+  // picks it up for the lot-photo thumbnail. The element stays display:none
+  // (the new flow shows the captured photo via #p2-captured-thumb in the
+  // confirm state), but its src is still the source of truth that
+  // populateReview reads.
+  const legacyImg = document.getElementById('barcode-captured');
+  if (legacyImg) legacyImg.src = url;
 
   let raw = '';
   try {
@@ -15236,6 +15254,10 @@ const TRANSLATIONS = {
     'p3.recallAlert': 'RECALL ALERT — Do not place on shelf',
     'p3.confirmPlace': '✓ Confirm Shelf Placement',
     'p3.editLot': '← Edit Lot Code (TLC) / Expiry Date',
+    // Raw-capture rebuild — Phase 3 keys for the simplified review screen
+    'p3.captured': 'Captured',
+    'p3.noLotCaptured': 'No lot captured',
+    'p3.back': '← Back',
     // Actions
     'action.cancel': 'Cancel', 'action.capture': 'Capture',
     'action.aiRead': 'AI Read', 'action.snapAnalyse': 'Snap & Analyse',
@@ -15658,6 +15680,10 @@ const TRANSLATIONS = {
     'p3.recallAlert': 'TILBAKEKALLINGSVARSEL — Ikke sett på hylla',
     'p3.confirmPlace': '✓ Bekreft hyllutsetting',
     'p3.editLot': '← Rediger partikode (TLC) / Utløpsdato',
+    // Råfangst-omarbeidelse — Fase 3 nøkler for den forenklede gjennomgangen
+    'p3.captured': 'Fanget',
+    'p3.noLotCaptured': 'Ingen partikode fanget',
+    'p3.back': '← Tilbake',
     // Actions
     'action.cancel': 'Avbryt', 'action.capture': 'Ta bilde',
     'action.aiRead': 'AI-les', 'action.snapAnalyse': 'Ta bilde & analyser',
