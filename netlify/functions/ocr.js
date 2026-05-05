@@ -106,9 +106,29 @@ exports.handler = async (event) => {
         // Capture-everything-match-later flow: read the inkjet date/lot cluster
         // verbatim, no parsing. Substring matching at recall time depends on
         // character-level fidelity, so use Sonnet rather than Haiku.
+        //
+        // Prompt is intentionally aggressive about completeness — the most
+        // common failure mode is omission (e.g. dropping an asterisk-prefixed
+        // segment like "*1599" because it looked like metadata), not bad
+        // guesses. Explicit instructions to include EVERY character and to
+        // guess rather than skip directly counter that failure mode.
         model = MODEL_SONNET;
-        maxTokens = 120;
-        prompt = 'Look at this image of food packaging. Find all text that appears to be a date, lot code, batch number, production time, or line code — these are typically found together as a cluster of inkjet-printed characters near the bottom or back of the pack. Return ALL characters you can read from that cluster as a single raw string, exactly as printed. Do not label them, do not separate them into fields, do not interpret them. Just return the raw string. If you see multiple clusters, return the one most likely to be the lot/date cluster. If you cannot read anything, return an empty string.';
+        maxTokens = 160;
+        prompt = [
+          'Find the inkjet-printed character cluster containing date and lot information on this food packaging — typically a single line or stacked group of digits, dots, slashes, asterisks, colons, dashes, and possibly letters, printed near the bottom, side, or back of the pack.',
+          '',
+          'Return EVERY character you can see in that cluster, exactly as printed, in the order it appears (left-to-right; for stacked layouts, top line first then bottom line, separated by a single space).',
+          '',
+          'CRITICAL RULES:',
+          '- Include ALL separator characters: * . / - : space',
+          '- If you see digits or letters separated by an asterisk, slash, or symbol, include both sides. Do NOT assume the trailing portion is metadata to skip.',
+          '- If a character is faint, partially obscured, or you are not 100% sure what it is, include your best guess. Omitting characters is worse than guessing wrong — the user will verify and edit.',
+          '- Do NOT parse the result. Do NOT separate it into date / lot / time fields. Do NOT normalize formats. Do NOT skip characters that look "extra" or out of place.',
+          '',
+          'Return ONE single raw string with the verbatim text. No labels, no JSON, no commentary.',
+          '',
+          'If you see multiple inkjet clusters, return the one most likely to be the lot/date cluster (usually the longest sequence near the expiry date). If you cannot read any inkjet-printed characters at all, return an empty string.',
+        ].join('\n');
         break;
       }
 
