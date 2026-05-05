@@ -9081,24 +9081,21 @@ async function saveRecord() {
         }).catch(e => { console.warn('[cross-ref] post-save match failed:', e.message); })
       : Promise.resolve();
 
-    // Correction feedback loop — if employee edited lot/batch, record it as high-confidence
-    const _correctionPromise = maybeRecordCorrection(productName, barcodeNum || null)
-      .catch(e => { console.warn('[correction] save failed:', e.message); });
+    // Pattern-learning writes to code_patterns are gone in the raw-capture
+    // rebuild. The old multi-pass OCR pipeline stored crop coordinates,
+    // anchor tokens, and confidence-graded label hints per-product so
+    // future scans of the same SKU could pre-localise the lot region.
+    // The new flow doesn't need any of that — every scan captures the
+    // verbatim cluster and the user verifies. Keeping the learn-write would
+    // populate the table with stale shape inferred from the raw_capture
+    // string (which is no longer a parsed lot code), poisoning the data
+    // for any future feature that reads code_patterns.
+    //
+    // The table itself is untouched — manager dashboard analytics, the
+    // pattern admin view, and brand-schema admin still read from it. Only
+    // scan-time writes are disabled.
 
-    // Save learned pattern with confidence level, barcode, and anchor tokens
-    const _learnPromise = (ocrState && ocrState.codeA)
-      ? saveLearnedPattern(
-          productName, barcodeNum || null,
-          ocrState.codeA, ocrState.codeB,
-          ocrState.lotIsFirst, null, // rawText no longer injected — use null
-          ocrState.locationHint || null,
-          ocrState.confidence, ocrState.localisedCrop || null,
-          ocrState.anchorBefore || null,
-          ocrState.anchorAfter  || null
-        ).catch(e => { console.warn('[learn] saveLearnedPattern failed:', e.message); })
-      : Promise.resolve();
-
-    await Promise.allSettled([_matchPromise, _correctionPromise, _learnPromise]);
+    await Promise.allSettled([_matchPromise]);
 
     todayScanCount++;
     updateScanCounter();
@@ -11105,8 +11102,8 @@ async function runQuickCheck() {
     const syntheticScan = { lot_number: q, product_name: q, barcode_number: q, label_text: q };
     const exactRecalls    = recalls.filter(r => recallMatchLevel(syntheticScan, r).level === 'exact');
     const possibleRecalls = recalls.filter(r => recallMatchLevel(syntheticScan, r).level === 'possible');
-    const rawRecalls      = recalls.filter(r => recallMatchLevel(syntheticScan, r).level === 'raw');
-    const hasRecallMatch  = exactRecalls.length + possibleRecalls.length + rawRecalls.length > 0;
+    // 'raw' tier was retired in chunk 4 — recallMatchLevel no longer emits it.
+    const hasRecallMatch  = exactRecalls.length + possibleRecalls.length > 0;
 
     if (!matchedScans.length && !hasRecallMatch) {
       el.innerHTML = `
@@ -13123,11 +13120,8 @@ async function snapOcr() {
         } else if (level === 'possible' && aiResult.lot_confidence !== 'high') {
           aiResult.lot_confidence = 'medium';
           aiResult.reconcileNote = (aiResult.reconcileNote ? aiResult.reconcileNote + ' · ' : '') + '⚠ Possible recall match';
-        } else if (level === 'raw') {
-          // Raw metadata match — don't boost confidence (the lot code didn't match)
-          // but flag it so the recall alert banner shows
-          aiResult.reconcileNote = (aiResult.reconcileNote ? aiResult.reconcileNote + ' · ' : '') + '~ Recall code in label metadata — verify';
         }
+        // 'raw' tier was retired in chunk 4 — recallMatchLevel no longer emits it.
         break;
       }
     }
@@ -13324,20 +13318,14 @@ function toggleLotUnavailable() {
   }
 }
 
-// Called just before save — if employee edited lot/batch, fire correction feedback
+// Raw-capture rebuild: no-op. The correction feedback loop fed manually-edited
+// lot codes back into code_patterns as high-confidence learning signal, but the
+// rebuild's hidden field-lot bridge is now populated from _rawCapture (not from
+// AI output the user might correct), so there's nothing meaningful to "correct"
+// against. submitScan no longer calls this; preserved for defensive call-site
+// compatibility.
 async function maybeRecordCorrection(productName, barcodeNumber) {
-  if (!_manualEditPending || !ocrState) return;
-  const correctedLot = document.getElementById('field-lot').value.trim();
-  if (!correctedLot) return;
-  const aiLot = ocrState.lotIsFirst ? ocrState.codeA : ocrState.codeB;
-  if (correctedLot !== aiLot) {
-    await recordManualCorrection(
-      productName, barcodeNumber,
-      correctedLot, null,
-      true, ocrState.locationHint
-    );
-  }
-  _manualEditPending = false;
+  return;
 }
 
 // ── OCR STATE ─────────────────────────────────────────────────
@@ -14118,6 +14106,14 @@ function describeCodeFormat(code) {
 const CONF_RANK = { high: 4, medium: 3, low: 2, brand: 1 };
 
 async function saveLearnedPattern(productName, barcodeNumber, codeA, codeB, lotIsFirst, rawText, locationHint, newConfidence, localisedCrop, anchorBefore, anchorAfter) {
+  // Raw-capture rebuild: no-op. The old multi-pass OCR pipeline that produced
+  // the inputs (codeA/codeB/locationHint/anchor*/localisedCrop) is gone, and
+  // writing inferred shape to code_patterns from the new verbatim raw_capture
+  // would poison the table. Function preserved (rather than deleted) because
+  // call sites in the legacy path may still exist; early-return is the
+  // defensive guard that ensures no scan-time write reaches the DB.
+  return;
+  /* eslint-disable no-unreachable */
   if (!productName || !codeA) return;
   try {
     const lotCode   = lotIsFirst ? codeA : codeB;
@@ -15316,7 +15312,7 @@ const TRANSLATIONS = {
     // Phase 1
     'p1.title': 'Identify Product',
     'p1.sub': 'Photograph the label before placing on shelf — AI identifies it',
-    'p1.photoLabel': 'Label', 'p1.scanBarcode': 'GS-1/Barcode',
+    'p1.photoLabel': 'Label',
     'p1.productName': 'Product Name', 'p1.confirm': 'Confirm & Continue →',
     // Phase 2
     'p2.title': 'Lot Code Capture',
@@ -15326,20 +15322,15 @@ const TRANSLATIONS = {
     'p2.captureSubGuide': 'Usually near the bottom or back of the pack',
     'p2.reading': 'Reading text…',
     'p2.captured': 'Captured',
-    'p2.editHint': 'Edit if anything’s wrong',
     'p2.verifyHint': 'Compare with the package — edit anything missing or wrong before continuing.',
     'p2.looksGood': 'Looks good',
     'p2.noLotCode': 'No lot code on this product',
     'p2.backToStep1': '← Back to product',
-    'p2.visualOcr': 'Visual OCR', 'p2.barcodeScan': 'GS-1/Barcode',
-    'p2.confirm': 'Confirm & Review →', 'p2.swap': '⇄ Swap Lot & Batch (TLC)',
     // Phase 3
     'p3.title': 'Confirm & Place on Shelf',
     'p3.sub': 'Review details — then confirm placement to create the traceability record',
     'p3.recallAlert': 'RECALL ALERT — Do not place on shelf',
     'p3.confirmPlace': '✓ Confirm Shelf Placement',
-    'p3.editLot': '← Edit Lot Code (TLC) / Expiry Date',
-    // Raw-capture rebuild — Phase 3 keys for the simplified review screen
     'p3.captured': 'Captured',
     'p3.noLotCaptured': 'No lot captured',
     'p3.back': '← Back',
@@ -15383,8 +15374,6 @@ const TRANSLATIONS = {
     'js.saving': '⏳ Saving…',
     'js.placementRecorded': '✓ Placement recorded',
     'js.savedOffline': 'Saved offline — will sync when connection returns.',
-    'js.p2sub.ocr': 'Photograph the printed lot/batch code (TLC) — AI will read it',
-    'js.p2sub.barcode': 'Scan the barcode on the packaging for the lot code (TLC)',
     'js.selectStore': 'Select store… *required',
     'js.notFoundManual': 'Not found — enter name manually',
     'js.sameProductNext': 'Same product, next unit → scan new lot (TLC)',
@@ -15397,13 +15386,6 @@ const TRANSLATIONS = {
     'scan.productPlaceholder': 'Photograph the label — AI will fill this in…',
     'scan.shelfPlaceholder': 'Shelf location — e.g. Dairy, Aisle 4',
     'scan.done': 'Done',
-    'scan.bestBefore': 'Best Before / Expiry',
-    'scan.bestBeforeNo': 'Best Before / Expiry',
-    'scan.lotUnavail': 'Lot Code Unavailable',
-    'scan.lotUnavailSub': 'Not printed or unreadable — expiry date required instead',
-    'scan.lotRequired': 'Lot number required — enter it manually, or toggle "Lot Number Unavailable".',
-    'scan.expiryRequired': 'Expiry date is required when lot number is unavailable.',
-    'scan.enterExpiry': 'Enter the expiry date instead of a lot number.',
     'shift.noScans': 'No scans yet today.',
     'shift.startScanning': 'Start scanning to see your shift summary.',
     'escalated.title': 'Escalated Recall Items',
@@ -15481,14 +15463,7 @@ const TRANSLATIONS = {
     // Step badges, hints, overlays
     'step.badge1': 'Step 1/3', 'step.badge2': 'Step 2/3', 'step.badge3': 'Step 3/3',
     'p1.cameraHintLabel': "Hold product in front of camera — Batch'd will identify it automatically",
-    'p1.cameraHintBarcode': 'Hold steady · 15-30cm from barcode · align with frame',
-    'p1.noBarcodeFound': "Can't find a barcode?",
-    'p1.switchToLabel': 'Tap to identify by photo',
-    'p1.gotIt': 'Got it',
-    'p1.continueToLot': 'Continue to lot code →',
-    'p1.wrongProduct': 'Wrong product? Start over',
     'p1.confirmRight': "✓ That's right", 'p1.retakeBtn': 'Retake',
-    'p2.backBtn': '← Step 1',
     'hist.addNote': '🔒 Add Note',
     'card.placedOn': 'Placed on shelf:',
     'hist.refresh': '↻ Refresh', 'hist.exportCSV': '↓ Export CSV',
@@ -15726,7 +15701,7 @@ const TRANSLATIONS = {
     // Phase 1
     'p1.title': 'Identifiser produkt',
     'p1.sub': 'Fotografer etiketten før du setter varen på hylla — AI identifiserer den',
-    'p1.photoLabel': 'Etikett', 'p1.scanBarcode': 'GS-1/Strekkode',
+    'p1.photoLabel': 'Etikett',
     // Drawer menu
     'drawer.navigate': 'Navigasjon', 'drawer.scan': 'Skann', 'drawer.history': 'Historikk',
     'drawer.recalls': 'Tilbakekall', 'drawer.settings': 'Innstillinger',
@@ -15734,14 +15709,7 @@ const TRANSLATIONS = {
     // Step badges, hints, overlays
     'step.badge1': 'Steg 1/3', 'step.badge2': 'Steg 2/3', 'step.badge3': 'Steg 3/3',
     'p1.cameraHintLabel': 'Hold produktet foran kameraet — Batch\'d identifiserer det automatisk',
-    'p1.cameraHintBarcode': 'Hold stødig · 15-30cm fra strekkoden · rett mot rammen',
-    'p1.noBarcodeFound': 'Finner ikke strekkoden?',
-    'p1.switchToLabel': 'Trykk for å identifisere med bilde',
-    'p1.gotIt': 'Identifisert',
-    'p1.continueToLot': 'Fortsett til partikode →',
-    'p1.wrongProduct': 'Feil produkt? Start på nytt',
     'p1.confirmRight': '✓ Det stemmer', 'p1.retakeBtn': 'Ta på nytt',
-    'p2.backBtn': '← Steg 1',
     'hist.addNote': '🔒 Legg til notat',
     'p1.productName': 'Produktnavn', 'p1.confirm': 'Bekreft & fortsett →',
     // Phase 2
@@ -15752,20 +15720,15 @@ const TRANSLATIONS = {
     'p2.captureSubGuide': 'Vanligvis nederst eller på baksiden av pakken',
     'p2.reading': 'Leser tekst…',
     'p2.captured': 'Fanget',
-    'p2.editHint': 'Rediger hvis noe er feil',
     'p2.verifyHint': 'Sammenlign med pakken — rediger alt som mangler eller er feil før du fortsetter.',
     'p2.looksGood': 'Ser bra ut',
     'p2.noLotCode': 'Ingen partikode på dette produktet',
     'p2.backToStep1': '← Tilbake til produkt',
-    'p2.visualOcr': 'Visuell OCR', 'p2.barcodeScan': 'GS-1/Strekkode',
-    'p2.confirm': 'Bekreft & se gjennom →', 'p2.swap': '⇄ Bytt parti og batch',
     // Phase 3
     'p3.title': 'Bekreft & legg på hylla',
     'p3.sub': 'Se gjennom detaljene — bekreft deretter utsettingen for å opprette sporbarhetsdokumentasjon',
     'p3.recallAlert': 'TILBAKEKALLINGSVARSEL — Ikke sett på hylla',
     'p3.confirmPlace': '✓ Bekreft hyllutsetting',
-    'p3.editLot': '← Rediger partikode (TLC) / Utløpsdato',
-    // Råfangst-omarbeidelse — Fase 3 nøkler for den forenklede gjennomgangen
     'p3.captured': 'Fanget',
     'p3.noLotCaptured': 'Ingen partikode fanget',
     'p3.back': '← Tilbake',
@@ -15809,8 +15772,6 @@ const TRANSLATIONS = {
     'js.saving': '⏳ Lagrer…',
     'js.placementRecorded': '✓ Hyllutsetting registrert',
     'js.savedOffline': 'Lagret frakoblet — synkroniseres når tilkoblingen er tilbake.',
-    'js.p2sub.ocr': 'Fotografer partinummeret/batchkoden — AI leser den',
-    'js.p2sub.barcode': 'Skann strekkoden på emballasjen for partinummeret',
     'js.selectStore': 'Velg butikk… *påkrevd',
     'js.notFoundManual': 'Ikke funnet — skriv inn navn manuelt',
     'js.sameProductNext': 'Samme produkt, neste enhet → skann nytt parti',
@@ -15824,13 +15785,6 @@ const TRANSLATIONS = {
     'scan.productPlaceholder': 'Fotografer etiketten — AI fyller inn dette…',
     'scan.shelfPlaceholder': 'Hylleplassering — f.eks. Meieri, Gang 4',
     'scan.done': 'Ferdig',
-    'scan.bestBefore': 'Best før / Utløpsdato',
-    'scan.bestBeforeNo': 'Best før / Utløpsdato',
-    'scan.lotUnavail': 'Partinummer utilgjengelig',
-    'scan.lotUnavailSub': 'Ikke trykket eller uleselig — utløpsdato kreves i stedet',
-    'scan.lotRequired': 'Partinummer kreves — skriv det inn manuelt, eller bruk «Partinummer utilgjengelig».',
-    'scan.expiryRequired': 'Utløpsdato er påkrevd når partinummer er utilgjengelig.',
-    'scan.enterExpiry': 'Skriv inn utløpsdatoen i stedet for partinummer.',
     // Shift summary
     'shift.noScans': 'Ingen skanninger i dag ennå.',
     'shift.startScanning': 'Begynn å skanne for å se din skiftoppsummering.',
@@ -16318,17 +16272,13 @@ initLanguage();
 initTheme();
 
 function initMode() {
-  // Apply default mode (OCR) visually on load for Phase 2
-  document.querySelectorAll('.mode-barcode').forEach(el => el.style.display = 'none');
-  document.querySelectorAll('.mode-ocr').forEach(el => el.style.display = '');
-  document.getElementById('field-barcode-wrap').style.display = 'none';
-  document.getElementById('barcode-result').style.display = 'none';
-  document.getElementById('step2-sub').textContent = t('js.p2sub.ocr');
-  // Phase 1.2 of refactor v2: start in barcode mode (ZXing-first identification).
-  // Don't actually call setPhase1Mode here — startP1BarcodeScanner needs camera
-  // permission which needs user gesture on iOS. The static HTML defaults already
-  // show barcode mode; setPhase1Mode runs from the auth flow once a user is
-  // present (which happens post-gesture from sign-in).
+  // Raw-capture rebuild: stripped to a no-op. The Phase 2 mode-toggle UI
+  // (.mode-barcode / .mode-ocr / #field-barcode-wrap / #barcode-result)
+  // was removed in chunk 2 — all the DOM operations this function used to
+  // perform now have nothing to operate on. Subtitle text comes from the
+  // p2.captureGuide data-i18n binding directly. The function call itself
+  // is left at top-level boot for compatibility and to avoid touching the
+  // surrounding init sequence.
 }
 
 // ── MANAGER ROLE ─────────────────────────────────────────────
