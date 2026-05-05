@@ -9958,7 +9958,11 @@ async function renderConsumerNotification() {
     // Limit to last 90 days to avoid showing stale/imported data
     const ninetyDaysAgo = new Date(Date.now() - 90 * 86400000).toISOString();
     const { data: manualRecalls } = await sb.from('recalls')
-      .select('id, product_name, lot_number, active, created_at, source, is_pushed, recall_event_id')
+      // is_pushed and recall_event_id removed — neither column exists on the
+      // live recalls schema (same hotfix as the line ~2105 SELECT). Manual
+      // recalls page deduplication still works via the product+lot key set
+      // built below; the dropped fields weren't load-bearing.
+      .select('id, product_name, lot_number, active, created_at, source')
       .eq('organisation_id', _orgId)
       .eq('active', true)
       .not('source', 'in', '("fda","rasff","FDA","RASFF")')
