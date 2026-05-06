@@ -895,14 +895,9 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
         Reports and Exports
       </button>
-      <div class="nav-section">Supply Chain</div>
-      <!-- Manufacturers nav button retired — chunk 6B partners cleanup. The
-           Manufacturers panel was removed when Batch'd became retailer-only. -->
-      <button class="nav-item" onclick="showPanel('shipments')">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 5v3h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
-        Incoming Shipments
-        <span style="margin-left:auto;font-size:9px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.06em;padding:1px 5px;border-radius:4px;background:rgba(245,166,35,0.15);color:var(--warn);border:1px solid rgba(245,166,35,0.3);">ALPHA</span>
-      </button>
+      <!-- "Supply Chain" sidebar section retired in chunk 6C-a — both
+           items it used to contain (Manufacturers, Incoming Shipments)
+           are gone in the retailer-only pivot. -->
       <div class="nav-section">Setup</div>
       <button class="nav-item" id="nav-onboarding" onclick="showPanel('onboarding')" style="display:none;">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
@@ -1397,7 +1392,7 @@ async function initDashboard(user) {
     // Hide corp-only nav items
     document.querySelectorAll('.nav-item').forEach(el => {
       const onclick = el.getAttribute('onclick') || '';
-      if (onclick.includes("'stores'") || onclick.includes("'staff'") || onclick.includes("'reports'") || onclick.includes("'partners'") || onclick.includes("'shipments'")) {
+      if (onclick.includes("'stores'") || onclick.includes("'staff'") || onclick.includes("'reports'")) {
         el.style.display = 'none';
       }
     });
@@ -1476,13 +1471,13 @@ function showPanel(name) {
     document.getElementById('mobile-overlay')?.classList.remove('active');
   }
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-  const panels = { overview:'Dashboard', onboarding:'Getting started', recalls:'Recalls', stores:'Stores', traceability:'Traceability', shipments:'Incoming Shipments', staff:'Staff', compliance:'Compliance', reports:'Reports', settings:'Settings', triage:'Complaint Triage', 'consumer-notify':'Consumer Notifications', investigations:'Investigations', terminology:'Terminology & Help', lotcheck:'Lot Lookup' };
+  const panels = { overview:'Dashboard', onboarding:'Getting started', recalls:'Recalls', stores:'Stores', traceability:'Traceability', staff:'Staff', compliance:'Compliance', reports:'Reports', settings:'Settings', triage:'Complaint Triage', 'consumer-notify':'Consumer Notifications', investigations:'Investigations', terminology:'Terminology & Help', lotcheck:'Lot Lookup' };
   document.getElementById('topbar-title').textContent = panels[name] || name;
   document.querySelectorAll('.nav-item').forEach(el => {
     if (el.getAttribute('onclick')?.includes(`'${name}'`)) el.classList.add('active');
   });
   // partners: renderPartners removed — Manufacturers panel retired in chunk 6B partners cleanup.
-  const fns = { overview: renderOverview, onboarding: renderOnboarding, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, shipments: renderShipments, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, triage: renderDashboardTriage, investigations: renderDashInvestigations, 'consumer-notify': renderConsumerNotification, terminology: renderTerminology, lotcheck: renderLotCheck };
+  const fns = { overview: renderOverview, onboarding: renderOnboarding, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, triage: renderDashboardTriage, investigations: renderDashInvestigations, 'consumer-notify': renderConsumerNotification, terminology: renderTerminology, lotcheck: renderLotCheck };
   (fns[name] || renderComingSoon)(name);
 }
 
@@ -2677,28 +2672,10 @@ el.innerHTML = `
           </div>
         </div>
 
-        <!-- Shipments on shelf (exposed ones first) -->
-        <div class="panel" onclick="showPanel('shipments')" style="cursor:pointer;">
-          <div class="panel-header">
-            <div><div class="panel-title">Products on shelf</div><div class="panel-sub">${shipments.length} lot${shipments.length!==1?'s':''} from ${confirmedPartners} partner${confirmedPartners!==1?'s':''}</div></div>
-            <button class="panel-action" onclick="event.stopPropagation();showPanel('shipments')">View all →</button>
-          </div>
-          <div class="panel-body" style="padding:${shipments.length===0?'18px':'0 18px'};">
-            ${shipments.length === 0
-              ? `<div class="empty">No shipment data on record.</div>`
-              : [...exposedShipments, ...shipments.filter(s => !exposedShipments.includes(s))].slice(0,5).map(s => {
-                  const isExposed = exposedShipments.includes(s);
-                  return `<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid rgba(22,61,55,0.4);">
-                    <div style="width:6px;height:6px;border-radius:50%;flex-shrink:0;background:${isExposed?'var(--danger)':'var(--accent)'};${isExposed?'box-shadow:0 0 6px rgba(255,92,92,0.5);':''}"></div>
-                    <div style="flex:1;min-width:0;">
-                      <div style="font-size:12px;color:var(--text);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${s.products?.name||'—'}</div>
-                      <div style="font-size:10px;color:var(--muted);margin-top:1px;">Lot: <span style="font-family:'DM Mono',monospace;">${s.lot_number}</span> · ${s.stores?.name||'—'}</div>
-                    </div>
-                    ${isExposed?`<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(255,92,92,0.1);color:var(--danger);flex-shrink:0;">⚠ Recalled</span>`:`<span style="font-size:10px;color:var(--muted);flex-shrink:0;">${fmtDate(s.shipped_at)}</span>`}
-                  </div>`;}).join('')}
-            ${shipments.length > 5 ? `<div style="font-size:11px;color:var(--muted);padding:8px 0;">+ ${shipments.length-5} more</div>` : ''}
-          </div>
-        </div>
+        <!-- "Products on shelf" tile retired (chunk 6C-a) — pointed at
+             the now-removed Shipments panel. The data the tile relied on
+             (shipments + exposedShipments + confirmedPartners) still
+             gets computed for the compliance score in renderCompliance. -->
 
       </div>
     </div>`;
@@ -3842,382 +3819,14 @@ async function deletePattern(id, btn) {
 }
 
 
-// ── Shipments panel ───────────────────────────────────────────
-// ── Incoming Shipments panel ───────────────────────────────────
-// ── Incoming Shipments panel — RETIRED ─────────────────────────
-// renderShipments + downloadShipmentsCSV + _shipment* state were removed
-// in the retailer-only pivot. The shipments table itself stays in the DB
-// (manufacturer_id column untouched), and the recalls panel can still
-// surface manufacturer-pushed recalls via recall_distributions reads.
-// But there's no UI here that creates shipments, exports them, or
-// surfaces them as a panel — the manufacturer side that populated the
-// table is gone.
-
-async function renderShipments() {
-  const _errEl = document.getElementById('main-content');
-  try {
-
-  const el = document.getElementById('main-content');
-  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading shipments…</div>`;
-  try {
-
-  // ── Fetch shipments + recalled lots from both sources ────────
-  const since = _shipmentDays === 'all' ? null
-    : new Date(Date.now() - parseInt(_shipmentDays) * 86400000).toISOString();
-
-  let shipQ = sb.from('shipments')
-    .select('*, products(name), stores(name, id), organisations!shipments_manufacturer_id_fkey(id, name, contact_email, recall_coordinator_name, recall_coordinator_contact)')
-    .eq('retailer_id', _orgId)
-    .order('shipped_at', { ascending: false })
-    .limit(500);
-  if (since) shipQ = shipQ.gte('shipped_at', since);
-
-  const [shipRes, recallsRes, distRes] = await Promise.all([
-    shipQ,
-    sb.from('recalls').select('lot_number, product_name, active').eq('organisation_id', _orgId).eq('active', true),
-    sb.from('recall_distributions')
-      .select('recall_event_id, recall_events!inner(lot_number, product_name, is_drill)')
-      .eq('retailer_org_id', _orgId),
-  ]).limit(200);
-
-  const list       = shipRes.data || [];
-  const recalledLots = new Set([
-    ...(recallsRes.data || []).map(r => r.lot_number).filter(Boolean),
-    ...(distRes.data || []).flatMap(d => d.recall_events?.is_drill ? [] : [d.recall_events?.lot_number]).filter(Boolean),
-  ]);
-
-  // ── Cross-reference with scan history ────────────────────────
-  // For each unique lot number in shipments, check whether it's been scanned
-  const uniqueLots = [...new Set(list.map(s => s.lot_number).filter(Boolean))];
-  let scansByLot = {};
-  if (uniqueLots.length > 0) {
-    const { data: scans } = await sb.from('scans')
-      .select('lot_number, store_name, store_id, scanned_by, created_at, removed_from_shelf_at')
-      .eq('organisation_id', _orgId)
-      .in('lot_number', uniqueLots.slice(0, 100)); // Supabase IN limit safety
-    (scans || []).forEach(s => {
-      const lot = (s.lot_number || '').toLowerCase().trim();
-      if (!scansByLot[lot]) scansByLot[lot] = [];
-      scansByLot[lot].push(s);
-    });
-  }
-
-  // ── Annotate each shipment with scan status ───────────────────
-  const annotated = list.map(sh => {
-    const lot       = (sh.lot_number || '').toLowerCase().trim();
-    const storeId   = sh.store_id || sh.stores?.id;
-    const storeName = sh.stores?.name;
-    const allScansForLot = scansByLot[lot] || [];
-    // Match scans to this specific store
-    const storeScans = allScansForLot.filter(s =>
-      (storeId && s.store_id === storeId) ||
-      (storeName && s.store_name === storeName)
-    );
-    const isRecalled = recalledLots.has(sh.lot_number);
-    const scanStatus = storeScans.length > 0
-      ? (storeScans.some(s => s.removed_from_shelf_at) ? 'pulled' : 'scanned')
-      : 'gap';
-    const lastScan = storeScans.length > 0
-      ? storeScans.reduce((a, b) => a.created_at > b.created_at ? a : b)
-      : null;
-    return { ...sh, isRecalled, scanStatus, storeScans, lastScan };
-  });
-
-  // ── Summary stats ─────────────────────────────────────────────
-  const totalUnits   = annotated.reduce((s, sh) => s + (sh.quantity || 0), 0);
-  const mfrSet       = new Set(annotated.map(s => s.organisations?.name).filter(Boolean));
-  const recalledCount = annotated.filter(s => s.isRecalled).length;
-  const gapCount     = annotated.filter(s => s.scanStatus === 'gap' && !s.isRecalled).length;
-  const scannedCount = annotated.filter(s => s.scanStatus === 'scanned').length;
-  const pulledCount  = annotated.filter(s => s.scanStatus === 'pulled').length;
-
-  // ── Build filter lists ────────────────────────────────────────
-  const mfrNames   = [...mfrSet].sort();
-  const storeNames = [...new Set(annotated.map(s => s.stores?.name).filter(Boolean))].sort();
-
-  // ── Apply current filters ─────────────────────────────────────
-  let filtered = annotated;
-  if (_shipmentMfr)    filtered = filtered.filter(s => s.organisations?.name === _shipmentMfr);
-  if (_shipmentStore)  filtered = filtered.filter(s => s.stores?.name === _shipmentStore);
-  if (_shipmentStatus === 'recalled') filtered = filtered.filter(s => s.isRecalled);
-  if (_shipmentStatus === 'scanned')  filtered = filtered.filter(s => s.scanStatus === 'scanned' && !s.isRecalled);
-  if (_shipmentStatus === 'gap')      filtered = filtered.filter(s => s.scanStatus === 'gap');
-  if (_shipmentStatus === 'pulled')   filtered = filtered.filter(s => s.scanStatus === 'pulled');
-
-  const fmtD = d => d ? new Date(d).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',year:'numeric'}) : '—';
-  const fmtDT = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '—';
-
-  function statusPill(sh) {
-    if (sh.isRecalled) return `<span style="font-size:10px;padding:2px 9px;border-radius:10px;background:rgba(255,92,92,0.12);color:var(--danger);font-weight:700;white-space:nowrap;">⚠ Recalled</span>`;
-    if (sh.scanStatus === 'pulled')  return `<span style="font-size:10px;padding:2px 9px;border-radius:10px;background:rgba(245,166,35,0.12);color:var(--warn);font-weight:600;white-space:nowrap;">Pulled from shelf</span>`;
-    if (sh.scanStatus === 'scanned') return `<span style="font-size:10px;padding:2px 9px;border-radius:10px;background:rgba(52,211,153,0.1);color:var(--accent);font-weight:600;white-space:nowrap;">✓ Scanned in</span>`;
-    return `<span style="font-size:10px;padding:2px 9px;border-radius:10px;background:rgba(245,166,35,0.08);color:var(--warn);font-weight:600;white-space:nowrap;">⏳ Not yet scanned</span>`;
-  }
-
-  // ── Tab bar ───────────────────────────────────────────────────
-  const tabBar = `
-    <div style="display:flex;align-items:center;gap:2px;margin-bottom:18px;border-bottom:1px solid var(--border);padding-bottom:0;flex-wrap:wrap;">
-      ${[
-        { id:'all',    label:`All shipments (${annotated.length})` },
-        { id:'by_mfr', label:'By manufacturer' },
-        { id:'gaps',   label:`Traceability gaps${gapCount>0?' ('+gapCount+')':''}`, warn: gapCount > 0 },
-      ].map(t => `<button onclick="_shipmentTab='${t.id}';renderShipments()"
-        style="font-family:'DM Mono',monospace;font-size:11px;padding:8px 14px;border:none;background:none;cursor:pointer;
-          border-bottom:2px solid ${_shipmentTab===t.id?(t.warn?'var(--warn)':'var(--accent)'):'transparent'};
-          color:${_shipmentTab===t.id?(t.warn?'var(--warn)':'var(--accent)'):'var(--muted)'};
-          margin-bottom:-1px;font-weight:${_shipmentTab===t.id?'700':'400'};"
-        onmouseover="if('${_shipmentTab}'!=='${t.id}')this.style.color='var(--text)'"
-        onmouseout="if('${_shipmentTab}'!=='${t.id}')this.style.color='var(--muted)'">${t.label}</button>`).join('')}
-    </div>`;
-
-  // ── Render ────────────────────────────────────────────────────
-  el.innerHTML = `
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
-      <div>
-        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Incoming shipments</div>
-        <div style="font-size:11px;color:var(--muted);margin-top:2px;">Lot codes shipped to your stores by manufacturer partners · one-step-back traceability</div>
-      </div>
-      <button onclick="downloadShipmentsCSV()" style="font-family:'DM Mono',monospace;font-size:11px;padding:7px 14px;border-radius:7px;border:1px solid var(--glass-border);background:none;color:var(--muted);cursor:pointer;display:flex;align-items:center;gap:6px;">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        Export CSV
-      </button>
-    </div>
-
-    <!-- KPI tiles -->
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:18px;">
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;text-align:center;">
-        <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:22px;color:var(--text);line-height:1;">${annotated.length}</div>
-        <div style="font-size:10px;color:var(--muted);margin-top:4px;text-transform:uppercase;letter-spacing:0.06em;">Shipments</div>
-      </div>
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;text-align:center;">
-        <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:22px;color:var(--text);line-height:1;">${mfrSet.size}</div>
-        <div style="font-size:10px;color:var(--muted);margin-top:4px;text-transform:uppercase;letter-spacing:0.06em;">Manufacturers</div>
-      </div>
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;text-align:center;">
-        <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:22px;color:var(--accent);line-height:1;">${scannedCount + pulledCount}</div>
-        <div style="font-size:10px;color:var(--muted);margin-top:4px;text-transform:uppercase;letter-spacing:0.06em;">Scanned in</div>
-      </div>
-      <div style="background:${gapCount>0?'rgba(245,166,35,0.06)':'var(--surface)'};border:1px solid ${gapCount>0?'rgba(245,166,35,0.25)':'var(--border)'};border-radius:10px;padding:14px 16px;text-align:center;">
-        <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:22px;color:${gapCount>0?'var(--warn)':'var(--muted)'};line-height:1;">${gapCount}</div>
-        <div style="font-size:10px;color:${gapCount>0?'var(--warn)':'var(--muted)'};margin-top:4px;text-transform:uppercase;letter-spacing:0.06em;">Not scanned</div>
-      </div>
-      ${recalledCount > 0 ? `
-      <div style="background:rgba(255,92,92,0.06);border:1px solid rgba(255,92,92,0.25);border-radius:10px;padding:14px 16px;text-align:center;">
-        <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:22px;color:var(--danger);line-height:1;">${recalledCount}</div>
-        <div style="font-size:10px;color:var(--danger);margin-top:4px;text-transform:uppercase;letter-spacing:0.06em;">Under recall</div>
-      </div>` : ''}
-    </div>
-
-    <!-- Recall alert banner -->
-    ${recalledCount > 0 ? `
-    <div style="background:rgba(255,92,92,0.06);border:1px solid rgba(255,92,92,0.25);border-radius:10px;padding:13px 16px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
-      <div style="display:flex;align-items:center;gap:10px;">
-        <div style="width:8px;height:8px;border-radius:50%;background:var(--danger);box-shadow:0 0 6px rgba(255,92,92,0.6);flex-shrink:0;"></div>
-        <span style="font-size:13px;color:var(--danger);font-weight:600;">${recalledCount} shipment${recalledCount!==1?'s':''} under active recall</span>
-        <span style="font-size:11px;color:var(--muted);">Check the Recalls panel for store-level response status</span>
-      </div>
-      <button onclick="showPanel('recalls')" style="font-family:'DM Mono',monospace;font-size:11px;padding:6px 12px;border-radius:6px;border:1px solid rgba(255,92,92,0.3);background:none;color:var(--danger);cursor:pointer;white-space:nowrap;">View recalls →</button>
-    </div>` : ''}
-
-    <!-- Gap alert banner -->
-    ${gapCount > 0 ? `
-    <div style="background:rgba(245,166,35,0.05);border:1px solid rgba(245,166,35,0.2);border-radius:10px;padding:13px 16px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
-      <div style="font-size:13px;color:var(--warn);font-weight:600;">⏳ ${gapCount} lot${gapCount!==1?'s':''} shipped but not yet scanned into store records</div>
-      <div style="font-size:11px;color:var(--muted);">These are traceability gaps — the manufacturer has a shipment record but your store has no scan record for these lots.</div>
-      <button onclick="_shipmentTab='gaps';renderShipments()" style="font-family:'DM Mono',monospace;font-size:11px;padding:6px 12px;border-radius:6px;border:1px solid rgba(245,166,35,0.3);background:none;color:var(--warn);cursor:pointer;white-space:nowrap;">View gaps →</button>
-    </div>` : ''}
-
-    ${tabBar}
-
-    ${_shipmentTab === 'all' ? `
-    <!-- Filters row -->
-    <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center;">
-      <select onchange="_shipmentMfr=this.value;renderShipments()" style="font-family:'DM Mono',monospace;font-size:11px;padding:6px 10px;border-radius:6px;border:1px solid var(--glass-border);background:var(--surface2);color:var(--text);">
-        <option value="">All manufacturers</option>
-        ${mfrNames.map(n => `<option value="${n}" ${_shipmentMfr===n?'selected':''}>${n}</option>`).join('')}
-      </select>
-      <select onchange="_shipmentStore=this.value;renderShipments()" style="font-family:'DM Mono',monospace;font-size:11px;padding:6px 10px;border-radius:6px;border:1px solid var(--glass-border);background:var(--surface2);color:var(--text);">
-        <option value="">All stores</option>
-        ${storeNames.map(n => `<option value="${n}" ${_shipmentStore===n?'selected':''}>${n}</option>`).join('')}
-      </select>
-      <select onchange="_shipmentStatus=this.value;renderShipments()" style="font-family:'DM Mono',monospace;font-size:11px;padding:6px 10px;border-radius:6px;border:1px solid var(--glass-border);background:var(--surface2);color:var(--text);">
-        <option value="">All statuses</option>
-        <option value="scanned"  ${_shipmentStatus==='scanned' ?'selected':''}>✓ Scanned in</option>
-        <option value="gap"      ${_shipmentStatus==='gap'     ?'selected':''}>⏳ Not yet scanned</option>
-        <option value="pulled"   ${_shipmentStatus==='pulled'  ?'selected':''}>Pulled from shelf</option>
-        <option value="recalled" ${_shipmentStatus==='recalled'?'selected':''}>⚠ Under recall</option>
-      </select>
-      <select onchange="_shipmentDays=this.value;renderShipments()" style="font-family:'DM Mono',monospace;font-size:11px;padding:6px 10px;border-radius:6px;border:1px solid var(--glass-border);background:var(--surface2);color:var(--text);">
-        <option value="30"  ${_shipmentDays==='30' ?'selected':''}>Last 30 days</option>
-        <option value="90"  ${_shipmentDays==='90' ?'selected':''}>Last 90 days</option>
-        <option value="180" ${_shipmentDays==='180'?'selected':''}>Last 180 days</option>
-        <option value="all" ${_shipmentDays==='all'?'selected':''}>All time</option>
-      </select>
-      ${(_shipmentMfr || _shipmentStore || _shipmentStatus) ? `<button onclick="_shipmentMfr='';_shipmentStore='';_shipmentStatus='';renderShipments()" style="font-family:'DM Mono',monospace;font-size:11px;padding:6px 10px;border-radius:6px;border:1px solid var(--glass-border);background:none;color:var(--muted);cursor:pointer;">✕ Clear filters</button>` : ''}
-      <div style="margin-left:auto;font-size:11px;color:var(--muted);">${filtered.length} of ${annotated.length} shown</div>
-    </div>
-
-    <!-- All shipments table -->
-    <div class="panel"><div class="panel-body" style="padding:0;">
-      <table class="store-table" style="width:100%;">
-        <thead><tr>
-          <th style="padding:11px 16px;">Product / Lot</th>
-          <th style="padding:11px 16px;">Manufacturer</th>
-          <th style="padding:11px 16px;">Store</th>
-          <th style="padding:11px 16px;">Qty</th>
-          <th style="padding:11px 16px;">Shipped</th>
-          <th style="padding:11px 16px;">Scan status</th>
-          <th style="padding:11px 16px;">Ref doc</th>
-        </tr></thead>
-        <tbody>
-          ${filtered.length === 0
-            ? `<tr><td colspan="7"><div class="empty">No shipments match the current filters.</div></td></tr>`
-            : filtered.map(s => `<tr style="${s.isRecalled?'background:rgba(255,92,92,0.03);':''}">
-              <td style="padding:10px 16px;">
-                <div style="font-size:12px;font-weight:600;color:var(--text);">${s.products?.name||'—'}</div>
-                <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:2px;">${s.lot_number||'—'}</div>
-              </td>
-              <td style="padding:10px 16px;font-size:11px;color:var(--muted);">${s.organisations?.name||'—'}</td>
-              <td style="padding:10px 16px;font-size:11px;color:var(--muted);">${s.stores?.name||'—'}</td>
-              <td style="padding:10px 16px;font-size:12px;font-weight:600;color:var(--text);">${s.quantity||'—'} ${s.unit||''}</td>
-              <td style="padding:10px 16px;font-size:11px;color:var(--muted);white-space:nowrap;">${fmtD(s.shipped_at)}</td>
-              <td style="padding:10px 16px;">
-                ${statusPill(s)}
-                ${s.lastScan ? `<div style="font-size:10px;color:var(--muted);margin-top:3px;">Last scan: ${fmtDT(s.lastScan.created_at)}</div>` : ''}
-              </td>
-              <td style="padding:10px 16px;font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${s.reference_document||'—'}</td>
-            </tr>`).join('')}
-        </tbody>
-      </table>
-    </div></div>` : ''}
-
-    ${_shipmentTab === 'by_mfr' ? (() => {
-      // Group by manufacturer
-      const byMfr = {};
-      annotated.forEach(s => {
-        const mfr = s.organisations?.name || 'Unknown';
-        if (!byMfr[mfr]) byMfr[mfr] = { org: s.organisations, shipments: [] };
-        byMfr[mfr].shipments.push(s);
-      });
-      return Object.entries(byMfr).sort((a,b) => b[1].shipments.length - a[1].shipments.length).map(([mfrName, { org, shipments: mfrShips }]) => {
-        const mfrRecalled = mfrShips.filter(s => s.isRecalled).length;
-        const mfrGaps     = mfrShips.filter(s => s.scanStatus==='gap').length;
-        const mfrScanned  = mfrShips.filter(s => s.scanStatus!=='gap').length;
-        const mfrUnits    = mfrShips.reduce((s,sh)=>s+(sh.quantity||0),0);
-        return `<div class="panel" style="margin-bottom:14px;">
-          <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">
-            <div>
-              <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:14px;color:var(--text);">${mfrName}</div>
-              <div style="font-size:11px;color:var(--muted);margin-top:2px;">
-                ${mfrShips.length} shipment${mfrShips!==1?'s':''} · ${mfrUnits} units total
-                ${org?.recall_coordinator_name ? ` · Coordinator: ${org.recall_coordinator_name}` : ''}
-                ${org?.contact_email ? ` · <span style="font-family:'DM Mono',monospace;">${org.contact_email}</span>` : ''}
-              </div>
-            </div>
-            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-              ${mfrRecalled > 0 ? `<span style="font-size:10px;padding:2px 9px;border-radius:10px;background:rgba(255,92,92,0.12);color:var(--danger);font-weight:700;">${mfrRecalled} recalled</span>` : ''}
-              ${mfrGaps > 0 ? `<span style="font-size:10px;padding:2px 9px;border-radius:10px;background:rgba(245,166,35,0.1);color:var(--warn);font-weight:600;">${mfrGaps} not scanned</span>` : ''}
-              <span style="font-size:10px;padding:2px 9px;border-radius:10px;background:rgba(52,211,153,0.1);color:var(--accent);">${mfrScanned} scanned ✓</span>
-              <button onclick="_shipmentMfr='${mfrName.replace(/'/g,"\\'")}';_shipmentTab='all';renderShipments()" style="font-family:'DM Mono',monospace;font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid var(--glass-border);background:none;color:var(--muted);cursor:pointer;">View all →</button>
-            </div>
-          </div>
-          <div style="padding:0 18px;">
-            ${mfrShips.slice(0,5).map(s => `
-              <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid rgba(22,61,55,0.3);">
-                <div style="flex:1;min-width:0;">
-                  <span style="font-size:12px;font-weight:500;color:var(--text);">${s.products?.name||'—'}</span>
-                  <span style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-left:8px;">${s.lot_number||'—'}</span>
-                </div>
-                <div style="font-size:11px;color:var(--muted);">${s.stores?.name||'—'}</div>
-                <div style="font-size:11px;color:var(--muted);">${fmtD(s.shipped_at)}</div>
-                ${statusPill(s)}
-              </div>`).join('')}
-            ${mfrShips.length > 5 ? `<div style="padding:10px 0;font-size:11px;color:var(--muted);">+${mfrShips.length-5} more — <button onclick="_shipmentMfr='${mfrName.replace(/'/g,"\\'")}';_shipmentTab='all';renderShipments()" style="background:none;border:none;color:var(--accent);cursor:pointer;font-family:inherit;font-size:inherit;padding:0;">View all</button></div>` : ''}
-          </div>
-        </div>`;
-      }).join('');
-    })() : ''}
-
-    ${_shipmentTab === 'gaps' ? (() => {
-      const gaps = annotated.filter(s => s.scanStatus === 'gap' && !s.isRecalled);
-      if (!gaps.length) return `<div class="panel"><div class="panel-body">
-        <div style="text-align:center;padding:32px 24px;">
-          <div style="font-size:28px;margin-bottom:10px;">✅</div>
-          <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:6px;">No traceability gaps</div>
-          <div style="font-size:12px;color:var(--muted);">All shipped lots have a corresponding scan record. One-step-back traceability is complete.</div>
-        </div>
-      </div></div>`;
-      return `
-      <div style="background:rgba(245,166,35,0.05);border:1px solid rgba(245,166,35,0.2);border-radius:10px;padding:14px 16px;margin-bottom:16px;font-size:12px;color:var(--muted);line-height:1.7;">
-        <strong style="color:var(--warn);">What is a traceability gap?</strong> A gap means a manufacturer has logged a shipment to your store, but your store has no scan record for that lot code. Under <strong style="color:var(--text);">${_orgRegion==='us'?'FSMA 204 §1.1330':'EU Reg. 178/2002 Art. 18'}</strong>, you need records at both ends of the supply chain. Ask the relevant store to scan these products into Batch'd when they arrive.
-      </div>
-      <div class="panel"><div class="panel-body" style="padding:0;">
-        <table class="store-table" style="width:100%;">
-          <thead><tr>
-            <th style="padding:11px 16px;">Product / Lot</th>
-            <th style="padding:11px 16px;">Manufacturer</th>
-            <th style="padding:11px 16px;">Store</th>
-            <th style="padding:11px 16px;">Qty shipped</th>
-            <th style="padding:11px 16px;">Shipped</th>
-            <th style="padding:11px 16px;">Days since shipped</th>
-          </tr></thead>
-          <tbody>
-            ${gaps.map(s => {
-              const daysSince = s.shipped_at
-                ? Math.floor((Date.now() - new Date(s.shipped_at)) / 86400000)
-                : null;
-              const urgency = daysSince !== null && daysSince > 14 ? 'var(--danger)' : daysSince > 7 ? 'var(--warn)' : 'var(--muted)';
-              return `<tr>
-                <td style="padding:10px 16px;">
-                  <div style="font-size:12px;font-weight:600;color:var(--text);">${s.products?.name||'—'}</div>
-                  <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:2px;">${s.lot_number||'—'}</div>
-                </td>
-                <td style="padding:10px 16px;font-size:11px;color:var(--muted);">${s.organisations?.name||'—'}</td>
-                <td style="padding:10px 16px;font-size:11px;color:var(--muted);">${s.stores?.name||'—'}</td>
-                <td style="padding:10px 16px;font-size:12px;font-weight:600;">${s.quantity||'—'} ${s.unit||''}</td>
-                <td style="padding:10px 16px;font-size:11px;color:var(--muted);">${fmtD(s.shipped_at)}</td>
-                <td style="padding:10px 16px;font-size:12px;font-weight:700;color:${urgency};">${daysSince !== null ? daysSince + ' days' : '—'}</td>
-              </tr>`;}).join('')}
-          </tbody>
-        </table>
-      </div></div>`;
-    })() : ''}`;
-
-  // Store annotated list for CSV export
-  window._shipmentsCache = annotated;
-
-  } catch(e) {
-    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading shipments: ${e.message}</div>`;
-  }
-
-  } catch(_renderErr) {
-    console.error('[renderShipments]', _renderErr);
-    if (_errEl) _errEl.innerHTML += `<div style="margin:20px 0;padding:16px;background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.2);border-radius:10px;font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;"><strong style="color:var(--danger);">Error loading Shipments</strong><br>${_renderErr.message}</div>`;
-  }
-}
-
-function downloadShipmentsCSV() {
-  const list = window._shipmentsCache || [];
-  if (!list.length) { showToast('No shipments to export', 'warn', 2500); return; }
-  const statusLabel = s => s.isRecalled ? 'Under recall' : s.scanStatus === 'scanned' ? 'Scanned in' : s.scanStatus === 'pulled' ? 'Pulled from shelf' : 'Not yet scanned';
-  downloadCSV(`batchd-incoming-shipments-${new Date().toISOString().split('T')[0]}.csv`,
-    ['Shipped date','Product','Lot number','Manufacturer','Store','Quantity','Unit','Status','Last scan date','Reference document'],
-    list.map(s => [
-      s.shipped_at ? fmtDash(s.shipped_at) : '',
-      s.products?.name || '',
-      s.lot_number || '',
-      s.organisations?.name || '',
-      s.stores?.name || '',
-      s.quantity || '',
-      s.unit || '',
-      statusLabel(s),
-      s.lastScan?.created_at ? fmtDash(s.lastScan.created_at) : '',
-      s.reference_document || '',
-    ])
-  );
-  showToast('CSV downloaded ✓', 'ok', 2500);
-}
-
+// ── Incoming Shipments panel ─ RETIRED ─────────────────────────
+// renderShipments + downloadShipmentsCSV + the dashboard "Products on
+// shelf" KPI tile + the sidebar nav button were all removed in the
+// retailer-only pivot (chunk 6C-a). The shipments table itself stays
+// in the DB — the lot-lookup page (renderLotCheck) and the compliance
+// score (renderCompliance) still read it for one-step-back traceability
+// signal — but there is no longer a UI here that lists shipments,
+// filters them, exports them as CSV, or opens them as a panel.
 
 // ── Staff panel ───────────────────────────────────────────────
 async function renderStaff() {
@@ -8038,9 +7647,6 @@ async function renderDashTriageDetail(el) {
           <button onclick="updateDashTriageStatus('${c.id}','closed')" style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:8px 14px;font-size:12px;cursor:pointer;font-family:inherit;">Close</button>
         </div>` : ''}
 
-        <!-- Manufacturer escalation section -->
-        <div id="escalation-section" style="margin-top:14px;"></div>
-
         <!-- Intelligence panel — auto-loads related data -->
         <div id="triage-intel-panel"></div>
 
@@ -8049,8 +7655,9 @@ async function renderDashTriageDetail(el) {
     if (c.product_name || c.lot_number) {
       renderIntelligencePanel('triage-intel-panel', c.product_name, c.lot_number);
     }
-    // Load escalation section
-    renderEscalationSection('escalation-section', c.id, c.product_name, c.lot_number, c.triage_level);
+    // Manufacturer escalation section retired (chunk 6C-a) — Batch'd is
+    // retailer-only; complaints no longer have a manufacturer audience to
+    // escalate to from this portal.
 
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);padding:20px;">Error: ${e.message}</div>`;
@@ -8074,137 +7681,12 @@ async function updateDashTriageStatus(id, newStatus) {
   } catch(e) { showToast('Error: ' + e.message, 'error', 4000); }
 }
 
-async function renderEscalationSection(elId, complaintId, productName, lotNumber, triageLevel) {
-  const _errEl = document.getElementById('main-content');
-  try {
-
-  const el = document.getElementById(elId);
-  if (!el) return;
-
-  // Fetch existing escalations and confirmed trading partners in parallel.
-  // The escalations query joins to the parent complaint and filters by
-  // receiving_org_id so a forged complaint_id from another org returns nothing.
-  const [escRes, partRes] = await Promise.all([
-    sb.from('complaint_escalations').select('*, organisations!complaint_escalations_to_org_id_fkey(name), complaints!inner(receiving_org_id)').eq('complaint_id', complaintId).eq('complaints.receiving_org_id', _orgId).order('escalated_at', {ascending:false}),
-    sb.from('trading_partners').select('manufacturer_id, organisations!trading_partners_manufacturer_id_fkey(id, name, contact_email, recall_coordinator_name, recall_coordinator_contact)').eq('retailer_id', _orgId).eq('status', 'active'),
-  ]);
-  const escalations = escRes.data || [];
-  const partners    = (partRes.data || []).map(p => p.organisations).filter(Boolean);
-
-  const statusPillEsc = s => {
-    const map = { pending:{c:'var(--warn)',bg:'rgba(245,166,35,0.1)',l:'Pending'}, acknowledged:{c:'var(--info)',bg:'rgba(56,189,248,0.1)',l:'Acknowledged'}, investigating:{c:'var(--accent)',bg:'rgba(52,211,153,0.1)',l:'Investigating'}, resolved:{c:'var(--accent)',bg:'rgba(52,211,153,0.1)',l:'Resolved'} };
-    const d = map[s] || {c:'var(--muted)',bg:'var(--surface2)',l:s};
-    return `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:${d.bg};color:${d.c};font-weight:600;">${d.l}</span>`;
-  };
-
-  el.innerHTML = `
-    <div style="margin-top:14px;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;">
-      <div style="padding:13px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
-        <div>
-          <div style="font-size:12px;font-weight:700;color:var(--text);">Manufacturer escalation</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:1px;">Share this complaint with a connected manufacturer for joint investigation</div>
-        </div>
-        ${partners.length > 0 ? `<button onclick="openEscalateModal('${complaintId}','${(productName||'').replace(/'/g,"\\'")}','${lotNumber||''}','${triageLevel||''}')"
-          style="font-family:'DM Mono',monospace;font-size:11px;padding:7px 14px;border-radius:7px;border:1px solid rgba(245,166,35,0.3);background:rgba(245,166,35,0.06);color:var(--warn);cursor:pointer;white-space:nowrap;">
-          ↗ Escalate to manufacturer
-        </button>` : `<div style="font-size:11px;color:var(--muted);">Connect a manufacturer partner to enable escalation</div>`}
-      </div>
-      ${escalations.length === 0
-        ? `<div style="padding:14px 18px;font-size:11px;color:var(--muted);">No escalations yet — use the button above to share this complaint with the relevant manufacturer.</div>`
-        : `<div style="padding:0 18px;">
-          ${escalations.map(e => `
-            <div style="padding:12px 0;border-bottom:1px solid rgba(22,61,55,0.4);display:flex;align-items:flex-start;gap:12px;">
-              <div style="flex:1;min-width:0;">
-                <div style="font-size:12px;font-weight:600;color:var(--text);">${e.organisations?.name||'Manufacturer'} ${statusPillEsc(e.status)}</div>
-                <div style="font-size:11px;color:var(--muted);margin-top:3px;">Escalated ${fmtDashDT(e.escalated_at)}</div>
-                ${e.message ? `<div style="font-size:11px;color:var(--muted);margin-top:5px;background:var(--surface2);border-radius:6px;padding:7px 10px;line-height:1.5;">"${e.message}"</div>` : ''}
-                ${e.manufacturer_notes ? `<div style="font-size:11px;color:var(--accent);margin-top:5px;background:rgba(52,211,153,0.05);border-radius:6px;padding:7px 10px;line-height:1.5;border:1px solid rgba(52,211,153,0.15);">Manufacturer: "${e.manufacturer_notes}"</div>` : ''}
-              </div>
-            </div>`).join('')}
-          </div>`}
-    </div>`;
-
-  } catch(_renderErr) {
-    console.error('[renderEscalationSection]', _renderErr);
-    if (_errEl) _errEl.innerHTML += `<div style="margin:20px 0;padding:16px;background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.2);border-radius:10px;font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;"><strong style="color:var(--danger);">Error loading Escalation Section</strong><br>${_renderErr.message}</div>`;
-  }
-}
-
-function openEscalateModal(complaintId, productName, lotNumber, triageLevel) {
-  document.getElementById('escalate-modal')?.remove();
-  const m = document.createElement('div');
-  m.id = 'escalate-modal';
-  m.style.cssText = 'position:fixed;inset:0;background:rgba(4,12,14,0.92);z-index:9500;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(4px);';
-
-  // Re-fetch partners for the modal (we have them from renderEscalationSection but safer to re-fetch)
-  sb.from('trading_partners').select('manufacturer_id, organisations!trading_partners_manufacturer_id_fkey(id, name, contact_email, recall_coordinator_name)').eq('retailer_id', _orgId).eq('status', 'active').then(({ data }) => {
-    const partners = (data || []).map(p => p.organisations).filter(Boolean);
-    m.innerHTML = `
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:20px;width:100%;max-width:500px;">
-        <div style="padding:20px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
-          <div>
-            <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:15px;">Escalate to manufacturer</div>
-            <div style="font-size:11px;color:var(--muted);margin-top:2px;">${productName}${lotNumber?' · '+regionTerm('lot_short')+': '+lotNumber:''}</div>
-          </div>
-          <button onclick="document.getElementById('escalate-modal').remove()" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;">✕</button>
-        </div>
-        <div style="padding:20px 24px;">
-          <div id="esc-modal-msg" style="display:none;"></div>
-          <div class="field">
-            <label>Send to manufacturer</label>
-            <select id="esc-to-org">
-              ${partners.map(p => `<option value="${p.id}">${p.name}${p.recall_coordinator_name?' — '+p.recall_coordinator_name:''}</option>`).join('')}
-            </select>
-          </div>
-          <div class="field">
-            <label>Message to manufacturer <span style="font-size:10px;color:var(--muted);">optional</span></label>
-            <textarea id="esc-message" rows="3" placeholder="Describe why you're escalating — what you've found, what you need from them…" style="width:100%;background:var(--surface2);border:1px solid var(--glass-border);border-radius:8px;padding:9px 11px;color:var(--text);font-family:'Figtree',sans-serif;font-size:13px;resize:vertical;"></textarea>
-          </div>
-          <div style="background:rgba(245,166,35,0.06);border:1px solid rgba(245,166,35,0.2);border-radius:8px;padding:10px 13px;font-size:11px;color:var(--muted);margin-bottom:16px;line-height:1.6;">
-            The manufacturer will see: complaint reference, product name, lot number, triage severity, and your message. They will not see consumer personal data. This creates an audit trail in both portals.
-          </div>
-          <div style="display:flex;gap:10px;">
-            <button onclick="submitEscalation('${complaintId}','${triageLevel}')" style="background:var(--warn);color:#1a0f00;border:none;border-radius:8px;padding:10px 20px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">Escalate →</button>
-            <button onclick="document.getElementById('escalate-modal').remove()" style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:10px 16px;font-size:13px;cursor:pointer;font-family:inherit;">Cancel</button>
-          </div>
-        </div>
-      </div>`;
-  });
-  document.body.appendChild(m);
-}
-
-async function submitEscalation(complaintId, triageLevel) {
-  const toOrgId = document.getElementById('esc-to-org')?.value;
-  const message = document.getElementById('esc-message')?.value?.trim();
-  const msgEl   = document.getElementById('esc-modal-msg');
-  const setMsg  = (t, ok) => { if (msgEl) { msgEl.textContent=t; msgEl.style.cssText='display:block;padding:9px 12px;border-radius:6px;margin-bottom:12px;font-size:12px;background:'+(ok?'rgba(52,211,153,0.1)':'rgba(255,92,92,0.1)')+';color:'+(ok?'var(--accent)':'var(--danger)'); } };
-  if (!toOrgId) { setMsg('Select a manufacturer', false); return; }
-  const btn = document.querySelector('#escalate-modal button[onclick^="submitEscalation"]');
-  if (btn) { btn.disabled=true; btn.textContent='Escalating…'; }
-  try {
-    const userId = (await sb.auth.getUser()).data?.user?.id;
-    const { error } = await sb.from('complaint_escalations').insert({
-      complaint_id: complaintId,
-      from_org_id: _orgId,
-      to_org_id: toOrgId,
-      escalated_by: userId,
-      message: message || null,
-      status: 'pending',
-    });
-    if (error) throw error;
-    await sb.from('complaint_audit_log').insert({ complaint_id: complaintId, action: 'escalated_to_manufacturer', actor_label: 'Corp Admin' }).catch(()=>{});
-    setMsg('✓ Escalated — manufacturer notified', true);
-    setTimeout(() => {
-      document.getElementById('escalate-modal')?.remove();
-      // Reload the escalation section
-      const el = document.getElementById('escalation-section');
-      if (el) renderEscalationSection('escalation-section', complaintId, '', '', triageLevel);
-    }, 1200);
-  } catch(e) {
-    setMsg('Error: ' + e.message, false);
-    if (btn) { btn.disabled=false; btn.textContent='Escalate →'; }
-  }
-}
+// ── Manufacturer escalation flow ─ RETIRED ────────────────────
+// renderEscalationSection / openEscalateModal / submitEscalation removed
+// in the retailer-only pivot (chunk 6C-a). The complaint_escalations
+// and complaint_audit_log tables stay in the DB; if escalation ever
+// returns it would target a different audience (e.g. an internal
+// supplier portal), not the retired manufacturer side.
 
 async function loadDashboardTriageBadge() {
   try {
