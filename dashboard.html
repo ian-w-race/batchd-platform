@@ -2243,7 +2243,8 @@ async function renderOverview() {
       color: 'var(--accent)',
     }));
 
-    const confirmedPartners = partners.filter(p => p.status === 'active').length;
+    // confirmedPartners declaration removed in compliance-redesign — was only
+    // used by the "Products on shelf" KPI tile that retired in chunk 6C-a.
     // Strict three-condition rule: only pushed events with on-shelf matches count toward
     // the headline KPI. Pushed events without matches are surfaced separately as
     // pendingAckCount so the acknowledgement workflow stays visible.
@@ -4198,7 +4199,6 @@ function renderComplianceDashboard(el) {
   const gaps = [];
   if (d.scans.length === 0)                                              gaps.push({ cat:'Record keeping',    msg:'No scan records — open the scanning app and start scanning products', link:"showPanel('traceability')" });
   else if (d.lotScans/Math.max(d.scans.length,1) < 0.7)                 gaps.push({ cat:'Record keeping',    msg:`Lot code coverage is ${Math.round(d.lotScans/Math.max(d.scans.length,1)*100)}% — target 100% to meet ${isUS?'FSMA 204':'EU 178/2002'} requirements`, link:null });
-  if (d.confirmedPartners === 0)                                         gaps.push({ cat:'Traceability',       msg:'No manufacturer partners connected — one-step-back traceability is incomplete', link:"showPanel('partners')" });
   if (d.supplierScans === 0 && d.scans.length > 0)                      gaps.push({ cat:'Traceability',       msg:`Supplier names not recorded on any scans — ask staff to enter supplier during scanning`, link:null });
   if (isUS && (d.tlcSourceScans||0) === 0 && d.scans.length > 0)        gaps.push({ cat:'Traceability',       msg:`TLC source not recorded on any scans — required KDE under FSMA 204 §1.1330`, link:null });
   if (isUS && (d.refDocScans||0) === 0 && d.scans.length > 0)           gaps.push({ cat:'Traceability',       msg:`Reference document not recorded on any scans — required KDE under FSMA 204 §1.1330`, link:null });
@@ -4214,8 +4214,8 @@ function renderComplianceDashboard(el) {
       step:1 },
     { label:'Traceability chain', score:sc.traceScore,     icon:'🔗', reg:isUS?'FSMA 204 KDEs / CTEs':'EU 178/2002 Art. 18',
       stats: isUS
-        ? `${d.confirmedPartners} partner${d.confirmedPartners!==1?'s':''} · ${Math.round((d.tlcSourceScans||0)/Math.max(d.scans.length,1)*100)}% TLC source · ${Math.round((d.refDocScans||0)/Math.max(d.scans.length,1)*100)}% ref doc`
-        : `${d.confirmedPartners} manufacturer${d.confirmedPartners!==1?'s':''} · ${Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)}% supplier coverage`,
+        ? `${Math.round((d.tlcSourceScans||0)/Math.max(d.scans.length,1)*100)}% TLC source · ${Math.round((d.refDocScans||0)/Math.max(d.scans.length,1)*100)}% ref doc · ${Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)}% supplier`
+        : `${Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)}% supplier coverage on scans`,
       step:2 },
     { label:'Recall readiness',   score:sc.recallScore,    icon:'🚨', reg:isUS?'FDA 21 CFR · 24h RFR notification':'Mattilsynet §16 · Immediate notification',
       stats:`${d.drills.length} drill${d.drills.length!==1?'s':''} · ${d.acksConfirmed} full response${d.acksConfirmed!==1?'s':''} completed`,
@@ -4308,14 +4308,13 @@ function renderComplianceDashboard(el) {
               <span style="font-size:11px;font-weight:700;color:${scoreColor(sc.traceScore)};">${sc.traceScore}%</span>
             </div>
             <div style="padding:0 16px;">
-              ${complianceCheck(d.confirmedPartners > 0, 'Manufacturer partners connected', d.confirmedPartners > 0 ? d.confirmedPartners+' confirmed partner'+( d.confirmedPartners!==1?'s':'') : 'No partners — one-step-back incomplete', 'Go to Manufacturer Partners')}
               ${complianceCheck(d.supplierScans > 0, isUS ? 'Supplier / previous source documented' : 'Supplier name documented (one-step back)', d.supplierScans > 0 ? Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)+'% of scans include supplier' : 'No supplier data on scans', 'Staff should enter supplier during scanning')}
               ${isUS
                 ? complianceCheck((d.tlcSourceScans||0) > 0, 'TLC source documented (FSMA 204 KDE)', (d.tlcSourceScans||0) > 0 ? Math.round((d.tlcSourceScans||0)/Math.max(d.scans.length,1)*100)+'% of scans include TLC source' : 'No TLC source on any scans — required KDE', 'Enter TLC source (lot assigning document) during scanning')
                 : complianceCheck(d.supplierScans/Math.max(d.scans.length,1) > 0.5, 'Traceability coverage >50%', Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)+'% of records have supplier data', 'Target 100% for all received goods')}
               ${isUS
                 ? complianceCheck((d.refDocScans||0) > 0, 'Reference document recorded (FSMA 204 KDE)', (d.refDocScans||0) > 0 ? Math.round((d.refDocScans||0)/Math.max(d.scans.length,1)*100)+'% of scans include reference document' : 'No reference documents on any scans — required KDE', 'Enter PO/invoice number during scanning')
-                : complianceCheck(d.confirmedPartners > 0 && d.supplierScans > 0, 'Full one-step-back chain established', d.confirmedPartners > 0 && d.supplierScans > 0 ? 'Both manufacturer connections and supplier records present' : 'Requires manufacturer connections + supplier records', null)}
+                : complianceCheck(d.supplierScans > 0 && d.lotScans > 0, 'One-step-back chain established', d.supplierScans > 0 && d.lotScans > 0 ? 'Supplier names and lot codes present on scans' : 'Requires supplier names + lot codes on scans', 'Staff should enter both supplier and lot during scanning')}
             </div>
           </div>
         </div>
@@ -4329,7 +4328,7 @@ function renderComplianceDashboard(el) {
             </div>
             <div style="padding:0 16px;">
               ${complianceCheck(d.drillInYear, 'Mock recall drill (last 12 months)', d.drillInYear ? d.drills.length+' drill'+( d.drills.length!==1?'s':'')+' — last: '+fmtDate(d.drills[0].started_at) : 'No drills on record', 'Run a mock recall drill from Manager Dashboard')}
-              ${complianceCheck(d.acks.length > 0, 'Recall alert network active', d.acks.length > 0 ? d.acks.length+' recall acknowledgements received' : 'No recalls received yet', 'Connect manufacturer partners')}
+              ${complianceCheck(d.acks.length > 0, 'Recall alert network active', d.acks.length > 0 ? d.acks.length+' recall acknowledgements received' : 'No recalls received yet', null)}
               ${complianceCheck(d.acksProgressed > 0, 'Recall responses documented', d.acksProgressed > 0 ? d.acksProgressed+' recall'+(d.acksProgressed!==1?'s':'')+' progressed through response chain' : 'No responses documented yet', 'Document each step in the Recalls panel')}
               ${complianceCheck(d.acksConfirmed > 0 || d.acks.length === 0, 'Full 5-step response chain completed', d.acksConfirmed > 0 ? d.acksConfirmed+' full response'+( d.acksConfirmed!==1?'s':'')+' completed' : d.acks.length > 0 ? 'No recalls fully confirmed yet' : 'Chain not yet exercised', null)}
             </div>
@@ -4480,7 +4479,7 @@ async function loadComplianceData(el) {
   const days365 = new Date(now - 365 * 86400000).toISOString();
   const isUS = _orgRegion === 'us';
 
-  const [scansRes, storesRes, acksRes, drillsRes, partnersRes, orgRes] = await Promise.all([
+  const [scansRes, storesRes, acksRes, drillsRes, orgRes] = await Promise.all([
     // 365-day lookback + cap: prevents unbounded query on large orgs.
     // Columns include FSMA 204 KDEs (tlc_source, reference_document) for US scoring.
     sb.from('scans')
@@ -4492,7 +4491,6 @@ async function loadComplianceData(el) {
     sb.from('stores').select('id, name, active').eq('organisation_id', _orgId),
     sb.from('recall_acknowledgements').select('status, acknowledged_at, created_at, recall_event_id').eq('organisation_id', _orgId),
     sb.from('mock_recall_drills').select('id, started_at, recall_event_id').eq('initiated_by_org', _orgId).gte('started_at', days365).order('started_at', {ascending:false}),
-    sb.from('trading_partners').select('status').eq('retailer_id', _orgId),
     sb.from('organisations').select('recall_coordinator_name, recall_coordinator_contact, recall_lookback_days').eq('id', _orgId).single(),
   ]);
 
@@ -4500,7 +4498,6 @@ async function loadComplianceData(el) {
   const stores  = storesRes.data  || [];
   const acks    = acksRes.data    || [];
   const drills  = drillsRes.data  || [];
-  const partners= partnersRes.data|| [];
   const org     = orgRes.data     || {};
 
   // Enrich drills
@@ -4514,7 +4511,6 @@ async function loadComplianceData(el) {
   }
 
   const activeStores      = stores.filter(s => s.active);
-  const confirmedPartners = partners.filter(p => p.status === 'active').length;
   const recentScans       = scans.filter(s => s.created_at >= days30);
   const lotScans          = scans.filter(s => s.lot_number).length;
   const supplierScans     = scans.filter(s => s.supplier_name).length;
@@ -4541,20 +4537,23 @@ async function loadComplianceData(el) {
     ? Math.round(((tlcSourceScans + refDocScans + supplierScans) / (3 * scans.length)) * 100)
     : Math.round((supplierScans / scans.length) * 100);
 
-  // Coordinator adds to recall readiness score
+  // Coordinator adds to recall readiness score.
+  // Reweight after chunk 6C (retailer-only): the +20 that used to be
+  // awarded for "manufacturer partners connected" is rolled into the
+  // drillInYear weight, since drilling is the meaningful proactive
+  // readiness signal for a retailer-only platform.
   const hasCoordinator = !!(org.recall_coordinator_name && org.recall_coordinator_contact);
   let recallScore     = 20;
-  if (confirmedPartners > 0)  recallScore += 20;
   if (acks.length > 0)        recallScore += 15;
   if (acksProgressed > 0)     recallScore += 20;
-  if (drillInYear)            recallScore += 15;
+  if (drillInYear)            recallScore += 35;
   if (hasCoordinator)         recallScore += 10;
   recallScore = Math.min(100, recallScore);
   const coverageScore = activeStores.length === 0 ? 0 : Math.round((storesActiveRecent / activeStores.length) * 100);
   const overallScore  = Math.round((docScore + traceScore + recallScore + coverageScore) / 4);
 
   _complianceData = {
-    scans, stores, acks, drills, partners, activeStores, confirmedPartners,
+    scans, stores, acks, drills, activeStores,
     recentScans, lotScans, supplierScans, ftlScans,
     tlcSourceScans, refDocScans,        // FSMA 204 KDE fields
     acksProgressed, acksConfirmed,
@@ -4639,12 +4638,6 @@ function renderComplianceCategory(el, step) {
       score: sc.traceScore,
       checks: [
         {
-          pass: d.confirmedPartners > 0,
-          label: 'Manufacturer partners connected',
-          detail: d.confirmedPartners > 0 ? `${d.confirmedPartners} confirmed manufacturer partner${d.confirmedPartners!==1?'s':''}` : 'No manufacturer partners connected',
-          action: 'Go to Manufacturer Partners → accept pending requests or invite manufacturers',
-        },
-        {
           pass: d.supplierScans > 0,
           label: isUS ? 'Supplier / previous source documented' : 'Supplier name documented (one step back)',
           detail: d.supplierScans > 0 ? `${d.supplierScans} of ${d.scans.length} records include supplier name (${Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)}%)` : 'No supplier names on record',
@@ -4677,19 +4670,19 @@ function renderComplianceCategory(el, step) {
         }] : []),
         {
           pass: isUS
-            ? d.confirmedPartners > 0 && (d.tlcSourceScans||0) > 0 && (d.refDocScans||0) > 0
-            : d.confirmedPartners > 0 && d.supplierScans > 0,
+            ? (d.tlcSourceScans||0) > 0 && (d.refDocScans||0) > 0 && d.supplierScans > 0
+            : d.supplierScans > 0 && d.lotScans > 0,
           label: isUS ? 'Full FSMA 204 KDE chain established' : 'Full one-step-back chain established',
           detail: isUS
-            ? (d.confirmedPartners > 0 && (d.tlcSourceScans||0) > 0 && (d.refDocScans||0) > 0
-                ? 'Manufacturer connections, TLC source, and reference documents all present'
-                : 'Requires manufacturer connections + TLC source + reference documents on scans')
-            : (d.confirmedPartners > 0 && d.supplierScans > 0
-                ? 'Both manufacturer connections and supplier records are present'
-                : 'Requires both manufacturer connections and supplier records on scans'),
+            ? ((d.tlcSourceScans||0) > 0 && (d.refDocScans||0) > 0 && d.supplierScans > 0
+                ? 'TLC source, reference documents, and supplier names all present on scans'
+                : 'Requires TLC source + reference documents + supplier names on scans')
+            : (d.supplierScans > 0 && d.lotScans > 0
+                ? 'Both supplier names and lot codes are recorded on scans'
+                : 'Requires both supplier names and lot codes on scans'),
           action: isUS
-            ? 'Connect manufacturers in the Manufacturers panel and ensure staff complete all KDE fields when scanning'
-            : 'Connect manufacturers in the Manufacturers panel and ensure supplier names are recorded on all scans',
+            ? 'Ensure staff complete all KDE fields (supplier, TLC source, reference doc) when scanning'
+            : 'Ensure supplier names and lot codes are recorded on all scans',
         },
       ],
     },
@@ -4708,7 +4701,7 @@ function renderComplianceCategory(el, step) {
           pass: d.acks.length > 0,
           label: 'Recall network active — alerts received',
           detail: d.acks.length > 0 ? `${d.acks.length} recall acknowledgement record${d.acks.length!==1?'s':''}` : 'No recall alerts received yet',
-          action: 'Connect manufacturer partners so you receive recall pushes when they occur',
+          action: null,
         },
         {
           pass: d.acksProgressed > 0,
@@ -4879,7 +4872,6 @@ function renderComplianceResults(el) {
         <div style="padding:0 18px;">
           ${[
             !d.drillInYear       && { step:3, label:'Run a mock recall drill', detail:'Required annually for recall readiness certification', urgency:'high' },
-            d.confirmedPartners===0 && { step:2, label:'Connect manufacturer partners', detail:'Required for manufacturer push recall notifications', urgency:'high' },
             d.supplierScans===0  && { step:2, label:'Start recording supplier names on scans', detail:'Required for one step back traceability under EU 178/2002 and FSMA 204', urgency:'med' },
             d.lotScans===0       && { step:1, label:'Capture lot codes on all scans', detail:'Key Data Element required for FSMA 204 compliance', urgency:'med' },
             d.activeStores.length>0 && d.storesActiveRecent<d.activeStores.length && { step:4, label:'Investigate dark stores', detail:`${d.activeStores.length-d.storesActiveRecent} store${d.activeStores.length-d.storesActiveRecent!==1?'s':''} with no recent scanning activity`, urgency:'low' },
@@ -4911,7 +4903,7 @@ function renderComplianceResults(el) {
             <div style="display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-bottom:1px solid rgba(22,61,55,0.5);">
               <div>
                 <div style="font-size:12px;font-weight:500;color:var(--text);">${dr.product_name||'Mock drill'}</div>
-                <div style="font-size:10px;color:var(--muted);margin-top:2px;">${new Date(dr.created_at).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',year:'numeric'})}</div>
+                <div style="font-size:10px;color:var(--muted);margin-top:2px;">${new Date(dr.started_at).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',year:'numeric'})}</div>
               </div>
               <button onclick="generateDrillReport('${dr.id}')" style="font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;">↓ PDF</button>
             </div>`).join('')}
@@ -5334,8 +5326,7 @@ async function generateComplianceReport() {
     <div class="check"><div class="check-icon ${d.scans.length>0?'pass':'fail'}">${d.scans.length>0?'✓':'✗'}</div><div><strong>Scan records on file</strong><br><span style="color:#666;">${d.scans.length} product records</span></div></div>
     <div class="check"><div class="check-icon ${d.lotScans>0?'pass':'fail'}">${d.lotScans>0?'✓':'✗'}</div><div><strong>Lot codes captured</strong><br><span style="color:#666;">${d.lotScans} of ${d.scans.length} scans (${Math.round(d.lotScans/Math.max(d.scans.length,1)*100)}%)</span></div></div>
     <h2>Traceability chain</h2>
-    <div class="check"><div class="check-icon ${d.confirmedPartners>0?'pass':'fail'}">${d.confirmedPartners>0?'✓':'✗'}</div><div><strong>Manufacturer partners connected</strong><br><span style="color:#666;">${d.confirmedPartners} confirmed partners</span></div></div>
-    <div class="check"><div class="check-icon ${d.supplierScans>0?'pass':'fail'}">${d.supplierScans>0?'✓':'✗'}</div><div><strong>Supplier names documented</strong><br><span style="color:#666;">${d.supplierScans} of ${d.scans.length} records</span></div></div>
+    <div class="check"><div class="check-icon ${d.supplierScans>0?'pass':'fail'}">${d.supplierScans>0?'✓':'✗'}</div><div><strong>Supplier names documented</strong><br><span style="color:#666;">${d.supplierScans} of ${d.scans.length} records (${Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)}%)</span></div></div>
     <h2>Recall readiness</h2>
     <div class="check"><div class="check-icon ${d.drillInYear?'pass':'fail'}">${d.drillInYear?'✓':'✗'}</div><div><strong>Mock recall drill (12 months)</strong><br><span style="color:#666;">${d.drills.length} drill${d.drills.length!==1?'s':''} on record</span></div></div>
     <div class="check"><div class="check-icon ${d.acksProgressed>0?'pass':'fail'}">${d.acksProgressed>0?'✓':'✗'}</div><div><strong>Recall response documented</strong><br><span style="color:#666;">${d.acksProgressed} responses progressed</span></div></div>
