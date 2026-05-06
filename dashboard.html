@@ -1471,7 +1471,7 @@ function showPanel(name) {
     document.getElementById('mobile-overlay')?.classList.remove('active');
   }
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-  const panels = { overview:'Dashboard', onboarding:'Getting started', recalls:'Recalls', stores:'Stores', traceability:'Scan History', staff:'Staff', compliance:'Compliance', reports:'Reports', settings:'Settings', triage:'Complaint Triage', 'consumer-notify':'Consumer Notifications', investigations:'Investigations', terminology:'Terminology & Help', lotcheck:'Lot Lookup' };
+  const panels = { overview:'Dashboard', onboarding:'Getting started', recalls:'Recalls', stores:'Store Network', traceability:'Scan History', staff:'Staff Activity', compliance:'Compliance', reports:'Reports and Exports', settings:'Settings', triage:'Complaint Triage', 'consumer-notify':'Consumer Notify', investigations:'Investigations', terminology:'Terminology & Help', lotcheck:'Lot Lookup' };
   document.getElementById('topbar-title').textContent = panels[name] || name;
   document.querySelectorAll('.nav-item').forEach(el => {
     if (el.getAttribute('onclick')?.includes(`'${name}'`)) el.classList.add('active');
@@ -1920,10 +1920,9 @@ async function renderOnboarding() {
 
     el.innerHTML = `
       <div style="max-width:680px;">
-        <!-- Header -->
+        <!-- Subheader (page title is already in the topbar) -->
         <div style="margin-bottom:24px;">
-          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;margin-bottom:4px;">Getting started with Batch'd</div>
-          <div style="font-size:11px;color:var(--muted);">${_orgName} · Complete all steps to be audit-ready</div>
+          <div style="font-size:11px;color:var(--muted);">Complete all steps to be audit-ready.</div>
         </div>
 
         <!-- Progress -->
@@ -2993,10 +2992,7 @@ async function renderRecalls() {
   if (_recallsTab === 'active') {
     el.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
-        <div>
-          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Recalls</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:2px;">${active} active · ${unacknowledged} store${unacknowledged!==1?'s':''} awaiting action</div>
-        </div>
+        <div style="font-size:11px;color:var(--muted);">${active} active · ${unacknowledged} store${unacknowledged!==1?'s':''} awaiting action</div>
         ${unacknowledged > 0 ? `<div style="display:flex;align-items:center;gap:6px;background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.25);border-radius:8px;padding:8px 12px;"><div style="width:7px;height:7px;border-radius:50%;background:var(--danger);animation:blink 1.2s ease-in-out infinite;"></div><span style="font-size:11px;color:var(--danger);">${unacknowledged} store${unacknowledged!==1?'s':''} require action</span></div>` : ''}
       </div>
       ${tabBar('active')}
@@ -3031,8 +3027,7 @@ async function renderRecalls() {
     const histRecalls = recalls.filter(r => !r.active);
     el.innerHTML = `
       <div style="margin-bottom:16px;">
-        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Recalls</div>
-        <div style="font-size:11px;color:var(--muted);margin-top:2px;">${allHistory.length + histRecalls.length} historical records</div>
+        <div style="font-size:11px;color:var(--muted);">${allHistory.length + histRecalls.length} historical records</div>
       </div>
       ${tabBar('history')}
       ${allHistory.length === 0 && histRecalls.length === 0 ? `<div class="empty" style="padding:48px 24px;text-align:center;">No completed recalls yet. Active recalls move here when all stores confirm.</div>` : ''}
@@ -3055,8 +3050,7 @@ async function renderRecalls() {
     const isUS = _orgRegion === 'us';
     el.innerHTML = `
       <div style="margin-bottom:16px;">
-        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Recalls</div>
-        <div style="font-size:11px;color:var(--muted);margin-top:2px;">${feedRecalls.length} ${isUS?'FDA':'Mattilsynet'} alerts imported · ${feedRecalls.filter(r=>matchedIds.has(r.id)).length} match your scan history</div>
+        <div style="font-size:11px;color:var(--muted);">${feedRecalls.length} ${isUS?'FDA':'Mattilsynet'} alerts imported · ${feedRecalls.filter(r=>matchedIds.has(r.id)).length} match your scan history</div>
       </div>
       ${tabBar('feed')}
       <div style="background:rgba(56,189,248,0.05);border:1px solid rgba(56,189,248,0.2);border-radius:10px;padding:13px 16px;margin-bottom:16px;font-size:12px;color:var(--muted);line-height:1.6;">
@@ -3083,9 +3077,6 @@ async function renderRecalls() {
 
   } else if (_recallsTab === 'add') {
     el.innerHTML = `
-      <div style="margin-bottom:16px;">
-        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Recalls</div>
-      </div>
       ${tabBar('add')}
       <div style="max-width:580px;">
         <div class="panel">
@@ -3403,10 +3394,7 @@ async function renderStores() {
   const list = stores || [];
   el.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
-      <div>
-        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">${list.filter(s=>s.active).length} active stores</div>
-        <div style="font-size:11px;color:var(--muted);margin-top:2px;">${list.length} total locations for ${_orgName}</div>
-      </div>
+      <div style="font-size:11px;color:var(--muted);">${list.filter(s=>s.active).length} active · ${list.length} total locations</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn-ghost" onclick="importStores()" style="display:flex;align-items:center;gap:6px;font-size:12px;padding:7px 13px;">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -3775,11 +3763,7 @@ function filterTraceability() {
 
 function traceabilityHeader(activeTab) {
   return `
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
-      <div>
-        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Scan History</div>
-        <div style="font-size:11px;color:var(--muted);margin-top:2px;">${_orgName}</div>
-      </div>
+    <div style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
       <div style="display:flex;gap:2px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:3px;">
         <button onclick="renderTraceability('scans')"
           style="font-family:'DM Mono',monospace;font-size:11px;padding:6px 14px;border-radius:6px;border:none;cursor:pointer;transition:all 0.15s;
@@ -3900,10 +3884,7 @@ async function renderStaff() {
 
   el.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
-      <div>
-        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">${members.length} team member${members.length!==1?'s':''}</div>
-        <div style="font-size:11px;color:var(--muted);margin-top:2px;">All staff and managers in ${_orgName}</div>
-      </div>
+      <div style="font-size:11px;color:var(--muted);">${members.length} team member${members.length!==1?'s':''} — staff and managers</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn-ghost" onclick="importStaff()" style="display:flex;align-items:center;gap:6px;font-size:12px;padding:7px 13px;">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -4256,8 +4237,7 @@ function renderComplianceDashboard(el) {
       <!-- Header row: overall score + last assessed -->
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:20px;flex-wrap:wrap;">
         <div>
-          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Compliance Centre</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:2px;">${isUS?'FDA · FSMA 204 · USDA FSIS':'Matloven · Mattilsynet'} · Last checked ${fmtDate(d.assessedAt)}</div>
+          <div style="font-size:11px;color:var(--muted);">${isUS?'FDA · FSMA 204 · USDA FSIS':'Matloven · Mattilsynet'} · Last checked ${fmtDate(d.assessedAt)}</div>
         </div>
         <div style="display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 20px;">
           <div style="width:54px;height:54px;border-radius:50%;background:conic-gradient(${scoreColor(sc.overallScore)} ${sc.overallScore*3.6}deg,var(--border) 0deg);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
@@ -5495,8 +5475,7 @@ async function renderReports() {
       <!-- Header -->
       <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
         <div>
-          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Reports & exports</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:2px;">${_orgName} · ${isUS?'FDA / FSMA 204':'EU 178/2002 / Mattilsynet'}</div>
+          <div style="font-size:11px;color:var(--muted);">${isUS?'FDA / FSMA 204':'EU 178/2002 / Mattilsynet'}</div>
         </div>
         <!-- Date range filter -->
         <div style="display:flex;gap:2px;background:var(--surface2);border:1px solid var(--glass-border);border-radius:8px;padding:3px;">
@@ -6233,7 +6212,6 @@ function renderLotCheck() {
   el.innerHTML = `
     <div style="max-width:760px;">
       <div style="margin-bottom:20px;">
-        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;margin-bottom:4px;">Lot Lookup</div>
         <div style="font-size:12px;color:var(--muted);">Search any lot code, barcode, or product name — or scroll down to see everything currently on shelf across all stores.</div>
       </div>
 
@@ -6548,7 +6526,6 @@ function renderTerminology() {
     <div style="max-width:820px;">
 
       <div style="margin-bottom:20px;">
-        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;margin-bottom:6px;">Terminology & Help</div>
         <div style="font-size:12px;color:var(--muted);line-height:1.7;">
           Precise definitions of every term used in the Batch'd platform. These definitions are intended to
           support compliance documentation, regulatory submissions, and legal review. Where a term has a
@@ -6724,11 +6701,6 @@ async function renderSettings() {
   const lookbackDays = userSett?.recall_lookback_days || 180;
 
   el.innerHTML = `
-    <div style="margin-bottom:20px;">
-      <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Settings</div>
-      <div style="font-size:11px;color:var(--muted);margin-top:2px;">${_orgName}</div>
-    </div>
-
     <div style="display:flex;flex-direction:column;gap:16px;max-width:860px;">
 
       <!-- Row 1: Organisation + Account -->
@@ -7248,10 +7220,7 @@ async function renderDashTriageList(el) {
 
     el.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:20px;flex-wrap:wrap;">
-        <div>
-          <div style="font-size:15px;font-weight:600;color:var(--text);">Complaint Triage</div>
-          <div style="font-size:12px;color:var(--muted);margin-top:2px;">Complaints about products in your stores, triaged automatically by Batch'd AI.</div>
-        </div>
+        <div style="font-size:12px;color:var(--muted);">Complaints about products in your stores, triaged automatically by Batch'd AI.</div>
         <button onclick="_dashTriageView='new';renderDashboardTriage()" style="background:var(--accent);color:#052e16;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;">+ Log Phone Complaint</button>
       </div>
 
@@ -8271,10 +8240,7 @@ const fmtElapsed = d => { if (!d) return '—'; const ms = Date.now()-new Date(d
 
     el.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px;">
-        <div>
-          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">${invs.length} investigation${invs.length!==1?'s':''}</div>
-          <div style="font-size:12px;color:var(--muted);margin-top:2px;">Field inspection requests from your manufacturer partners</div>
-        </div>
+        <div style="font-size:12px;color:var(--muted);">${invs.length} investigation${invs.length!==1?'s':''} — field inspection requests from your manufacturer partners.</div>
         ${needsResponse.length>0 ? `<div style="background:rgba(245,166,35,0.1);border:1px solid rgba(245,166,35,0.3);border-radius:8px;padding:8px 14px;font-size:12px;color:var(--warn);">⏱ ${needsResponse.length} awaiting your response</div>` : ''}
       </div>
 
@@ -9488,8 +9454,7 @@ async function renderConsumerNotification() {
       </div>`;
     el.innerHTML = `
       <div style="margin-bottom:4px;">
-        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">Consumer recall notifications</div>
-        <div style="font-size:12px;color:var(--muted);margin-top:2px;">Notify customers who may have purchased recalled products</div>
+        <div style="font-size:12px;color:var(--muted);">Notify customers who may have purchased recalled products.</div>
       </div>
       ${allRecalls.length > 0 ? cnProgressBar : ''}
 
