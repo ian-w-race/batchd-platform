@@ -5259,6 +5259,20 @@
 // ── CONFIG ──────────────────────────────────────────────────
 const SUPABASE_URL = 'https://lurxucdmrugikdlvvebc.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1cnh1Y2RtcnVnaWtkbHZ2ZWJjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTU5NTQsImV4cCI6MjA4OTgzMTk1NH0.ewNhBbF8nUzpF9Ve822D9t8VLwB_hjk27KuFFEXct0A';
+
+// Diagnostic logger — emits only when ?debug=1 is in the URL or
+// localStorage.batchd_debug === '1'. Production / pilot users get a
+// clean console; developers can opt in per-tab. Replaces the bare
+// console.log calls that used to live in the OCR pipeline, GS1 decode,
+// brand rules, fetchUserProfile auth flow, etc. — none of those are
+// load-bearing for any real user-visible behaviour.
+const _DEBUG_LOG = (() => {
+  try {
+    return new URLSearchParams(location.search).get('debug') === '1' ||
+           localStorage.getItem('batchd_debug') === '1';
+  } catch (_) { return false; }
+})();
+const dlog = _DEBUG_LOG ? console.log.bind(console) : () => {};
 // Anthropic API calls are proxied through a Netlify serverless function.
 // The API key is stored as a Netlify environment variable — never in client code.
 async function callOcrFunction(task, imageB64, extra) {
@@ -7703,6 +7717,11 @@ async function snapProduct() {
   productBlob = displayBlob;
   const url = URL.createObjectURL(displayBlob);
   const img = document.getElementById('product-captured');
+  // Revoke the blob URL once the browser has decoded the image — the
+  // <img> element keeps its rendered bitmap independently of the URL,
+  // so dropping the URL here doesn't blank the display. Without this
+  // each scan leaks a JPEG-sized blob (~100KB+) until the page reloads.
+  img.addEventListener('load', () => URL.revokeObjectURL(url), { once: true });
   img.src = url;
   img.style.display = 'block';
   vid.style.display = 'none';
@@ -7732,13 +7751,14 @@ function retakeProduct() {
   startProductCamera();
 }
 
-// ── PHASE 1 BARCODE MODE ─────────────────────────────────────
-// Phase 1.2 of refactor v2: barcode is now the default. ZXing reads the barcode
-// for deterministic identification via products_public; AI label scan is the
-// fallback (surfaced via "Can't find barcode?" prompt after 3s, or instant
-// switch back when ZXing finds a code in the label-mode video stream).
+// ── PHASE 1 STATE ────────────────────────────────────────────
+// Phase 1 is label-only since the raw-capture rebuild — the user takes a
+// product photo and the AI identifies it. The phase1Mode variable is kept
+// (always coerced to 'label' in setPhase1Mode) because many callers still
+// pass the old 'barcode' / phase1Mode arg and rewriting them would be
+// busywork. p1DetectedBarcode is still reset defensively on transitions
+// in case any GS1 parse path repopulates it.
 let phase1Mode = 'label';
-let p1ZXingControls = null;
 let p1DetectedBarcode = null;
 let _prefetchedPattern = null;
 let _gs1FullCapture = null; // set when a GS1 DL or GS1-128 with lot is scanned in Phase 1
@@ -7773,34 +7793,11 @@ function setPhase1Mode(mode) {
   startProductCamera();
 }
 
-let p1Html5QrScanner = null;
-
-// Phase 1.2 of refactor v2: fallback timer. If ZXing doesn't decode anything
-// within FALLBACK_TIMEOUT_MS, surface a "Can't find a barcode?" prompt that
-// switches to label-photo identification. Cleared when ZXing detects or when
-// the user explicitly switches modes.
-//
-// Bumped from 3s to 5s after pilot testing — 3s felt too aggressive in real
-// store flow where users put down one product and pick up another between scans.
-const P1_FALLBACK_TIMEOUT_MS = 5000;
-let _p1FallbackTimer = null;
-function _showP1FallbackPrompt() {
-  const el = document.getElementById('p1-barcode-fallback-prompt');
-  if (el) el.style.display = 'block';
-  // Phase 3 telemetry: if the user ends up at AI fallback after this prompt
-  // appeared (i.e., ZXing didn't decode in time), tag the reason. This is a
-  // tentative tag — only sticks if the user actually proceeds to label mode.
-  // If they later switch back to barcode and ZXing decodes, _telZxingDecodedAt
-  // gets set and this tag becomes irrelevant for the path determination.
-  if (_telAiFallbackReason == null) _telAiFallbackReason = 'zxing_failed_then_prompt';
-}
-function _hideP1FallbackPrompt() {
-  const el = document.getElementById('p1-barcode-fallback-prompt');
-  if (el) el.style.display = 'none';
-}
-function _clearP1FallbackTimer() {
-  if (_p1FallbackTimer) { clearTimeout(_p1FallbackTimer); _p1FallbackTimer = null; }
-}
+// The fallback-timer block (P1_FALLBACK_TIMEOUT_MS, _p1FallbackTimer,
+// _showP1FallbackPrompt, _hideP1FallbackPrompt, _clearP1FallbackTimer)
+// retired with the rest of the Phase 1 ZXing path. The "Can't find a
+// barcode?" prompt it surfaced is gone too — Phase 1 just goes straight
+// to the label-photo flow now, no timeout escape hatch needed.
 
 // ── PHASE 1.5 UX: "GOT IT" CONFIRMATION HANDOFF ────────────────────────────
 // Per plan v2: barcode and lot code are usually on different sides of packaging.
@@ -8117,14 +8114,14 @@ async function _writeUnknownProductToCatalog(barcode, productName) {
       // same barcode between our lookup miss and this insert. Not an error
       // from the user's perspective — the catalog is now populated either way.
       if (error.code === '23505') {
-        console.log('[products] Barcode', normalized, 'already added concurrently — skipping write');
+        dlog('[products] Barcode', normalized, 'already added concurrently — skipping write');
         return;
       }
       console.warn('[products] Write failed for', normalized, ':', error.message);
       return;
     }
 
-    console.log('[products] New unknown-barcode product written:', normalized, '→', productName);
+    dlog('[products] New unknown-barcode product written:', normalized, '→', productName);
   } catch(e) {
     console.warn('[products] Write threw:', e);
   }
@@ -11842,9 +11839,14 @@ function auditExportCSV() {
   const csv = [headers.map(h => `"${h}"`), ...rows].map(r => r.join(',')).join('\r\n');
   const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
+  const url = URL.createObjectURL(blob);
+  a.href = url;
   a.download = `batched-audit-${(_auditParams.from||'all').replace(/-/g,'')}-${(_auditParams.to||'now').replace(/-/g,'')}.csv`;
   a.click();
+  // Browsers initiate the download synchronously inside .click(), so the
+  // URL is safe to revoke right after — without this the audit CSV
+  // export leaks one URL per click for the life of the tab.
+  URL.revokeObjectURL(url);
 }
 
 let auditPrintContent = ''; // keep for any legacy references
@@ -12292,14 +12294,28 @@ async function snapRawCluster() {
 
   const url = URL.createObjectURL(dispBlob);
   const thumb = document.getElementById('p2-captured-thumb');
-  if (thumb) thumb.src = url;
   // Also set the legacy #barcode-captured src so Phase 3's populateReview
   // picks it up for the lot-photo thumbnail. The element stays display:none
   // (the new flow shows the captured photo via #p2-captured-thumb in the
   // confirm state), but its src is still the source of truth that
   // populateReview reads.
   const legacyImg = document.getElementById('barcode-captured');
-  if (legacyImg) legacyImg.src = url;
+  // Revoke the URL once both images have decoded — without this each
+  // capture leaks a JPEG-sized blob until the page reloads. Both images
+  // share the same URL, so we count loads and revoke when the last one
+  // fires. If either element is missing we still want the other to
+  // trigger revocation, so the counter target is recomputed on the fly.
+  const _imgsUsingUrl = (thumb ? 1 : 0) + (legacyImg ? 1 : 0);
+  let _loadedCount = 0;
+  const _revokeWhenAllLoaded = () => {
+    if (++_loadedCount >= _imgsUsingUrl) URL.revokeObjectURL(url);
+  };
+  if (thumb)     { thumb.addEventListener('load', _revokeWhenAllLoaded, { once: true });     thumb.src = url; }
+  if (legacyImg) { legacyImg.addEventListener('load', _revokeWhenAllLoaded, { once: true }); legacyImg.src = url; }
+  // Belt-and-suspenders: if for any reason load events don't fire (e.g.
+  // both elements are gone before the listener attaches), revoke after
+  // a generous timeout so we never leak forever.
+  setTimeout(() => URL.revokeObjectURL(url), 3000);
 
   let raw = '';
   try {
@@ -12796,10 +12812,10 @@ async function snapOcr() {
   let r2 = null;
   const _pass1HighConf = r1?.code_a && r1.confidence === 'high';
   if (!_pass1HighConf && blob2) {
-    console.log('[snapOcr] Pass 1 not high-confidence — running Pass 2 for consensus');
+    dlog('[snapOcr] Pass 1 not high-confidence — running Pass 2 for consensus');
     r2 = await extractCodesFromImage(blob2, preLearn, null).catch(() => null);
   } else if (_pass1HighConf) {
-    console.log('[snapOcr] Pass 1 high-confidence — skipping Pass 2 (~1 Sonnet call saved)');
+    dlog('[snapOcr] Pass 1 high-confidence — skipping Pass 2 (~1 Sonnet call saved)');
   }
 
   // ── CONSENSUS RESOLUTION ──────────────────────────────────
@@ -13335,7 +13351,7 @@ async function tryGS1StaticDecode(blob) {
     if (!gs1Result) return null;
     const parsed = parseGS1(gs1Result.getText());
     if (parsed?.lot) {
-      console.log('[GS1-128] Lot code found via static decode:', parsed.lot);
+      dlog('[GS1-128] Lot code found via static decode:', parsed.lot);
       return { lot: parsed.lot, expiry: parsed.expiry || null, source: 'GS1-128 AI(10)' };
     }
   } catch(e) { /* No barcode in image — normal */ }
@@ -13445,7 +13461,7 @@ function applyBrandRules(productName, rawText) {
     if (m?.[1]) {
       const code = m[1].trim().replace(/[.\s]+$/, '');
       if (code.length >= 2 && validateLotCode(code).valid) {
-        console.log(`[Brand Rule] ${label}: "${code}" (${confidence})`);
+        dlog(`[Brand Rule] ${label}: "${code}" (${confidence})`);
         return { lot: code, confidence, source: `brand_rule:${label}` };
       }
     }
@@ -13470,7 +13486,7 @@ async function initTesseract() {
       tessedit_pageseg_mode:   '11', // PSM_SPARSE_TEXT — best for scattered inkjet codes
     });
     _tesseractReady = true;
-    console.log('[Tesseract] Ready — on-device OCR active');
+    dlog('[Tesseract] Ready — on-device OCR active');
   } catch(e) {
     console.warn('[Tesseract] Init failed (Sonnet fallback will be used):', e.message);
     _tesseractWorker = null; _tesseractReady = false;
@@ -13483,7 +13499,7 @@ async function runTesseractOnImage(blob) {
   try {
     const { data: { text, confidence } } = await _tesseractWorker.recognize(url);
     const raw = text?.trim() || null;
-    if (raw) console.log(`[Tesseract] conf=${confidence?.toFixed(0)}% text="${raw.slice(0,100)}"`);
+    if (raw) dlog(`[Tesseract] conf=${confidence?.toFixed(0)}% text="${raw.slice(0,100)}"`);
     return raw;
   } catch(e) { return null; }
   finally { URL.revokeObjectURL(url); }
@@ -13493,7 +13509,7 @@ async function destroyTesseract() {
   if (!_tesseractWorker) return;
   try { await _tesseractWorker.terminate(); } catch(e) {}
   _tesseractWorker = null; _tesseractReady = false;
-  console.log('[Tesseract] Worker terminated');
+  dlog('[Tesseract] Worker terminated');
 }
 
 // ── BRAND KNOWLEDGE BASE ──────────────────────────────────────
@@ -14029,7 +14045,7 @@ async function saveLearnedPattern(productName, barcodeNumber, codeA, codeB, lotI
 // immediately updates the pattern record for this product.
 async function recordManualCorrection(productName, barcodeNumber, correctedLot, correctedBatch, lotIsFirst, locationHint) {
   if (!productName || !correctedLot) return;
-  console.log('Manual correction recorded — updating pattern with high confidence');
+  dlog('Manual correction recorded — updating pattern with high confidence');
   await saveLearnedPattern(
     productName, barcodeNumber,
     lotIsFirst ? correctedLot : correctedBatch,
@@ -14509,7 +14525,7 @@ async function extractCodesFromImage(blob, learnedContext, tesseractText = null)
         yEnd:   learnedContext.cropYEnd,
         source: 'learned'
       };
-      console.log(
+      dlog(
         `[LEARNED CROP] Using stored region ` +
         `y=${localisedCrop.yStart.toFixed(2)}–${localisedCrop.yEnd.toFixed(2)} ` +
         `(${learnedContext.cropScanCount} crop observations, ${learnedContext.scanCount} total scans)`
@@ -14643,7 +14659,7 @@ async function extractCodesFromImage(blob, learnedContext, tesseractText = null)
       : pass1Prompt;
 
     const pass1 = await callOcrApi(b64Primary, enrichedPrompt, false); // Sonnet — capable
-    console.log(`[Pass 1] ${localisedCrop ? 'localised crop' : 'full image'}:`, pass1);
+    dlog(`[Pass 1] ${localisedCrop ? 'localised crop' : 'full image'}:`, pass1);
 
     // ── PASS 2: REMOVED for speed ─────────────────────────
     const pass2 = { lot: null, batch: null, lot_confidence: 'low', lot_is_date: false, raw: '', anchor_before: null, anchor_after: null };
@@ -14658,7 +14674,7 @@ async function extractCodesFromImage(blob, learnedContext, tesseractText = null)
       const pName = productNameEl?.value?.trim() || '';
       const brandFallback = applyBrandRules(pName, pass1.raw);
       if (brandFallback?.lot) {
-        console.log('[Brand Rule Post-process] Found in Sonnet raw:', brandFallback);
+        dlog('[Brand Rule Post-process] Found in Sonnet raw:', brandFallback);
         pass1.lot = brandFallback.lot;
         pass1.lot_confidence = brandFallback.confidence;
       }
@@ -14670,7 +14686,7 @@ async function extractCodesFromImage(blob, learnedContext, tesseractText = null)
       const pName = productNameEl?.value?.trim() || '';
       const tessResult = applyBrandRules(pName, tesseractText);
       if (tessResult?.lot) {
-        console.log('[Brand Rule on Tesseract] Rescued from tesseract text:', tessResult);
+        dlog('[Brand Rule on Tesseract] Rescued from tesseract text:', tessResult);
         pass1.lot = tessResult.lot;
         pass1.lot_confidence = tessResult.confidence;
       }
@@ -16027,7 +16043,7 @@ async function fetchUserProfile() {
       .select('is_manager')
       .eq('id', currentUser.id)
       .maybeSingle();
-    console.log('[fetchUserProfile] id:', currentUser.id, 'data:', JSON.stringify(data), 'error:', error?.message);
+    dlog('[fetchUserProfile] id:', currentUser.id, 'data:', JSON.stringify(data), 'error:', error?.message);
     if (error) throw error;
     if (!data) {
       // Row missing — auto-create it (is_manager defaults to false; admin sets true via Supabase)
@@ -16040,7 +16056,7 @@ async function fetchUserProfile() {
       if (upsertErr) console.warn('[fetchUserProfile] upsert failed:', upsertErr.message);
       // Re-read after upsert in case the row already existed with is_manager:true
       const { data: reread } = await sb.from('user_profiles').select('is_manager').eq('id', currentUser.id).maybeSingle();
-      console.log('[fetchUserProfile] re-read after upsert:', JSON.stringify(reread));
+      dlog('[fetchUserProfile] re-read after upsert:', JSON.stringify(reread));
       const isManager = reread?.is_manager === true;
       currentUser.isManager = isManager;
       applyManagerUI(isManager);
@@ -17107,7 +17123,7 @@ async function autoEscalateForComplaintRecallMatch(scanId, recall) {
       allRecords[idx].manager_escalated_at = now;
       allRecords[idx].manager_escalated_by = 'system:complaint+recall';
     }
-    console.log('[cross-ref] Auto-escalated scan', scanId, 'due to complaint+recall match:', recall.product_name);
+    dlog('[cross-ref] Auto-escalated scan', scanId, 'due to complaint+recall match:', recall.product_name);
   } catch(e) {
     console.warn('[cross-ref] autoEscalateForComplaintRecallMatch failed:', e.message);
   }
