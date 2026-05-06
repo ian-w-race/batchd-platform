@@ -1030,6 +1030,13 @@
 
   @keyframes spin { to { transform: rotate(360deg); } }
 
+  /* Tap-to-focus visual feedback ring (Phase 2 camera) */
+  @keyframes tap-focus-ring {
+    0%   { transform: scale(1.25); opacity: 0.85; }
+    50%  { transform: scale(1.00); opacity: 0.85; }
+    100% { transform: scale(0.85); opacity: 0; }
+  }
+
   /* AI analyzing overlay */
   .analyzing-overlay {
     position: absolute;
@@ -7578,6 +7585,65 @@ function stopSharedStream() {
   }
 }
 
+// ── TAP-TO-FOCUS HELPER (Phase 2 camera) ──────────────────────
+// Wires a pointerdown listener onto the Phase 2 video element so the user
+// can nudge camera autofocus toward whatever they're trying to capture.
+// We DON'T gate on getCapabilities().pointsOfInterest — iOS Safari is
+// notorious for not advertising that capability even when applyConstraints
+// would actually accept it. Instead the listener is always attached, the
+// visual ring always fires (immediate user feedback), and the focus
+// constraint is tried inside try/catch — if the hardware rejects it,
+// we silently fall through.
+//
+// Idempotent: re-entry is normal because Phase 2 calls startOcrCamera()
+// every time the user steps into the lot-capture view; we guard with a
+// dataset flag on the <video> element so we never stack listeners.
+function attachTapToFocus(videoEl, track) {
+  if (!videoEl || !track || videoEl.dataset.tapFocusWired === '1') return;
+  videoEl.dataset.tapFocusWired = '1';
+
+  videoEl.addEventListener('pointerdown', async (e) => {
+    const rect = videoEl.getBoundingClientRect();
+    const nx = (e.clientX - rect.left) / rect.width;
+    const ny = (e.clientY - rect.top)  / rect.height;
+    if (nx < 0 || nx > 1 || ny < 0 || ny > 1) return;
+
+    // Show the ring FIRST so the user gets immediate feedback even if the
+    // focus call throws. The ring is purely cosmetic — it confirms the
+    // tap registered and points at where focus would land if hardware
+    // cooperates.
+    showTapFocusRing(videoEl, e.clientX - rect.left, e.clientY - rect.top);
+
+    // Try single-shot focus + pointsOfInterest first (re-acquires after the
+    // tap, then locks). Fall back to bare pointsOfInterest if the device
+    // rejects single-shot. Keep going if both throw — many laptops just
+    // don't support either, and that's fine.
+    try {
+      await track.applyConstraints({
+        advanced: [{ focusMode: 'single-shot', pointsOfInterest: [{ x: nx, y: ny }] }],
+      });
+    } catch(_) {
+      try {
+        await track.applyConstraints({
+          advanced: [{ pointsOfInterest: [{ x: nx, y: ny }] }],
+        });
+      } catch(__) {/* hardware ignored it; ring already fired */}
+    }
+  });
+}
+
+function showTapFocusRing(videoEl, x, y) {
+  const wrap = videoEl.parentElement;
+  if (!wrap) return;
+  const ring = document.createElement('div');
+  ring.style.cssText =
+    'position:absolute;left:' + (x - 22) + 'px;top:' + (y - 22) + 'px;' +
+    'width:44px;height:44px;border-radius:50%;border:2px solid var(--accent);' +
+    'pointer-events:none;z-index:20;animation:tap-focus-ring 0.6s ease-out forwards;';
+  wrap.appendChild(ring);
+  setTimeout(() => ring.remove(), 700);
+}
+
 // ── PRODUCT CAMERA ───────────────────────────────────────────
 async function startProductCamera() {
   const stream = await getSharedStream();
@@ -12372,6 +12438,11 @@ async function startOcrCamera() {
   const vid = document.getElementById('barcode-video');
   vid.srcObject = stream;
   await vid.play().catch(() => {});
+  // Tap-to-focus: wire once per video element. No-op on browsers that
+  // don't expose pointsOfInterest in MediaTrack capabilities (most of
+  // desktop). See attachTapToFocus() for the capability gate + fallback.
+  const _p2Track = stream.getVideoTracks ? stream.getVideoTracks()[0] : null;
+  if (_p2Track) attachTapToFocus(vid, _p2Track);
   document.getElementById('barcode-placeholder').style.display = 'none';
   document.getElementById('barcode-video-wrap').style.display = 'block';
   // The barcode-mode frame and the legacy snap-ocr / retake-barcode buttons
