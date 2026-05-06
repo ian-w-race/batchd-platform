@@ -2104,12 +2104,14 @@ async function renderOverview() {
     // Exclude pushed recalls (already in relevantRecalls) to avoid duplicates
     const { data: ownRecallsRaw } = await sb.from('recalls')
       // is_pushed and recall_event_id removed from the SELECT — neither
-      // column exists on the live recalls schema and the SELECT was 400-ing.
-      // The filters at lines below that referenced them (`r.is_pushed ||
-      // r.recall_event_id`) were already no-ops since both fields resolved
-      // to undefined; explicit `false` placeholders preserve that behavior
-      // without the SELECT failure. (chunk-6B-postship hotfix)
-      .select('id, product_name, lot_number, barcode_number, active, source, created_at, reason')
+      // column exists on the live recalls schema. The `reason` column also
+      // doesn't exist; the equivalent text on this table is `description`,
+      // so we PostgREST-alias `description` to `reason` here so downstream
+      // code reading `r.reason` keeps working without a rename. The filters
+      // at lines below that referenced is_pushed/recall_event_id were already
+      // no-ops (both undefined); explicit `false` placeholders preserve that
+      // behavior. (chunk-6B-postship hotfix)
+      .select('id, product_name, lot_number, barcode_number, active, source, created_at, reason:description')
       .eq('organisation_id', _orgId)
       .eq('active', true).limit(300);
     // Feed sources — imported from FDA/RASFF/Mattilsynet daily feeds.
