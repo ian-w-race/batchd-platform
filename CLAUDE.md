@@ -13,13 +13,32 @@ to manually insert.
 - All routing is done via JavaScript domain detection 
   inside each HTML file — no _redirects files
 
+## Retailer-only platform (post-chunk-6 pivot)
+Batch'd has been streamlined to a retailer-only platform.
+The manufacturer side has been retired:
+- manufacturer.html, supplier.html, manufacturer-signup.html 
+  are now static "retired" landing pages (~80 lines each, 
+  noindex, link to batchd.no)
+- The Manufacturers panel and Shipments panel were removed 
+  from dashboard.html in chunks 6B and 6C-a
+- The manufacturer-escalation flow was removed from the 
+  Complaint Triage panel in chunk 6C-a
+- The trading_partners and shipments tables stay in the 
+  DB — they're read by the lot-lookup page, drill launcher, 
+  and recall-distribution joins, but no UI in the platform 
+  creates new rows in them
+- partnerScore was dropped from the dashboard's 4-way 
+  readiness average in chunk 6C-b — readiness is now 
+  3-way: ackScore + shipScore + scanScore
+
 ## The three files
-- index.html — staff scanning app (19,400+ lines)
+- index.html — staff scanning app (~20,500 lines)
   Deployed to: batchd-app.netlify.app
-- dashboard.html — corporate dashboard (10,500+ lines)
+- dashboard.html — corporate retailer dashboard (~9,900 lines)
   Deployed to: app.batchdapp.com/dashboard.html
-- manufacturer.html — manufacturer portal (8,000+ lines)
-  Deployed to: app.batchdapp.com/manufacturer.html
+- manufacturer.html / supplier.html / manufacturer-signup.html
+  — retired stubs (~80 lines each, served from same domain 
+  but show "retired" copy)
 
 ## Supabase
 - Project: lurxucdmrugikdlvvebc.supabase.co
@@ -35,6 +54,24 @@ to manually insert.
   if confirmed via scan_recall_matches table
 - Manual/push recalls count if exact lot or barcode 
   matches an on-shelf scan (removed_from_shelf_at IS NULL)
+
+## Schema gotchas — column names that bit us
+These tables don't have the column names you'd expect from 
+nearby code patterns. Always verify against Supabase Table 
+Editor before adding new SELECTs:
+- recall_distributions  → retailer_org_id (NOT initiating_org_id)
+- mock_recall_drills    → initiated_by_org + started_at 
+                          (NOT retailer_org_id + created_at)
+- recalls               → description (NOT reason). Alias 
+                          via PostgREST: `reason:description`
+- investigation_responses → retailer_org_id (NOT initiating_org_id)
+- recalls table also has no is_pushed and no recall_event_id 
+  columns despite their use elsewhere
+- recall_events has no is_recalled column
+
+These are silent 400s — Supabase returns Postgres 42703 
+"column X does not exist" with no client-visible error 
+unless you're watching devtools.
 
 ## Recall counting rules (platform-wide)
 A recall requires action only when ALL THREE are true:
@@ -55,10 +92,15 @@ Mock drills never count toward active recall numbers.
   #283C37 inputs) — no pure black, desaturated accents
 - Light mode: #F5F7F6 bg, #1A201D text, white cards
 - Accent: #4DC99A dark / #077A55 light
-- Both files (dashboard + manufacturer) share identical 
-  CSS variable values — keep them in sync
+- dashboard.html and index.html are the two live UIs to 
+  keep visually consistent (manufacturer.html is retired)
 
-## Manufacturer portal & incoming shipments
-- Marked ALPHA in the nav — early stage features
-- Manufacturer portal is lower priority than scanning 
-  app and corporate dashboard for pilot readiness
+## UI conventions
+- Every panel has exactly ONE page-title — the topbar text 
+  set by the `panels` mapping in showPanel(). Inner page 
+  bodies should NOT add a duplicate h1 row. Subtitles 
+  (instructional text, regulatory context, dynamic stats) 
+  are fine and encouraged.
+- Topbar labels in `panels` should match the sidebar nav 
+  text exactly — e.g. sidebar "Store Network" → topbar 
+  "Store Network", not "Stores".
