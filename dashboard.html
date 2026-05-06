@@ -976,6 +976,16 @@ let _userId = null, _userEmail = '', _userRole = null, _storeId = null;
 // ═══════════════════════════════════════════════════════════════
 
 // Fuzzy lot code matching — handles prefix ranges, trailing variants, case
+// HTML-escape user-entered strings before interpolating into innerHTML
+// templates. The Lot Lookup result rendering and a few other panels rely
+// on this — without it, `${esc(x)}` throws ReferenceError on every
+// search that has results, breaking the panel.
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, m => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[m]));
+}
+
 function lotsMatch(a, b) {
   if (!a || !b) return false;
   const clean = s => s.trim().toUpperCase().replace(/[_\s]/g, '-');
@@ -1054,12 +1064,26 @@ async function renderIntelligencePanel(containerId, productName, lotCode, opts =
         .eq('is_drill', false).order('published_at', { ascending: false }).limit(100)
     );
 
-    // 5. Related investigations
+    // 5. Related investigations — must be scoped to investigations owned by
+    //    THIS retailer's connected manufacturers. Without that scope, the
+    //    .ilike fuzzy match on product_name returned up to 10 hits from any
+    //    org with a matching product, leaning on Supabase RLS as the only
+    //    guard. Pull active partner manufacturer IDs first, then run the
+    //    investigation query with .in('manufacturer_id', mfrIds). Same
+    //    scoping pattern as the dashboard's overdue-investigations card
+    //    (line ~2321).
     if (productName) {
-      queries.push(
-        sb.from('investigation_requests').select('id, product_name, lot_number, status, urgency_class, created_at, issue_type')
-          .ilike('product_name', `%${productName.split(' ')[0]}%`).limit(10)
-      );
+      queries.push((async () => {
+        const { data: pData } = await sb.from('trading_partners')
+          .select('manufacturer_id').eq('retailer_id', _orgId).eq('status', 'active');
+        const mfrIds = (pData || []).map(p => p.manufacturer_id).filter(Boolean);
+        if (mfrIds.length === 0) return { data: [] };
+        return sb.from('investigation_requests')
+          .select('id, product_name, lot_number, status, urgency_class, created_at, issue_type')
+          .ilike('product_name', `%${productName.split(' ')[0]}%`)
+          .in('manufacturer_id', mfrIds)
+          .limit(10);
+      })());
     } else {
       queries.push(Promise.resolve({ data: [] }));
     }
@@ -1505,7 +1529,14 @@ async function traceLot() {
     const [shipmentsRes, scansRes, recallsRes, acksRes] = await Promise.all([
       sb.from('shipments').select('id,lot_number,quantity,unit,shipped_at,reference_document,stores(name,address),organisations!shipments_manufacturer_id_fkey(name),products(name)').eq('retailer_id', _orgId).limit(200),
       sb.from('scans').select('id,product_name,lot_number,store_name,scanned_by,created_at,tlc_source').eq('organisation_id', _orgId).order('created_at',{ascending:false}).limit(500),
-      sb.from('recall_events').select('id,product_name,lot_number,severity,reason,is_drill,published_at').order('published_at',{ascending:false}).limit(100),
+      // recall_events is global by design (FDA + Mattilsynet feeds + pushed
+      // recalls), so no org filter — this lot tracer needs to see every
+      // candidate. Server-side filter is_drill=false (drills shouldn't
+      // surface here) and bump the limit from 100 to 500 because busy feed
+      // days can easily push a relevant recall out of the most-recent-100
+      // window, causing the tracer to silently say "no recall match" when
+      // there actually is one.
+      sb.from('recall_events').select('id,product_name,lot_number,severity,reason,is_drill,published_at').eq('is_drill', false).order('published_at',{ascending:false}).limit(500),
       sb.from('recall_acknowledgements').select('id,status,recall_event_id,created_at,acknowledged_at,units_pulled,stores(name)').eq('organisation_id', _orgId),
     ]);
 
