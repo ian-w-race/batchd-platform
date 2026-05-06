@@ -2220,14 +2220,18 @@ async function renderOverview() {
     const sparkMax  = Math.max(...sparkData, 1);
 
     // ── Compliance / readiness score ─────────────────────────
-    const hasPartners  = partners.filter(p => p.status === 'active').length > 0;
+    // partnerScore dropped in chunk 6C-b — Batch'd is retailer-only
+    // and "manufacturer partners connected" is no longer a meaningful
+    // axis for the dashboard's at-a-glance readiness number. Average
+    // is now 3-way: response rate + shipments-on-file + lot-code
+    // coverage. (renderCompliance still surfaces partner state in
+    // its more detailed scoring — that's a separate pass.)
     const hasShipments = shipments.length > 0;
     const hasScans     = scans.length > 0;
     const ackScore     = responseRate;
-    const partnerScore = hasPartners  ? 100 : 0;
     const shipScore    = hasShipments ? 100 : 0;
     const scanScore    = hasScans     ? Math.min(100, scans.filter(s => s.lot_number).length / Math.max(scans.length,1) * 100) : 0;
-    const readiness    = Math.round((ackScore + partnerScore + shipScore + scanScore) / 4);
+    const readiness    = Math.round((ackScore + shipScore + scanScore) / 3);
 
     // ── Recent activity feed ──────────────────────────────────
     const recentActivity = scans.slice(0, 8).map(s => ({
@@ -2592,7 +2596,6 @@ el.innerHTML = `
                 <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.6;">
                   ${[
                     {label:'Recall response',   val:ackScore,    ok:ackScore>=80},
-                    {label:'Partners connected',val:partnerScore,ok:partnerScore===100},
                     {label:'Shipments logged',  val:shipScore,   ok:shipScore===100},
                     {label:'Lot code coverage', val:Math.round(scanScore),ok:scanScore>=80},
                   ].map(c=>`<div style="display:flex;justify-content:space-between;gap:12px;margin-bottom:2px;">
