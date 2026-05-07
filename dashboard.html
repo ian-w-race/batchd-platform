@@ -3354,6 +3354,28 @@ async function advanceAckStatus(ackId, status, recallEventId) {
   const origText = btn?.textContent;
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
 
+  const userId = (await sb.auth.getUser()).data.user?.id;
+  const now = new Date().toISOString();
+
+  // Build update with status + per-step timestamp.
+  // Audit fix (2026-05-07): previously every transition overwrote
+  // acknowledged_at, so the column held the LAST transition's time instead of
+  // when the recall was actually acknowledged. The new pulled_at /
+  // disposed_at / confirmed_at columns record per-step timestamps so audit
+  // reports (Joint Recall Report, Store Audit, Store Timeline) can render the
+  // full chain timeline instead of "—" for everything past Acknowledged.
+  const update = { status };
+  if (status === 'acknowledged') {
+    update.acknowledged_at = now;
+    update.acknowledged_by = userId;
+  } else if (status === 'pulled') {
+    update.pulled_at = now;
+  } else if (status === 'disposed') {
+    update.disposed_at = now;
+  } else if (status === 'confirmed') {
+    update.confirmed_at = now;
+  }
+
   // ── Units pulled — required before marking as pulled ────────
   // "Pulled" is the step that creates the legal record of removal.
   // We need a quantity — even 0 is valid (product couldn't be found).
@@ -3368,39 +3390,27 @@ async function advanceAckStatus(ackId, status, recallEventId) {
       unitsInput?.style && (unitsInput.style.borderColor = 'rgba(255,92,92,0.6)');
       return;
     }
-    // Save units at the same time as status advance.
-    // All ack writes scope by organisation_id and check rows-affected so a
-    // forged ackId from another org can't be flipped via this path.
-    const userId = (await sb.auth.getUser()).data.user?.id;
-    const { data: pulledUpd, error: pulledErr } = await sb.from('recall_acknowledgements').update({
-      status,
-      acknowledged_at:             new Date().toISOString(),
-      acknowledged_by:             userId,
-      units_pulled:                units,
-      units_pulled_confirmed_at:   new Date().toISOString(),
-      units_pulled_confirmed_by:   userId,
-    }).eq('id', ackId).eq('organisation_id', _orgId).select('id');
-    if (btn) { btn.disabled = false; btn.textContent = origText; }
-    if (pulledErr) {
-      showToast('Could not save: ' + pulledErr.message, 'error', 4000);
-      return;
-    }
-    if (!pulledUpd || !pulledUpd.length) {
-      showToast('Could not save — acknowledgement not found in your organisation.', 'error', 4000);
-      return;
-    }
-    showToast(`${units} unit${units !== 1 ? 's' : ''} recorded — step complete ✓`, 'ok', 3000);
-    renderRecalls();
-    return;
+    update.units_pulled              = units;
+    update.units_pulled_confirmed_at = now;
+    update.units_pulled_confirmed_by = userId;
   }
 
-  const { data: updated, error } = await sb.from('recall_acknowledgements').update({
-    status, acknowledged_at: new Date().toISOString(),
-    acknowledged_by: (await sb.auth.getUser()).data.user?.id,
-  }).eq('id', ackId).eq('organisation_id', _orgId).select('id');
-  if (error)               { if (btn) { btn.disabled=false; btn.textContent=origText; } showToast('Could not save: ' + error.message, 'error', 4000); return; }
-  if (!updated || !updated.length) { if (btn) { btn.disabled=false; btn.textContent=origText; } showToast('Could not save — acknowledgement not found in your organisation.', 'error', 4000); return; }
-  if (status === 'confirmed') showToast('Step complete — store confirmed ✓', 'ok', 3000);
+  // All ack writes scope by organisation_id and check rows-affected so a
+  // forged ackId from another org can't be flipped via this path.
+  const { data: updated, error } = await sb.from('recall_acknowledgements')
+    .update(update)
+    .eq('id', ackId).eq('organisation_id', _orgId).select('id');
+  if (btn) { btn.disabled = false; btn.textContent = origText; }
+  if (error) {
+    showToast('Could not save: ' + error.message, 'error', 4000);
+    return;
+  }
+  if (!updated || !updated.length) {
+    showToast('Could not save — acknowledgement not found in your organisation.', 'error', 4000);
+    return;
+  }
+  if (status === 'pulled')         showToast(`${update.units_pulled} unit${update.units_pulled !== 1 ? 's' : ''} recorded — step complete ✓`, 'ok', 3000);
+  else if (status === 'confirmed') showToast('Step complete — store confirmed ✓', 'ok', 3000);
   renderRecalls();
 }
 
@@ -8728,17 +8738,21 @@ async function generateDrillCertificate(recallEventId) {
   if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
 
   try {
-    const [evRes, acksRes, orgRes, coordRes] = await Promise.all([
+    // Audit fix (2026-05-07): coordinator info is org-level, not user-level.
+    // Previously this queried user_settings.recall_coordinator_*, which is
+    // keyed by user_id; .eq('organisation_id', _orgId).limit(1) picked an
+    // arbitrary user's coordinator instead of the org's. The org-level
+    // coordinator lives on organisations.recall_coordinator_name/contact —
+    // matches the loadComplianceData query pattern at line ~4527.
+    const [evRes, acksRes, orgRes] = await Promise.all([
       sb.from('recall_events').select('*').eq('id', recallEventId).single(),
       sb.from('recall_acknowledgements')
         .select('id, status, acknowledged_at, created_at, stores(name)')
         .eq('recall_event_id', recallEventId)
         .eq('organisation_id', _orgId),
-      sb.from('organisations').select('name, contact_email, region').eq('id', _orgId).single(),
-      sb.from('user_settings')
-        .select('recall_coordinator_name, recall_coordinator_contact')
-        .eq('organisation_id', _orgId).limit(1),
+      sb.from('organisations').select('name, contact_email, region, recall_coordinator_name, recall_coordinator_contact').eq('id', _orgId).single(),
     ]);
+    const coordRes = { data: [orgRes.data || {}] };  // shim — keeps downstream coord shape consistent
 
     const ev     = evRes.data;
     const acks   = acksRes.data  || [];

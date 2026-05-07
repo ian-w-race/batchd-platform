@@ -18521,16 +18521,22 @@ async function _advanceLinkedAck(targetStatus) {
   const target  = ACK_STEPS.indexOf(targetStatus);
   if (target <= current) return; // already at or past this step
   try {
-    // Schema only has acknowledged_at as a transition timestamp — no
-    // disposed_at / confirmed_at columns. Only stamp acknowledged_at when
-    // we're actually entering the acknowledged step; other transitions
-    // update status only. Previously this overwrote acknowledged_at on
-    // every transition, so the field ended up holding the time of the
-    // LAST transition (often confirmed) instead of when acknowledged.
+    // Per-step timestamps (acknowledged_at, pulled_at, disposed_at,
+    // confirmed_at) — added to schema 2026-05-07 after audit identified
+    // dashboard reports were rendering "—" for every step after Acknowledged.
+    // Only stamp the timestamp for the step we're entering; never overwrite
+    // an earlier step's timestamp on later transitions.
+    const now = new Date().toISOString();
     const update = { status: targetStatus };
     if (targetStatus === 'acknowledged') {
-      update.acknowledged_at = new Date().toISOString();
+      update.acknowledged_at = now;
       update.acknowledged_by = currentUser?.id || null;
+    } else if (targetStatus === 'pulled') {
+      update.pulled_at = now;
+    } else if (targetStatus === 'disposed') {
+      update.disposed_at = now;
+    } else if (targetStatus === 'confirmed') {
+      update.confirmed_at = now;
     }
     // Audit fix: scope by organisation_id as defence-in-depth alongside RLS.
     // The dashboard's advanceAckStatus does the same — keeps both code paths
