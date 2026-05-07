@@ -1950,7 +1950,7 @@ async function renderOnboarding() {
         title: 'Run your first mock recall drill',
         desc: `Simulate a recall to test your team's response procedures. ${isUS ? 'FDA recommends annual drills.' : 'Required annually by Mattilsynet best practice.'} Generates a compliance report you can share with auditors.`,
         detail: hasDrill
-          ? `Last drill: ${new Date(drillsRes.data[0].created_at).toLocaleDateString(_dashLocale(), {day:'numeric',month:'long',year:'numeric'})}`
+          ? `Last drill: ${new Date(drillsRes.data[0].started_at).toLocaleDateString(_dashLocale(), {day:'numeric',month:'long',year:'numeric'})}`
           : 'No drills conducted yet.',
         cta: 'Run a drill →', action: `showPanel('recalls')`,
         reg: isUS ? 'FDA annual drill recommendation' : 'Mattilsynet best practice',
@@ -6468,7 +6468,9 @@ async function _loadCorpOnShelf() {
       sb.from('stores').select('id,name').eq('organisation_id', _orgId).eq('active', true),
     ]);
 
-    const scans  = (scansRes.data || []).filter(s => !s.removed_from_shelf_at && !s.recall_resolved);
+    // Server query already filters .is('removed_from_shelf_at', null) and
+    // .eq('recall_resolved', false), so no client-side re-filter needed.
+    const scans  = scansRes.data || [];
     const stores = storesRes.data || [];
 
     if (!scans.length) {

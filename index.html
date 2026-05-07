@@ -8529,7 +8529,20 @@ async function sweepScansForRecall(recallId) {
       p_lookback_days:   180,
     });
     if (error) throw error;
-    return data || 0;
+    // Audit fix #44: validate RPC return shape. The RPC is expected to return
+    // an integer count of matches inserted. If it returns null (DB function
+    // changed signature, migration not applied, etc.) the UI would silently
+    // show "0 matched scans" — which is indistinguishable from a clean run.
+    // Log a warning so devtools surfaces the schema drift.
+    if (data === null || data === undefined) {
+      console.warn('[cross-ref] sweep_recall_matches returned null — RPC may need migration check');
+      return 0;
+    }
+    if (typeof data !== 'number') {
+      console.warn('[cross-ref] sweep_recall_matches returned unexpected type:', typeof data, data);
+      return 0;
+    }
+    return data;
   } catch(e) {
     console.warn('[cross-ref] sweepScansForRecall failed:', e.message);
     return 0;
@@ -9788,51 +9801,10 @@ async function deleteRecall(id) {
   loadRecallsList();
 }
 
-async function addManualRecall() {
-  // These form elements no longer exist in the current HTML.
-  // This function is retained for reference but is effectively dead code.
-  const productNameEl = document.getElementById('recall-product-name');
-  const lotEl         = document.getElementById('recall-lot');
-  const batchEl       = document.getElementById('recall-batch');
-  const descEl        = document.getElementById('recall-desc');
-  const msgEl         = document.getElementById('add-recall-msg');
-  if (!productNameEl || !msgEl) return; // elements not present — safe exit
-
-  const productName = productNameEl.value.trim();
-  const lot   = lotEl?.value.trim()   || '';
-  const batch = batchEl?.value.trim() || '';
-  const desc  = descEl?.value.trim()  || '';
-
-  if (!productName) { msgEl.style.color = 'var(--danger)'; msgEl.textContent = '⚠ Product name is required.'; return; }
-
-  msgEl.style.color = 'var(--muted)'; msgEl.textContent = t('js.saving');
-  try {
-    const { error } = await sb.from('recalls').insert({
-      product_name: productName,
-      lot_number: lot || null,
-      batch_number: batch || null,
-      description: desc || null,
-      source: 'manual',
-      active: true
-    });
-    if (error) throw error;
-    // Retroactive sweep — non-blocking
-    (async () => {
-      const { data: r } = await sb.from('recalls').select('id')
-        .eq('product_name', productName).order('created_at', { ascending: false }).limit(1);
-      if (r?.[0]?.id) sweepScansForRecall(r[0].id);
-    })();
-    msgEl.style.color = 'var(--accent)'; msgEl.textContent = '✓ Recall added';
-    if (productNameEl) productNameEl.value = '';
-    if (lotEl)         lotEl.value         = '';
-    if (batchEl)       batchEl.value       = '';
-    if (descEl)        descEl.value        = '';
-    setTimeout(() => { if (msgEl) msgEl.textContent = ''; }, 2500);
-    loadRecallsList();
-  } catch(e) {
-    msgEl.style.color = 'var(--danger)'; msgEl.textContent = '✗ ' + e.message;
-  }
-}
+// addManualRecall removed in audit cleanup pass — its form elements
+// (recall-product-name, recall-lot, recall-batch, recall-desc, add-recall-msg)
+// no longer exist in the HTML. The live manual-recall-creation paths are
+// mgrAddRecall (this file) and saveManualRecall (dashboard.html).
 
 // ── EXTERNAL RECALL FETCHERS ──────────────────────────────────
 async function fetchExternalRecalls() {
