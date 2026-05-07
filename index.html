@@ -8583,6 +8583,14 @@ async function matchScanAgainstRecalls(scanId, scanData) {
     seenRecallIds.add(r.id);
     rows.push({
       scan_id:          scanId,
+      // Path A (manual / feed recalls): recall_id holds recalls.id.
+      // recall_event_id is intentionally NOT set — these matches don't link
+      // to a recall_events row (Path B is the only one that does). When
+      // querying scan_recall_matches for a manual or feed recall, use
+      // recall_id; for a manufacturer-pushed recall, use recall_event_id.
+      // Audit fix #6 added this convention to disambiguate the polymorphic
+      // recall_id column. See sweep_recall_matches RPC (DB-side) for the
+      // server-side equivalent of this insert path.
       recall_id:        r.id,
       recall_source:    r.source || 'manual',
       recall_product:   r.product_name || null,
@@ -9490,7 +9498,14 @@ async function checkRecallsOnLogin(silent = false) {
               if (level !== 'exact') return null;
               return {
                 scan_id:         s.id,
+                // Path B (manufacturer-push): recall_id holds the recall_events.id
+                // for backward compat with existing reads; recall_event_id is the
+                // new typed column with an FK to recall_events. Audit fix #6 added
+                // recall_event_id so consumers can disambiguate Path A (manual /
+                // feed → recalls.id) from Path B (manufacturer-push →
+                // recall_events.id) without relying on recall_source filtering.
                 recall_id:       m.recall.id,
+                recall_event_id: m.recall.id,
                 recall_source:   'manufacturer_push',
                 recall_product:  m.recall.product_name || null,
                 recall_lot:      m.recall.lot_number   || null,
@@ -10165,7 +10180,18 @@ async function checkActiveRecalls(cachedRecalls = null) {
     const banner = document.getElementById('auto-recall-banner');
     const text = document.getElementById('auto-recall-text');
     banner.style.display = 'flex';
-    autoRecallCode = matchedRecalls[0].recall.lot_number || matchedRecalls[0].recall.product_name;
+    // Audit fix (#28): pick a search query that won't flood results.
+    // Priority: lot_number → barcode_number → product_name (only if short).
+    // Long FDA / Mattilsynet feed descriptions in product_name (200+ chars)
+    // were being slammed into the search box and substring-matching
+    // everything in scan history.
+    {
+      const r0 = matchedRecalls[0].recall;
+      const productShortEnough = r0.product_name && r0.product_name.length <= 40;
+      autoRecallCode = r0.lot_number
+        || r0.barcode_number
+        || (productShortEnough ? r0.product_name : (r0.product_name ? r0.product_name.split(/\s+/)[0] : ''));
+    }
     text.innerHTML = matchedRecalls.map(m => {
       const parts = [];
       if (m.exactCount)   parts.push(`<strong style="color:var(--danger)">${m.exactCount===1?t('hist.exactMatches',{n:1}):t('hist.exactMatchesPlural',{n:m.exactCount})}</strong>`);

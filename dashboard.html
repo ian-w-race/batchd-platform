@@ -3256,6 +3256,14 @@ async function launchDrill() {
   const btn = document.querySelector('#drill-launcher-modal button[onclick="launchDrill()"]');
   if (btn) { btn.disabled=true; btn.textContent='Launching…'; }
 
+  // Audit fix (#17): minimise the half-published window by inserting in this
+  // order — recall_event → mock_recall_drills → distributions → acks. If a
+  // step fails after the recall_event is created, attempt to delete the
+  // recall_event so we don't leave a real-recall artifact in the wild.
+  // (Distributions/acks have FKs to recall_event so a successful event delete
+  // cascades; if cascade is configured restrictive, the cleanup deletes nothing
+  // and the user sees the error. Either way safer than the previous order.)
+  let createdRecallEventId = null;
   try {
     // Create recall_event with is_drill=true
     const { data: ev, error: evErr } = await sb.from('recall_events').insert({
@@ -3265,6 +3273,18 @@ async function launchDrill() {
       published_at: new Date().toISOString(),
     }).select().single();
     if (evErr) throw evErr;
+    createdRecallEventId = ev.id;
+
+    // Log in mock_recall_drills FIRST (right after recall_event). If a later
+    // step fails, downstream "is this a drill?" detection that reads
+    // mock_recall_drills still works correctly.
+    const { error: drillErr } = await sb.from('mock_recall_drills').insert({
+      recall_event_id: ev.id,
+      initiated_by_org: _orgId,
+      target_retailer_id: _orgId,
+      started_at: new Date().toISOString(),
+    });
+    if (drillErr) throw drillErr;
 
     // Distribute to this retailer org
     const { error: distErr } = await sb.from('recall_distributions').insert({
@@ -3286,18 +3306,6 @@ async function launchDrill() {
       if (acksErr) throw acksErr;
     }
 
-    // Log in mock_recall_drills.
-    // CRITICAL: if this insert silently fails, the recall_event exists with
-    // is_drill=true but no row in mock_recall_drills — the active recall counter
-    // and other downstream consumers may not recognize it as a drill.
-    const { error: drillErr } = await sb.from('mock_recall_drills').insert({
-      recall_event_id: ev.id,
-      initiated_by_org: _orgId,
-      target_retailer_id: _orgId,
-      started_at: new Date().toISOString(),
-    });
-    if (drillErr) throw drillErr;
-
     setMsg('✓ Drill launched — ' + (stores?.length||0) + ' store' + ((stores?.length||0)!==1?'s':'') + ' notified', true);
     // Update button to a clear "done" state immediately rather than leaving it
     // disabled with "Launching…" until the timeout. Prevents user confusion if
@@ -3310,6 +3318,19 @@ async function launchDrill() {
     }, 1500);
   } catch(e) {
     setMsg('Error: ' + e.message, false);
+    // Best-effort rollback: if a step failed after recall_event was created,
+    // try to delete the recall_event. This depends on FK cascade behaviour
+    // (mock_recall_drills, recall_distributions, recall_acknowledgements all
+    // have FKs to recall_events). If the delete itself fails (e.g. cascade is
+    // RESTRICT), we leave the partial state and the user knows the operation
+    // failed — same outcome as before, just with one more attempt to recover.
+    if (createdRecallEventId) {
+      try {
+        await sb.from('recall_events').delete().eq('id', createdRecallEventId);
+      } catch(cleanupErr) {
+        console.warn('[launchDrill] cleanup failed after error:', cleanupErr?.message);
+      }
+    }
     if (btn) { btn.disabled=false; btn.textContent='Launch drill →'; }
   }
 }
@@ -5110,10 +5131,19 @@ async function generateJointRecallReport(recallEventId, productName) {
       mfrOrg = mfr || {};
     }
 
-    // Fetch matched scans via scan_recall_matches
+    // Fetch matched scans via scan_recall_matches.
+    // Audit fix #6: query by recall_event_id (new column added 2026-05-07)
+    // instead of recall_id. The legacy recall_id column is polymorphic —
+    // Path A (manual / feed) writes recalls.id, Path B (manufacturer-push)
+    // writes recall_events.id. Querying by recall_id with a recall_events.id
+    // value would only catch Path B rows AND would over-match if any
+    // recalls.id happened to collide with a recall_events.id (UUIDs make
+    // that vanishingly unlikely but possible). recall_event_id has a real FK
+    // to recall_events and is only populated by Path B, so this is correct
+    // and unambiguous.
     const { data: matchRows } = await sb.from('scan_recall_matches')
       .select('scan_id, store_name, scanned_by, placed_at, quantity, match_type')
-      .eq('recall_id', recallEventId)
+      .eq('recall_event_id', recallEventId)
       .eq('organisation_id', _orgId);
 
     const scanIds = (matchRows || []).map(m => m.scan_id).filter(Boolean);
