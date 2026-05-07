@@ -4714,8 +4714,22 @@ async function loadComplianceData(el) {
   // FSMA 204 KDE fields — only meaningful for US orgs but computed for both
   const tlcSourceScans    = scans.filter(s => s.tlc_source).length;
   const refDocScans       = scans.filter(s => s.reference_document).length;
-  const acksProgressed    = acks.filter(a => a.status !== 'notified').length;
-  const acksConfirmed     = acks.filter(a => a.status === 'confirmed').length;
+  // Audit fix #18: separate drill activity from real-recall activity in the
+  // compliance score. drillInYear (+35) already credits drill engagement
+  // directly. Without this filter, drill acks were also triggering the
+  // acks-engagement bonuses (+15 for any acks, +20 for any progressed),
+  // giving drill-only retailers up to 100 pts for "we ran our annual drill
+  // once." Real-recall handling without a drill could only score 65.
+  // Filtering ack-engagement signals to non-drill events makes drill
+  // activity only contribute via the dedicated +35 weight, balancing drill
+  // and real-recall contributions equally.
+  // Compliance-check messages downstream ("recall alert network active",
+  // "5-step chain completed", etc.) also use this filtered set so a
+  // drill-only retailer doesn't see "X recalls received" implying real ones.
+  const drillEventIds     = new Set((drills || []).map(d => d.recall_event_id).filter(Boolean));
+  const realAcks          = acks.filter(a => !drillEventIds.has(a.recall_event_id));
+  const acksProgressed    = realAcks.filter(a => a.status !== 'notified').length;
+  const acksConfirmed     = realAcks.filter(a => a.status === 'confirmed').length;
   const drillInYear       = drills.length > 0;
   const storeIdsRecent    = new Set(recentScans.map(s => s.store_id || s.store_name).filter(Boolean));
   const storesActiveRecent= activeStores.filter(s => storeIdsRecent.has(s.id) || storeIdsRecent.has(s.name)).length;
@@ -4740,7 +4754,8 @@ async function loadComplianceData(el) {
   // readiness signal for a retailer-only platform.
   const hasCoordinator = !!(org.recall_coordinator_name && org.recall_coordinator_contact);
   let recallScore     = 20;
-  if (acks.length > 0)        recallScore += 15;
+  // Audit fix #18: realAcks (non-drill) drives the +15 alert-network bonus.
+  if (realAcks.length > 0)    recallScore += 15;
   if (acksProgressed > 0)     recallScore += 20;
   if (drillInYear)            recallScore += 35;
   if (hasCoordinator)         recallScore += 10;
@@ -4749,7 +4764,14 @@ async function loadComplianceData(el) {
   const overallScore  = Math.round((docScore + traceScore + recallScore + coverageScore) / 4);
 
   _complianceData = {
-    scans, stores, acks, drills, activeStores,
+    scans, stores,
+    // Audit fix #18: expose the drill-filtered ack list as `acks` so all
+    // downstream consumers (gap detector at line ~4403, compliance-check
+    // messages, audit checklist) reflect REAL recall activity, not drills.
+    // `allAcks` is also exposed for any future view that wants the unfiltered
+    // count (e.g. drill-only metrics). Currently nothing reads allAcks.
+    acks: realAcks, allAcks: acks,
+    drills, activeStores,
     recentScans, lotScans, supplierScans, ftlScans,
     tlcSourceScans, refDocScans,        // FSMA 204 KDE fields
     acksProgressed, acksConfirmed,
