@@ -10542,16 +10542,19 @@ function lotMatchLevel(scanLot, recallLot) {
   if (sNorm === rNorm) return 'exact';
 
   // 3. Prefix/substring match — the query must be at least 3 normalised chars
-  //    to avoid single-letter noise ("L"→"1") matching everything
+  //    to avoid single-letter noise ("L"→"1") matching everything.
+  //    Audit fix: previously this was >= 1 which let one-character recall lots
+  //    substring-match every scan. Now matches the documented threshold.
   const normMinLen = Math.min(sNorm.length, rNorm.length);
-  if (normMinLen >= 1 && (sNorm.includes(rNorm) || rNorm.includes(sNorm))) return 'exact';
+  if (normMinLen >= 3 && (sNorm.includes(rNorm) || rNorm.includes(sNorm))) return 'exact';
 
-  // 4. Raw substring — require 4+ chars on the shorter side (less aggressive)
+  // 4. Raw substring — require 4+ chars on the shorter side (less aggressive).
+  //    Audit fix: was >= 1, same false-positive vector as branch 3.
   const rawMinLen = Math.min(sLow.length, rLow.length);
-  if (rawMinLen >= 1 && (sLow.includes(rLow) || rLow.includes(sLow))) return 'exact';
+  if (rawMinLen >= 4 && (sLow.includes(rLow) || rLow.includes(sLow))) return 'exact';
 
   // 5. Levenshtein fuzzy match — needs at least 3 normalised chars
-  if (sNorm.length < 1 || rNorm.length < 1) return null;
+  if (sNorm.length < 3 || rNorm.length < 3) return null;
   const maxLen = Math.max(sNorm.length, rNorm.length);
   // Tighter threshold for short strings to avoid false positives
   const threshold = maxLen <= 5 ? 1 : maxLen <= 10 ? 2 : 3;
@@ -10656,8 +10659,9 @@ function queryMatchLevel(scanRecord, q) {
     if (level) return level;
   }
 
-  // 2. Exact product name substring match
-  if (qLow.length >= 1 && (product.includes(qLow) || qLow.includes(product.split(' ')[0]))) {
+  // 2. Exact product name substring match — require 3+ chars to avoid
+  //    single-letter queries matching everything. Audit fix: was >= 1.
+  if (qLow.length >= 3 && (product.includes(qLow) || qLow.includes(product.split(' ')[0]))) {
     return 'exact';
   }
 
@@ -10689,11 +10693,12 @@ function recallQueryMatch(scanRecord, query) {
     if (level) return level;
   }
 
-  // 3. Product name
-  if (qLow.length >= 1) {
+  // 3. Product name — require 3+ chars to avoid single-letter queries matching
+  //    everything. Audit fix: was >= 1.
+  if (qLow.length >= 3) {
     if (product.includes(qLow)) return 'exact';
     const firstWord = product.split(/\s+/)[0];
-    if (firstWord && qLow.includes(firstWord)) return 'exact';
+    if (firstWord && firstWord.length >= 3 && qLow.includes(firstWord)) return 'exact';
   }
 
   // 4. Raw label text fallback
@@ -18527,9 +18532,14 @@ async function _advanceLinkedAck(targetStatus) {
       update.acknowledged_at = new Date().toISOString();
       update.acknowledged_by = currentUser?.id || null;
     }
+    // Audit fix: scope by organisation_id as defence-in-depth alongside RLS.
+    // The dashboard's advanceAckStatus does the same — keeps both code paths
+    // consistent and prevents a forged or stale ack id from mutating another
+    // org's record if RLS ever has a gap.
     const { data, error } = await sb.from('recall_acknowledgements')
       .update(update)
       .eq('id', _recallLinkedAck.id)
+      .eq('organisation_id', _currentOrgId)
       .select().single();
     if (error) throw error;
     _recallLinkedAck = data;

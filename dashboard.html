@@ -2742,7 +2742,7 @@ async function renderRecalls() {
   const userId = (await sb.auth.getUser()).data?.user?.id;
   const [recallsRes, acksRes, coordRes] = await Promise.all([
     sb.from('recalls').select('*').eq('organisation_id', _orgId).order('created_at', {ascending:false}).limit(300),
-    sb.from('recall_acknowledgements').select('*, stores(name)').eq('organisation_id', _orgId).order('created_at', {ascending:false}).limit(300),
+    sb.from('recall_acknowledgements').select('*, stores(name), recall_events(is_drill)').eq('organisation_id', _orgId).order('created_at', {ascending:false}).limit(300),
     sb.from('user_settings').select('recall_coordinator_name, recall_coordinator_contact, recall_coordinator_backup').eq('user_id', userId).single(),
   ]);
   const coord   = coordRes.data || {};
@@ -2769,11 +2769,24 @@ async function renderRecalls() {
   }
 
   const RECALL_FEED_SOURCES = new Set(['fda','rasff','FDA','RASFF','mattilsynet','Mattilsynet']);
-  const { data: recallMatchRows } = await sb.from('scan_recall_matches').select('recall_id').eq('organisation_id', _orgId);
+  // Audit fix: enforce CLAUDE.md three-condition rule — a recall only "matches"
+  // if at least one matched scan is still on shelf. Previously this set
+  // included recalls whose only matched scan had been pulled, inflating active
+  // counts. Inner join + IS NULL filter on scans.removed_from_shelf_at gates
+  // it server-side.
+  const { data: recallMatchRows } = await sb.from('scan_recall_matches')
+    .select('recall_id, scans!inner(removed_from_shelf_at)')
+    .eq('organisation_id', _orgId)
+    .is('scans.removed_from_shelf_at', null);
   const matchedIds = new Set((recallMatchRows||[]).map(m => m.recall_id).filter(Boolean));
 
   const pushedKeys = new Set(pushed.map(p => (p.recall_events?.product_name||'').toLowerCase() + '|' + (p.recall_events?.lot_number||'').toLowerCase()));
-  const activePushed   = pushed.filter(p => !p.recall_events?.is_drill).length;
+  // Audit fix: activePushed now requires an on-shelf match (matchedIds is filtered above).
+  // Note: scan_recall_matches.recall_id can be either recalls.id or recall_events.id
+  // depending on the insert path (audit issue #6 — ID-class drift). This intersect
+  // works for the manufacturer-push path; the trigger-based path may underreport
+  // until that drift is normalised.
+  const activePushed   = pushed.filter(p => !p.recall_events?.is_drill && matchedIds.has(p.recall_event_id)).length;
   const manualRecalls  = recalls.filter(r => {
     if (!r.active) return false;
     if (r.is_pushed || r.recall_event_id) return false;
@@ -2784,7 +2797,9 @@ async function renderRecalls() {
   const historyRecalls = recalls.filter(r => !r.active);
   const feedRecalls    = recalls.filter(r => RECALL_FEED_SOURCES.has(r.source));
   const active         = manualRecalls.length + activePushed;
-  const unacknowledged = acks.filter(a => a.status === 'notified').length;
+  // Audit fix: exclude drill acks from the "unacknowledged" count — CLAUDE.md rule:
+  // "Mock drills never count toward active recall numbers."
+  const unacknowledged = acks.filter(a => a.status === 'notified' && !a.recall_events?.is_drill).length;
 
   // ── Connected manufacturers for drill launcher ─────────────
   const { data: partners } = await sb.from('trading_partners')
@@ -6970,7 +6985,8 @@ async function renderStoreManagerOverview() {
     const scansToday = scans.filter(s => s.created_at?.startsWith(today)).length;
     const escalated  = scans.filter(s => s.manager_escalated && !s.recall_resolved).length;
     const onShelf    = scans.filter(s => !s.removed_from_shelf_at).length;
-    const pendingAcks = acks.filter(a => a.status === 'notified').length;
+    // Audit fix: drill acks don't count as pending action — CLAUDE.md rule.
+    const pendingAcks = acks.filter(a => a.status === 'notified' && !a.recall_events?.is_drill).length;
 
     // Last 7 days sparkline
     const last7 = Array.from({length:7}, (_,i) => {
