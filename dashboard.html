@@ -986,11 +986,34 @@ function esc(s) {
   }[m]));
 }
 
+// Audit fix #36: detect a lot range "L23400-L23500" and check if a single
+// lot falls inside it. Returns true only when EXACTLY one of (a, b) is a
+// recognisable range and the other is a single in-range lot.
+function _dashLotInRange(rangeStr, singleStr) {
+  if (!rangeStr || !singleStr) return false;
+  const cleaned = String(rangeStr).trim().replace(/\s*[-–—]\s*/g, '-');
+  if ((cleaned.match(/-/g) || []).length !== 1) return false;
+  const rm = cleaned.match(/^([A-Z]*)(\d+)-([A-Z]*)(\d+)$/i);
+  if (!rm) return false;
+  const [, p1, n1, p2, n2] = rm;
+  if (p1.toUpperCase() !== p2.toUpperCase()) return false;
+  const start = parseInt(n1, 10), end = parseInt(n2, 10);
+  if (isNaN(start) || isNaN(end) || start > end) return false;
+  const sm = String(singleStr).trim().match(/^([A-Z]*)(\d+)$/i);
+  if (!sm) return false;
+  const [, sp, sn] = sm;
+  if (sp.toUpperCase() !== p1.toUpperCase()) return false;
+  const v = parseInt(sn, 10);
+  return !isNaN(v) && v >= start && v <= end;
+}
+
 function lotsMatch(a, b) {
   if (!a || !b) return false;
   const clean = s => s.trim().toUpperCase().replace(/[_\s]/g, '-');
   const ca = clean(a), cb = clean(b);
   if (ca === cb) return true;
+  // Lot range match — either side could be the range, the other side single.
+  if (_dashLotInRange(a, b) || _dashLotInRange(b, a)) return true;
   // Prefix match — recall says "L2024-03", scan has "L2024-03-15A"
   if (ca.startsWith(cb) || cb.startsWith(ca)) return true;
   // Strip trailing date/time variants: L2024-03-15A → L2024-03
@@ -2537,10 +2560,16 @@ el.innerHTML = `
                   const pulled     = evAcks.filter(a => ['pulled','disposed','confirmed'].includes(a.status)).length;
                   const notified   = evAcks.length;
                   const isExposed  = r.lot_number && myLotNumbers.has(r.lot_number);
-                  const sevColor   = r.severity?.toLowerCase().includes('i') || r.severity?.toLowerCase().includes('critical') ? 'var(--danger)' : r.severity?.toLowerCase().includes('ii') ? 'var(--warn)' : 'var(--muted)';
+                  // Audit fix #26: route severity through formatSeverity (exact
+                  // map lookup) instead of substring matching. The previous
+                  // code used `includes('i')` which is true for class_i,
+                  // class_ii, class_iii AND class_iv/class_v — making it
+                  // effectively always danger-coloured.
+                  const sevColor   = formatSeverity(r.severity).color;
+                  const isHighSev  = sevColor === 'var(--danger)';
                   return `
                   <div onclick="showPanel('recalls')" style="display:flex;align-items:flex-start;gap:12px;padding:14px 18px;border-bottom:1px solid var(--border);cursor:pointer;transition:background 0.15s;" onmouseover="this.style.background='rgba(52,211,153,0.03)'" onmouseout="this.style.background=''">
-                    <div style="width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:5px;background:${sevColor};${r.severity?.toLowerCase().includes('i')||!r.severity?'box-shadow:0 0 7px rgba(255,92,92,0.5);':''}"></div>
+                    <div style="width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:5px;background:${sevColor};${isHighSev||!r.severity?'box-shadow:0 0 7px rgba(255,92,92,0.5);':''}"></div>
                     <div style="flex:1;min-width:0;">
                       <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${r.product_name || '—'}</div>
                       <div style="font-size:11px;color:var(--muted);">
@@ -2856,10 +2885,21 @@ async function renderRecalls() {
     const storeName  = a.stores?.name || 'Unknown store';
     const nextStep   = STEPS[idx + 1];
     const elapsed    = a.acknowledged_at ? Math.round((Date.now() - new Date(a.acknowledged_at).getTime()) / 60000) : null;
-    // Detect app-advanced: if the ack was set by a user UUID (not a manager session),
-    // or if multiple steps were advanced within seconds of each other (batch advance from resolve)
-    const appAdvanced = a.status === 'confirmed' && a.confirmed_at && a.pulled_at &&
-      Math.abs(new Date(a.confirmed_at) - new Date(a.pulled_at)) < 5000;
+    // Detect app-advanced: the scanning app's resolve flow batch-advances
+    // pulled → disposed → confirmed in rapid succession (1-3s). Dashboard
+    // users take 30+ seconds between clicks because each step requires
+    // reading the prompt and clicking. If all three step timestamps land
+    // within 10 seconds of each other, it's almost certainly the app's
+    // batch advance.
+    // Audit fix #2/#14: now that pulled_at / disposed_at / confirmed_at are
+    // real columns (added 2026-05-07), this heuristic actually works
+    // instead of being permanently false.
+    const tPul = a.pulled_at    ? new Date(a.pulled_at).getTime()    : null;
+    const tDis = a.disposed_at  ? new Date(a.disposed_at).getTime()  : null;
+    const tCon = a.confirmed_at ? new Date(a.confirmed_at).getTime() : null;
+    const appAdvanced = a.status === 'confirmed' && tPul && tDis && tCon &&
+      Math.abs(tCon - tPul) < 10000 &&
+      Math.abs(tDis - tPul) < 10000;
     const appBadge = appAdvanced
       ? `<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:rgba(52,211,153,0.1);color:var(--accent);font-family:'DM Mono',monospace;margin-left:4px;" title="Completed via Batch'd scanning app">via app</span>`
       : '';
@@ -2915,7 +2955,10 @@ async function renderRecalls() {
     const mfrName  = mfrOrg.name || 'Unknown manufacturer';
     const allDone  = evAcks.length > 0 && evAcks.every(a => a.status === 'confirmed');
     const anyAction= evAcks.some(a => a.status === 'notified');
-    const sevNum   = ev.severity?.includes('iii') ? '3' : ev.severity?.includes('ii') ? '2' : ev.severity?.includes('i') ? '1' : '2';
+    // Audit fix #26: exact-match instead of substring. Previously
+    // `class_iv` was bucketed as '1' because 'iv' contains 'i'.
+    const sevKey   = (ev.severity || '').toLowerCase().trim().replace(/\s+/g,'_');
+    const sevNum   = sevKey === 'class_iii' ? '3' : sevKey === 'class_ii' ? '2' : sevKey === 'class_i' ? '1' : '?';
     const sevColor = sevNum==='1' ? 'var(--danger)' : sevNum==='2' ? 'var(--warn)' : 'var(--muted)';
 
     // Manufacturer contact strip for collaboration
@@ -5948,7 +5991,10 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
             data.map(r => {
               const isPushed = r._type === 'pushed';
               const d = isPushed ? (r.published_at||r.created_at) : r.created_at;
-              const sevColor = (r.severity||'').includes('class_i') && !(r.severity||'').includes('ii') && !(r.severity||'').includes('iii') ? 'var(--danger)' : (r.severity||'').includes('class_ii') ? 'var(--warn)' : 'var(--muted)';
+              // Audit fix #26: route through formatSeverity. Previous logic
+              // bucketed class_iv as danger because it includes('class_i')
+              // returned true. formatSeverity uses an exact-match map.
+              const sevColor = formatSeverity(r.severity).color;
               return `<tr>
                 <td style="white-space:nowrap;font-size:11px;color:var(--muted);">${fmtDate(d)}</td>
                 <td style="font-size:12px;font-weight:600;color:var(--text);">${r.product_name||'—'}

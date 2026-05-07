@@ -8413,123 +8413,13 @@ function stopZXing() {
   if (torchOn) { torchOn = false; toggleTorch().catch(() => {}); }
 }
 
-function snapBarcode() {
-  const vid = document.getElementById('barcode-video');
-  const canvas = document.createElement('canvas');
-  canvas.width = vid.videoWidth; canvas.height = vid.videoHeight;
-  canvas.getContext('2d').drawImage(vid, 0, 0);
-  canvas.toBlob((blob) => {
-    barcodeBlob = blob;
-    const url = URL.createObjectURL(blob);
-    const img = document.getElementById('barcode-captured');
-    img.src = url;
-    img.style.display = 'block';
-    document.getElementById('barcode-video-wrap').style.display = 'none';
-    document.getElementById('scan-line').style.display = 'none';
-    document.getElementById('barcode-frame').style.display = 'none';
-    document.getElementById('btn-snap-barcode').style.display = 'none';
-    document.getElementById('btn-retake-barcode').style.display = 'flex';
-    stopZXing();
-    // Keep stream alive for instant retake
-  }, 'image/jpeg', 0.92);
-}
-
-// AI barcode fallback — snap a photo and let Claude read the barcode number
-async function snapAiBarcode() {
-  const vid = document.getElementById('barcode-video');
-  const canvas = document.createElement('canvas');
-  canvas.width = vid.videoWidth; canvas.height = vid.videoHeight;
-  canvas.getContext('2d').drawImage(vid, 0, 0);
-
-  canvas.toBlob(async (blob) => {
-    barcodeBlob = blob;
-    const url = URL.createObjectURL(blob);
-    const img = document.getElementById('barcode-captured');
-    img.src = url;
-    img.style.display = 'block';
-    document.getElementById('barcode-video-wrap').style.display = 'none';
-    document.getElementById('scan-line').style.display = 'none';
-    document.getElementById('barcode-frame').style.display = 'none';
-    document.getElementById('btn-snap-barcode').style.display = 'none';
-    document.getElementById('btn-ai-barcode').style.display = 'none';
-    document.getElementById('btn-retake-barcode').style.display = 'flex';
-    stopZXing();
-    // Keep stream alive for instant retake
-
-    document.getElementById('barcode-ai-analyzing').style.display = 'flex';
-    const code = await readBarcodeWithAI(blob);
-    document.getElementById('barcode-ai-analyzing').style.display = 'none';
-
-    if (code) {
-      detectedBarcode = code;
-      document.getElementById('field-barcode').value = code;
-      document.getElementById('field-barcode').classList.add('auto-filled');
-      document.getElementById('barcode-value').textContent = code;
-      document.getElementById('barcode-result').classList.add('visible');
-      const gs1 = parseGS1(code);
-      if (gs1.lot) { document.getElementById('field-lot').value = gs1.lot; document.getElementById('field-lot').classList.add('auto-filled'); }
-      // field-batch removed from UI
-    } else {
-      document.getElementById('barcode-value').textContent = currentLang==='no'?'Kunne ikke lese — skriv inn manuelt':'Could not read — enter manually';
-      document.getElementById('barcode-result').classList.add('visible');
-    }
-    
-    
-  }, 'image/jpeg', 0.95);
-}
-
-async function readBarcodeWithAI(blob) {
-  try {
-    // 1600px is plenty for Anthropic's vision model to read EAN/UPC/Code128.
-    // 2400px was producing 4-6MB base64 payloads that added ~150-300ms upload
-    // and Anthropic processing time without improving accuracy.
-    const upscaled = await upscaleBlob(blob, 1600);
-    const b64 = await blobToBase64(upscaled);
-    const data = await callOcrFunction('read_barcode', b64);
-    const result = data.content?.[0]?.text?.trim();
-    if (!result || result === 'null') return null;
-    // Strip any non-digit characters just in case
-    const digits = result.replace(/\D/g, '');
-    return digits.length >= 6 ? digits : null;
-  } catch(e) {
-    return null;
-  }
-}
-
-function retakeBarcode() {
-  stopAutoCapture();
-  hideRegionConfirmation();
-  hideLotFormatHint();
-  _pendingOcrResult = null;
-  _gs1FullCapture = null;
-  const gs1Banner = document.getElementById('gs1-full-capture-banner');
-  if (gs1Banner) gs1Banner.style.display = 'none';
-  barcodeBlob = null;
-  detectedBarcode = null;
-  document.getElementById('barcode-captured').style.display = 'none';
-  document.getElementById('barcode-captured').src = '';
-  document.getElementById('btn-retake-barcode').style.display = 'none';
-  document.getElementById('barcode-result').classList.remove('visible');
-  document.getElementById('ocr-result').classList.remove('visible');
-  document.getElementById('ocr-analyzing').style.display = 'none';
-  document.getElementById('field-barcode').value = '';
-  document.getElementById('field-barcode').classList.remove('auto-filled');
-  document.getElementById('field-lot').value = '';
-  document.getElementById('field-lot').classList.remove('auto-filled');
-  document.getElementById('field-lot').style.borderColor = '';
-  const confDot = document.getElementById('lot-confidence-dot');
-  if (confDot) confDot.style.display = 'none';
-  // field-batch removed from UI
-  document.getElementById('gs1-parsed').style.display = 'none';
-  document.getElementById('gs1-parsed').innerHTML = '';
-  stopZXing();
-  // Restart camera immediately in current mode
-  if (currentMode === 'barcode') {
-    startBarcodeScanner();
-  } else {
-    startOcrCamera();
-  }
-}
+// snapBarcode / snapAiBarcode / readBarcodeWithAI / retakeBarcode were
+// removed in the audit cleanup pass — they were leftover from the pre-
+// raw-capture rebuild's Phase 1 barcode mode. None had call sites; many of
+// the DOM elements they referenced (btn-snap-barcode, btn-ai-barcode,
+// barcode-result, barcode-value, barcode-ai-analyzing, scan-line) no
+// longer exist in the HTML, so the functions would throw on first
+// invocation if anything tried to call them.
 
 function stopQuagga() {
   if (quaggaRunning) { Quagga.stop(); quaggaRunning = false; }
@@ -10117,13 +10007,38 @@ async function fetchMattilsynetRecalls() {
 async function loadHistory() {
   const grid = document.getElementById('records-grid');
   grid.innerHTML = `<div class="empty-state"><div class="spinner" style="margin:0 auto;"></div><p style="margin-top:12px;">${t('hist.loadingRecords')}</p></div>`;
-  const [scansRes, recallsRes] = await Promise.all([
+  // Audit fix #22: also fetch manufacturer-pushed recalls so the post-save
+  // toast and history-tab banner cover both paths. Previously only the
+  // recalls table was queried, so a scan that matched a pushed recall
+  // silently passed the post-save check without surfacing a warning to
+  // staff. Distributions → recall_events normalised into the same shape
+  // as recalls rows (matches the login-alert pattern at line ~9372).
+  const [scansRes, recallsRes, distRes] = await Promise.all([
     sb.from('scans').select('*').eq('organisation_id', _currentOrgId).order('created_at', { ascending: false }),
-    sb.from('recalls').select('*').eq('active', true).eq('organisation_id', _currentOrgId)
+    sb.from('recalls').select('*').eq('active', true).eq('organisation_id', _currentOrgId),
+    sb.from('recall_distributions').select('recall_event_id').eq('retailer_org_id', _currentOrgId),
   ]);
   if (scansRes.error) { grid.innerHTML = '<div class="empty-state"><h3>Error loading records</h3><p>' + scansRes.error.message + '</p></div>'; return; }
   allRecords = scansRes.data || [];
-  _cachedActiveRecalls = recallsRes.data || [];
+  let pushedRecalls = [];
+  const distRows = distRes.data || [];
+  if (distRows.length) {
+    const eventIds = [...new Set(distRows.map(d => d.recall_event_id).filter(Boolean))];
+    const { data: events } = await sb.from('recall_events')
+      .select('id, product_name, lot_number, barcode, reason, is_drill')
+      .in('id', eventIds);
+    // Drills are training, not real recalls — exclude per CLAUDE.md.
+    pushedRecalls = (events || []).filter(ev => !ev.is_drill).map(ev => ({
+      id:             ev.id,
+      product_name:   ev.product_name,
+      lot_number:     ev.lot_number,
+      barcode_number: ev.barcode,        // recall_events column is `barcode` not `barcode_number`
+      description:    ev.reason,
+      active:         true,
+      source:         'manufacturer_push',
+    }));
+  }
+  _cachedActiveRecalls = [...(recallsRes.data || []), ...pushedRecalls];
   buildStoreDropdown();
   applyFilters();
   // Pass already-fetched recalls so checkActiveRecalls doesn't re-query for the same data.
@@ -10583,6 +10498,45 @@ function fuzzyProductMatch(recallProduct, scanProduct) {
   return false;
 }
 
+// Audit fix #36: parse a lot-range expression like "L23400-L23500" into
+// {prefix, start, end}. Returns null if the input isn't a recognisable
+// range (e.g. single lot, multi-segment date/lot cluster like
+// "06.06.26*1599", multiple dashes, mismatched prefixes).
+//
+// Recognised forms:
+//   "L23400-L23500"  → { prefix:'L', start:23400, end:23500 }
+//   "23400-23500"    → { prefix:'',  start:23400, end:23500 }
+//   "BATCH001-BATCH050" → { prefix:'BATCH', start:1, end:50 }
+//   "L23400 - L23500" (with spaces, en-/em-dashes) — also accepted.
+function parseLotRange(s) {
+  if (!s) return null;
+  // Normalise dash variants (ASCII -, en-dash –, em-dash —) and surrounding whitespace.
+  const cleaned = String(s).trim().replace(/\s*[-–—]\s*/g, '-');
+  // Single-dash form only — multi-dash strings are date-style or compound lots, not ranges.
+  if ((cleaned.match(/-/g) || []).length !== 1) return null;
+  const m = cleaned.match(/^([A-Z]*)(\d+)-([A-Z]*)(\d+)$/i);
+  if (!m) return null;
+  const [, p1, n1, p2, n2] = m;
+  if (p1.toUpperCase() !== p2.toUpperCase()) return null;
+  const start = parseInt(n1, 10);
+  const end   = parseInt(n2, 10);
+  if (isNaN(start) || isNaN(end) || start > end) return null;
+  return { prefix: p1.toUpperCase(), start, end };
+}
+
+// Returns true if a single lot string falls within a parsed range.
+// Requires the same prefix and a numeric suffix that's in [start, end].
+function lotInRange(scanLot, range) {
+  if (!scanLot || !range) return false;
+  const m = String(scanLot).trim().match(/^([A-Z]*)(\d+)$/i);
+  if (!m) return false;
+  const [, prefix, n] = m;
+  if (prefix.toUpperCase() !== range.prefix) return false;
+  const num = parseInt(n, 10);
+  if (isNaN(num)) return false;
+  return num >= range.start && num <= range.end;
+}
+
 // Core: compare a scan lot against a recall lot
 // Returns 'exact' | 'possible' | null
 function lotMatchLevel(scanLot, recallLot) {
@@ -10592,6 +10546,13 @@ function lotMatchLevel(scanLot, recallLot) {
 
   // 1. Exact string match
   if (sLow === rLow) return 'exact';
+
+  // 1.5. Lot range match (audit fix #36) — recall lot can be a range
+  // like "L23400-L23500"; check if the scan lot falls inside it. Treated
+  // as 'exact' because suppliers using ranges intend every lot in the
+  // range to be recalled.
+  const range = parseLotRange(rl);
+  if (range && lotInRange(sl, range)) return 'exact';
 
   // 2. Normalised OCR confusion match (0/O, 1/I/L, 8/B, 5/S, 2/Z, 6/G)
   const sNorm = normaliseForFuzzy(sl);
@@ -14427,10 +14388,9 @@ function invertGrayscaleBlob(blob, targetWidth) {
   });
 }
 
-// Keep upscaleBlob as alias
-function upscaleBlob(blob, targetWidth) {
-  return preprocessImage(blob, targetWidth);
-}
+// upscaleBlob alias removed — only consumer was readBarcodeWithAI which
+// was deleted in the audit cleanup pass. preprocessImage is still live
+// and called directly from the OCR flow.
 
 // ── LOT CODE VALIDATION ───────────────────────────────────────
 // After extraction, sanity-check the returned code.
