@@ -7051,8 +7051,25 @@ async function loadMultiStoreOverview() {
     const { data, error } = await query;
     if (error) throw error;
 
-    const { data: recalls } = await sb.from('recalls').select('product_name, lot_number, barcode_number').eq('active', true).eq('organisation_id', _currentOrgId);
-    const activeRecalls = recalls || [];
+    // Audit fix: pull manual recalls from `recalls` AND manufacturer-pushed
+    // recalls from `recall_distributions` → `recall_events`. Previously only
+    // the manual table was queried, so pushed recalls never showed up in the
+    // multi-store Recall Hits tile even when on-shelf scans matched.
+    const [manualRecallsRes, distRes] = await Promise.all([
+      sb.from('recalls').select('product_name, lot_number, barcode_number').eq('active', true).eq('organisation_id', _currentOrgId),
+      sb.from('recall_distributions').select('recall_event_id').eq('retailer_org_id', _currentOrgId),
+    ]);
+    let pushedRecalls = [];
+    const distRows = distRes.data || [];
+    if (distRows.length) {
+      const eventIds = [...new Set(distRows.map(d => d.recall_event_id))];
+      const { data: events } = await sb.from('recall_events')
+        .select('product_name, lot_number, is_drill')
+        .in('id', eventIds);
+      // Drill events are training, not real recalls — exclude per CLAUDE.md.
+      pushedRecalls = (events || []).filter(ev => !ev.is_drill);
+    }
+    const activeRecalls = [...(manualRecallsRes.data || []), ...pushedRecalls];
 
     if (!data || !data.length) {
       output.innerHTML = `<div style="color:var(--muted);font-size:13px;text-align:center;padding:16px;">${t('store.noScanData')}</div>`;
@@ -7079,8 +7096,14 @@ async function loadMultiStoreOverview() {
                (recBarcode && sBarcode && recBarcode === sBarcode);
       });
       if (isMatch) {
-        byStore[s].recallHits++;
-        if (!r.recall_resolved) byStore[s].unresolved++;
+        // Audit fix: only count as a "recall hit requiring action" if the
+        // scan is still on shelf. A pulled scan is no longer at risk and
+        // shouldn't inflate the per-store risk profile (CLAUDE.md
+        // three-condition rule, especially condition 3).
+        if (!r.removed_from_shelf_at) {
+          byStore[s].recallHits++;
+          if (!r.recall_resolved) byStore[s].unresolved++;
+        }
       }
     });
 
@@ -10114,9 +10137,17 @@ async function checkActiveRecalls(cachedRecalls = null) {
       return true;
     });
 
-    // Check each active recall against recent scans (last 30 days)
+    // Check each active recall against recent on-shelf scans.
+    // Audit fix: filter !removed_from_shelf_at and !recall_resolved so the
+    // banner only flags scans that genuinely require action. Pulled or
+    // already-resolved scans were inflating the banner counts and contradicted
+    // the CLAUDE.md three-condition rule for active recalls.
     const cutoff = new Date(Date.now() - recallLookbackDays * 24 * 60 * 60 * 1000);
-    const recentRecords = allRecords.filter(r => new Date(r.created_at) > cutoff);
+    const recentRecords = allRecords.filter(r =>
+      new Date(r.created_at) > cutoff
+      && !r.removed_from_shelf_at
+      && !r.recall_resolved
+    );
 
     let matchedRecalls = [];
     for (const recall of uniqueData) {

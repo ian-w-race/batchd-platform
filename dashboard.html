@@ -2065,7 +2065,7 @@ async function renderOverview() {
     const days30 = new Date(now - 30 * 86400000).toISOString();
     const days7  = new Date(now - 7  * 86400000).toISOString();
 
-    const [storesRes, scansRes, partnersRes, shipmentsRes, acksRes, distRes, srmRes] = await Promise.all([
+    const [storesRes, scansRes, partnersRes, shipmentsRes, acksRes, distRes, srmRes, onShelfRes] = await Promise.all([
       sb.from('stores').select('id, name, active').eq('organisation_id', _orgId),
       sb.from('scans').select('id, created_at, store_name, store_id, product_name, lot_number, barcode_number, removed_from_shelf_at, scanned_by, recall_resolved').eq('organisation_id', _orgId).gte('created_at', days30).order('created_at', {ascending:false}).limit(500),
       sb.from('trading_partners').select('id, status, organisations!trading_partners_manufacturer_id_fkey(id,name)').eq('retailer_id', _orgId),
@@ -2077,6 +2077,13 @@ async function renderOverview() {
       // Selecting it would cause a silent Supabase error, returning data:null and
       // zeroing _confirmedRecallIds → activeCount = 0.
       sb.from('scan_recall_matches').select('scan_id, recall_id, recall_product, recall_lot, store_name, quantity, placed_at, match_confidence').eq('organisation_id', _orgId),
+      // Audit fix (#9): the main `scans` query is capped at 30 days for KPI
+      // display, but on-shelf detection must NOT be date-bounded — slow-moving
+      // products (freezer aisle, ambient shelf) older than 30 days that are
+      // still on shelf were invisible to the active-recall match, so the
+      // dashboard under-reported risk. This separate query fetches all
+      // currently-on-shelf scans regardless of age, with a generous cap.
+      sb.from('scans').select('id, lot_number, barcode_number').eq('organisation_id', _orgId).is('removed_from_shelf_at', null).limit(10000),
     ]);
 
     const stores    = storesRes.data    || [];
@@ -2086,15 +2093,19 @@ async function renderOverview() {
     const acks      = acksRes.data      || [];
     const dists     = distRes.data      || [];
     const srmRows   = srmRes.data       || [];
+    const onShelfAll = onShelfRes.data  || [];
 
     // ── On-shelf scan lookups (anchor for the strict three-condition rule) ──
     // Per CLAUDE.md, a recall counts as active only when (1) recall.active = true,
     // (2) it matches an org scan by exact lot or barcode, and (3) that matched
     // scan is still on shelf. These sets back conditions (2) and (3).
+    // Built from the dedicated onShelfAll query (no date floor) so old on-shelf
+    // scans aren't dropped from the active-recall match.
+    const _onShelfScanIds = new Set(onShelfAll.map(s => s.id).filter(Boolean));
+    const _onShelfLots    = new Set(onShelfAll.map(s => (s.lot_number    ||'').toLowerCase().trim()).filter(Boolean));
+    const _onShelfBcs     = new Set(onShelfAll.map(s => (s.barcode_number||'').toLowerCase().trim()).filter(Boolean));
+    // Kept for downstream code that still expects this object shape (KPI tiles).
     const _onShelfScans   = scans.filter(s => !s.removed_from_shelf_at);
-    const _onShelfScanIds = new Set(_onShelfScans.map(s => s.id).filter(Boolean));
-    const _onShelfLots    = new Set(_onShelfScans.map(s => (s.lot_number    ||'').toLowerCase().trim()).filter(Boolean));
-    const _onShelfBcs     = new Set(_onShelfScans.map(s => (s.barcode_number||'').toLowerCase().trim()).filter(Boolean));
 
     // ── Exposure metrics — only match rows tied to an on-shelf scan ──
     // scans.removed_from_shelf_at is the authoritative pull record; scan_recall_matches has no removal tracking.
@@ -2162,7 +2173,9 @@ async function renderOverview() {
     // Manual recalls require an exact on-shelf hit too — drill / "just logged" recalls
     // with no scan in stock no longer inflate the headline count.
     const ownRecalls = (ownRecallsRaw || []).filter(r => {
-      if (r.is_pushed || r.recall_event_id) return false; // auto-created from push — skip
+      // (Audit fix: removed dead is_pushed/recall_event_id checks — neither
+      // column exists on the recalls table, so these were always false. Dedup
+      // against pushed recalls now happens via the pushedKeys lookup below.)
       const rLot = (r.lot_number    ||'').toLowerCase().trim();
       const rBc  = (r.barcode_number||'').toLowerCase().trim();
       if (!rLot && !rBc) return false; // can't satisfy condition (2) without a key
@@ -2789,7 +2802,9 @@ async function renderRecalls() {
   const activePushed   = pushed.filter(p => !p.recall_events?.is_drill && matchedIds.has(p.recall_event_id)).length;
   const manualRecalls  = recalls.filter(r => {
     if (!r.active) return false;
-    if (r.is_pushed || r.recall_event_id) return false;
+    // (Audit fix: removed dead is_pushed/recall_event_id checks — neither
+    // column exists on the recalls table. Dedup against pushed recalls
+    // happens via pushedKeys below.)
     if (RECALL_FEED_SOURCES.has(r.source)) return matchedIds.has(r.id);
     const key = (r.product_name||'').toLowerCase() + '|' + (r.lot_number||'').toLowerCase();
     return !pushedKeys.has(key);
@@ -3061,11 +3076,12 @@ async function renderRecalls() {
         ${manualRecalls.map(r => `
           <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--surface);border:1px solid var(--border);border-radius:10px;margin-bottom:8px;">
             <div style="width:8px;height:8px;border-radius:50%;background:${r.active?'var(--danger)':'var(--muted)'};flex-shrink:0;"></div>
-            <div style="flex:1;">
-              <div style="font-size:13px;font-weight:600;color:var(--text);">${r.product_name}</div>
-              <div style="font-size:11px;color:var(--muted);margin-top:2px;">${regionTerm('lot_short')}: ${r.lot_number||'—'} · ${r.source||'Manual'} · ${r.created_at?fmtDash(r.created_at):''}</div>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:13px;font-weight:600;color:var(--text);">${esc(r.product_name||'')}</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:2px;">${regionTerm('lot_short')}: ${esc(r.lot_number||'—')} · ${esc(r.source||'Manual')} · ${r.created_at?fmtDash(r.created_at):''}</div>
             </div>
-            <span style="font-size:10px;padding:2px 8px;border-radius:10px;background:${r.active?'rgba(255,92,92,0.12)':'rgba(52,211,153,0.12)'};color:${r.active?'var(--danger)':'var(--accent)'};">${r.active?'Active':'Resolved'}</span>
+            <span style="font-size:10px;padding:2px 8px;border-radius:10px;background:${r.active?'rgba(255,92,92,0.12)':'rgba(52,211,153,0.12)'};color:${r.active?'var(--danger)':'var(--accent)'};white-space:nowrap;">${r.active?'Active':'Resolved'}</span>
+            ${r.active ? `<button onclick="resolveManualRecall('${r.id}', this)" title="Mark this recall as resolved — it will move to the History tab" style="font-size:11px;padding:5px 10px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;white-space:nowrap;">Resolve</button>` : ''}
           </div>`).join('')}
       </div>` : ''}`;
 
@@ -3313,11 +3329,17 @@ async function saveManualRecall() {
   const btn = document.querySelector('button[onclick="saveManualRecall()"]');
   if (btn) { btn.disabled=true; btn.textContent='Saving…'; }
 
-  const { error } = await sb.from('recalls').insert({
+  // Audit fix (#12, #11-severity): capture the new recall id so we can run
+  // a retroactive sweep, and persist the severity the form collected.
+  const insertPayload = {
     product_name: product, lot_number: lot, barcode_number: barcode||null,
     description: desc||null, source: source||'manual', active: true,
     organisation_id: _orgId,
-  });
+  };
+  if (severity) insertPayload.severity = severity;
+  const { data: inserted, error } = await sb.from('recalls')
+    .insert(insertPayload)
+    .select('id').single();
 
   if (error) {
     setMsg(error.message, false);
@@ -3325,11 +3347,65 @@ async function saveManualRecall() {
     return;
   }
 
+  // Audit fix (#12): retroactively match this recall against existing scans
+  // in the org. Without this sweep, only future scans would link via the
+  // matchScanAgainstRecalls trigger, leaving on-shelf items invisible to the
+  // active-recall counter until their next scan event.
+  if (inserted?.id) {
+    try {
+      await sb.rpc('sweep_recall_matches', {
+        p_recall_id:       inserted.id,
+        p_organisation_id: _orgId,
+        p_lookback_days:   180,
+      });
+    } catch(e) {
+      console.warn('[saveManualRecall] sweep failed:', e?.message);
+      // Don't block — the recall is created either way; sweep is best-effort.
+    }
+  }
+
+  // Audit fix (#45): clear the form so a second click can't accidentally
+  // duplicate the recall.
+  ['new-recall-product','new-recall-lot','new-recall-barcode','new-recall-description'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+
   showToast('Recall created', 'ok', 3000);
+  invalidateOverviewCache();
   _recallsTab = 'active';
   renderRecalls();
 }
 
+
+// Audit fix (#13): mark a manual / feed recall as resolved from the dashboard.
+// Previously the dashboard had no way to flip a recall's active=false — only
+// the scanning app's mgrToggleRecall could do it. Manual recalls created here
+// would accumulate as Active forever from a corp_admin's perspective.
+async function resolveManualRecall(recallId, btn) {
+  if (!recallId) return;
+  if (!confirm('Mark this recall as resolved? It will move to the History tab and stop counting toward active recall metrics.')) return;
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  try {
+    const { data, error } = await sb.from('recalls')
+      .update({ active: false })
+      .eq('id', recallId)
+      .eq('organisation_id', _orgId)  // defence-in-depth alongside RLS
+      .select('id');
+    if (error) throw error;
+    if (!data || !data.length) {
+      showToast('Could not resolve — recall not found in your organisation.', 'error', 4000);
+      if (btn) { btn.disabled = false; btn.textContent = 'Resolve'; }
+      return;
+    }
+    showToast('Recall resolved', 'ok', 2500);
+    invalidateOverviewCache();
+    renderRecalls();
+  } catch(e) {
+    showToast('Could not resolve: ' + e.message, 'error', 4000);
+    if (btn) { btn.disabled = false; btn.textContent = 'Resolve'; }
+  }
+}
 
 async function sendRecallReminder(recallEventId, productName) {
   const btn = event?.target;
@@ -5265,9 +5341,15 @@ async function generateStoreAuditReport(ackId, storeName) {
   const btn = event?.target;
   if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
   try {
+    // Audit fix: org-scope explicitly. generateJointRecallReport already
+    // does .eq('organisation_id', _orgId) — keeps the audit trail consistent
+    // and prevents a stale ack id from leaking another retailer's report
+    // contents if RLS ever has a gap.
     const { data: a } = await sb.from('recall_acknowledgements')
       .select('*, recall_events(*), stores(name), organisations(name, recall_coordinator_name, contact_email)')
-      .eq('id', ackId).single();
+      .eq('id', ackId)
+      .eq('organisation_id', _orgId)
+      .single();
     if (!a) throw new Error('Acknowledgement not found');
     const ev  = a.recall_events || {};
     const org = a.organisations || {};
@@ -5698,7 +5780,7 @@ async function fetchReportData(key) {
       }
       const pushedKeys2 = new Set(pushed.map(ev => (ev.product_name||'').toLowerCase()+'|'+(ev.lot_number||'').toLowerCase()));
       const internal = (recallsRes.data || []).filter(r => {
-        if (r.is_pushed || r.recall_event_id) return false;
+        // (Audit fix: removed dead is_pushed/recall_event_id checks.)
         const key = (r.product_name||'').toLowerCase()+'|'+(r.lot_number||'').toLowerCase();
         return !pushedKeys2.has(key);
       }).map(r => ({ ...r, _type:'internal' }));
@@ -9487,7 +9569,7 @@ async function renderConsumerNotification() {
       (e.product_name||'').toLowerCase() + '|' + (e.lot_number||'').toLowerCase()
     ));
     const dedupedManual = (manualRecalls||[]).filter(r => {
-      if (r.is_pushed || r.recall_event_id) return false; // auto-created from push
+      // (Audit fix: removed dead is_pushed/recall_event_id checks.)
       if (r.source === 'fda' || r.source === 'rasff') return false;
       const key = (r.product_name||'').toLowerCase() + '|' + (r.lot_number||'').toLowerCase();
       return !pushedKeys.has(key);
@@ -9993,9 +10075,12 @@ function showToast(msg, type, duration) {
 // ── Store timeline modal ──────────────────────────────────────
 async function showStoreTimeline(ackId) {
   document.getElementById('dash-store-timeline-modal')?.remove();
+  // Audit fix: org-scope explicitly (defence-in-depth alongside RLS).
   const { data: a } = await sb.from('recall_acknowledgements')
     .select('*, stores(name), recall_events(product_name, lot_number, published_at)')
-    .eq('id', ackId).single();
+    .eq('id', ackId)
+    .eq('organisation_id', _orgId)
+    .single();
   if (!a) return;
 
   const steps = [
