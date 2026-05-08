@@ -5314,9 +5314,16 @@ let recallLookbackDays = 180; // default 6 months; managers can set 30–365 day
 // In-memory recall match log for debugging — NOT persisted. Each entry:
 //   { scan_id, recall_id, match_type: 'red'|'orange'|'none', matched_on: 'substring'|'barcode'|'product_name_only'|null, ts }
 // Capped at 500 entries with FIFO eviction so the array can't grow unbounded.
+//
+// Perf fix #29: gated behind _DEBUG_LOG (?debug=1 or localStorage). Inside
+// recallMatchLevel which runs O(scans × recalls) per loadHistory — with
+// 500 scans × 30 recalls = 15k allocations of ~120 bytes = 1.8MB of
+// garbage per page load. None of it benefits production users; the log
+// is consumed by the developer console only.
 const _recallMatchLog = [];
 const _RECALL_MATCH_LOG_CAP = 500;
 function _logRecallMatch(scan, recall, matchType, matchedOn) {
+  if (!_DEBUG_LOG) return; // skip in prod — saves ~1.8MB GC churn per loadHistory
   _recallMatchLog.push({
     scan_id:    scan?.id || null,
     recall_id:  recall?.id || null,
@@ -5525,8 +5532,12 @@ async function showApp(user) {
       last_seen_app:  'scanning_app',
     }, { onConflict: 'user_id' }); } catch(e) {} })();
 
-    // initRecallSystem is now safe — external fetches run in background
-    await initRecallSystem();
+    // Perf fix #13: don't block login on initRecallSystem. It does sequential
+    // user_settings → organisations queries plus checkRecallsOnLogin (which
+    // fetches recalls + scans). Total typical case: 200-500ms. None of that
+    // gates the camera or scan flow — the recall banner just populates when
+    // ready. Fire-and-forget; the function already wraps internal failures.
+    initRecallSystem().catch(e => console.warn('initRecallSystem:', e?.message));
 
     // Multistore date defaults
     const today = new Date();
@@ -12561,10 +12572,28 @@ let _acActive   = false;  // is the loop running?
 let _acPhase    = null;   // 'product' | 'ocr'
 let _acChecking = false;  // AI call in flight — don't stack calls
 let _acCanvas   = null;   // reusable 160×120 sampling canvas
-let _acPrevGray = null;   // previous frame grayscale for motion detection
 let _acStableFrames = 0; // consecutive stable frames counter
 let _acCtx      = null;
 let _acLastAiCall = 0;    // timestamp of last AI check
+// Perf fix #16: buffer-swap allocation pattern. Previously the loop allocated
+// a fresh Float32Array(160*120) every iteration AND called gray.slice() to
+// snapshot it for the next frame's motion comparison — 2 × ~77KB allocations
+// per loop iteration × 5 iterations/sec = ~770KB/s of GC churn while the
+// auto-capture loop was active. Phone GC pressure on older iPhones was
+// measurable. Pre-allocated double-buffer + pointer swap keeps it at zero
+// allocation per iteration.
+let _acGrayCur  = null;   // current-frame grayscale buffer (one of the two below)
+let _acGrayPrev = null;   // previous-frame grayscale buffer
+let _acHasPrev  = false;  // false on the very first iteration (no prev to motion-compare yet)
+// Perf fix #17: adaptive AI-call backoff. The local quality gate can pass
+// frame after frame while the actual product label / lot code isn't yet
+// presented (user is framing the shot). Each pass triggers a Sonnet
+// extract_codes call → "NO" → 400ms wait → repeat. At 2.5 calls/sec during
+// dwell time, this burns Anthropic budget for nothing. Tracking
+// consecutive NOs and lengthening the interval drops the rate without
+// hurting responsiveness — motion (user repositions) resets the counter
+// so a fresh attempt fires at the original 400ms cadence.
+let _acConsecutiveNo = 0;
 
 const AC_LOOP_INTERVAL  = 200;   // ms — how often the fast local check runs (was 300; 200 = more aggressive Phase 1 trigger)
 const AC_AI_INTERVAL    = 400;   // ms — minimum gap between AI calls (was 1500 → 600 → 400; 400 = more aggressive)
@@ -12581,13 +12610,17 @@ function startAutoCapture(phase) {
   _acActive = true;
   _acLastAiCall = 0;
   _acChecking = false;
-  _acPrevGray = null;
   _acStableFrames = 0;
+  _acHasPrev = false;
+  _acConsecutiveNo = 0;  // perf fix #17: reset adaptive backoff on each new auto-capture session
   if (!_acCanvas) {
     _acCanvas = document.createElement('canvas');
     _acCanvas.width = 160; _acCanvas.height = 120;
     _acCtx = _acCanvas.getContext('2d', { willReadFrequently: true });
   }
+  // Perf fix #16: lazy-init the double buffer once. 160 × 120 = 19200 floats.
+  if (!_acGrayCur)  _acGrayCur  = new Float32Array(160 * 120);
+  if (!_acGrayPrev) _acGrayPrev = new Float32Array(160 * 120);
   _acLoop();
 }
 
@@ -12624,7 +12657,9 @@ function _acLoop() {
     const { data } = _acCtx.getImageData(0, 0, 160, 120);
     const W = 160, H = 120;
     let brightness = 0;
-    const gray = new Float32Array(W * H);
+    // Perf fix #16: write into the pre-allocated current-frame buffer.
+    // No new Float32Array per iteration.
+    const gray = _acGrayCur;
     for (let i = 0; i < W * H; i++) {
       const g = 0.299*data[i*4] + 0.587*data[i*4+1] + 0.114*data[i*4+2];
       gray[i] = g; brightness += g;
@@ -12646,7 +12681,11 @@ function _acLoop() {
     if (!frameOk) {
       _acSetReady(false);
       _acStableFrames = 0;
-      _acPrevGray = gray.slice();
+      // Perf fix #16: swap buffer pointers instead of slice(). The current
+      // buffer becomes "prev" for the next iteration; the old "prev" buffer
+      // gets overwritten next iteration (its contents are no longer needed).
+      const _swap = _acGrayPrev; _acGrayPrev = _acGrayCur; _acGrayCur = _swap;
+      _acHasPrev = true;
       _acTimer = setTimeout(_acLoop, AC_LOOP_INTERVAL);
       return;
     }
@@ -12655,17 +12694,23 @@ function _acLoop() {
     // Mean absolute difference between current and previous grayscale.
     // High MAD = camera is moving → don't trigger capture.
     let motionScore = 0;
-    if (_acPrevGray) {
+    if (_acHasPrev) {
       for (let i = 0; i < W * H; i++) {
-        motionScore += Math.abs(gray[i] - _acPrevGray[i]);
+        motionScore += Math.abs(gray[i] - _acGrayPrev[i]);
       }
       motionScore /= (W * H);
     }
-    _acPrevGray = gray.slice();
+    // Swap for next iteration — see explanation above.
+    const _swap = _acGrayPrev; _acGrayPrev = _acGrayCur; _acGrayCur = _swap;
+    _acHasPrev = true;
 
     const isMoving = motionScore > AC_MOTION_MAX;
     if (isMoving) {
       _acStableFrames = 0;
+      // Perf fix #17: motion = user is repositioning, possibly framing a new
+      // shot. Reset the AI backoff so the next stable frame gets evaluated
+      // immediately at the original cadence.
+      _acConsecutiveNo = 0;
       _acSetReady(false);
       // Show "Hold still" state on indicator
       const indId = _acPhase === 'product' ? 'auto-indicator-product' : 'auto-indicator-ocr';
@@ -12692,9 +12737,14 @@ function _acLoop() {
     // Frame looks usable and stable — show indicator while AI checks
     _acSetReady(true);
 
-    // ── Stage 2: AI confirmation (rate-limited to every 1.5s) ─
+    // ── Stage 2: AI confirmation (rate-limited) ─
+    // Perf fix #17: adaptive interval. Base 400ms; grows after consecutive
+    // NOs to avoid burning AI calls during dwell time. Resets on motion.
     const now = Date.now();
-    if (_acChecking || now - _acLastAiCall < AC_AI_INTERVAL) {
+    const adaptiveInterval = _acConsecutiveNo >= 5 ? 1500
+                          :  _acConsecutiveNo >= 3 ? 800
+                          :  AC_AI_INTERVAL;
+    if (_acChecking || now - _acLastAiCall < adaptiveInterval) {
       _acTimer = setTimeout(_acLoop, AC_LOOP_INTERVAL);
       return;
     }
@@ -12720,9 +12770,15 @@ function _acLoop() {
         const result = await callOcrFunction('extract_codes', b64, { prompt, useHaiku: true });
         const answer = (result.content?.[0]?.text || '').trim().toUpperCase();
         if (_acActive && answer.startsWith('YES')) {
+          // Perf fix #17: reset backoff counter on success
+          _acConsecutiveNo = 0;
           stopAutoCapture();
           if (_acPhase === 'product') snapProduct();
           else snapOcr();
+        } else {
+          // Perf fix #17: NO → bump counter (caps at 6 to avoid overflow on
+          // long dwells; the 1500ms ceiling already kicks in at 5).
+          _acConsecutiveNo = Math.min(6, _acConsecutiveNo + 1);
         }
       } catch(e) { /* silent — just wait for next cycle */ }
       _acChecking = false;

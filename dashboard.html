@@ -1275,7 +1275,16 @@ function updateClock() {
     now.toLocaleDateString(_dashLocale(), { weekday:'short', day:'numeric', month:'short' }) + ' · ' +
     now.toLocaleTimeString(_dashLocale(), { hour:'2-digit', minute:'2-digit' });
 }
-setInterval(updateClock, 1000); updateClock();
+// Perf fix #22+#33: tick on minute boundaries rather than every 1s.
+// The format only displays minutes — updating every second was wasted
+// work (28,800 useless updates per 8h day). Aligning to the boundary
+// keeps the displayed time accurate without burning the cycles.
+updateClock();
+const _msToNextMinute = 60_000 - (Date.now() % 60_000);
+setTimeout(() => {
+  updateClock();
+  setInterval(updateClock, 60_000);
+}, _msToNextMinute);
 
 // ── Auth ───────────────────────────────────────────────────────
 
@@ -1406,18 +1415,20 @@ async function initDashboard(user) {
     last_seen_app: 'dashboard',
   }, { onConflict: 'user_id' }); } catch(e) {} })();
 
-  const { data: org } = await sb.from('organisations')
-    .select('name, region')
-    .eq('id', _orgId)
-    .single();
-
+  // Perf fix #14: parallelize org + store name lookups. Both depend on
+  // values from the org_members query above but neither depends on the
+  // other. Previously serial — saved ~100-200ms per dashboard cold-start.
+  const [orgRes, storeRes] = await Promise.all([
+    sb.from('organisations').select('name, region').eq('id', _orgId).single(),
+    _storeId
+      ? sb.from('stores').select('name').eq('id', _storeId).single()
+      : Promise.resolve({ data: null }),
+  ]);
+  const org = orgRes.data;
   _orgName   = org?.name || 'My Organisation';
   _orgRegion = org?.region || 'no';
-
-  // If store manager, load store name
   if (_storeId) {
-    const { data: store } = await sb.from('stores').select('name').eq('id', _storeId).single();
-    _storeName = store?.name || 'My Store';
+    _storeName = storeRes.data?.name || 'My Store';
   }
 
   // Show app
@@ -2106,7 +2117,12 @@ async function renderOverview() {
       sb.from('scans').select('id, created_at, store_name, store_id, product_name, lot_number, barcode_number, removed_from_shelf_at, scanned_by, recall_resolved').eq('organisation_id', _orgId).gte('created_at', days30).order('created_at', {ascending:false}).limit(500),
       sb.from('trading_partners').select('id, status, organisations!trading_partners_manufacturer_id_fkey(id,name)').eq('retailer_id', _orgId),
       sb.from('shipments').select('id, lot_number, quantity, unit, shipped_at, stores(name), organisations!shipments_manufacturer_id_fkey(id,name), products(name)').eq('retailer_id', _orgId).order('shipped_at', {ascending:false}).limit(200),
-      sb.from('recall_acknowledgements').select('id, status, recall_event_id, store_id, created_at, acknowledged_at, organisation_id, recall_events!inner(is_drill)').eq('organisation_id', _orgId),
+      // Perf fix #20: 365-day floor on the acks query. Previously unbounded —
+      // a 50-store retailer with weekly recalls accumulates 10k+ ack rows
+      // over 2-3 years, all read on every dashboard render. Acks older than
+      // 365 days don't affect the active-recall counter or the response-rate
+      // KPIs (those are time-bounded), so the floor is safe.
+      sb.from('recall_acknowledgements').select('id, status, recall_event_id, store_id, created_at, acknowledged_at, organisation_id, recall_events!inner(is_drill)').eq('organisation_id', _orgId).gte('created_at', days365Iso),
       sb.from('recall_distributions').select('recall_event_id, distributed_at').eq('retailer_org_id', _orgId),
       // NOTE: removed_at is intentionally omitted — it is never written by app code
       // (pullFromShelf writes to scans.removed_from_shelf_at, not scan_recall_matches).
@@ -3781,7 +3797,7 @@ async function renderTraceability(tab) {
       <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
         <input id="trace-search" type="text" placeholder="Search product or lot…"
           style="flex:1;min-width:160px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-family:'DM Mono',monospace;font-size:12px;color:var(--text);outline:none;"
-          oninput="filterTraceability()" onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border)'" />
+          oninput="filterTraceabilityDebounced()" onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border)'" />
         <select id="trace-store" onchange="filterTraceability()"
           style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-family:'DM Mono',monospace;font-size:12px;color:var(--text);outline:none;cursor:pointer;">
           <option value="">All stores</option>
@@ -3959,6 +3975,15 @@ function renderTraceRows(list) {
     </tr>`).join('');
 }
 
+// Perf fix #26: debounce the traceability filter. 500-row tbody rebuilds
+// (~350KB innerHTML) on every keystroke became a 4-letter search = 4
+// rebuilds. 200ms debounce collapses to 1 rebuild.
+let _filterTraceabilityTimer = null;
+function filterTraceabilityDebounced() {
+  clearTimeout(_filterTraceabilityTimer);
+  _filterTraceabilityTimer = setTimeout(filterTraceability, 200);
+}
+
 function filterTraceability() {
   const search  = (document.getElementById('trace-search')?.value || '').toLowerCase();
   const store   = document.getElementById('trace-store')?.value  || '';
@@ -4048,10 +4073,14 @@ async function renderStaff() {
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading staff…</div>`;
   try {
 
-  const [membersRes, storesRes, acceptedInvRes] = await Promise.all([
+  // Perf fix #25: pull `allPending` (pending invitations) into the initial
+  // batch — it doesn't depend on members. Was sequential at line ~4113,
+  // adding 100-200ms of round-trip latency.
+  const [membersRes, storesRes, acceptedInvRes, allPendingRes] = await Promise.all([
     sb.from('organisation_members').select('user_id, role, joined_at, store_id, active').eq('organisation_id', _orgId),
     sb.from('stores').select('id, name').eq('organisation_id', _orgId).eq('active', true),
     sb.from('invitations').select('email, role, user_id').eq('organisation_id', _orgId).eq('accepted', true),
+    sb.from('invitations').select('id, email, role, accepted, created_at, expires_at').eq('organisation_id', _orgId).eq('accepted', false).order('created_at', { ascending: false }),
   ]);
 
   const allMembers  = membersRes.data || [];
@@ -4059,6 +4088,7 @@ async function renderStaff() {
   const deactivated = allMembers.filter(m => m.active === false);
   const stores      = storesRes.data  || [];
   const acceptedInv = acceptedInvRes.data || [];
+  const allPending  = allPendingRes.data || [];
 
   // Build email lookup keyed by user_id (most reliable)
   // and by role-order as fallback for members who joined before user_id was tracked
@@ -4094,12 +4124,7 @@ async function renderStaff() {
   };
 
   const now = new Date();
-  const { data: allPending } = await sb.from('invitations')
-    .select('id, email, role, accepted, created_at, expires_at')
-    .eq('organisation_id', _orgId)
-    .eq('accepted', false)
-    .order('created_at', { ascending: false });
-
+  // Perf fix #25: allPending now in the initial Promise.all above.
   // Split into active and expired — fix #13
   const pending = (allPending || []).filter(i => new Date(i.expires_at) > now);
   const expired = (allPending || []).filter(i => new Date(i.expires_at) <= now);
