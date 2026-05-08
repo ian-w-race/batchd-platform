@@ -2087,8 +2087,21 @@ async function renderOverview() {
     const now = Date.now();
     const days30 = new Date(now - 30 * 86400000).toISOString();
     const days7  = new Date(now - 7  * 86400000).toISOString();
+    // Perf fix #6: 4 additional queries (ownRecallsRaw, scans90, drillsRecent,
+    // recentComplaints) are all independent of the main batch and each other.
+    // Previously they ran sequentially after the main Promise.all (mid-render),
+    // adding ~400-1000ms of cumulative round-trip latency to every dashboard
+    // load. Moving them here parallelizes everything that can run in parallel.
+    // The remaining sequential queries (recall_events, mfrNames orgs,
+    // investigation_requests) genuinely depend on results from this batch.
+    const days90Iso = new Date(now - 90 * 86400000).toISOString();
+    const days365Iso = new Date(now - 365 * 86400000).toISOString();
+    const days7Iso = new Date(now - 7 * 86400000).toISOString();
 
-    const [storesRes, scansRes, partnersRes, shipmentsRes, acksRes, distRes, srmRes, onShelfRes] = await Promise.all([
+    const [
+      storesRes, scansRes, partnersRes, shipmentsRes, acksRes, distRes, srmRes, onShelfRes,
+      ownRecallsRes, scans90Res, drillsRecentRes, recentComplaintsRes,
+    ] = await Promise.all([
       sb.from('stores').select('id, name, active').eq('organisation_id', _orgId),
       sb.from('scans').select('id, created_at, store_name, store_id, product_name, lot_number, barcode_number, removed_from_shelf_at, scanned_by, recall_resolved').eq('organisation_id', _orgId).gte('created_at', days30).order('created_at', {ascending:false}).limit(500),
       sb.from('trading_partners').select('id, status, organisations!trading_partners_manufacturer_id_fkey(id,name)').eq('retailer_id', _orgId),
@@ -2107,6 +2120,17 @@ async function renderOverview() {
       // dashboard under-reported risk. This separate query fetches all
       // currently-on-shelf scans regardless of age, with a generous cap.
       sb.from('scans').select('id, lot_number, barcode_number').eq('organisation_id', _orgId).is('removed_from_shelf_at', null).limit(10000),
+      // Perf fix #6: ownRecallsRaw — was a sequential await mid-render (line ~2167)
+      sb.from('recalls')
+        .select('id, product_name, lot_number, barcode_number, active, source, created_at, reason:description, is_pushed, recall_event_id')
+        .eq('organisation_id', _orgId)
+        .eq('active', true).limit(300),
+      // Perf fix #6: scans90 baseline — was sequential (line ~2353)
+      sb.from('scans').select('store_name, store_id, created_at').eq('organisation_id', _orgId).gte('created_at', days90Iso),
+      // Perf fix #6: drillsRecent — was sequential (line ~2381)
+      sb.from('mock_recall_drills').select('id, started_at').eq('initiated_by_org', _orgId).gte('started_at', days365Iso).limit(1),
+      // Perf fix #6: recentComplaints — was sequential (line ~2389)
+      sb.from('complaints').select('id, product_name, triage_level, created_at').eq('receiving_org_id', _orgId).gte('created_at', days7Iso).not('status', 'in', '("closed","resolved")'),
     ]);
 
     const stores    = storesRes.data    || [];
@@ -2160,19 +2184,12 @@ async function renderOverview() {
     }
 
     // ── Also fetch any self-managed recalls for this org ──
-    // Exclude pushed recalls (already in relevantRecalls) to avoid duplicates
-    const { data: ownRecallsRaw } = await sb.from('recalls')
-      // is_pushed and recall_event_id removed from the SELECT — neither
-      // column exists on the live recalls schema. The `reason` column also
-      // doesn't exist; the equivalent text on this table is `description`,
-      // so we PostgREST-alias `description` to `reason` here so downstream
-      // code reading `r.reason` keeps working without a rename. The filters
-      // at lines below that referenced is_pushed/recall_event_id were already
-      // no-ops (both undefined); explicit `false` placeholders preserve that
-      // behavior. (chunk-6B-postship hotfix)
-      .select('id, product_name, lot_number, barcode_number, active, source, created_at, reason:description')
-      .eq('organisation_id', _orgId)
-      .eq('active', true).limit(300);
+    // Exclude pushed recalls (already in relevantRecalls) to avoid duplicates.
+    // Perf fix #6: ownRecallsRaw is now fetched in the main Promise.all above.
+    // Round-7 schema correction (2026-05-08): recalls.is_pushed and
+    // recall_event_id DO exist (~7 legacy production rows); included in the
+    // select so we can dedup against legacy push artifacts.
+    const ownRecallsRaw = ownRecallsRes.data;
     // Feed sources — imported from FDA/RASFF/Mattilsynet daily feeds.
     // These are NOT operational alerts unless they match something in scan history.
     const FEED_SOURCES = new Set(['fda','rasff','FDA','RASFF','mattilsynet','Mattilsynet']);
@@ -2338,12 +2355,9 @@ async function renderOverview() {
     const slowStores     = storeHealth.filter(s => s.status === 'slow');
 
     // ── Predictive dark store: baseline deviation per store ───────────────
-    // Compute 90-day baseline for each store and flag significant drops
-    const days90 = new Date(Date.now() - 90 * 86400000).toISOString();
-    const { data: scans90 } = await sb.from('scans')
-      .select('store_name, store_id, created_at')
-      .eq('organisation_id', _orgId)
-      .gte('created_at', days90);
+    // Compute 90-day baseline for each store and flag significant drops.
+    // Perf fix #6: scans90 fetched in the main Promise.all above.
+    const scans90 = scans90Res.data;
     const baselineByStore = {};
     (scans90 || []).forEach(s => {
       const key = s.store_id || s.store_name;
@@ -2367,20 +2381,12 @@ async function renderOverview() {
     });
     const overdueAcksAll = realAcks.filter(a => a.status === 'notified' && (Date.now() - new Date(a.created_at)) > 4*3600000);
 
-    // Check for drill overdue - fetch from drills table
-    const { data: recentDrills } = await sb.from('mock_recall_drills')
-      .select('id, started_at')
-      .eq('initiated_by_org', _orgId)
-      .gte('started_at', new Date(Date.now() - 365 * 86400000).toISOString())
-      .limit(1);
+    // Check for drill overdue. Perf fix #6: drillsRecent in main Promise.all.
+    const recentDrills = drillsRecentRes.data;
     const drillOverdue = !recentDrills?.length;
 
-    // Fetch complaint clusters
-    const { data: recentComplaints } = await sb.from('complaints')
-      .select('id, product_name, triage_level, created_at')
-      .eq('receiving_org_id', _orgId)
-      .gte('created_at', new Date(Date.now() - 7 * 86400000).toISOString())
-      .not('status', 'in', '("closed","resolved")');
+    // Fetch complaint clusters. Perf fix #6: recentComplaints in main Promise.all.
+    const recentComplaints = recentComplaintsRes.data;
     const complaintGroups = {};
     (recentComplaints||[]).forEach(c => {
       const k = (c.product_name||'Unknown').toLowerCase().split(' ')[0];
@@ -2787,17 +2793,23 @@ async function renderRecalls() {
   try {
 
   const userId = (await sb.auth.getUser()).data?.user?.id;
-  const [recallsRes, acksRes, coordRes] = await Promise.all([
+  // Perf fix #12: 3 of the 5 sequential queries that previously ran AFTER
+  // this Promise.all (recall_distributions, scan_recall_matches,
+  // trading_partners) are independent of the main batch. Moved them in.
+  // The remaining two (recall_events, organisations) are genuinely
+  // data-dependent and stay sequential below.
+  const [recallsRes, acksRes, coordRes, distRes, recallMatchRes, partnersRes] = await Promise.all([
     sb.from('recalls').select('*').eq('organisation_id', _orgId).order('created_at', {ascending:false}).limit(300),
     sb.from('recall_acknowledgements').select('*, stores(name), recall_events(is_drill)').eq('organisation_id', _orgId).order('created_at', {ascending:false}).limit(300),
     sb.from('user_settings').select('recall_coordinator_name, recall_coordinator_contact, recall_coordinator_backup').eq('user_id', userId).single(),
+    sb.from('recall_distributions').select('recall_event_id, est_affected_units, distributed_at').eq('retailer_org_id', _orgId),
+    sb.from('scan_recall_matches').select('recall_id, scans!inner(removed_from_shelf_at)').eq('organisation_id', _orgId).is('scans.removed_from_shelf_at', null),
+    sb.from('trading_partners').select('organisations!trading_partners_manufacturer_id_fkey(id, name)').eq('retailer_id', _orgId).eq('status', 'active'),
   ]);
   const coord   = coordRes.data || {};
   const recalls = recallsRes.data || [];
   const acks    = acksRes.data   || [];
-
-  const { data: distData } = await sb.from('recall_distributions')
-    .select('recall_event_id, est_affected_units, distributed_at').eq('retailer_org_id', _orgId);
+  const distData = distRes.data;
 
   let pushed = [];
   const orgNameMap = {};
@@ -2820,11 +2832,8 @@ async function renderRecalls() {
   // if at least one matched scan is still on shelf. Previously this set
   // included recalls whose only matched scan had been pulled, inflating active
   // counts. Inner join + IS NULL filter on scans.removed_from_shelf_at gates
-  // it server-side.
-  const { data: recallMatchRows } = await sb.from('scan_recall_matches')
-    .select('recall_id, scans!inner(removed_from_shelf_at)')
-    .eq('organisation_id', _orgId)
-    .is('scans.removed_from_shelf_at', null);
+  // it server-side. Perf fix #12: this query is now in the main Promise.all.
+  const recallMatchRows = recallMatchRes.data;
   const matchedIds = new Set((recallMatchRows||[]).map(m => m.recall_id).filter(Boolean));
 
   const pushedKeys = new Set(pushed.map(p => (p.recall_events?.product_name||'').toLowerCase() + '|' + (p.recall_events?.lot_number||'').toLowerCase()));
@@ -2852,9 +2861,8 @@ async function renderRecalls() {
   const unacknowledged = acks.filter(a => a.status === 'notified' && !a.recall_events?.is_drill).length;
 
   // ── Connected manufacturers for drill launcher ─────────────
-  const { data: partners } = await sb.from('trading_partners')
-    .select('organisations!trading_partners_manufacturer_id_fkey(id, name)')
-    .eq('retailer_id', _orgId).eq('status', 'active');
+  // Perf fix #12: this query is now in the main Promise.all.
+  const partners = partnersRes.data;
   const mfrPartners = (partners||[]).map(p => p.organisations).filter(Boolean);
 
   const navBtn = document.getElementById('nav-recalls');
