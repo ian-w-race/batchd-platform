@@ -48,30 +48,72 @@ The manufacturer side has been retired:
 ## Critical database rules — never violate these
 - recall_resolved on the scans table defaults to false 
   on every insert — never use it to count active recalls
-- scan_recall_matches.removed_at does NOT exist as a 
-  column — never select it or Supabase silently fails
+- scan_recall_matches.removed_at IS a real column but is 
+  NEVER WRITTEN by app code — pull tracking lives on 
+  scans.removed_from_shelf_at. Don't rely on removed_at 
+  for "is this scan still on shelf" checks.
 - Feed recalls (FDA/Mattilsynet) only count as "active" 
   if confirmed via scan_recall_matches table
 - Manual/push recalls count if exact lot or barcode 
   matches an on-shelf scan (removed_from_shelf_at IS NULL)
 
-## Schema gotchas — column names that bit us
-These tables don't have the column names you'd expect from 
-nearby code patterns. Always verify against Supabase Table 
-Editor before adding new SELECTs:
-- recall_distributions  → retailer_org_id (NOT initiating_org_id)
-- mock_recall_drills    → initiated_by_org + started_at 
-                          (NOT retailer_org_id + created_at)
-- recalls               → description (NOT reason). Alias 
-                          via PostgREST: `reason:description`
-- investigation_responses → retailer_org_id (NOT initiating_org_id)
-- recalls table also has no is_pushed and no recall_event_id 
-  columns despite their use elsewhere
-- recall_events has no is_recalled column
+## Schema reference
+See SCHEMA.md (repo root) for the canonical column-by-column 
+reference for the 7 recall-flow tables, FK relationships, 
+trigger/RPC inventory, and migration log. SCHEMA.md is 
+verified against information_schema and updated whenever 
+the live schema changes.
 
-These are silent 400s — Supabase returns Postgres 42703 
-"column X does not exist" with no client-visible error 
-unless you're watching devtools.
+## Schema gotchas — column names that bit us
+Quick-reference for the highest-impact rules. Full details 
+in SCHEMA.md.
+
+- recall_distributions  → retailer_org_id (NOT initiating_org_id)
+- mock_recall_drills    → initiated_by_org (NOT retailer_org_id). 
+                          Both started_at and created_at exist; 
+                          started_at is canonical.
+- recalls               → description (NOT reason). Alias 
+                          via PostgREST: `reason:description`. 
+                          recalls table has NO severity column 
+                          — fold severity into description text.
+- recall_events         → barcode (NOT barcode_number). Has 
+                          BOTH reason AND description; code 
+                          reads them interchangeably.
+- recalls.is_pushed and recalls.recall_event_id DO exist 
+  (legacy from retired manufacturer-push flow, ~7 prod rows). 
+  Filter with `if (r.is_pushed || r.recall_event_id) return false;` 
+  when iterating "manual recalls only".
+- recall_acknowledgements per-step timestamps added 2026-05-07: 
+  pulled_at, disposed_at, confirmed_at (alongside acknowledged_at). 
+  Earlier rows have NULL for the new three.
+
+Genuine silent 400s — these COLUMNS DO NOT EXIST and a 
+SELECT will fail without client-visible feedback unless 
+devtools is open:
+- recall_events.is_recalled does NOT exist
+- recalls.severity does NOT exist
+- recalls.reason does NOT exist (use description with PostgREST alias)
+
+## scan_recall_matches — two ID columns, two paths
+The recall_id column is polymorphic for legacy reasons:
+- Path A (manual / feed recalls): recall_id = recalls.id, 
+  recall_event_id IS NULL. Inserted by matchScanAgainstRecalls 
+  (index.html) and the sweep_recall_matches RPC (DB-side).
+- Path B (manufacturer-pushed recalls): recall_id = 
+  recall_events.id AND recall_event_id = recall_events.id 
+  (both populated for backward compat). Inserted by the 
+  login-time push sweep in index.html.
+
+Convention added 2026-05-07 (audit fix #6):
+- Querying by manual/feed recall: use .eq('recall_id', 
+  recalls.id). recall_event_id will be NULL on these rows.
+- Querying by pushed recall: use .eq('recall_event_id', 
+  recall_events.id). Has a real FK to recall_events with 
+  CASCADE on delete.
+- recall_source is the legacy discriminator ('manual', 
+  'fda', 'rasff', 'mattilsynet', 'manufacturer_push'). 
+  Still useful for reporting but no longer needed for 
+  disambiguation since recall_event_id is unambiguous.
 
 ## Recall counting rules (platform-wide)
 A recall requires action only when ALL THREE are true:

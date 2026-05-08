@@ -2196,9 +2196,14 @@ async function renderOverview() {
     // Manual recalls require an exact on-shelf hit too — drill / "just logged" recalls
     // with no scan in stock no longer inflate the headline count.
     const ownRecalls = (ownRecallsRaw || []).filter(r => {
-      // (Audit fix: removed dead is_pushed/recall_event_id checks — neither
-      // column exists on the recalls table, so these were always false. Dedup
-      // against pushed recalls now happens via the pushedKeys lookup below.)
+      // Round-7 correction: is_pushed and recall_event_id DO exist on recalls
+      // (verified 2026-05-08; ~7 of ~14k production rows have them set, all
+      // legacy artifacts from the retired manufacturer-push flow). The earlier
+      // round-3 audit incorrectly treated these as dead code based on a stale
+      // CLAUDE.md gotcha. Re-introduced — these legacy rows would otherwise
+      // leak into the manual-recall count if their recall_event was deleted
+      // (so pushedKeys lookup wouldn't catch them).
+      if (r.is_pushed || r.recall_event_id) return false;
       const rLot = (r.lot_number    ||'').toLowerCase().trim();
       const rBc  = (r.barcode_number||'').toLowerCase().trim();
       if (!rLot && !rBc) return false; // can't satisfy condition (2) without a key
@@ -2831,9 +2836,10 @@ async function renderRecalls() {
   const activePushed   = pushed.filter(p => !p.recall_events?.is_drill && matchedIds.has(p.recall_event_id)).length;
   const manualRecalls  = recalls.filter(r => {
     if (!r.active) return false;
-    // (Audit fix: removed dead is_pushed/recall_event_id checks — neither
-    // column exists on the recalls table. Dedup against pushed recalls
-    // happens via pushedKeys below.)
+    // Round-7 correction: re-introduced legacy push dedup. These columns DO
+    // exist on the recalls schema (~7 production rows from the retired
+    // manufacturer-push flow). See SCHEMA.md "recalls" section.
+    if (r.is_pushed || r.recall_event_id) return false;
     if (RECALL_FEED_SOURCES.has(r.source)) return matchedIds.has(r.id);
     const key = (r.product_name||'').toLowerCase() + '|' + (r.lot_number||'').toLowerCase();
     return !pushedKeys.has(key);
@@ -3395,12 +3401,20 @@ async function saveManualRecall() {
 
   // Audit fix (#12, #11-severity): capture the new recall id so we can run
   // a retroactive sweep, and persist the severity the form collected.
+  // Round-7 correction: recalls.severity does NOT exist on the schema —
+  // a previous fix wrote insertPayload.severity which would have caused a
+  // 42703 column-does-not-exist error on insert. Fold severity into the
+  // description text the same way mgrAddRecall (scanning app) does, so the
+  // value is preserved and visible in audit logs without a schema change.
+  const descParts = [];
+  if (desc)     descParts.push(desc);
+  if (severity) descParts.push(`Severity: ${severity}`);
   const insertPayload = {
     product_name: product, lot_number: lot, barcode_number: barcode||null,
-    description: desc||null, source: source||'manual', active: true,
+    description: descParts.length ? descParts.join(' · ') : null,
+    source: source||'manual', active: true,
     organisation_id: _orgId,
   };
-  if (severity) insertPayload.severity = severity;
   const { data: inserted, error } = await sb.from('recalls')
     .insert(insertPayload)
     .select('id').single();
@@ -5875,7 +5889,10 @@ async function fetchReportData(key) {
       }
       const pushedKeys2 = new Set(pushed.map(ev => (ev.product_name||'').toLowerCase()+'|'+(ev.lot_number||'').toLowerCase()));
       const internal = (recallsRes.data || []).filter(r => {
-        // (Audit fix: removed dead is_pushed/recall_event_id checks.)
+        // Round-7 correction: re-introduced legacy push dedup. These columns
+        // DO exist on the recalls schema (~7 production rows from the
+        // retired manufacturer-push flow). See SCHEMA.md "recalls" section.
+        if (r.is_pushed || r.recall_event_id) return false;
         const key = (r.product_name||'').toLowerCase()+'|'+(r.lot_number||'').toLowerCase();
         return !pushedKeys2.has(key);
       }).map(r => ({ ...r, _type:'internal' }));
@@ -9669,7 +9686,10 @@ async function renderConsumerNotification() {
       (e.product_name||'').toLowerCase() + '|' + (e.lot_number||'').toLowerCase()
     ));
     const dedupedManual = (manualRecalls||[]).filter(r => {
-      // (Audit fix: removed dead is_pushed/recall_event_id checks.)
+      // Round-7 correction: re-introduced legacy push dedup. These columns
+      // DO exist on the recalls schema (~7 production rows from the retired
+      // manufacturer-push flow). See SCHEMA.md "recalls" section.
+      if (r.is_pushed || r.recall_event_id) return false;
       if (r.source === 'fda' || r.source === 'rasff') return false;
       const key = (r.product_name||'').toLowerCase() + '|' + (r.lot_number||'').toLowerCase();
       return !pushedKeys.has(key);
