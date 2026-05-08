@@ -1560,6 +1560,15 @@ async function traceLot() {
   el.innerHTML = '<div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);padding:12px 0;"><div class="spinner"></div> Tracing lot across supply chain…</div>';
 
   try {
+    // Perf note: investigated pushing the lot filter to server (.ilike
+    // %lotCode%) — would have saved ~1.5MB transfer per traceLot — but
+    // %X% misses the case where stored lot_number is SHORTER than input
+    // (e.g. user types "L2024-03-15A" but DB has scan stored as
+    // "L2024-03"). lotsMatch handles prefix in both directions, so the
+    // server filter would silently drop legitimate matches. Trade-off
+    // not worth it for the tracer where correctness > speed. Left as
+    // client-side filter pending a more sophisticated server filter
+    // (e.g. trigram similarity index in Postgres).
     const [shipmentsRes, scansRes, recallsRes, acksRes] = await Promise.all([
       sb.from('shipments').select('id,lot_number,quantity,unit,shipped_at,reference_document,stores(name,address),organisations!shipments_manufacturer_id_fkey(name),products(name)').eq('retailer_id', _orgId).limit(200),
       sb.from('scans').select('id,product_name,lot_number,store_name,scanned_by,created_at,tlc_source').eq('organisation_id', _orgId).order('created_at',{ascending:false}).limit(500),

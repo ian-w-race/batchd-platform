@@ -4912,7 +4912,7 @@
       <div style="font-size:12px;color:var(--muted);" data-i18n="qc.sub">Enter a lot number, barcode, or product name to instantly check against all active recalls — no photo needed.</div>
       <div class="field">
         <label data-i18n="qc.label">Lot / Barcode / Product</label>
-        <input type="text" id="quick-check-input" placeholder="e.g. L250415 or 7020034…" oninput="runQuickCheck()" style="font-size:16px;" />
+        <input type="text" id="quick-check-input" placeholder="e.g. L250415 or 7020034…" oninput="runQuickCheckDebounced()" style="font-size:16px;" />
       </div>
       <div id="quick-check-result" style="min-height:48px;font-size:13px;line-height:1.6;"></div>
     </div>
@@ -4994,7 +4994,7 @@
         <!-- Search bar -->
         <div class="search-wrap" style="margin-bottom:10px;">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-          <input type="text" id="exposure-search" placeholder="Search product, lot, batch, barcode, store…" oninput="filterExposureResults()" autocomplete="off" />
+          <input type="text" id="exposure-search" placeholder="Search product, lot, batch, barcode, store…" oninput="filterExposureResultsDebounced()" autocomplete="off" />
         </div>
 
         <!-- Filters row -->
@@ -9229,6 +9229,22 @@ let recallSchedulerInterval = null;
 const RECALL_FETCH_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes — frequent polling for near-realtime recall awareness
 
 async function initRecallSystem() {
+  // Perf fix #28: prune stale per-user localStorage keys. A device used by
+  // multiple staff accumulates one `batched_recall_fetch_${user_id}` entry
+  // per user, and they never expire. Anything older than 30 days is from
+  // a user who hasn't logged in here recently — drop it. Cap the iteration
+  // because localStorage.key() is O(n).
+  try {
+    const _cutoff = Date.now() - 30 * 86400000;
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith('batched_recall_fetch_')) {
+        const ts = parseInt(localStorage.getItem(k) || '0', 10);
+        if (ts > 0 && ts < _cutoff) localStorage.removeItem(k);
+      }
+    }
+  } catch(_) {}
+
   // Step 1: load this user's recall source preference
   // Use a 5s timeout so a slow DB never blocks login
   try {
@@ -10447,6 +10463,30 @@ function renderRecords(records, recallQ) {
   }).join('');
 }
 
+// Perf fix #36: precomputed lookup sets for isRecallMatchAny. Previously the
+// function walked loginRecallMatches once per record, giving O(records ×
+// recalls) per applyFilters call. With Sets, it's O(1) per record after a
+// one-time cache build. Cache is invalidated when loginRecallMatches is
+// reassigned (we hold a reference to the array; if the array identity
+// changes, recompute).
+let _recallLotKeysSet      = null;
+let _recallBarcodeKeysSet  = null;
+let _recallKeysCachedFor   = null;
+function _ensureRecallKeys() {
+  if (_recallKeysCachedFor === loginRecallMatches) return;
+  const lotSet = new Set();
+  const bcSet  = new Set();
+  for (const m of (loginRecallMatches || [])) {
+    const lot = (m?.recall?.lot_number     || '').toLowerCase().trim();
+    const bc  = (m?.recall?.barcode_number || '').toLowerCase().trim();
+    if (lot) lotSet.add(lot);
+    if (bc)  bcSet.add(bc);
+  }
+  _recallLotKeysSet     = lotSet;
+  _recallBarcodeKeysSet = bcSet;
+  _recallKeysCachedFor  = loginRecallMatches;
+}
+
 function isRecallMatchAny(r) {
   // Check record against companion recall data loaded at login.
   if (!loginRecallMatches || !loginRecallMatches.length) {
@@ -10459,14 +10499,12 @@ function isRecallMatchAny(r) {
   // Product-name substring matching was producing false positives (e.g. recall lot
   // "C12" matched scan lot "ABC123"; recall product "Coop tilbakekaller X" matched
   // every Coop-brand scan). See comment in matchScanAgainstRecalls.
+  _ensureRecallKeys();
   const rLot     = (r.lot_number     || '').toLowerCase().trim();
+  if (rLot && _recallLotKeysSet.has(rLot)) return true;
   const rBarcode = (r.barcode_number || '').toLowerCase().trim();
-  return loginRecallMatches.some(m => {
-    const mLot     = (m.recall.lot_number     || '').toLowerCase().trim();
-    const mBarcode = (m.recall.barcode_number || '').toLowerCase().trim();
-    return (mLot && rLot && mLot === rLot) ||
-           (mBarcode && rBarcode && mBarcode === rBarcode);
-  });
+  if (rBarcode && _recallBarcodeKeysSet.has(rBarcode)) return true;
+  return false;
 }
 
 // ── FUZZY RECALL MATCHING ENGINE ─────────────────────────────
@@ -10908,6 +10946,24 @@ function closeQuickCheck() {
   document.getElementById('quick-check-modal').classList.remove('open');
 }
 
+// Perf round 3 — sweep: runQuickCheck debounce. Each keystroke previously
+// fired a 500-row Supabase fetch + 3 parallel queries. Even at 200ms cadence
+// that's an enormous waste. 300ms debounce collapses fast typing into one
+// fetch.
+let _runQuickCheckTimer = null;
+function runQuickCheckDebounced() {
+  clearTimeout(_runQuickCheckTimer);
+  _runQuickCheckTimer = setTimeout(runQuickCheck, 300);
+}
+
+// filterExposureResults debounce — filters allRecords (up to 2000) on every
+// keystroke. 200ms collapses fast typing into one filter pass.
+let _filterExposureTimer = null;
+function filterExposureResultsDebounced() {
+  clearTimeout(_filterExposureTimer);
+  _filterExposureTimer = setTimeout(filterExposureResults, 200);
+}
+
 async function runQuickCheck() {
   const q   = document.getElementById('quick-check-input').value.trim();
   const el  = document.getElementById('quick-check-result');
@@ -11216,6 +11272,22 @@ async function undoPullFromShelf(scanId) {
 // is reflected immediately for all connected users at the same store.
 let _realtimeChannel = null;
 
+// Perf fix #23: debounce realtime-triggered re-renders. When another user at
+// the same org bulk-pulls scans (e.g. a manager resolving 10 items in quick
+// succession), the server emits one UPDATE event per row. Without debouncing,
+// each event triggers a full applyFilters() → renderRecords() cycle on this
+// client (~200-500ms of main-thread work each). 300ms debounce collapses a
+// burst of N updates into a single render. Standalone updates still feel
+// near-real-time (300ms is below human "instant" threshold for status changes).
+let _realtimeRenderTimer = null;
+function _scheduleRealtimeRender() {
+  if (_realtimeRenderTimer) return; // already pending
+  _realtimeRenderTimer = setTimeout(() => {
+    _realtimeRenderTimer = null;
+    applyFilters();
+  }, 300);
+}
+
 function initRealtimeSync() {
   if (_realtimeChannel) sb.removeChannel(_realtimeChannel);
   // Perf fix #2: scope subscriptions to this org. Without the filter,
@@ -11239,7 +11311,7 @@ function initRealtimeSync() {
       if (idx !== -1) {
         // Merge updated fields into local cache
         allRecords[idx] = { ...allRecords[idx], ...updated };
-        applyFilters();
+        _scheduleRealtimeRender();
       }
     })
     .on('postgres_changes', {
@@ -11253,7 +11325,7 @@ function initRealtimeSync() {
       // Only add if not already in cache (could be from current user's own save)
       if (!allRecords.find(r => r.id === inserted.id)) {
         allRecords.unshift(inserted);
-        applyFilters();
+        _scheduleRealtimeRender();
       }
     })
     .subscribe();
