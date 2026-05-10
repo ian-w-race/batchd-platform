@@ -3456,10 +3456,20 @@
             <div class="flow-phase-title" data-i18n="p2.title">Lot Code Capture</div>
             <div class="flow-phase-sub" id="step2-sub" data-i18n="p2.captureGuide">Align the lot code inside the box</div>
           </div>
-          <button onclick="cancelScan()" class="cancel-scan-btn" title="Cancel and start over">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg>
-            <span data-i18n="action.cancel">Cancel</span>
-          </button>
+          <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+            <!-- Lot Code Helper — re-opens the first-use illustrated guide on demand.
+                 First-use auto-show is wired in goToPhase(2). -->
+            <button onclick="openLotHelpOverlay()" id="btn-lot-help"
+                    title="Where to find lot codes"
+                    aria-label="Where to find lot codes"
+                    style="width:30px;height:30px;border-radius:50%;background:var(--surface);border:1px solid var(--border);color:var(--muted);font-family:'Figtree',sans-serif;font-weight:700;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;line-height:1;padding:0;">
+              ?
+            </button>
+            <button onclick="cancelScan()" class="cancel-scan-btn" title="Cancel and start over">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg>
+              <span data-i18n="action.cancel">Cancel</span>
+            </button>
+          </div>
         </div>
 
         <div class="flow-phase-body">
@@ -5851,6 +5861,24 @@ function openTerminologyOverlay(regionOverride) {
       'Enabling this toggle requires the expiry date to be entered instead. Not counted as a complete traceability record.',
       '')}
 
+    ${section('Hvor du finner partikoder', 'Where to find lot codes')}
+
+    <div style="padding:8px 0 14px;">
+      <div style="font-size:13px;color:var(--muted);line-height:1.65;margin-bottom:12px;">
+        ${isNO
+          ? 'Partikoder er små inkjet- eller laser-etsede klynger nær holdbarhetsdatoen. Se etter L, Parti, produksjonsdato, eller bare en serie tall.'
+          : 'Lot codes are small inkjet or laser-etched clusters near the best-by date. Look for L, LOT, BATCH, MFG DATE, or just a string of numbers.'}
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">
+        ${_lotHelpCard(_lotHelpSVGs.dairy,   'lothelp.dairy')}
+        ${_lotHelpCard(_lotHelpSVGs.yoghurt, 'lothelp.yoghurt')}
+        ${_lotHelpCard(_lotHelpSVGs.canned,  'lothelp.canned')}
+        ${_lotHelpCard(_lotHelpSVGs.cereal,  'lothelp.cereal')}
+        ${_lotHelpCard(_lotHelpSVGs.frozen,  'lothelp.frozen')}
+        ${_lotHelpCard(_lotHelpSVGs.bottle,  'lothelp.bottle')}
+      </div>
+    </div>
+
     ${section('Etterlevelse og dokumenter', 'Compliance & documents')}
 
     ${term('Felles tilbakekallingsrapport', 'Joint completion report',
@@ -5890,6 +5918,135 @@ function openTerminologyOverlay(regionOverride) {
 
 function closeTerminologyOverlay() {
   document.getElementById('terminology-overlay').style.display = 'none';
+  document.body.style.overflow = '';
+}
+
+// ─── Lot Code Helper Overlay ─────────────────────────────────────────────
+// First-use illustrated guide showing typical lot code locations on six
+// common package types. Auto-opens the first time staff enter Phase 2;
+// dismiss flag is stored in localStorage('batchd_lot_help_seen'). Persistent
+// '?' button in the Phase 2 header re-opens it on demand. Region-aware
+// terminology (US: LOT/BATCH; NO: Parti).
+//
+// SVG illustrations are inline (no external assets) and use stroke="currentColor"
+// so they automatically theme for dark/light mode.
+
+const _lotHelpSVGs = {
+  // Gable-top milk/dairy carton — lot stamped on side panel near best-by
+  dairy: `<svg viewBox="0 0 120 120" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:100%;height:auto;display:block;">
+    <path d="M40 102 V36 L60 24 L80 36 V102 Z"/>
+    <line x1="40" y1="36" x2="80" y2="36"/>
+    <line x1="60" y1="24" x2="60" y2="36" opacity="0.5"/>
+    <rect x="48" y="50" width="24" height="14" rx="2" fill="currentColor" opacity="0.12" stroke="none"/>
+    <line x1="52" y1="55" x2="68" y2="55" opacity="0.7"/>
+    <line x1="52" y1="60" x2="65" y2="60" opacity="0.7"/>
+    <path d="M22 57 L42 57" stroke-dasharray="3 2" opacity="0.65"/>
+    <path d="M40 53 L44 57 L40 61"/>
+  </svg>`,
+
+  // Yoghurt cup — lot stamped on lid
+  yoghurt: `<svg viewBox="0 0 120 120" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:100%;height:auto;display:block;">
+    <path d="M40 38 L46 100 L74 100 L80 38 Z"/>
+    <ellipse cx="60" cy="38" rx="20" ry="4"/>
+    <ellipse cx="60" cy="38" rx="14" ry="2.5" fill="currentColor" opacity="0.12" stroke="none"/>
+    <line x1="52" y1="38" x2="68" y2="38" opacity="0.65" stroke-dasharray="2 1.5"/>
+    <path d="M22 22 L42 32" stroke-dasharray="3 2" opacity="0.65"/>
+    <path d="M40 28 L44 33 L38 35"/>
+  </svg>`,
+
+  // Canned good (tin) — laser-etched on base
+  canned: `<svg viewBox="0 0 120 120" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:100%;height:auto;display:block;">
+    <ellipse cx="60" cy="32" rx="22" ry="5"/>
+    <line x1="38" y1="32" x2="38" y2="92"/>
+    <line x1="82" y1="32" x2="82" y2="92"/>
+    <ellipse cx="60" cy="92" rx="22" ry="5"/>
+    <ellipse cx="60" cy="92" rx="14" ry="3" fill="currentColor" opacity="0.12" stroke="none"/>
+    <line x1="52" y1="93" x2="68" y2="93" opacity="0.7"/>
+    <path d="M22 102 L42 96" stroke-dasharray="3 2" opacity="0.65"/>
+    <path d="M40 92 L44 96 L40 100"/>
+  </svg>`,
+
+  // Cereal box — printed on bottom of the box
+  cereal: `<svg viewBox="0 0 120 120" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:100%;height:auto;display:block;">
+    <rect x="38" y="22" width="44" height="80" rx="1.5"/>
+    <rect x="42" y="88" width="36" height="10" rx="1" fill="currentColor" opacity="0.12" stroke="none"/>
+    <line x1="46" y1="92" x2="68" y2="92" opacity="0.7"/>
+    <line x1="46" y1="96" x2="62" y2="96" opacity="0.7"/>
+    <path d="M22 110 L40 100" stroke-dasharray="3 2" opacity="0.65"/>
+    <path d="M38 96 L42 100 L38 104"/>
+  </svg>`,
+
+  // Frozen bag — printed on back seal near best-by
+  frozen: `<svg viewBox="0 0 120 120" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:100%;height:auto;display:block;">
+    <path d="M34 38 Q60 30 86 38 L86 96 Q60 102 34 96 Z"/>
+    <path d="M34 38 Q60 34 86 38" opacity="0.6"/>
+    <line x1="34" y1="38" x2="34" y2="96" stroke-dasharray="2 1.5" opacity="0.55"/>
+    <line x1="86" y1="38" x2="86" y2="96" stroke-dasharray="2 1.5" opacity="0.55"/>
+    <rect x="42" y="44" width="36" height="10" rx="1" fill="currentColor" opacity="0.12" stroke="none"/>
+    <line x1="46" y1="48" x2="68" y2="48" opacity="0.7"/>
+    <line x1="46" y1="52" x2="62" y2="52" opacity="0.7"/>
+    <path d="M22 30 L40 44" stroke-dasharray="3 2" opacity="0.65"/>
+    <path d="M38 40 L42 45 L36 47"/>
+  </svg>`,
+
+  // Bottled beverage — printed on shoulder or base
+  bottle: `<svg viewBox="0 0 120 120" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:100%;height:auto;display:block;">
+    <path d="M52 22 L52 44 Q44 48 44 60 L44 100 L76 100 L76 60 Q76 48 68 44 L68 22 Z"/>
+    <line x1="52" y1="30" x2="68" y2="30" opacity="0.55"/>
+    <rect x="48" y="54" width="24" height="10" rx="1" fill="currentColor" opacity="0.12" stroke="none"/>
+    <line x1="52" y1="58" x2="66" y2="58" opacity="0.7"/>
+    <line x1="52" y1="62" x2="62" y2="62" opacity="0.7"/>
+    <path d="M22 60 L42 60" stroke-dasharray="3 2" opacity="0.65"/>
+    <path d="M40 56 L44 60 L40 64"/>
+  </svg>`
+};
+
+function _lotHelpCard(svg, captionKey) {
+  return `
+    <div style="display:flex;flex-direction:column;align-items:center;gap:10px;padding:14px 12px;background:var(--surface);border:1px solid var(--border);border-radius:12px;">
+      <div style="width:96px;height:96px;color:var(--text);">${svg}</div>
+      <div style="font-size:12px;color:var(--muted);text-align:center;line-height:1.5;">${t(captionKey)}</div>
+    </div>`;
+}
+
+function openLotHelpOverlay() {
+  const lang = currentLang || 'en';
+  const isNO = lang === 'no';
+
+  const grid = `
+    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:14px;">
+      ${_lotHelpCard(_lotHelpSVGs.dairy,   'lothelp.dairy')}
+      ${_lotHelpCard(_lotHelpSVGs.yoghurt, 'lothelp.yoghurt')}
+      ${_lotHelpCard(_lotHelpSVGs.canned,  'lothelp.canned')}
+      ${_lotHelpCard(_lotHelpSVGs.cereal,  'lothelp.cereal')}
+      ${_lotHelpCard(_lotHelpSVGs.frozen,  'lothelp.frozen')}
+      ${_lotHelpCard(_lotHelpSVGs.bottle,  'lothelp.bottle')}
+    </div>`;
+
+  document.getElementById('lot-help-content').innerHTML = `
+    <div style="font-size:13px;color:var(--muted);line-height:1.65;padding:4px 2px 8px;">${t('lothelp.subtitle')}</div>
+    ${grid}
+    <div style="margin-top:18px;display:flex;justify-content:center;">
+      <button onclick="closeLotHelpOverlay()"
+              style="background:var(--accent);color:#04120e;border:none;border-radius:10px;padding:11px 28px;font-family:'Figtree',sans-serif;font-weight:700;font-size:14px;cursor:pointer;">
+        ${t('lothelp.gotit')}
+      </button>
+    </div>`;
+
+  // Update header title to current language
+  const header = document.querySelector('#lot-help-overlay .lot-help-title');
+  if (header) header.textContent = t('lothelp.title');
+
+  document.getElementById('lot-help-overlay').style.display = 'block';
+  document.body.style.overflow = 'hidden';
+
+  // Mark as seen so it doesn't auto-open again. Wrapped in try/catch because
+  // some private-browsing modes throw on localStorage writes.
+  try { localStorage.setItem('batchd_lot_help_seen', '1'); } catch (_) {}
+}
+
+function closeLotHelpOverlay() {
+  document.getElementById('lot-help-overlay').style.display = 'none';
   document.body.style.overflow = '';
 }
 
@@ -7327,6 +7484,20 @@ function goToPhase(n) {
     if (_thumb) _thumb.removeAttribute('src');
     _showP2CaptureState();
     setTimeout(() => { startOcrCamera().catch(() => {}); }, 100);
+
+    // First-use Lot Code Helper overlay — show once per device, dismissable.
+    // The persistent '?' button in the header re-opens it on demand. Wrapped
+    // in try/catch because some private-browsing modes throw on localStorage.
+    try {
+      if (!localStorage.getItem('batchd_lot_help_seen')) {
+        // Slight delay so the camera has a moment to start before the overlay
+        // covers the screen. The user can dismiss and the camera will be
+        // ready behind it.
+        setTimeout(() => {
+          if (currentPhase === 2) openLotHelpOverlay();
+        }, 600);
+      }
+    } catch (_) {}
   }
 }
 
@@ -12279,7 +12450,7 @@ function setMode(mode) {
 
   document.getElementById('step2-sub').textContent = mode === 'barcode'
     ? 'Point camera at the barcode — AI will detect in real time'
-    : 'Find the best-before date — the lot code is printed right next to it. Frame both together, 20-25cm away, camera flat-on.';
+    : t('p2.sub');
 
   // If user manually switches mode, clear GS1 full-capture state — they want to re-scan
   _gs1FullCapture = null;
@@ -15335,7 +15506,7 @@ const TRANSLATIONS = {
     'p1.productName': 'Product Name', 'p1.confirm': 'Confirm & Continue →',
     // Phase 2
     'p2.title': 'Lot Code Capture',
-    'p2.sub': 'Find the best-before date — the lot code is printed right next to it. Frame both together, 20-25cm away, camera flat-on.',
+    'p2.sub': 'Photograph the small inkjet or laser-etched cluster near the best-by date. Look for: L, LOT, BATCH, MFG DATE, or just a string of numbers.',
     // Raw-capture rebuild — Phase 2 keys for the new single-photo flow
     'p2.captureGuide': 'Align the lot code inside the box',
     'p2.captureSubGuide': 'Usually near the bottom or back of the pack',
@@ -15345,6 +15516,17 @@ const TRANSLATIONS = {
     'p2.looksGood': 'Looks good',
     'p2.noLotCode': 'No lot code on this product',
     'p2.backToStep1': '← Back to product',
+
+    // Lot Code Helper overlay — first-use illustrated guide for finding lot codes
+    'lothelp.title': 'Where to find lot codes',
+    'lothelp.subtitle': 'Lot codes are small inkjet or laser-etched clusters near the best-by date. Look for L, LOT, BATCH, MFG DATE, or just a string of numbers.',
+    'lothelp.dairy': 'Milk / dairy carton — side panel near the best-by date',
+    'lothelp.yoghurt': 'Yoghurt cup — stamped on the lid',
+    'lothelp.canned': 'Canned good — laser-etched on the base',
+    'lothelp.cereal': 'Cereal box — bottom of the box',
+    'lothelp.frozen': 'Frozen bag — back seal near the best-by date',
+    'lothelp.bottle': 'Bottled beverage — shoulder or base',
+    'lothelp.gotit': 'Got it',
     // Phase 3
     'p3.title': 'Confirm & Place on Shelf',
     'p3.sub': 'Review details — then confirm placement to create the traceability record',
@@ -15733,7 +15915,7 @@ const TRANSLATIONS = {
     'p1.productName': 'Produktnavn', 'p1.confirm': 'Bekreft & fortsett →',
     // Phase 2
     'p2.title': 'Partikodefangst',
-    'p2.sub': 'Finn best-før datoen — partinummeret er trykket rett ved siden av den. Ta bildet av begge, 20-25cm unna, kameraet flatt mot pakningen.',
+    'p2.sub': 'Fotografer den lille inkjet- eller laser-etsede klyngen nær holdbarhetsdatoen. Se etter: L, Parti, BATCH, eller bare en serie tall.',
     // Råfangst-omarbeidelse — Fase 2 nøkler for den nye enkeltfoto-flyten
     'p2.captureGuide': 'Plasser partikoden inne i boksen',
     'p2.captureSubGuide': 'Vanligvis nederst eller på baksiden av pakken',
@@ -15743,6 +15925,17 @@ const TRANSLATIONS = {
     'p2.looksGood': 'Ser bra ut',
     'p2.noLotCode': 'Ingen partikode på dette produktet',
     'p2.backToStep1': '← Tilbake til produkt',
+
+    // Lot Code Helper overlay — first-use illustrated guide for finding lot codes
+    'lothelp.title': 'Hvor du finner partikoder',
+    'lothelp.subtitle': 'Partikoder er små inkjet- eller laser-etsede klynger nær holdbarhetsdatoen. Se etter L, Parti, produksjonsdato, eller bare en serie tall.',
+    'lothelp.dairy': 'Melk / meierikartong — sidepanel nær holdbarhetsdatoen',
+    'lothelp.yoghurt': 'Yoghurtbeger — stemplet på lokket',
+    'lothelp.canned': 'Hermetikk — laser-etset på bunnen',
+    'lothelp.cereal': 'Kornblandingseske — bunnen av esken',
+    'lothelp.frozen': 'Frossenpose — bakre sveis nær holdbarhetsdatoen',
+    'lothelp.bottle': 'Flaskedrikke — skulder eller bunn',
+    'lothelp.gotit': 'Forstått',
     // Phase 3
     'p3.title': 'Bekreft & legg på hylla',
     'p3.sub': 'Se gjennom detaljene — bekreft deretter utsettingen for å opprette sporbarhetsdokumentasjon',
@@ -20559,6 +20752,22 @@ async function loadRecallsView() {
 </main>
 
 <!-- ── TERMINOLOGY & HELP OVERLAY ────────────────────────────── -->
+<!-- Lot Code Helper overlay — illustrated guide showing where lot codes
+     typically appear on six common package types. Auto-opens first time
+     staff enter Phase 2; persistent '?' button in the Phase 2 header
+     re-opens it on demand. Populated by openLotHelpOverlay(). -->
+<div id="lot-help-overlay" style="display:none;position:fixed;inset:0;z-index:9500;background:var(--bg);overflow-y:auto;">
+  <div style="max-width:680px;margin:0 auto;padding:0 16px calc(60px + env(safe-area-inset-bottom, 0px));">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;position:sticky;top:0;background:var(--bg);padding:calc(env(safe-area-inset-top, 0px) + 14px) 0 12px;border-bottom:1px solid var(--border);z-index:1;">
+      <div>
+        <div class="lot-help-title" style="font-family:'Figtree',sans-serif;font-weight:800;font-size:18px;color:var(--text);">Where to find lot codes</div>
+      </div>
+      <button onclick="closeLotHelpOverlay()" aria-label="Close" style="width:36px;height:36px;border-radius:50%;background:var(--surface);border:1px solid var(--border);color:var(--muted);font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;">×</button>
+    </div>
+    <div id="lot-help-content"></div>
+  </div>
+</div>
+
 <div id="terminology-overlay" style="display:none;position:fixed;inset:0;z-index:9500;background:var(--bg);overflow-y:auto;">
   <div style="max-width:680px;margin:0 auto;padding:0 16px calc(60px + env(safe-area-inset-bottom, 0px));">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;position:sticky;top:0;background:var(--bg);padding:calc(env(safe-area-inset-top, 0px) + 14px) 0 12px;border-bottom:1px solid var(--border);z-index:1;">
