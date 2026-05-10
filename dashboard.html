@@ -4391,10 +4391,16 @@ async function renderStores() {
                   <td style="color:var(--muted);font-size:11px;">
                     <span title="${_mapDot.t}" aria-label="${_mapDot.t}" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${_mapDot.c};margin-right:8px;vertical-align:middle;flex-shrink:0;"></span>${s.address||'—'}
                   </td>
-                  <td style="text-align:right;">
+                  <td style="text-align:right;white-space:nowrap;">
                     <button onclick="editStore('${s.id}')"
                       style="font-family:'DM Mono',monospace;font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);cursor:pointer;">
                       Edit
+                    </button>
+                    <button onclick="deleteStore('${s.id}')" title="Delete store"
+                      style="font-family:'DM Mono',monospace;font-size:10px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;margin-left:6px;display:inline-flex;align-items:center;vertical-align:middle;"
+                      onmouseenter="this.style.borderColor='var(--danger)';this.style.color='var(--danger)'"
+                      onmouseleave="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
                     </button>
                   </td>
                 </tr>`;
@@ -4453,6 +4459,66 @@ function editStore(id) {
 function closeStoreForm() {
   document.getElementById('store-form').style.display = 'none';
   _editingStoreId = null;
+}
+
+// Delete a store. Behaviour depends on whether the store has historical
+// scans or recall acknowledgements:
+//   - No history → hard delete (DELETE FROM stores)
+//   - Has history → refuse hard delete and offer to deactivate instead
+//                   (recall_acknowledgements.store_id has ON DELETE CASCADE,
+//                   so a hard delete would wipe the compliance audit trail)
+async function deleteStore(id) {
+  const store = (window._storesById || {})[id];
+  if (!store) {
+    showToast('Could not find store. Try refreshing.', 'error', 3500);
+    return;
+  }
+
+  // Check for associated data so we know whether hard delete is safe
+  const [scansRes, acksRes] = await Promise.all([
+    sb.from('scans').select('id', { count: 'exact', head: true }).eq('store_id', id).eq('organisation_id', _orgId),
+    sb.from('recall_acknowledgements').select('id', { count: 'exact', head: true }).eq('store_id', id).eq('organisation_id', _orgId)
+  ]);
+  const scanCount = scansRes.count || 0;
+  const ackCount  = acksRes.count  || 0;
+
+  if (scanCount > 0 || ackCount > 0) {
+    // Has history — refuse hard delete, offer deactivation
+    const parts = [];
+    if (scanCount > 0) parts.push(`${scanCount} scan${scanCount === 1 ? '' : 's'}`);
+    if (ackCount  > 0) parts.push(`${ackCount} recall response${ackCount === 1 ? '' : 's'}`);
+    const msg = `"${store.name}" has ${parts.join(' and ')} on file.\n\n`
+              + `To preserve the compliance audit trail, this store can\'t be permanently deleted.\n\n`
+              + `Deactivate it instead? It will be hidden from the active store list but its history stays intact.`;
+    if (!confirm(msg)) return;
+
+    const { error } = await sb.from('stores')
+      .update({ active: false })
+      .eq('id', id)
+      .eq('organisation_id', _orgId);
+    if (error) {
+      showToast('Could not deactivate: ' + error.message, 'error', 4000);
+      return;
+    }
+    showToast(`"${store.name}" deactivated. History preserved.`, 'ok', 3500);
+    invalidateOverviewCache();
+    renderStores();
+    return;
+  }
+
+  // No history — safe to hard delete
+  if (!confirm(`Permanently delete "${store.name}"?\n\nThis cannot be undone.`)) return;
+  const { error } = await sb.from('stores')
+    .delete()
+    .eq('id', id)
+    .eq('organisation_id', _orgId);
+  if (error) {
+    showToast('Could not delete: ' + error.message, 'error', 4000);
+    return;
+  }
+  showToast(`"${store.name}" deleted.`, 'ok', 3000);
+  invalidateOverviewCache();
+  renderStores();
 }
 
 async function saveStore() {
