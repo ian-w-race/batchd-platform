@@ -3738,6 +3738,34 @@ const _MAP_STATUS_LABELS = {
 // Window for the "recently resolved" green state. Tuneable.
 const _MAP_RESOLVED_WINDOW_MS = 7 * 24 * 3600_000;
 
+// Window for time-based quick-stat tiles ("median ack time over last X days").
+const _STATS_LOOKBACK_MS      = 30 * 24 * 3600_000;
+
+// Window for "is this store scanning recently" (network coverage tile).
+const _COVERAGE_WINDOW_MS     = 72 *      3600_000;
+
+// Median helper. Returns null for empty input. Works for any numeric array.
+function _median(arr) {
+  if (!arr || arr.length === 0) return null;
+  const sorted = arr.slice().sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+// Format a duration in ms as a short human string. Returns "—" for null
+// or non-finite. Distinct from _fmtElapsed which is ALWAYS measured from
+// "now" — this one takes a delta directly.
+function _fmtDuration(ms) {
+  if (ms == null || !isFinite(ms) || ms < 0) return '—';
+  if (ms < 60_000) return '< 1m';
+  const totalMin = Math.floor(ms / 60_000);
+  const totalHr  = Math.floor(totalMin / 60);
+  const totalDay = Math.floor(totalHr / 24);
+  if (totalDay >= 1) return `${totalDay}d ${totalHr % 24}h`;
+  if (totalHr  >= 1) return `${totalHr}h ${totalMin % 60}m`;
+  return `${totalMin}m`;
+}
+
 // Small relative-time helper for marker popups. Returns "12m ago",
 // "3h ago", "2d ago", etc.
 function _mapFmtAgo(iso) {
@@ -3904,25 +3932,33 @@ async function renderMapTest() {
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);padding:4px 0;"><div class="spinner"></div> Loading map…</div>`;
   try {
-    const now      = Date.now();
-    const since7d  = new Date(now - _MAP_RESOLVED_WINDOW_MS).toISOString();
+    const now           = Date.now();
+    const since7d       = new Date(now - _MAP_RESOLVED_WINDOW_MS).toISOString();
+    const sinceCoverage = new Date(now - _COVERAGE_WINDOW_MS).toISOString();
 
     // Parallel fetch. The ack query is broadened (vs the earlier resolved-
     // only query) because Step 4 also needs all in-flight acks for the
     // right-rail "Active Recalls" panel. We post-filter in JS for both:
     //   - resolved-7d → drives green dots on the map
     //   - in-flight   → drives the right-rail cards
+    //   - 30-day windowed aggregates → drives quick-stat tiles
     // Embedded recall_events relation pulls product/severity/drill flag.
     // 'confirmed' is the canonical DB enum value for the final chain step;
     // the UI label is "Resolved" platform-wide as of 2026-05.
-    const [storesRes, srmRes, ackRes] = await Promise.all([
+    //
+    // The recentScansRes query is only the store_id field (no created_at)
+    // because all we need is "did this store scan at all in the last 72h"
+    // for the coverage tile. We query within the time window so we don't
+    // pull every scan in history.
+    const [storesRes, srmRes, ackRes, recentScansRes] = await Promise.all([
       sb.from('stores').select('*').eq('organisation_id', _orgId),
       sb.from('scan_recall_matches').select('store_id, scan_id, recall_id, recall_event_id').eq('organisation_id', _orgId),
       sb.from('recall_acknowledgements')
         .select('id, store_id, recall_event_id, status, acknowledged_at, pulled_at, disposed_at, confirmed_at, created_at, recall_events(id, product_name, lot_number, severity, reason, is_drill, published_at)')
         .eq('organisation_id', _orgId)
         .order('created_at', { ascending: false })
-        .limit(500)
+        .limit(500),
+      sb.from('scans').select('store_id').eq('organisation_id', _orgId).gte('created_at', sinceCoverage).limit(5000)
     ]);
 
     const stores      = (storesRes.data || []).filter(s => s.active && s.latitude != null && s.longitude != null);
@@ -4031,6 +4067,68 @@ async function renderMapTest() {
     const activeRealCount  = activeRecalls.filter(r => !r.isDrill).length;
     const activeDrillCount = activeRecalls.filter(r =>  r.isDrill).length;
 
+    // ── Quick-stat tiles (Step 5) ────────────────────────────────
+    // 30-day window for time-based aggregates. Drills are excluded — they
+    // exercise the chain but don't represent real recall response speed.
+    const sinceLookbackMs = now - _STATS_LOOKBACK_MS;
+    const lookbackAcks = (ackRes.data || []).filter(a => {
+      if (a.recall_events?.is_drill) return false;
+      const t = a.created_at ? new Date(a.created_at).getTime() : 0;
+      return t >= sinceLookbackMs;
+    });
+
+    const ackDurations = lookbackAcks
+      .filter(a => a.acknowledged_at && a.created_at)
+      .map(a => new Date(a.acknowledged_at).getTime() - new Date(a.created_at).getTime())
+      .filter(ms => ms >= 0);
+
+    const resolveDurations = lookbackAcks
+      .filter(a => a.confirmed_at && a.created_at)
+      .map(a => new Date(a.confirmed_at).getTime() - new Date(a.created_at).getTime())
+      .filter(ms => ms >= 0);
+
+    const medianAckMs     = _median(ackDurations);
+    const medianResolveMs = _median(resolveDurations);
+
+    // 72h coverage tile — % of active stores that scanned in last 72h.
+    const activeStoresAll = (storesRes.data || []).filter(s => s.active);
+    const scanningStoreIds = new Set((recentScansRes.data || []).map(r => r.store_id).filter(Boolean));
+    const scanningStoreCount = activeStoresAll.filter(s => scanningStoreIds.has(s.id)).length;
+    const coveragePct = activeStoresAll.length > 0
+      ? Math.round((scanningStoreCount / activeStoresAll.length) * 100)
+      : null;
+
+    const quickStats = [
+      {
+        label: 'Active recalls',
+        value: String(activeRealCount),
+        detail: activeDrillCount > 0
+          ? `${activeDrillCount} drill${activeDrillCount === 1 ? '' : 's'} also in flight`
+          : 'In flight right now'
+      },
+      {
+        label: 'Median ack time',
+        value: medianAckMs != null ? _fmtDuration(medianAckMs) : '—',
+        detail: ackDurations.length > 0
+          ? `${ackDurations.length} ack${ackDurations.length === 1 ? '' : 's'} · last 30 days`
+          : 'No data in last 30 days'
+      },
+      {
+        label: 'Median resolve time',
+        value: medianResolveMs != null ? _fmtDuration(medianResolveMs) : '—',
+        detail: resolveDurations.length > 0
+          ? `Notified → Resolved · last 30 days`
+          : 'No data in last 30 days'
+      },
+      {
+        label: 'Network coverage',
+        value: coveragePct != null ? `${coveragePct}%` : '—',
+        detail: activeStoresAll.length > 0
+          ? `${scanningStoreCount} of ${activeStoresAll.length} stores scanning · last 72h`
+          : 'No active stores yet'
+      }
+    ];
+
     // Filter pills — pure filter controls (text + count only). The map's
     // bottom-left legend is the single source of color meaning. Don't add
     // colored dots to these pills — that would duplicate the legend.
@@ -4124,6 +4222,16 @@ async function renderMapTest() {
         <div style="font-size:11px;color:var(--muted);margin-top:2px;">${stores.length} store${stores.length===1?'':'s'} on the map · ${offMapCount} not yet placed</div>
       </div>
 
+      <!-- Quick stats — 4 tiles. auto-fit collapses to 2 cols at narrow widths. -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:14px;">
+        ${quickStats.map(t => `
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;">
+            <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;">${esc(t.label)}</div>
+            <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:22px;color:var(--text);line-height:1.1;">${esc(t.value)}</div>
+            <div style="font-size:10.5px;color:var(--muted);margin-top:5px;line-height:1.4;">${esc(t.detail)}</div>
+          </div>`).join('')}
+      </div>
+
       <!-- 2-column grid: map + filter pills on left, Active Recalls rail on right.
            At narrow widths the rail wraps below the map (flex-wrap). -->
       <div style="display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;">
@@ -4170,7 +4278,7 @@ async function renderMapTest() {
       </div>
 
       <div style="margin-top:14px;font-size:10.5px;color:var(--muted);font-family:'DM Mono',monospace;letter-spacing:0.02em;">
-        Step 4 preview — quick stats and the Push-a-Recall hero arrive in Steps 5-6.
+        Step 5 preview — Push-a-Recall hero arrives in Step 6, then Step 7 swaps this into the home view.
       </div>`;
 
     const ctrl = renderStoreMap(document.getElementById('map-test-container'), stores, { height: '620px' });
