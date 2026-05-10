@@ -1539,13 +1539,17 @@ function showPanel(name) {
     document.getElementById('mobile-overlay')?.classList.remove('active');
   }
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-  const panels = { overview:'Dashboard', onboarding:'Getting started', recalls:'Recalls', stores:'Store Network', traceability:'Scan History', staff:'Staff Activity', compliance:'Compliance', reports:'Reports and Exports', settings:'Settings', triage:'Complaint Triage', 'consumer-notify':'Consumer Notify', investigations:'Investigations', terminology:'Terminology & Help', lotcheck:'Lot Lookup', 'map-test':'Map preview (test)' };
+  const panels = { overview:'Dashboard', onboarding:'Getting started', recalls:'Recalls', stores:'Store Network', traceability:'Scan History', staff:'Staff Activity', compliance:'Compliance', reports:'Reports and Exports', settings:'Settings', triage:'Complaint Triage', 'consumer-notify':'Consumer Notify', investigations:'Investigations', terminology:'Terminology & Help', lotcheck:'Lot Lookup' };
   document.getElementById('topbar-title').textContent = panels[name] || name;
   document.querySelectorAll('.nav-item').forEach(el => {
     if (el.getAttribute('onclick')?.includes(`'${name}'`)) el.classList.add('active');
   });
   // partners: renderPartners removed — Manufacturers panel retired in chunk 6B partners cleanup.
-  const fns = { overview: renderOverview, onboarding: renderOnboarding, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, triage: renderDashboardTriage, investigations: renderDashInvestigations, 'consumer-notify': renderConsumerNotification, terminology: renderTerminology, lotcheck: renderLotCheck, 'map-test': renderMapTest };
+  // overview → renderCommandCenter (Step 7 of the Command Center pivot,
+  // 2026-05). To revert to the legacy pre-pivot dashboard, change this
+  // line back to `overview: _renderOverviewLegacy` — the legacy function
+  // is preserved in code below renderRecalls.
+  const fns = { overview: renderCommandCenter, onboarding: renderOnboarding, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, triage: renderDashboardTriage, investigations: renderDashInvestigations, 'consumer-notify': renderConsumerNotification, terminology: renderTerminology, lotcheck: renderLotCheck };
   (fns[name] || renderComingSoon)(name);
 }
 
@@ -2096,7 +2100,12 @@ function handleDeepLink() {
   requestAnimationFrame(() => showPanel(target));
 }
 
-async function renderOverview() {
+// _renderOverviewLegacy — the pre-Command-Center home view (Dashboard).
+// Kept in code as a fallback. To revert to it, change the `fns` mapping
+// inside showPanel() so `overview: _renderOverviewLegacy` instead of
+// `overview: renderCommandCenter`. Nothing else references this function
+// externally — it's only reachable through that mapping.
+async function _renderOverviewLegacy() {
   const _errEl = document.getElementById('main-content');
   try {
 
@@ -2811,7 +2820,7 @@ el.innerHTML = `
   }
 
   } catch(_renderErr) {
-    console.error('[renderOverview]', _renderErr);
+    console.error('[_renderOverviewLegacy]', _renderErr);
     if (_errEl) _errEl.innerHTML += `<div style="margin:20px 0;padding:16px;background:rgba(255,92,92,0.08);border:1px solid rgba(255,92,92,0.2);border-radius:10px;font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;"><strong style="color:var(--danger);">Error loading </strong><br>${_renderErr.message}</div>`;
   }
 }
@@ -3718,10 +3727,9 @@ async function _geocodeNominatim(params) {
 // did we recently close one out? Operational concerns (dark stores,
 // SLA breaches) are surfaced elsewhere — not here.
 //
-// This function is reusable — Step 7 will call it from the new home
-// view as well. For now it's only reachable via the test panel
-// (renderMapTest, ?panel=map-test), so the production overview is
-// not affected.
+// This function is reusable — called from renderCommandCenter (the
+// home view) and could be called from a future per-recall detail page
+// to focus on a single recall's affected stores.
 
 const _MAP_STATUS_COLORS = {
   active:   '#ff5c5c', // red — has at least one active recall match still on shelf
@@ -3922,15 +3930,25 @@ function renderStoreMap(container, stores, options) {
   return { map, setFilter, markersByStatus };
 }
 
-// Test panel — only reachable via ?panel=map-test in the URL. Builds
-// the data the map needs (status per store, active recall count,
-// recently resolved count) and renders the map. Step 7 will fold
-// this logic into the new Command Center home view alongside the
-// right rail and quick stats; for now this isolates the map so we
-// can verify it visually without touching the production overview.
-async function renderMapTest() {
+// renderCommandCenter — the new Dashboard home view (Step 7 of the
+// Command Center pivot, 2026-05). Replaces the legacy renderOverview
+// in the panels mapping. Layout:
+//   1. Push-a-Recall hero (primary CTA)
+//   2. 4 quick-stat tiles (active count, median ack, median resolve,
+//      72h network coverage)
+//   3. 2-column main: filter pills + map | Active Recalls right rail
+//
+// Store managers continue routing to renderStoreManagerOverview() —
+// they don't push recalls and the new corp-focused layout isn't right
+// for them.
+//
+// The legacy overview is preserved as _renderOverviewLegacy in case we
+// need to revert; flipping one line in the `fns` mapping inside
+// showPanel() restores it.
+async function renderCommandCenter() {
+  if (_userRole === 'store_manager') { return renderStoreManagerOverview(); }
   const el = document.getElementById('main-content');
-  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);padding:4px 0;"><div class="spinner"></div> Loading map…</div>`;
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);padding:4px 0;"><div class="spinner"></div> Loading dashboard…</div>`;
   try {
     const now           = Date.now();
     const since7d       = new Date(now - _MAP_RESOLVED_WINDOW_MS).toISOString();
@@ -4217,11 +4235,6 @@ async function renderMapTest() {
       : activeRecalls.map(_renderRecallCard).join('<div style="height:10px;"></div>');
 
     el.innerHTML = `
-      <div style="margin-bottom:14px;">
-        <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:18px;color:var(--text);">Network · Live (test preview)</div>
-        <div style="font-size:11px;color:var(--muted);margin-top:2px;">${stores.length} store${stores.length===1?'':'s'} on the map · ${offMapCount} not yet placed</div>
-      </div>
-
       <!-- Push a Recall hero — primary CTA for the dashboard. Click goes
            to the existing recall composer (Recalls panel, Add tab). The
            secondary "Run a drill" button opens the existing drill launcher
@@ -4315,9 +4328,7 @@ async function renderMapTest() {
         </aside>
       </div>
 
-      <div style="margin-top:14px;font-size:10.5px;color:var(--muted);font-family:'DM Mono',monospace;letter-spacing:0.02em;">
-        Step 6 preview — Step 7 swaps this layout into the home (Dashboard) view.
-      </div>`;
+      `;
 
     const ctrl = renderStoreMap(document.getElementById('map-test-container'), stores, { height: '620px' });
 
@@ -4382,8 +4393,8 @@ async function renderMapTest() {
       });
     });
   } catch (e) {
-    console.error('[renderMapTest]', e);
-    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading map: ${esc(e.message)}</div>`;
+    console.error('[renderCommandCenter]', e);
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading dashboard: ${esc(e.message)}</div>`;
   }
 }
 
