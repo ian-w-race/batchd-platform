@@ -3725,6 +3725,22 @@ function _mapFmtAgo(iso) {
   return `${Math.floor(ms / 86_400_000)}d ago`;
 }
 
+// Elapsed-time helper for recall cards. Returns "30m", "2h 18m",
+// "2d 3h" — readable, short, no "ago" suffix.
+function _fmtElapsed(iso) {
+  if (!iso) return '—';
+  const t  = new Date(iso).getTime();
+  if (!isFinite(t)) return '—';
+  const ms = Date.now() - t;
+  if (ms < 60_000)  return '< 1m';
+  const totalMin = Math.floor(ms / 60_000);
+  const totalHr  = Math.floor(totalMin / 60);
+  const totalDay = Math.floor(totalHr / 24);
+  if (totalDay >= 1) return `${totalDay}d ${totalHr % 24}h`;
+  if (totalHr  >= 1) return `${totalHr}h ${totalMin % 60}m`;
+  return `${totalMin}m`;
+}
+
 // Mounts the map. `stores` should already have `_status` (one of
 // 'active'|'resolved'|'none'), and optionally `_activeRecallCount`
 // and `_recentResolvedCount` for the popup.
@@ -3864,14 +3880,22 @@ async function renderMapTest() {
     const now      = Date.now();
     const since7d  = new Date(now - _MAP_RESOLVED_WINDOW_MS).toISOString();
 
-    // Parallel fetch. recall_acknowledgements is the source for the
-    // resolved-in-7d state (status='confirmed' AND confirmed_at >= since7d).
+    // Parallel fetch. The ack query is broadened (vs the earlier resolved-
+    // only query) because Step 4 also needs all in-flight acks for the
+    // right-rail "Active Recalls" panel. We post-filter in JS for both:
+    //   - resolved-7d → drives green dots on the map
+    //   - in-flight   → drives the right-rail cards
+    // Embedded recall_events relation pulls product/severity/drill flag.
     // 'confirmed' is the canonical DB enum value for the final chain step;
     // the UI label is "Resolved" platform-wide as of 2026-05.
     const [storesRes, srmRes, ackRes] = await Promise.all([
       sb.from('stores').select('*').eq('organisation_id', _orgId),
       sb.from('scan_recall_matches').select('store_id, scan_id, recall_id, recall_event_id').eq('organisation_id', _orgId),
-      sb.from('recall_acknowledgements').select('store_id, status, confirmed_at').eq('organisation_id', _orgId).gte('confirmed_at', since7d).eq('status', 'confirmed')
+      sb.from('recall_acknowledgements')
+        .select('id, store_id, recall_event_id, status, acknowledged_at, pulled_at, disposed_at, confirmed_at, created_at, recall_events(id, product_name, lot_number, severity, reason, is_drill, published_at)')
+        .eq('organisation_id', _orgId)
+        .order('created_at', { ascending: false })
+        .limit(500)
     ]);
 
     const stores      = (storesRes.data || []).filter(s => s.active && s.latitude != null && s.longitude != null);
@@ -3900,10 +3924,16 @@ async function renderMapTest() {
       activeRecallByStore[m.store_id] = (activeRecallByStore[m.store_id] || 0) + 1;
     });
 
-    // store_id → recently-resolved count (within last 7 days)
+    // store_id → recently-resolved count (status='confirmed' AND
+    // confirmed_at >= since7d AND NOT a mock drill — drills are
+    // tracked separately and don't affect map markers).
     const recentlyResolvedByStore = {};
     (ackRes.data || []).forEach(a => {
       if (!a.store_id) return;
+      if (a.status !== 'confirmed') return;
+      if (!a.confirmed_at) return;
+      if (new Date(a.confirmed_at).getTime() < new Date(since7d).getTime()) return;
+      if (a.recall_events?.is_drill) return;
       recentlyResolvedByStore[a.store_id] = (recentlyResolvedByStore[a.store_id] || 0) + 1;
     });
 
@@ -3924,6 +3954,56 @@ async function renderMapTest() {
     const counts = { active: 0, resolved: 0, none: 0 };
     stores.forEach(s => { counts[s._status] = (counts[s._status] || 0) + 1; });
 
+    // ── Right-rail Active Recalls data ───────────────────────────
+    // Group acks by recall_event. An event is "in flight" when it has
+    // at least one ack and not all of those acks are status='confirmed'
+    // (i.e. at least one store hasn't reached the Resolved step yet).
+    // Mock drills are mixed in but visually distinct (DRILL badge,
+    // dashed border) — and are explicitly NOT shown on the map.
+    const acksByEvent = {};
+    (ackRes.data || []).forEach(a => {
+      if (!a.recall_event_id) return;
+      (acksByEvent[a.recall_event_id] = acksByEvent[a.recall_event_id] || []).push(a);
+    });
+
+    const activeRecalls = Object.keys(acksByEvent).map(eid => {
+      const evAcks = acksByEvent[eid];
+      const ev     = evAcks[0]?.recall_events || {};
+      const total  = evAcks.length;
+      // 5-stage progress counts. Once a store reaches a later stage, all
+      // earlier stages count as completed (so 'pulled' implies 'acknowledged').
+      const stageCounts = {
+        notified:     total,
+        acknowledged: evAcks.filter(a => ['acknowledged','pulled','disposed','confirmed'].includes(a.status)).length,
+        pulled:       evAcks.filter(a => ['pulled','disposed','confirmed'].includes(a.status)).length,
+        disposed:     evAcks.filter(a => ['disposed','confirmed'].includes(a.status)).length,
+        confirmed:    evAcks.filter(a => a.status === 'confirmed').length
+      };
+      const allConfirmed = stageCounts.confirmed === total;
+      const earliestAt = evAcks.reduce((min, a) => {
+        const t = a.created_at ? new Date(a.created_at).getTime() : null;
+        return (t && (!min || t < min)) ? t : min;
+      }, null);
+      const startedAt = ev.published_at || (earliestAt ? new Date(earliestAt).toISOString() : null);
+      return {
+        id: eid,
+        ev,
+        total,
+        stageCounts,
+        allConfirmed,
+        startedAt,
+        affectedStoreIds: evAcks.map(a => a.store_id).filter(Boolean),
+        isDrill: !!ev.is_drill
+      };
+    })
+    // In flight only — drop fully-resolved events
+    .filter(r => !r.allConfirmed && r.total > 0)
+    // Newest first
+    .sort((a, b) => new Date(b.startedAt || 0) - new Date(a.startedAt || 0));
+
+    const activeRealCount  = activeRecalls.filter(r => !r.isDrill).length;
+    const activeDrillCount = activeRecalls.filter(r =>  r.isDrill).length;
+
     // Filter pills — pure filter controls (text + count only). The map's
     // bottom-left legend is the single source of color meaning. Don't add
     // colored dots to these pills — that would duplicate the legend.
@@ -3934,58 +4014,200 @@ async function renderMapTest() {
       { key: 'none',     label: 'No recalls',    count: counts.none     }
     ];
 
+    // ── Recall card builder ──────────────────────────────────────
+    // Renders one card. Click handler is wired after innerHTML is set.
+    const _severityLabel = sev => {
+      if (!sev) return null;
+      const s = String(sev).toLowerCase();
+      if (s.includes('iii') || s === '3' || s === 'class_iii') return { txt: 'Class III', bg: 'rgba(70,130,255,0.12)',  border: 'rgba(70,130,255,0.4)',  fg: '#7ba9ff' };
+      if (s.includes('ii')  || s === '2' || s === 'class_ii')  return { txt: 'Class II',  bg: 'rgba(245,166,35,0.12)',  border: 'rgba(245,166,35,0.4)',  fg: '#f5a623' };
+      if (s.includes('i')   || s === '1' || s === 'class_i')   return { txt: 'Class I',   bg: 'rgba(255,92,92,0.12)',   border: 'rgba(255,92,92,0.4)',   fg: '#ff5c5c' };
+      // Pass-through for anything we don't recognise
+      return { txt: String(sev), bg: 'var(--surface2)', border: 'var(--border)', fg: 'var(--muted)' };
+    };
+    const _stageOrder = [
+      { key: 'notified',     label: 'NOTIF' },
+      { key: 'acknowledged', label: 'ACK'   },
+      { key: 'pulled',       label: 'PULL'  },
+      { key: 'disposed',     label: 'DISP'  },
+      { key: 'confirmed',    label: 'RSLV'  }   // UI label "Resolved" — DB enum stays 'confirmed'
+    ];
+    const _renderRecallCard = r => {
+      const sev = _severityLabel(r.ev.severity);
+      const lots = (r.ev.lot_number || '').trim();
+      const title = (r.ev.product_name || 'Unnamed product') + (r.ev.reason ? ` — ${r.ev.reason}` : '');
+      const elapsed = _fmtElapsed(r.startedAt);
+      const cardBorder = r.isDrill ? '1.5px dashed var(--border-hard)' : '1px solid var(--border)';
+
+      const drillBadge = r.isDrill
+        ? `<span style="display:inline-flex;align-items:center;font-family:'DM Mono',monospace;font-size:10px;font-weight:700;letter-spacing:0.06em;padding:3px 8px;border-radius:5px;background:rgba(245,166,35,0.14);border:1px solid rgba(245,166,35,0.4);color:#f5a623;">DRILL</span>` : '';
+
+      const sevBadge = sev
+        ? `<span style="display:inline-flex;align-items:center;font-family:'DM Mono',monospace;font-size:10px;font-weight:700;letter-spacing:0.06em;padding:3px 8px;border-radius:5px;background:${sev.bg};border:1px solid ${sev.border};color:${sev.fg};">${esc(sev.txt)}${r.isDrill?' (sim.)':''}</span>` : '';
+
+      const stagesHtml = _stageOrder.map(st => {
+        const count = r.stageCounts[st.key] || 0;
+        const pct = r.total > 0 ? Math.round((count / r.total) * 100) : 0;
+        return `
+          <div style="display:flex;flex-direction:column;align-items:center;gap:5px;min-width:0;">
+            <div style="width:100%;height:4px;background:var(--border);border-radius:2px;overflow:hidden;">
+              <div style="width:${pct}%;height:100%;background:var(--accent);transition:width 0.25s;"></div>
+            </div>
+            <div style="font-family:'DM Mono',monospace;font-size:8.5px;color:var(--muted);letter-spacing:0.05em;text-align:center;line-height:1.4;white-space:nowrap;">
+              <div style="font-weight:700;color:var(--text);">${st.label}</div>
+              <div>${count}/${r.total}</div>
+            </div>
+          </div>`;
+      }).join('');
+
+      return `
+        <div class="batchd-recall-card" data-event-id="${esc(r.id)}"
+             style="background:var(--surface);border:${cardBorder};border-radius:12px;padding:14px;cursor:pointer;transition:border-color 0.15s,transform 0.15s;"
+             onmouseenter="this.style.borderColor='var(--accent-dim)'"
+             onmouseleave="this.style.borderColor='${r.isDrill ? 'var(--border-hard)' : 'var(--border)'}'">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:8px;">
+            <div style="display:flex;flex-wrap:wrap;gap:5px;">
+              ${drillBadge}
+              ${sevBadge}
+            </div>
+            <div style="text-align:right;flex-shrink:0;">
+              <div style="font-family:'DM Mono',monospace;font-size:11px;font-weight:700;color:var(--text);line-height:1;">${elapsed}</div>
+              <div style="font-family:'DM Mono',monospace;font-size:8.5px;color:var(--muted);letter-spacing:0.06em;text-transform:uppercase;margin-top:2px;">elapsed</div>
+            </div>
+          </div>
+          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:13px;color:var(--text);margin-bottom:4px;line-height:1.4;">${esc(title)}</div>
+          ${lots ? `<div style="font-family:'DM Mono',monospace;font-size:10.5px;color:var(--muted);margin-bottom:12px;line-height:1.4;">Lots ${esc(lots)}</div>` : '<div style="margin-bottom:12px;"></div>'}
+          <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;">
+            ${stagesHtml}
+          </div>
+        </div>`;
+    };
+
+    // Right-rail card list — empty state vs cards
+    const cardsHtml = activeRecalls.length === 0
+      ? `<div style="padding:18px 16px;background:var(--surface);border:1px solid var(--border);border-radius:10px;font-size:12px;color:var(--muted);line-height:1.6;text-align:center;">
+           <div style="font-weight:600;color:var(--text);margin-bottom:4px;">No active recalls in flight</div>
+           <div>When a recall is pushed and stores start working through the response chain, in-flight cards appear here.</div>
+         </div>`
+      : activeRecalls.map(_renderRecallCard).join('<div style="height:10px;"></div>');
+
     el.innerHTML = `
-      <div style="display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:14px;">
-        <div>
-          <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:18px;color:var(--text);">Network · Live (test preview)</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:2px;">${stores.length} store${stores.length===1?'':'s'} on the map · ${offMapCount} not yet placed</div>
-        </div>
-        <div id="map-filter-pills" style="display:inline-flex;gap:4px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:4px;">
-          ${pills.map(p => `
-            <button data-filter="${p.key}"
-                    class="map-filter-pill ${p.key === 'all' ? 'active' : ''}"
-                    style="display:inline-flex;align-items:center;gap:6px;font-family:'DM Mono',monospace;font-size:11px;padding:6px 10px;border-radius:7px;border:none;background:none;color:var(--muted);cursor:pointer;transition:background 0.15s,color 0.15s;letter-spacing:0.02em;">
-              <span>${p.label}</span>
-              <span style="opacity:0.55;font-weight:600;">${p.count}</span>
-            </button>`).join('')}
-        </div>
+      <div style="margin-bottom:14px;">
+        <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:18px;color:var(--text);">Network · Live (test preview)</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px;">${stores.length} store${stores.length===1?'':'s'} on the map · ${offMapCount} not yet placed</div>
       </div>
-      <div id="map-test-container"></div>
-      ${stores.length === 0 ? `
-        <div style="margin-top:14px;padding:14px 16px;background:var(--surface);border:1px solid var(--border);border-radius:10px;font-size:12px;color:var(--muted);line-height:1.6;">
-          <strong style="color:var(--text);">No stores on the map yet.</strong>
-          ${offMapCount > 0
-            ? `${offMapCount} active store${offMapCount===1?' has':'s have'} an address but no coordinates. Go to <strong style="color:var(--text);">Store Network</strong>, edit each store, and verify the address — Batch'd will look up the location automatically.`
-            : 'Add an active store with a complete address from <strong style="color:var(--text);">Store Network</strong> to see it here.'}
-        </div>` : ''}
-      <div style="margin-top:10px;font-size:10.5px;color:var(--muted);font-family:'DM Mono',monospace;letter-spacing:0.02em;">
-        Step 3 preview — right-rail Active Recalls, quick stats, and the Push-a-Recall hero arrive in Steps 4-6.
+
+      <!-- 2-column grid: map + filter pills on left, Active Recalls rail on right.
+           At narrow widths the rail wraps below the map (flex-wrap). -->
+      <div style="display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;">
+
+        <!-- Left column: filter pills above the map -->
+        <div style="flex:1 1 480px;min-width:0;">
+          <div style="display:flex;justify-content:flex-end;margin-bottom:10px;">
+            <div id="map-filter-pills" style="display:inline-flex;gap:4px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:4px;">
+              ${pills.map(p => `
+                <button data-filter="${p.key}"
+                        class="map-filter-pill ${p.key === 'all' ? 'active' : ''}"
+                        style="display:inline-flex;align-items:center;gap:6px;font-family:'DM Mono',monospace;font-size:11px;padding:6px 10px;border-radius:7px;border:none;background:none;color:var(--muted);cursor:pointer;transition:background 0.15s,color 0.15s;letter-spacing:0.02em;">
+                  <span>${p.label}</span>
+                  <span style="opacity:0.55;font-weight:600;">${p.count}</span>
+                </button>`).join('')}
+            </div>
+          </div>
+          <div id="map-test-container"></div>
+          ${stores.length === 0 ? `
+            <div style="margin-top:14px;padding:14px 16px;background:var(--surface);border:1px solid var(--border);border-radius:10px;font-size:12px;color:var(--muted);line-height:1.6;">
+              <strong style="color:var(--text);">No stores on the map yet.</strong>
+              ${offMapCount > 0
+                ? `${offMapCount} active store${offMapCount===1?' has':'s have'} an address but no coordinates. Go to <strong style="color:var(--text);">Store Network</strong>, edit each store, and verify the address — Batch'd will look up the location automatically.`
+                : 'Add an active store with a complete address from <strong style="color:var(--text);">Store Network</strong> to see it here.'}
+            </div>` : ''}
+        </div>
+
+        <!-- Right column: Active Recalls rail -->
+        <aside style="flex:0 0 380px;max-width:100%;display:flex;flex-direction:column;gap:10px;">
+          <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:10px;margin-bottom:2px;">
+            <div>
+              <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:14px;color:var(--text);">Active Recalls</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:2px;">${activeRecalls.length} in flight${activeDrillCount > 0 ? ` · ${activeDrillCount} drill${activeDrillCount===1?'':'s'}` : ''}</div>
+            </div>
+          </div>
+          <div id="active-recalls-list">
+            ${cardsHtml}
+          </div>
+          ${activeRecalls.length > 0 ? `
+            <div style="margin-top:4px;font-size:10px;color:var(--muted);line-height:1.5;font-family:'DM Mono',monospace;letter-spacing:0.02em;">
+              Mock drills appear in this list with a DRILL badge and dashed border. They do not appear on the map.
+            </div>` : ''}
+        </aside>
+      </div>
+
+      <div style="margin-top:14px;font-size:10.5px;color:var(--muted);font-family:'DM Mono',monospace;letter-spacing:0.02em;">
+        Step 4 preview — quick stats and the Push-a-Recall hero arrive in Steps 5-6.
       </div>`;
 
     const ctrl = renderStoreMap(document.getElementById('map-test-container'), stores, { height: '620px' });
 
-    // Wire pill clicks — toggle the active class and call setFilter().
-    // Active pill style: solid surface2 background + bright text.
+    // Helper to switch a filter pill's visual active state.
+    const _activatePill = (filterKey) => {
+      document.querySelectorAll('#map-filter-pills .map-filter-pill').forEach(b => {
+        const isActive = b.dataset.filter === filterKey;
+        b.classList.toggle('active', isActive);
+        b.style.background = isActive ? 'var(--surface2)' : 'none';
+        b.style.color      = isActive ? 'var(--text)'    : 'var(--muted)';
+      });
+    };
+
+    // Wire pill clicks
     document.querySelectorAll('#map-filter-pills .map-filter-pill').forEach(btn => {
       btn.addEventListener('click', () => {
-        document.querySelectorAll('#map-filter-pills .map-filter-pill').forEach(b => {
-          b.classList.remove('active');
-          b.style.background = 'none';
-          b.style.color = 'var(--muted)';
-        });
-        btn.classList.add('active');
-        btn.style.background = 'var(--surface2)';
-        btn.style.color = 'var(--text)';
+        _activatePill(btn.dataset.filter);
         ctrl.setFilter(btn.dataset.filter);
       });
     });
-    // Apply initial active style to the "All" pill so it visually matches
-    // the .active class state we set in the markup.
-    const initialActive = document.querySelector('#map-filter-pills .map-filter-pill.active');
-    if (initialActive) {
-      initialActive.style.background = 'var(--surface2)';
-      initialActive.style.color = 'var(--text)';
-    }
+    // Apply initial active style to the "All" pill
+    _activatePill('all');
+
+    // Wire recall card clicks → focus map on affected stores + switch
+    // filter to "Active". Drills don't appear on the map, so clicking a
+    // drill card just shows a soft hint instead of trying to focus.
+    const storesById = {};
+    stores.forEach(s => { storesById[s.id] = s; });
+
+    document.querySelectorAll('.batchd-recall-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const eventId = card.dataset.eventId;
+        const recall = activeRecalls.find(r => r.id === eventId);
+        if (!recall) return;
+
+        if (recall.isDrill) {
+          showToast('Mock drills track separately and don\'t appear on the map.', 'info', 3000);
+          return;
+        }
+
+        // Find affected stores that are on the map (have coords)
+        const affected = recall.affectedStoreIds
+          .map(sid => storesById[sid])
+          .filter(s => s && s.latitude != null && s.longitude != null);
+
+        if (affected.length === 0) {
+          showToast('Affected stores are not yet placed on the map.', 'info', 3000);
+          return;
+        }
+
+        // Switch filter to Active so the relevant markers are bright
+        _activatePill('active');
+        ctrl.setFilter('active');
+
+        // Fit bounds to affected stores (with padding)
+        try {
+          const bounds = L.latLngBounds(affected.map(s => [s.latitude, s.longitude]));
+          ctrl.map.fitBounds(bounds.pad(0.25), { maxZoom: 11, animate: true });
+        } catch (_) {
+          ctrl.map.setView([affected[0].latitude, affected[0].longitude], 10);
+        }
+      });
+    });
   } catch (e) {
     console.error('[renderMapTest]', e);
     el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading map: ${esc(e.message)}</div>`;
