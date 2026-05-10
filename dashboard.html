@@ -4270,10 +4270,15 @@ async function renderMapTest() {
            At narrow widths the rail wraps below the map (flex-wrap). -->
       <div style="display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;">
 
-        <!-- Left column: filter pills above the map -->
+        <!-- Left column: filter pills float on top-right of the map.
+             The wrapper provides positioning context; pills are absolutely
+             positioned at z-index 1000 so they sit above markers and tiles
+             but below Leaflet popups (which are anchored to markers and
+             render in different screen regions anyway). -->
         <div style="flex:1 1 480px;min-width:0;">
-          <div style="display:flex;justify-content:flex-end;margin-bottom:10px;">
-            <div id="map-filter-pills" style="display:inline-flex;gap:4px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:4px;">
+          <div style="position:relative;">
+            <div id="map-test-container"></div>
+            <div id="map-filter-pills" style="position:absolute;top:12px;right:12px;z-index:1000;display:inline-flex;gap:4px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:4px;box-shadow:0 4px 14px rgba(0,0,0,0.35);">
               ${pills.map(p => `
                 <button data-filter="${p.key}"
                         class="map-filter-pill ${p.key === 'all' ? 'active' : ''}"
@@ -4283,7 +4288,6 @@ async function renderMapTest() {
                 </button>`).join('')}
             </div>
           </div>
-          <div id="map-test-container"></div>
           ${stores.length === 0 ? `
             <div style="margin-top:14px;padding:14px 16px;background:var(--surface);border:1px solid var(--border);border-radius:10px;font-size:12px;color:var(--muted);line-height:1.6;">
               <strong style="color:var(--text);">No stores on the map yet.</strong>
