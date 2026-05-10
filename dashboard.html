@@ -1670,7 +1670,7 @@ const fmtDT        = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'num
           ${chainNode(1, mfrName + ' — Manufacturer', shipments.length > 0 ? `${shipments.length} shipment${shipments.length!==1?'s':''} logged · ${totalQty} ${unit} total · First shipped ${fmtDate(shipments[shipments.length-1]?.shipped_at)}` : 'No shipment records on file — connect this manufacturer as a partner to receive shipment data', shipments.length?'ok':'muted', shipments.length?`Lot code: ${lotCode}`:null)}
           ${chainNode(2, storesShipped.length > 0 ? storesShipped.join(', ') : 'Receiving stores', storesShipped.length > 0 ? shipments.map(s=>`${s.stores?.name||'?'} — ${s.quantity} ${s.unit||''} received ${fmtDate(s.shipped_at)}`).slice(0,4).join(' · ') : 'No store receipt records', storesShipped.length?'ok':'muted', storesShipped.length?`${storesShipped.length} store${storesShipped.length!==1?'s':''} received this lot`:null)}
           ${chainNode(3, scans.length > 0 ? 'Scanned onto shelves' : 'Shelf placement', scans.length > 0 ? `${scans.length} scan${scans.length!==1?'s':''} by staff · ${storesSeen.join(', ')}` : 'No scan records for this lot — staff may not have scanned it, or lot code may differ slightly', scans.length?'ok':'warn', scans.length?`Latest scan: ${fmtDT(scans[0]?.created_at)}`:null)}
-          ${chainNode(4, isRecalled ? 'Recall response' : 'Recall status', isRecalled ? (acks.length > 0 ? `${acks.filter(a=>a.status==='confirmed').length}/${acks.length} stores confirmed removal · ${acks.reduce((s,a)=>s+(a.units_pulled||0),0)} units pulled` : 'Recall pushed — awaiting store acknowledgements') : 'No recall issued for this lot', isRecalled?(acks.every(a=>a.status==='confirmed')?'ok':'danger'):'ok', isRecalled?recalls[0].severity:null)}
+          ${chainNode(4, isRecalled ? 'Recall response' : 'Recall status', isRecalled ? (acks.length > 0 ? `${acks.filter(a=>a.status==='confirmed').length}/${acks.length} stores resolved · ${acks.reduce((s,a)=>s+(a.units_pulled||0),0)} units pulled` : 'Recall pushed — awaiting store acknowledgements') : 'No recall issued for this lot', isRecalled?(acks.every(a=>a.status==='confirmed')?'ok':'danger'):'ok', isRecalled?recalls[0].severity:null)}
         </div>
       </div>
 
@@ -2907,9 +2907,12 @@ async function renderRecalls() {
     badge.textContent = active; badge.style.display = 'inline';
   }
 
+  // STEPS: canonical DB enum values (do not change — matches recall_acknowledgements.status).
+  // STEP_LABELS: UI display strings. Step 5 was renamed Confirmed→Resolved on 2026-05.
+  // The DB enum stays 'confirmed' for backward compat with existing rows, triggers, and queries.
   const STEPS        = ['notified','acknowledged','pulled','disposed','confirmed'];
-  const STEP_LABELS  = { notified:'Notified', acknowledged:'Acknowledged', pulled:'Pulled', disposed:'Disposed', confirmed:'Confirmed' };
-  const STEP_ACTIONS = { notified:'Acknowledge receipt', acknowledged:'Confirm product pulled from shelf', pulled:'Confirm units disposed', disposed:'Submit final confirmation', confirmed:'' };
+  const STEP_LABELS  = { notified:'Notified', acknowledged:'Acknowledged', pulled:'Pulled', disposed:'Disposed', confirmed:'Resolved' };
+  const STEP_ACTIONS = { notified:'Acknowledge receipt', acknowledged:'Confirm product pulled from shelf', pulled:'Confirm units disposed', disposed:'Mark recall resolved', confirmed:'' };
 
   function stepCircles(currentStatus) {
     const idx = STEPS.indexOf(currentStatus);
@@ -3044,7 +3047,7 @@ async function renderRecalls() {
                 { status:'acknowledged',time:a.acknowledged_at,    label:'Acknowledged' },
                 { status:'pulled',      time:a.pulled_at,          label:'Pulled from shelf' },
                 { status:'disposed',    time:a.disposed_at,        label:'Disposed' },
-                { status:'confirmed',   time:a.confirmed_at,       label:'Confirmed — all clear' },
+                { status:'confirmed',   time:a.confirmed_at,       label:'Resolved — all clear' },
               ].filter(s => {
                 const storeIdx = STEPS.indexOf(a.status);
                 return STEPS.indexOf(s.status) <= storeIdx && s.time;
@@ -3607,7 +3610,7 @@ async function advanceAckStatus(ackId, status, recallEventId) {
     return;
   }
   if (status === 'pulled')         showToast(`${update.units_pulled} unit${update.units_pulled !== 1 ? 's' : ''} recorded — step complete ✓`, 'ok', 3000);
-  else if (status === 'confirmed') showToast('Step complete — store confirmed ✓', 'ok', 3000);
+  else if (status === 'confirmed') showToast('Step complete — store resolved ✓', 'ok', 3000);
   renderRecalls();
 }
 
@@ -3680,9 +3683,13 @@ async function _geocodeAddress(addr) {
 }
 
 // ── Live store map (Command Center pivot, Step 2) ─────────────
-// Renders a Leaflet map with status-colored markers for every active
-// store with coordinates. Status priority (most urgent wins):
-//   stalled > active recall > dark store > healthy
+// Renders a Leaflet map with recall-focused markers for every active
+// store with coordinates. Three states (priority: most urgent wins):
+//   active recall > recently resolved > none
+//
+// The map answers ONE question: where are recall hotspots, and where
+// did we recently close one out? Operational concerns (dark stores,
+// SLA breaches) are surfaced elsewhere — not here.
 //
 // This function is reusable — Step 7 will call it from the new home
 // view as well. For now it's only reachable via the test panel
@@ -3690,18 +3697,19 @@ async function _geocodeAddress(addr) {
 // not affected.
 
 const _MAP_STATUS_COLORS = {
-  healthy: '#4DC99A', // var(--accent), green
-  active:  '#f5a623', // warn orange (no token yet — see design system refresh)
-  stalled: '#ff5c5c', // danger red
-  dark:    '#7a8985'  // desaturated gray, slightly lighter than --muted for visibility on dark tiles
+  active:   '#ff5c5c', // red — has at least one active recall match still on shelf
+  resolved: '#4DC99A', // green — recently resolved (chain reached step 5 within last 7 days)
+  none:     '#7a8985'  // gray — no active or recently-resolved recalls
 };
 
 const _MAP_STATUS_LABELS = {
-  healthy: 'Healthy · scanning',
-  active:  'Active recall',
-  stalled: 'Stalled · SLA breach',
-  dark:    'Dark · no scans 72h'
+  active:   'Active recall',
+  resolved: 'Resolved · last 7 days',
+  none:     'No active recalls'
 };
+
+// Window for the "recently resolved" green state. Tuneable.
+const _MAP_RESOLVED_WINDOW_MS = 7 * 24 * 3600_000;
 
 // Small relative-time helper for marker popups. Returns "12m ago",
 // "3h ago", "2d ago", etc.
@@ -3770,11 +3778,11 @@ function renderStoreMap(container, stores, options) {
     }).addTo(map);
 
     // Popup uses light styles (Leaflet popup is white by default).
-    const lastScanLine = s._lastScan
-      ? `<div style="font-size:10px;color:#5a6661;margin-top:6px;font-family:'DM Mono',monospace;">Last scan · ${_mapFmtAgo(s._lastScan)}</div>`
-      : `<div style="font-size:10px;color:#5a6661;margin-top:6px;font-family:'DM Mono',monospace;">No scans in last 72h</div>`;
-    const recallLine = s._activeRecallCount > 0
-      ? `<div style="font-size:10px;color:#a52a2a;margin-top:4px;font-family:'DM Mono',monospace;">${s._activeRecallCount} active recall${s._activeRecallCount === 1 ? '' : 's'}</div>`
+    const activeLine = s._activeRecallCount > 0
+      ? `<div style="font-size:10px;color:#a52a2a;margin-top:6px;font-family:'DM Mono',monospace;">${s._activeRecallCount} active recall${s._activeRecallCount === 1 ? '' : 's'}</div>`
+      : '';
+    const resolvedLine = s._recentResolvedCount > 0
+      ? `<div style="font-size:10px;color:#0f7a55;margin-top:4px;font-family:'DM Mono',monospace;">${s._recentResolvedCount} resolved in last 7 days</div>`
       : '';
 
     const popupHtml = `
@@ -3785,8 +3793,8 @@ function renderStoreMap(container, stores, options) {
           <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};"></span>
           <span style="color:#1a201d;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;font-size:10px;">${esc(_MAP_STATUS_LABELS[status] || status)}</span>
         </div>
-        ${lastScanLine}
-        ${recallLine}
+        ${activeLine}
+        ${resolvedLine}
       </div>`;
     marker.bindPopup(popupHtml, { closeButton: true, autoClose: true, maxWidth: 280 });
 
@@ -3814,10 +3822,9 @@ function renderStoreMap(container, stores, options) {
     div.style.cssText = 'background:rgba(17,25,24,0.92);border:1px solid rgba(52,211,153,0.18);border-radius:10px;padding:10px 14px;font-family:Figtree,sans-serif;font-size:11px;color:#f0f3f1;min-width:170px;line-height:1.5;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);';
     div.innerHTML = `
       <div style="display:flex;flex-direction:column;gap:6px;">
-        <div style="display:flex;align-items:center;gap:8px;"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${_MAP_STATUS_COLORS.healthy};flex-shrink:0;"></span>${_MAP_STATUS_LABELS.healthy}</div>
         <div style="display:flex;align-items:center;gap:8px;"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${_MAP_STATUS_COLORS.active};flex-shrink:0;"></span>${_MAP_STATUS_LABELS.active}</div>
-        <div style="display:flex;align-items:center;gap:8px;"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${_MAP_STATUS_COLORS.stalled};flex-shrink:0;"></span>${_MAP_STATUS_LABELS.stalled}</div>
-        <div style="display:flex;align-items:center;gap:8px;"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${_MAP_STATUS_COLORS.dark};flex-shrink:0;"></span>${_MAP_STATUS_LABELS.dark}</div>
+        <div style="display:flex;align-items:center;gap:8px;"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${_MAP_STATUS_COLORS.resolved};flex-shrink:0;"></span>${_MAP_STATUS_LABELS.resolved}</div>
+        <div style="display:flex;align-items:center;gap:8px;"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${_MAP_STATUS_COLORS.none};flex-shrink:0;"></span>${_MAP_STATUS_LABELS.none}</div>
         <div style="font-size:9.5px;color:#9aa6a1;margin-top:6px;border-top:1px solid rgba(52,211,153,0.14);padding-top:6px;letter-spacing:0.02em;">Mock drills track separately and don't<br>affect map markers.</div>
       </div>`;
     return div;
@@ -3827,35 +3834,27 @@ function renderStoreMap(container, stores, options) {
   return map;
 }
 
-// SLA thresholds for "stalled" detection. These are Batch'd-recommended
-// best practice, NOT regulatory — the regulatory window comes from
-// 21 CFR Part 7 + FDA recall guidance ("as soon as possible") and is
-// not stage-broken-down. See memory/project_fsma_204_facts.md.
-const _SLA_NOTIFIED_TO_ACK_MS  = 2  *      3600_000; // 2h
-const _SLA_ACK_TO_PULL_MS      = 24 *      3600_000; // 24h
-const _SLA_PULL_TO_DISPOSE_MS  = 7  * 24 * 3600_000; // 7d
-
 // Test panel — only reachable via ?panel=map-test in the URL. Builds
-// the data the map needs (status per store, last scan, active recall
-// count) and renders the map. Step 7 will fold this logic into the
-// new Command Center home view alongside the right rail and quick
-// stats; for now this isolates the map so we can verify it visually
-// without touching the production overview.
+// the data the map needs (status per store, active recall count,
+// recently resolved count) and renders the map. Step 7 will fold
+// this logic into the new Command Center home view alongside the
+// right rail and quick stats; for now this isolates the map so we
+// can verify it visually without touching the production overview.
 async function renderMapTest() {
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);padding:4px 0;"><div class="spinner"></div> Loading map…</div>`;
   try {
     const now      = Date.now();
-    const since72h = new Date(now - 72 * 3600_000).toISOString();
+    const since7d  = new Date(now - _MAP_RESOLVED_WINDOW_MS).toISOString();
 
-    // Parallel fetch of everything the status computation needs.
-    // recall_acknowledgements is what gives us the per-stage timestamps for
-    // SLA breach detection.
-    const [storesRes, srmRes, scansRes, ackRes] = await Promise.all([
+    // Parallel fetch. recall_acknowledgements is the source for the
+    // resolved-in-7d state (status='confirmed' AND confirmed_at >= since7d).
+    // 'confirmed' is the canonical DB enum value for the final chain step;
+    // the UI label is "Resolved" platform-wide as of 2026-05.
+    const [storesRes, srmRes, ackRes] = await Promise.all([
       sb.from('stores').select('*').eq('organisation_id', _orgId),
       sb.from('scan_recall_matches').select('store_id, scan_id, recall_id, recall_event_id').eq('organisation_id', _orgId),
-      sb.from('scans').select('store_id, created_at, removed_from_shelf_at').eq('organisation_id', _orgId).gte('created_at', since72h),
-      sb.from('recall_acknowledgements').select('store_id, recall_event_id, status, acknowledged_at, pulled_at, disposed_at, confirmed_at, created_at').eq('organisation_id', _orgId)
+      sb.from('recall_acknowledgements').select('store_id, status, confirmed_at').eq('organisation_id', _orgId).gte('confirmed_at', since7d).eq('status', 'confirmed')
     ]);
 
     const stores      = (storesRes.data || []).filter(s => s.active && s.latitude != null && s.longitude != null);
@@ -3866,7 +3865,7 @@ async function renderMapTest() {
     // matched scan is still on shelf. We have to fetch the scans referenced
     // by the matches to check on-shelf status.
     const matchScanIds = Array.from(new Set((srmRes.data || []).map(m => m.scan_id).filter(Boolean)));
-    let onShelfScanIds = new Set();
+    const onShelfScanIds = new Set();
     if (matchScanIds.length > 0) {
       // Chunk in case there are many — Supabase URL limits ~2000 chars.
       const CHUNK = 200;
@@ -3877,53 +3876,35 @@ async function renderMapTest() {
       }
     }
 
-    // Build store_id → active recall count
+    // store_id → active recall count
     const activeRecallByStore = {};
     (srmRes.data || []).forEach(m => {
       if (!m.store_id || !onShelfScanIds.has(m.scan_id)) return;
       activeRecallByStore[m.store_id] = (activeRecallByStore[m.store_id] || 0) + 1;
     });
 
-    // Build store_id → last scan timestamp (within 72h window — anything
-    // older means dark store).
-    const lastScanByStore = {};
-    (scansRes.data || []).forEach(sc => {
-      if (!sc.store_id) return;
-      const cur = lastScanByStore[sc.store_id];
-      if (!cur || new Date(sc.created_at).getTime() > new Date(cur).getTime()) {
-        lastScanByStore[sc.store_id] = sc.created_at;
-      }
-    });
-
-    // SLA breach detection — scan acks per store, find any past threshold
-    const stalledStoreIds = new Set();
+    // store_id → recently-resolved count (within last 7 days)
+    const recentlyResolvedByStore = {};
     (ackRes.data || []).forEach(a => {
-      if (!a.store_id || !activeRecallByStore[a.store_id]) return;
-      const status = a.status || 'notified';
-      if (status === 'confirmed' || status === 'disposed') return; // chain done; not stalled
-      const ageFromCreated = now - new Date(a.created_at || 0).getTime();
-      if (status === 'notified' && ageFromCreated > _SLA_NOTIFIED_TO_ACK_MS) stalledStoreIds.add(a.store_id);
-      const ageFromAck = a.acknowledged_at ? now - new Date(a.acknowledged_at).getTime() : 0;
-      if (status === 'acknowledged' && ageFromAck > _SLA_ACK_TO_PULL_MS) stalledStoreIds.add(a.store_id);
-      const ageFromPull = a.pulled_at ? now - new Date(a.pulled_at).getTime() : 0;
-      if (status === 'pulled' && ageFromPull > _SLA_PULL_TO_DISPOSE_MS) stalledStoreIds.add(a.store_id);
+      if (!a.store_id) return;
+      recentlyResolvedByStore[a.store_id] = (recentlyResolvedByStore[a.store_id] || 0) + 1;
     });
 
-    // Compute final status per store. Priority: stalled > active > dark > healthy.
+    // Compute final status per store. Priority: active > resolved > none.
+    // A store with both an active recall AND a recent resolution shows
+    // active (red wins) — the urgent case takes precedence.
     stores.forEach(s => {
-      const hasRecall = (activeRecallByStore[s.id] || 0) > 0;
-      const lastScan  = lastScanByStore[s.id];
-      const dark      = !lastScan;
-      if (hasRecall && stalledStoreIds.has(s.id)) s._status = 'stalled';
-      else if (hasRecall)                          s._status = 'active';
-      else if (dark)                               s._status = 'dark';
-      else                                         s._status = 'healthy';
-      s._lastScan = lastScan || null;
-      s._activeRecallCount = activeRecallByStore[s.id] || 0;
+      const hasActive   = (activeRecallByStore[s.id]      || 0) > 0;
+      const hasResolved = (recentlyResolvedByStore[s.id]  || 0) > 0;
+      if (hasActive)        s._status = 'active';
+      else if (hasResolved) s._status = 'resolved';
+      else                  s._status = 'none';
+      s._activeRecallCount   = activeRecallByStore[s.id]     || 0;
+      s._recentResolvedCount = recentlyResolvedByStore[s.id] || 0;
     });
 
     // Counts for the header
-    const counts = { healthy: 0, active: 0, stalled: 0, dark: 0 };
+    const counts = { active: 0, resolved: 0, none: 0 };
     stores.forEach(s => { counts[s._status] = (counts[s._status] || 0) + 1; });
 
     el.innerHTML = `
@@ -3933,10 +3914,9 @@ async function renderMapTest() {
           <div style="font-size:11px;color:var(--muted);margin-top:2px;">${stores.length} store${stores.length===1?'':'s'} on the map · ${offMapCount} not yet placed</div>
         </div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);align-items:center;">
-          <span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:7px;height:7px;border-radius:50%;background:${_MAP_STATUS_COLORS.healthy};"></span>${counts.healthy} healthy</span>
           <span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:7px;height:7px;border-radius:50%;background:${_MAP_STATUS_COLORS.active};"></span>${counts.active} active</span>
-          <span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:7px;height:7px;border-radius:50%;background:${_MAP_STATUS_COLORS.stalled};"></span>${counts.stalled} stalled</span>
-          <span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:7px;height:7px;border-radius:50%;background:${_MAP_STATUS_COLORS.dark};"></span>${counts.dark} dark</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:7px;height:7px;border-radius:50%;background:${_MAP_STATUS_COLORS.resolved};"></span>${counts.resolved} resolved (7d)</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:7px;height:7px;border-radius:50%;background:${_MAP_STATUS_COLORS.none};"></span>${counts.none} none</span>
         </div>
       </div>
       <div id="map-test-container"></div>
@@ -5081,7 +5061,7 @@ function renderComplianceDashboard(el) {
               ${complianceCheck(d.drillInYear, 'Mock recall drill (last 12 months)', d.drillInYear ? d.drills.length+' drill'+( d.drills.length!==1?'s':'')+' — last: '+fmtDate(d.drills[0].started_at) : 'No drills on record', 'Run a mock recall drill from Manager Dashboard')}
               ${complianceCheck(d.acks.length > 0, 'Recall alert network active', d.acks.length > 0 ? d.acks.length+' recall acknowledgements received' : 'No recalls received yet', null)}
               ${complianceCheck(d.acksProgressed > 0, 'Recall responses documented', d.acksProgressed > 0 ? d.acksProgressed+' recall'+(d.acksProgressed!==1?'s':'')+' progressed through response chain' : 'No responses documented yet', 'Document each step in the Recalls panel')}
-              ${complianceCheck(d.acksConfirmed > 0 || d.acks.length === 0, 'Full 5-step response chain completed', d.acksConfirmed > 0 ? d.acksConfirmed+' full response'+( d.acksConfirmed!==1?'s':'')+' completed' : d.acks.length > 0 ? 'No recalls fully confirmed yet' : 'Chain not yet exercised', null)}
+              ${complianceCheck(d.acksConfirmed > 0 || d.acks.length === 0, 'Full 5-step response chain completed', d.acksConfirmed > 0 ? d.acksConfirmed+' full response'+( d.acksConfirmed!==1?'s':'')+' completed' : d.acks.length > 0 ? 'No recalls fully resolved yet' : 'Chain not yet exercised', null)}
             </div>
           </div>
           <div class="panel" style="margin:0;">
@@ -5485,8 +5465,8 @@ function renderComplianceCategory(el, step) {
         {
           pass: d.acksConfirmed > 0 || d.acks.length === 0,
           label: 'Full recall response chain completed',
-          detail: d.acksConfirmed > 0 ? `${d.acksConfirmed} full response chain${d.acksConfirmed!==1?'s':''} completed (all 5 steps)` : d.acks.length > 0 ? 'No recalls fully confirmed yet' : 'No recalls received — chain not yet exercised',
-          action: 'Complete all 5 steps (notified → acknowledged → pulled → disposed → confirmed) for each recall',
+          detail: d.acksConfirmed > 0 ? `${d.acksConfirmed} full response chain${d.acksConfirmed!==1?'s':''} completed (all 5 steps)` : d.acks.length > 0 ? 'No recalls fully resolved yet' : 'No recalls received — chain not yet exercised',
+          action: 'Complete all 5 steps (notified → acknowledged → pulled → disposed → resolved) for each recall',
         },
       ],
     },
@@ -5793,7 +5773,7 @@ async function generateJointRecallReport(recallEventId, productName) {
       if (a.acknowledged_at)   timelineRows.push({ t: a.acknowledged_at,   actor: a.stores?.name || org.name, event: 'Acknowledgement confirmed', type: 'ack' });
       if (a.pulled_at)         timelineRows.push({ t: a.pulled_at,         actor: a.stores?.name || org.name, event: 'Product confirmed pulled from shelf', type: 'pulled' });
       if (a.disposed_at)       timelineRows.push({ t: a.disposed_at,       actor: a.stores?.name || org.name, event: 'Disposal confirmed', type: 'disposed' });
-      if (a.confirmed_at)      timelineRows.push({ t: a.confirmed_at,      actor: a.stores?.name || org.name, event: 'Full recall response confirmed', type: 'confirmed' });
+      if (a.confirmed_at)      timelineRows.push({ t: a.confirmed_at,      actor: a.stores?.name || org.name, event: 'Full recall response resolved', type: 'confirmed' });
     });
     scanDetails.forEach(s => {
       if (s.removed_from_shelf_at) timelineRows.push({ t: s.removed_from_shelf_at, actor: (s.removed_from_shelf_by||'').split('@')[0]||'Staff', event: `Product physically removed — ${s.store_name||'store'} — via Batch\u2019d scanning app`, type: 'app' });
@@ -5892,12 +5872,12 @@ ${ev.description ? `<div style="background:#f9fafb;border:1px solid #e5e7eb;bord
 <h2>Store response chain</h2>
 <table>
   <thead><tr>
-    <th>Store</th><th>Status</th><th>Notified</th><th>Acknowledged</th><th>Pulled</th><th>Confirmed</th><th>Units removed</th>
+    <th>Store</th><th>Status</th><th>Notified</th><th>Acknowledged</th><th>Pulled</th><th>Resolved</th><th>Units removed</th>
   </tr></thead>
   <tbody>
     ${acks.map(a => `<tr>
       <td style="font-weight:600;">${a.stores?.name||'—'}</td>
-      <td><span class="chip ${a.status==='confirmed'?'chip-green':a.status==='notified'?'chip-red':'chip-amber'}">${a.status.toUpperCase()}</span></td>
+      <td><span class="chip ${a.status==='confirmed'?'chip-green':a.status==='notified'?'chip-red':'chip-amber'}">${(a.status==='confirmed'?'RESOLVED':a.status.toUpperCase())}</span></td>
       <td style="font-family:monospace;font-size:11px;">${a.created_at?new Date(a.created_at).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'—'}</td>
       <td style="font-family:monospace;font-size:11px;">${a.acknowledged_at?fmtDashDT(a.acknowledged_at):'—'}</td>
       <td style="font-family:monospace;font-size:11px;">${a.pulled_at?new Date(a.pulled_at).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'—'}</td>
@@ -6025,7 +6005,7 @@ async function generateStoreAuditReport(ackId, storeName) {
     <div class="row"><span class="lbl">Acknowledged</span><span class="val">${fmtDt(a.acknowledged_at)}</span></div>
     <div class="row"><span class="lbl">Pulled from shelf</span><span class="val">${fmtDt(a.pulled_at)}</span></div>
     <div class="row"><span class="lbl">Disposed</span><span class="val">${fmtDt(a.disposed_at)}</span></div>
-    <div class="row"><span class="lbl">Confirmed</span><span class="val">${fmtDt(a.confirmed_at)}</span></div>
+    <div class="row"><span class="lbl">Resolved</span><span class="val">${fmtDt(a.confirmed_at)}</span></div>
     <div class="row"><span class="lbl">Units removed</span><span class="val">${a.units_pulled ?? '—'}</span></div>
     <h2>Retailer</h2>
     <div class="row"><span class="lbl">Organisation</span><span class="val">${org.name||'—'}</span></div>
@@ -7375,9 +7355,9 @@ function renderTerminology() {
           'The removed product has been physically quarantined, returned to the manufacturer, destroyed, or otherwise handled in accordance with the recall instructions.',
           'The method of disposal is at the discretion of the recall issuer unless instructions specify otherwise. This step does not require the product to be destroyed — quarantine and return to manufacturer both qualify. The timestamp is the legal record that the product was taken out of the supply chain.',
           '')}
-        ${term('Confirmed',
+        ${term('Resolved',
           'The store manager or designated recall coordinator has reviewed all previous steps and confirmed the recall response is complete for this store.',
-          'This is the final step in the chain. Once confirmed, the store\'s response record is locked. Batch\'d records the confirming staff member\'s name, their role, and the exact timestamp. A store that reaches Confirmed status has a complete, legally defensible recall response record.',
+          'This is the final step in the chain. Once resolved, the store\'s response record is locked. Batch\'d records the resolving staff member\'s name, their role, and the exact timestamp. A store that reaches Resolved status has a complete, legally defensible recall response record.',
           isUS ? 'FDA 21 CFR 7.55' : 'Matloven §16')}
       </div>
 
@@ -7388,7 +7368,7 @@ function renderTerminology() {
           'Appears as a red indicator on recall cards and in the sidebar. The ops team should investigate which stores are outstanding and follow up directly.',
           '')}
         ${term('Audit trail locked',
-          'All stores connected to this recall have reached the Confirmed step. The recall record is now read-only.',
+          'All stores connected to this recall have reached the Resolved step. The recall record is now read-only.',
           'No further edits can be made to the response record. This creates an immutable compliance record. Batch\'d automatically locks the audit trail when the last store confirms. The joint completion report can be generated and downloaded at this point.',
           '')}
         ${term('Mock drill / MOCK DRILL',
@@ -7450,7 +7430,7 @@ function renderTerminology() {
       ${section('Compliance & documents')}
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:0 18px;margin-top:8px;">
         ${term('Joint completion report',
-          'A formal document generated by Batch\'d when all stores have reached Confirmed status on a recall. It names both the manufacturer and the retailer organisation.',
+          'A formal document generated by Batch\'d when all stores have reached Resolved status on a recall. It names both the manufacturer and the retailer organisation.',
           'The report contains: recall details (product, lot, severity, reason), manufacturer contact, date pushed, per-store response table with timestamps and unit counts, audit timeline, and signature blocks for both parties. It is formatted for regulatory submission and can be downloaded as a PDF. Batch\'d generates this automatically — no manual preparation is required.',
           '')}
         ${term('Audit record',
@@ -9377,7 +9357,7 @@ async function generateDrillReport(drillId) {
                   <tr style="border-bottom:1px solid #eee;">
                     <td style="padding:7px 10px;font-size:11px;">${a.stores?.name || '—'}</td>
                     <td style="padding:7px 10px;font-size:11px;">
-                      <span style="padding:2px 8px;border-radius:10px;background:${a.status==='confirmed'?'#d1fae5':a.status==='notified'?'#fef3c7':'#e0f2fe'};color:${a.status==='confirmed'?'#065f46':a.status==='notified'?'#d97706':'#0c4a6e'};font-size:10px;font-weight:600;">${a.status.charAt(0).toUpperCase()+a.status.slice(1)}</span>
+                      <span style="padding:2px 8px;border-radius:10px;background:${a.status==='confirmed'?'#d1fae5':a.status==='notified'?'#fef3c7':'#e0f2fe'};color:${a.status==='confirmed'?'#065f46':a.status==='notified'?'#d97706':'#0c4a6e'};font-size:10px;font-weight:600;">${a.status==='confirmed'?'Resolved':(a.status.charAt(0).toUpperCase()+a.status.slice(1))}</span>
                     </td>
                     <td style="padding:7px 10px;font-size:11px;color:#555;">${a.acknowledged_at ? fmtDashDT(a.acknowledged_at) : '—'}</td>
                   </tr>`).join('')}
@@ -9985,7 +9965,7 @@ const fmtDT      = d => d ? new Date(d).toLocaleString(_dashLocale(), {day:'nume
       distributed across the organisation's store network, testing the full 5-step response chain:
       Notified → Acknowledged → Pulled → Disposed → Confirmed.
       ${passed
-        ? `<br><br>The organisation <strong>met the minimum completion threshold</strong> (80% of stores fully confirmed).
+        ? `<br><br>The organisation <strong>met the minimum completion threshold</strong> (80% of stores fully resolved).
            This drill satisfies recall readiness exercise requirements under <strong>${regRef}</strong>.`
         : `<br><br>The organisation <strong>did not meet the minimum completion threshold</strong> of 80% store confirmation.
            Targeted follow-up and retraining are recommended before the next drill.`}
@@ -10032,7 +10012,7 @@ const fmtDT      = d => d ? new Date(d).toLocaleString(_dashLocale(), {day:'nume
         ${pct === 100
           ? `All ${total} stores completed the full 5-step recall response chain. Recall procedures are functioning as required by ${regRef}.`
           : pct >= 80
-            ? `${confirmed} of ${total} stores (${pct}%) completed the full response chain. The minimum 80% threshold was met. ${total-confirmed} location${total-confirmed!==1?'s':''} did not reach Confirmed status — review and follow up before the next drill.`
+            ? `${confirmed} of ${total} stores (${pct}%) completed the full response chain. The minimum 80% threshold was met. ${total-confirmed} location${total-confirmed!==1?'s':''} did not reach Resolved status — review and follow up before the next drill.`
             : `Only ${confirmed} of ${total} stores (${pct}%) completed the full response chain. The 80% threshold was not met. Targeted retraining is required. A repeat drill should be conducted within 30 days.`}
       </div>
     </div>
