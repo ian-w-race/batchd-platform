@@ -108,37 +108,59 @@ exports.handler = async (event) => {
       }
 
       case 'extract_raw_cluster': {
-        // Capture-everything-match-later flow: read the inkjet date/lot cluster
-        // verbatim, no parsing. Substring matching at recall time depends on
-        // character-level fidelity, so use Sonnet (not Haiku) and pin
-        // temperature to 0 so the model returns what it sees instead of
+        // Capture-everything-match-later flow: read the printed traceability
+        // information verbatim, no parsing. Substring matching at recall time
+        // depends on character-level fidelity, so use Sonnet (not Haiku) and
+        // pin temperature to 0 so the model returns what it sees instead of
         // completing toward a "plausible" date/lot string.
         //
-        // Prompt is structured around the actual failure modes seen in pilot
-        // testing:
-        //   1) Dropping an asterisk-prefixed segment (e.g. "*1599") that the
-        //      model thought was trailing metadata
-        //   2) Reading only the top line of a 2-line stacked cluster
-        //      ("06.06.26*1599" on top, "10:48-7" below — the second line
-        //      gets dropped)
-        //   3) Concatenating stacked lines with no space separator (e.g.
-        //      "17.06.26 T707" + "12:25" returned as "17.06.26T70712:25" or
-        //      "17.06.26 T70712:25")
-        //   4) Substituting characters that look similar in inkjet print —
-        //      "T707" returned as "TUT" or "1YY", "12:25" returned as
-        //      "10:25". This is the model "interpreting" instead of reading.
-        // The prompt names each failure mode explicitly with a worked
-        // example of right vs wrong output. Negative examples ("WRONG")
-        // anchor the model's behaviour better than positive descriptions.
+        // The prompt covers two distinct packaging styles seen in real
+        // retail (revised 2026-05 after pilot testing surfaced multi-field
+        // sticker labels):
+        //   A) Inkjet-on-bare-packaging — short cluster (date + maybe time
+        //      and/or lot suffix), printed directly on the carton/can/bag.
+        //   B) Printed sticker labels (common on Norwegian retail meat,
+        //      fish, dairy) — multiple separately labeled fields like
+        //      "Siste forbruksdag 09.05.26" and "Batch: 1324820 19:39"
+        //      printed on a paper sticker. The PRE-2026-05 prompt told the
+        //      model to "return only the lot/date cluster (usually the
+        //      longest sequence printed near the expiry date)" which caused
+        //      it to drop the batch field and break recall matching for
+        //      this packaging style.
+        // The new prompt instructs ALL distinct traceability fields to be
+        // captured, separated by ' · ' (space, middle-dot, space), so the
+        // substring matcher can hit ANY of them.
+        //
+        // Failure modes explicitly addressed:
+        //   1) Dropping an asterisk-prefixed segment (e.g. "*1599")
+        //   2) Reading only the top line of a stacked cluster
+        //   3) Concatenating stacked lines with no space separator
+        //   4) Substituting visually similar characters (T↔7, 0↔O, etc.)
+        //   5) (NEW) Dropping a separately labeled batch/lot row when a
+        //      best-by row is also visible on the same printed sticker
+        //   6) (NEW) Over-capturing non-traceability text (supplier name,
+        //      country of origin, plant approval numbers, weight, etc.)
+        // Each failure mode gets a worked example with right vs wrong
+        // output. Negative examples ("WRONG") anchor the model's behaviour
+        // better than positive descriptions alone.
         model = MODEL_SONNET;
-        maxTokens = 200;
+        maxTokens = 240;
         // temperature 0 — assigned below in the api call so we can use it
         // for THIS task without changing other tasks' behaviour.
         prompt = [
-          'You are transcribing an inkjet-printed lot/date cluster from food packaging. The output is substring-matched against recall records, so character-level fidelity is the entire job. Do NOT interpret, normalize, abbreviate, or "fix" what you see.',
+          'You are transcribing traceability information from a photo of food packaging. The output is substring-matched against recall records, so character-level fidelity is the entire job. Do NOT interpret, normalize, abbreviate, or "fix" what you see.',
           '',
           'TASK',
-          'Return the exact characters from the inkjet print, in reading order, as a single raw string.',
+          'Return a single raw string containing the EXACT printed traceability characters visible in the image. If multiple distinct traceability fields are present, capture ALL of them in reading order (top to bottom, left to right), separated by \' · \' (space, middle-dot, space).',
+          '',
+          'WHAT COUNTS AS A TRACEABILITY FIELD',
+          '- Lot codes / batch numbers (often labeled "Lot:", "Batch:", "Parti:", "Charge:", "L:", "B:", or unlabeled inkjet near the expiry date)',
+          '- Best-by / use-by dates (often labeled "Best før:", "Siste forbruksdag:", "Best by:", "Use by:", "EXP:", or unlabeled inkjet)',
+          '- Production / packaging dates (often labeled "Produksjonsdato:", "Pakkedato:", "MFG:", "Packed on:")',
+          '- Time stamps printed alongside dates or batch numbers',
+          '- Standalone alphanumeric sequences printed in the inkjet/laser-etched area near other traceability info',
+          '',
+          'When a printed sticker shows multiple labeled fields (e.g. "Siste forbruksdag 09.05.26" on one line and "Batch: 1324820 19:39" on another), capture ALL of them, separated by \' · \'. Keep the printed field labels — they help the substring matcher.',
           '',
           'CHARACTER FIDELITY — the most common failure is substituting a character that looks similar in dot-matrix inkjet print:',
           '- T vs 7 — the T crossbar can look like the top of a 7. Return what is actually printed.',
@@ -148,26 +170,50 @@ exports.handler = async (event) => {
           '- Do NOT substitute a character because the substitution "looks more like a date" or "looks more like a time".',
           '- If a character is faint or uncertain: include your best guess. Do not skip it.',
           '',
-          'LINE HANDLING — many lot/date clusters span 2 lines stacked vertically:',
+          'LINE HANDLING — clusters often span multiple lines:',
           '- Single-line cluster: read left-to-right.',
-          '- 2-line (or more) stacked cluster: read TOP line first, ADD A SINGLE SPACE, then read the next line. EVERY line must appear in the output. The space separator between lines is REQUIRED.',
-          '- Concrete example. Suppose the package shows two lines printed in inkjet:',
-          '    Line 1: 17.06.26 T707',
-          '    Line 2: 12:25',
-          '  CORRECT output:  17.06.26 T707 12:25',
-          '  WRONG output: 17.06.26T70712:25  (concatenated, no space between lines)',
-          '  WRONG output: 17.06.26 12:25  (dropped the middle token)',
-          '  WRONG output: 17.06.26 TUT 12:25  (substituted T707 → TUT)',
-          '  WRONG output: 17.06.26 1YY 10:25  (substituted T707 → 1YY and 12 → 10)',
+          '- Stacked lines WITHIN ONE field (e.g. inkjet date on top, time on bottom): read TOP line first, ADD A SINGLE SPACE, then the next line. EVERY line must appear. The space separator is REQUIRED.',
+          '- DISTINCT fields (e.g. a date row and a separately labeled batch row on a printed sticker): separate with \' · \', NOT a space.',
           '',
-          'INCLUDE EVERYTHING',
-          '- All separator characters between tokens: dots, slashes, asterisks, colons, dashes, spaces — keep them as printed.',
+          'INCLUDE EVERYTHING WITHIN A FIELD',
+          '- All separator characters: dots, slashes, asterisks, colons, dashes, spaces — keep them as printed.',
           '- All segments. Do NOT assume an asterisk-prefixed or trailing portion is metadata to skip. Asterisk segments are part of the lot cluster (e.g. "06.06.26*1599 10:48-7" is a single complete cluster).',
+          '- Field labels themselves ("Batch:", "Lot:", "Best før:", "Siste forbruksdag:", etc.) — keep them as printed.',
+          '',
+          'WHAT NOT TO INCLUDE',
+          '- Country of origin, supplier name, address, phone number, weight, temperature info, plant approval numbers (e.g. "NO XXXX EF") — these are not traceability fields.',
+          '- Marketing copy, ingredient lists, allergen warnings, recipes, nutrition facts.',
+          '- Barcode digits — those come from a separate scan path.',
+          '',
+          'CONCRETE EXAMPLES',
+          '',
+          '1) Inkjet on bare packaging, two-line cluster:',
+          '   Image shows two stacked inkjet lines:',
+          '     17.06.26 T707',
+          '     12:25',
+          '   CORRECT output:  17.06.26 T707 12:25',
+          '   WRONG: 17.06.26T70712:25  (concatenated, no space)',
+          '   WRONG: 17.06.26 12:25  (dropped the middle token)',
+          '   WRONG: 17.06.26 TUT 12:25  (substituted T707 → TUT)',
+          '',
+          '2) Inkjet with asterisk segment:',
+          '   Image shows: 06.06.26*1599 10:48-7',
+          '   CORRECT output: 06.06.26*1599 10:48-7',
+          '',
+          '3) Printed sticker label with multiple labeled fields:',
+          '   Image shows two separately labeled rows:',
+          '     Siste forbruksdag 09.05.26',
+          '     Batch: 1324820 19:39',
+          '   CORRECT output: Siste forbruksdag 09.05.26 · Batch: 1324820 19:39',
+          '   WRONG: Siste forbruksdag 09.05.26  (dropped the batch field — this is the failure we are fixing)',
+          '   WRONG: 09.05.26 1324820  (stripped the field labels)',
+          '',
+          '4) Date only, no batch label visible:',
+          '   Image shows: Best før: 14/08/2026',
+          '   CORRECT output: Best før: 14/08/2026',
           '',
           'OUTPUT',
-          'Return ONE raw string. No JSON, no labels, no quotes, no commentary, no explanation. If you cannot read any inkjet-printed characters at all, return an empty string.',
-          '',
-          'If the image contains multiple unrelated inkjet clusters, return only the lot/date cluster (usually the longest sequence printed near the expiry date).',
+          'Return ONE raw string. No JSON, no labels other than what is printed in the image, no quotes, no commentary, no explanation. If you cannot read any traceability characters at all, return an empty string.',
         ].join('\n');
         break;
       }
