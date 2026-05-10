@@ -3646,6 +3646,12 @@ async function updateAckStatus(ackId, status) {
 // Geocode a structured address via Nominatim (OpenStreetMap's free service).
 // Returns { lat, lng, source } on success, null on failure / no results / network err.
 //
+// Two-pass strategy: structured query first (most accurate when it matches),
+// then freeform query as a fallback. Real-world addresses often fail the
+// structured query because of small mismatches (e.g. "MN" vs "Minnesota",
+// "Northfield" with state ambiguity, postal codes with extended ZIP+4 format)
+// — the freeform query is much more forgiving and typically resolves these.
+//
 // Nominatim usage policy (https://operations.osmfoundation.org/policies/nominatim/):
 //   - 1 request per second per IP, max
 //   - Identify the application via Referer or User-Agent (browser sets Referer auto)
@@ -3655,18 +3661,39 @@ async function updateAckStatus(ackId, status) {
 // without coords (it just won't appear on the map). Re-saving an existing
 // store will retry the lookup.
 async function _geocodeAddress(addr) {
+  // Pass 1: structured query (most accurate match)
+  const structured = await _geocodeNominatim({
+    format:        'jsonv2',
+    limit:         '1',
+    addressdetails: '0',
+    street:        addr.street     || '',
+    city:          addr.city       || '',
+    state:         addr.region     || '',
+    postalcode:    addr.postalCode || '',
+    country:       addr.country    || ''
+  });
+  if (structured) return { ...structured, source: 'nominatim_structured' };
+
+  // Pass 2: freeform fallback. Wait 250ms to respect Nominatim's 1 req/sec
+  // policy when our first call already counted toward the limit.
+  await new Promise(r => setTimeout(r, 250));
+  const q = [addr.street, addr.city, addr.region, addr.postalCode, addr.country]
+    .map(s => (s || '').trim()).filter(Boolean).join(', ');
+  if (!q) return null;
+  const freeform = await _geocodeNominatim({
+    format: 'jsonv2',
+    limit:  '1',
+    q
+  });
+  if (freeform) return { ...freeform, source: 'nominatim_freeform' };
+
+  return null;
+}
+
+// Low-level Nominatim caller. Returns { lat, lng } or null.
+async function _geocodeNominatim(params) {
   try {
-    const params = new URLSearchParams({
-      format:        'jsonv2',
-      limit:         '1',
-      addressdetails: '0',
-      street:        addr.street       || '',
-      city:          addr.city         || '',
-      state:         addr.region       || '',
-      postalcode:    addr.postalCode   || '',
-      country:       addr.country      || ''
-    });
-    const url = `https://nominatim.openstreetmap.org/search?${params.toString()}`;
+    const url = `https://nominatim.openstreetmap.org/search?${new URLSearchParams(params).toString()}`;
     const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
     if (!res.ok) return null;
     const data = await res.json();
@@ -3675,9 +3702,9 @@ async function _geocodeAddress(addr) {
     const lat = parseFloat(hit.lat);
     const lng = parseFloat(hit.lon);
     if (!isFinite(lat) || !isFinite(lng)) return null;
-    return { lat, lng, source: 'nominatim' };
+    return { lat, lng };
   } catch (e) {
-    console.warn('[geocode] failed', e);
+    console.warn('[geocode] request failed', e);
     return null;
   }
 }
