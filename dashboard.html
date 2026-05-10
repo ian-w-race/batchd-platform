@@ -1539,13 +1539,13 @@ function showPanel(name) {
     document.getElementById('mobile-overlay')?.classList.remove('active');
   }
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-  const panels = { overview:'Dashboard', onboarding:'Getting started', recalls:'Recalls', stores:'Store Network', traceability:'Scan History', staff:'Staff Activity', compliance:'Compliance', reports:'Reports and Exports', settings:'Settings', triage:'Complaint Triage', 'consumer-notify':'Consumer Notify', investigations:'Investigations', terminology:'Terminology & Help', lotcheck:'Lot Lookup' };
+  const panels = { overview:'Dashboard', onboarding:'Getting started', recalls:'Recalls', stores:'Store Network', traceability:'Scan History', staff:'Staff Activity', compliance:'Compliance', reports:'Reports and Exports', settings:'Settings', triage:'Complaint Triage', 'consumer-notify':'Consumer Notify', investigations:'Investigations', terminology:'Terminology & Help', lotcheck:'Lot Lookup', 'map-test':'Map preview (test)' };
   document.getElementById('topbar-title').textContent = panels[name] || name;
   document.querySelectorAll('.nav-item').forEach(el => {
     if (el.getAttribute('onclick')?.includes(`'${name}'`)) el.classList.add('active');
   });
   // partners: renderPartners removed — Manufacturers panel retired in chunk 6B partners cleanup.
-  const fns = { overview: renderOverview, onboarding: renderOnboarding, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, triage: renderDashboardTriage, investigations: renderDashInvestigations, 'consumer-notify': renderConsumerNotification, terminology: renderTerminology, lotcheck: renderLotCheck };
+  const fns = { overview: renderOverview, onboarding: renderOnboarding, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, triage: renderDashboardTriage, investigations: renderDashInvestigations, 'consumer-notify': renderConsumerNotification, terminology: renderTerminology, lotcheck: renderLotCheck, 'map-test': renderMapTest };
   (fns[name] || renderComingSoon)(name);
 }
 
@@ -3676,6 +3676,285 @@ async function _geocodeAddress(addr) {
   } catch (e) {
     console.warn('[geocode] failed', e);
     return null;
+  }
+}
+
+// ── Live store map (Command Center pivot, Step 2) ─────────────
+// Renders a Leaflet map with status-colored markers for every active
+// store with coordinates. Status priority (most urgent wins):
+//   stalled > active recall > dark store > healthy
+//
+// This function is reusable — Step 7 will call it from the new home
+// view as well. For now it's only reachable via the test panel
+// (renderMapTest, ?panel=map-test), so the production overview is
+// not affected.
+
+const _MAP_STATUS_COLORS = {
+  healthy: '#4DC99A', // var(--accent), green
+  active:  '#f5a623', // warn orange (no token yet — see design system refresh)
+  stalled: '#ff5c5c', // danger red
+  dark:    '#7a8985'  // desaturated gray, slightly lighter than --muted for visibility on dark tiles
+};
+
+const _MAP_STATUS_LABELS = {
+  healthy: 'Healthy · scanning',
+  active:  'Active recall',
+  stalled: 'Stalled · SLA breach',
+  dark:    'Dark · no scans 72h'
+};
+
+// Small relative-time helper for marker popups. Returns "12m ago",
+// "3h ago", "2d ago", etc.
+function _mapFmtAgo(iso) {
+  if (!iso) return '—';
+  const t  = new Date(iso).getTime();
+  if (!isFinite(t)) return '—';
+  const ms = Date.now() - t;
+  if (ms < 0)            return 'just now';
+  if (ms < 60_000)       return `${Math.max(1, Math.floor(ms / 1000))}s ago`;
+  if (ms < 3_600_000)    return `${Math.floor(ms / 60_000)}m ago`;
+  if (ms < 86_400_000)   return `${Math.floor(ms / 3_600_000)}h ago`;
+  return `${Math.floor(ms / 86_400_000)}d ago`;
+}
+
+// Mounts the map. `stores` should already have `_status` (one of
+// 'healthy'|'active'|'stalled'|'dark'), and optionally `_lastScan`
+// (ISO string) and `_activeRecallCount` (number) for the popup.
+// Returns the Leaflet map instance so callers can manipulate it
+// (e.g. fitBounds to a recall's affected stores in Step 4).
+function renderStoreMap(container, stores, options) {
+  options = options || {};
+
+  if (typeof L === 'undefined') {
+    container.innerHTML = '<div style="padding:20px;color:var(--danger);font-size:12px;">Map library failed to load. Check network/CDN access.</div>';
+    return null;
+  }
+
+  // Fresh container — Leaflet would otherwise complain "Map container is already initialized."
+  container.innerHTML = '';
+  container.style.height = options.height || '600px';
+  container.style.position = 'relative';
+  container.style.borderRadius = '12px';
+  container.style.overflow = 'hidden';
+  container.style.border = '1px solid var(--border)';
+  container.style.background = '#0a1814';
+
+  const map = L.map(container, {
+    zoomControl: true,
+    attributionControl: true,
+    scrollWheelZoom: true
+  });
+
+  // CARTO Dark Matter — same tiles as the Claude Design mockup.
+  // Free for our scale; attribution required (Leaflet shows it bottom-right by default).
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
+    subdomains: 'abcd',
+    maxZoom: 19
+  }).addTo(map);
+
+  // Markers
+  const markers = [];
+  (stores || []).forEach(s => {
+    if (s.latitude == null || s.longitude == null) return;
+    const status = s._status || 'healthy';
+    const color  = _MAP_STATUS_COLORS[status] || _MAP_STATUS_COLORS.healthy;
+
+    const marker = L.circleMarker([s.latitude, s.longitude], {
+      radius:      9,
+      fillColor:   color,
+      color:       '#0a1814',
+      weight:      2,
+      opacity:     1,
+      fillOpacity: 0.92
+    }).addTo(map);
+
+    // Popup uses light styles (Leaflet popup is white by default).
+    const lastScanLine = s._lastScan
+      ? `<div style="font-size:10px;color:#5a6661;margin-top:6px;font-family:'DM Mono',monospace;">Last scan · ${_mapFmtAgo(s._lastScan)}</div>`
+      : `<div style="font-size:10px;color:#5a6661;margin-top:6px;font-family:'DM Mono',monospace;">No scans in last 72h</div>`;
+    const recallLine = s._activeRecallCount > 0
+      ? `<div style="font-size:10px;color:#a52a2a;margin-top:4px;font-family:'DM Mono',monospace;">${s._activeRecallCount} active recall${s._activeRecallCount === 1 ? '' : 's'}</div>`
+      : '';
+
+    const popupHtml = `
+      <div style="font-family:'Figtree',sans-serif;font-size:12px;line-height:1.5;min-width:200px;">
+        <div style="font-weight:700;font-size:13px;margin-bottom:4px;color:#1a201d;">${esc(s.name || 'Unnamed store')}</div>
+        <div style="color:#5a6661;font-size:11px;margin-bottom:6px;">${esc(s.address || '')}</div>
+        <div style="display:flex;align-items:center;gap:6px;font-size:11px;">
+          <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};"></span>
+          <span style="color:#1a201d;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;font-size:10px;">${esc(_MAP_STATUS_LABELS[status] || status)}</span>
+        </div>
+        ${lastScanLine}
+        ${recallLine}
+      </div>`;
+    marker.bindPopup(popupHtml, { closeButton: true, autoClose: true, maxWidth: 280 });
+
+    markers.push(marker);
+  });
+
+  // Auto-fit to markers, or default to a reasonable region view if none.
+  if (markers.length > 0) {
+    const group = L.featureGroup(markers);
+    try {
+      map.fitBounds(group.getBounds().pad(0.18), { maxZoom: 11 });
+    } catch (_) {
+      map.setView([markers[0].getLatLng().lat, markers[0].getLatLng().lng], 7);
+    }
+  } else {
+    // Default to continental US if no markers — replaced once stores load.
+    map.setView([39.8283, -98.5795], 4);
+  }
+
+  // Legend (bottom-left). Includes the "mock drills not shown" footnote
+  // per Ian's confirmation that mock drills track separately.
+  const legend = L.control({ position: 'bottomleft' });
+  legend.onAdd = function () {
+    const div = L.DomUtil.create('div', 'batchd-map-legend');
+    div.style.cssText = 'background:rgba(17,25,24,0.92);border:1px solid rgba(52,211,153,0.18);border-radius:10px;padding:10px 14px;font-family:Figtree,sans-serif;font-size:11px;color:#f0f3f1;min-width:170px;line-height:1.5;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);';
+    div.innerHTML = `
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div style="display:flex;align-items:center;gap:8px;"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${_MAP_STATUS_COLORS.healthy};flex-shrink:0;"></span>${_MAP_STATUS_LABELS.healthy}</div>
+        <div style="display:flex;align-items:center;gap:8px;"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${_MAP_STATUS_COLORS.active};flex-shrink:0;"></span>${_MAP_STATUS_LABELS.active}</div>
+        <div style="display:flex;align-items:center;gap:8px;"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${_MAP_STATUS_COLORS.stalled};flex-shrink:0;"></span>${_MAP_STATUS_LABELS.stalled}</div>
+        <div style="display:flex;align-items:center;gap:8px;"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${_MAP_STATUS_COLORS.dark};flex-shrink:0;"></span>${_MAP_STATUS_LABELS.dark}</div>
+        <div style="font-size:9.5px;color:#9aa6a1;margin-top:6px;border-top:1px solid rgba(52,211,153,0.14);padding-top:6px;letter-spacing:0.02em;">Mock drills track separately and don't<br>affect map markers.</div>
+      </div>`;
+    return div;
+  };
+  legend.addTo(map);
+
+  return map;
+}
+
+// SLA thresholds for "stalled" detection. These are Batch'd-recommended
+// best practice, NOT regulatory — the regulatory window comes from
+// 21 CFR Part 7 + FDA recall guidance ("as soon as possible") and is
+// not stage-broken-down. See memory/project_fsma_204_facts.md.
+const _SLA_NOTIFIED_TO_ACK_MS  = 2  *      3600_000; // 2h
+const _SLA_ACK_TO_PULL_MS      = 24 *      3600_000; // 24h
+const _SLA_PULL_TO_DISPOSE_MS  = 7  * 24 * 3600_000; // 7d
+
+// Test panel — only reachable via ?panel=map-test in the URL. Builds
+// the data the map needs (status per store, last scan, active recall
+// count) and renders the map. Step 7 will fold this logic into the
+// new Command Center home view alongside the right rail and quick
+// stats; for now this isolates the map so we can verify it visually
+// without touching the production overview.
+async function renderMapTest() {
+  const el = document.getElementById('main-content');
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);padding:4px 0;"><div class="spinner"></div> Loading map…</div>`;
+  try {
+    const now      = Date.now();
+    const since72h = new Date(now - 72 * 3600_000).toISOString();
+
+    // Parallel fetch of everything the status computation needs.
+    // recall_acknowledgements is what gives us the per-stage timestamps for
+    // SLA breach detection.
+    const [storesRes, srmRes, scansRes, ackRes] = await Promise.all([
+      sb.from('stores').select('*').eq('organisation_id', _orgId),
+      sb.from('scan_recall_matches').select('store_id, scan_id, recall_id, recall_event_id').eq('organisation_id', _orgId),
+      sb.from('scans').select('store_id, created_at, removed_from_shelf_at').eq('organisation_id', _orgId).gte('created_at', since72h),
+      sb.from('recall_acknowledgements').select('store_id, recall_event_id, status, acknowledged_at, pulled_at, disposed_at, confirmed_at, created_at').eq('organisation_id', _orgId)
+    ]);
+
+    const stores      = (storesRes.data || []).filter(s => s.active && s.latitude != null && s.longitude != null);
+    const allStores   = (storesRes.data || []).filter(s => s.active);
+    const offMapCount = allStores.length - stores.length;
+
+    // Active recalls per store: count of scan_recall_matches rows whose
+    // matched scan is still on shelf. We have to fetch the scans referenced
+    // by the matches to check on-shelf status.
+    const matchScanIds = Array.from(new Set((srmRes.data || []).map(m => m.scan_id).filter(Boolean)));
+    let onShelfScanIds = new Set();
+    if (matchScanIds.length > 0) {
+      // Chunk in case there are many — Supabase URL limits ~2000 chars.
+      const CHUNK = 200;
+      for (let i = 0; i < matchScanIds.length; i += CHUNK) {
+        const chunk = matchScanIds.slice(i, i + CHUNK);
+        const { data: scs } = await sb.from('scans').select('id, removed_from_shelf_at').in('id', chunk);
+        (scs || []).forEach(s => { if (s.removed_from_shelf_at == null) onShelfScanIds.add(s.id); });
+      }
+    }
+
+    // Build store_id → active recall count
+    const activeRecallByStore = {};
+    (srmRes.data || []).forEach(m => {
+      if (!m.store_id || !onShelfScanIds.has(m.scan_id)) return;
+      activeRecallByStore[m.store_id] = (activeRecallByStore[m.store_id] || 0) + 1;
+    });
+
+    // Build store_id → last scan timestamp (within 72h window — anything
+    // older means dark store).
+    const lastScanByStore = {};
+    (scansRes.data || []).forEach(sc => {
+      if (!sc.store_id) return;
+      const cur = lastScanByStore[sc.store_id];
+      if (!cur || new Date(sc.created_at).getTime() > new Date(cur).getTime()) {
+        lastScanByStore[sc.store_id] = sc.created_at;
+      }
+    });
+
+    // SLA breach detection — scan acks per store, find any past threshold
+    const stalledStoreIds = new Set();
+    (ackRes.data || []).forEach(a => {
+      if (!a.store_id || !activeRecallByStore[a.store_id]) return;
+      const status = a.status || 'notified';
+      if (status === 'confirmed' || status === 'disposed') return; // chain done; not stalled
+      const ageFromCreated = now - new Date(a.created_at || 0).getTime();
+      if (status === 'notified' && ageFromCreated > _SLA_NOTIFIED_TO_ACK_MS) stalledStoreIds.add(a.store_id);
+      const ageFromAck = a.acknowledged_at ? now - new Date(a.acknowledged_at).getTime() : 0;
+      if (status === 'acknowledged' && ageFromAck > _SLA_ACK_TO_PULL_MS) stalledStoreIds.add(a.store_id);
+      const ageFromPull = a.pulled_at ? now - new Date(a.pulled_at).getTime() : 0;
+      if (status === 'pulled' && ageFromPull > _SLA_PULL_TO_DISPOSE_MS) stalledStoreIds.add(a.store_id);
+    });
+
+    // Compute final status per store. Priority: stalled > active > dark > healthy.
+    stores.forEach(s => {
+      const hasRecall = (activeRecallByStore[s.id] || 0) > 0;
+      const lastScan  = lastScanByStore[s.id];
+      const dark      = !lastScan;
+      if (hasRecall && stalledStoreIds.has(s.id)) s._status = 'stalled';
+      else if (hasRecall)                          s._status = 'active';
+      else if (dark)                               s._status = 'dark';
+      else                                         s._status = 'healthy';
+      s._lastScan = lastScan || null;
+      s._activeRecallCount = activeRecallByStore[s.id] || 0;
+    });
+
+    // Counts for the header
+    const counts = { healthy: 0, active: 0, stalled: 0, dark: 0 };
+    stores.forEach(s => { counts[s._status] = (counts[s._status] || 0) + 1; });
+
+    el.innerHTML = `
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
+        <div>
+          <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:18px;color:var(--text);">Network · Live (test preview)</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">${stores.length} store${stores.length===1?'':'s'} on the map · ${offMapCount} not yet placed</div>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);align-items:center;">
+          <span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:7px;height:7px;border-radius:50%;background:${_MAP_STATUS_COLORS.healthy};"></span>${counts.healthy} healthy</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:7px;height:7px;border-radius:50%;background:${_MAP_STATUS_COLORS.active};"></span>${counts.active} active</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:7px;height:7px;border-radius:50%;background:${_MAP_STATUS_COLORS.stalled};"></span>${counts.stalled} stalled</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:7px;height:7px;border-radius:50%;background:${_MAP_STATUS_COLORS.dark};"></span>${counts.dark} dark</span>
+        </div>
+      </div>
+      <div id="map-test-container"></div>
+      ${stores.length === 0 ? `
+        <div style="margin-top:14px;padding:14px 16px;background:var(--surface);border:1px solid var(--border);border-radius:10px;font-size:12px;color:var(--muted);line-height:1.6;">
+          <strong style="color:var(--text);">No stores on the map yet.</strong>
+          ${offMapCount > 0
+            ? `${offMapCount} active store${offMapCount===1?' has':'s have'} an address but no coordinates. Go to <strong style="color:var(--text);">Store Network</strong>, edit each store, and verify the address — Batch'd will look up the location automatically.`
+            : 'Add an active store with a complete address from <strong style="color:var(--text);">Store Network</strong> to see it here.'}
+        </div>` : ''}
+      <div style="margin-top:10px;font-size:10.5px;color:var(--muted);font-family:'DM Mono',monospace;letter-spacing:0.02em;">
+        Step 2 preview — filter pills, right-rail Active Recalls, and the Push-a-Recall hero arrive in Steps 3-6.
+      </div>`;
+
+    renderStoreMap(document.getElementById('map-test-container'), stores, { height: '620px' });
+  } catch (e) {
+    console.error('[renderMapTest]', e);
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading map: ${esc(e.message)}</div>`;
   }
 }
 
