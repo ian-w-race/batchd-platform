@@ -3556,7 +3556,35 @@
                 </svg>
                 <span data-i18n="p2.verifyHint" style="font-weight:600;">Compare with the package — edit anything missing or wrong before continuing.</span>
               </div>
-              <input type="text" id="field-raw-capture" style="width:100%;font-family:'DM Mono',monospace;font-size:18px;font-weight:600;letter-spacing:0.04em;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:14px 16px;box-sizing:border-box;" placeholder="—" autocorrect="off" autocapitalize="characters" spellcheck="false" />
+
+              <!-- Multi-field row UI. Each row is one captured traceability field
+                   (date, batch number, production date, etc). Sonnet now returns
+                   distinct fields separated by ' · ' which we split into rows.
+                   Rows are individually editable; "+ Add a field" appends an
+                   empty row for fields the AI missed; the × removes a row.
+                   The hidden #field-raw-capture is the canonical store —
+                   _updateRawCaptureFromRows joins the rows back into it on
+                   every edit so confirmRawCapture and downstream code see
+                   the expected ' · '-joined string. -->
+              <div id="raw-fields-list" style="display:flex;flex-direction:column;gap:8px;"></div>
+
+              <button type="button" onclick="addRawField()"
+                      style="margin-top:8px;background:none;border:1px dashed var(--border);color:var(--muted);font-family:'DM Mono',monospace;font-size:11px;padding:8px 12px;border-radius:8px;cursor:pointer;letter-spacing:0.04em;width:100%;">
+                <span data-i18n="p2.addField">+ Add a field</span>
+              </button>
+
+              <!-- Soft warning — only shown when the captured string looks like
+                   it's missing a batch/lot. Heuristic in _hasLotPattern. -->
+              <div id="raw-missing-lot-warning" style="display:none;align-items:flex-start;gap:8px;margin-top:10px;padding:9px 11px;background:rgba(245,166,35,0.06);border:1px solid rgba(245,166,35,0.25);border-radius:8px;color:var(--muted);font-size:11.5px;line-height:1.5;">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#f5a623" stroke-width="2.4" style="flex-shrink:0;margin-top:1px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                <span data-i18n="p2.warnNoLot">Looks like only a date was captured — did Batch'd miss the batch or lot number? Add it manually below or retake the photo.</span>
+              </div>
+
+              <!-- Hidden canonical input. Kept in DOM so existing read paths
+                   (confirmRawCapture, extractBestBefore, populateReview,
+                   submitScan) keep working without refactor. Updated by
+                   _updateRawCaptureFromRows on every row edit. -->
+              <input type="hidden" id="field-raw-capture" />
             </div>
 
             <div class="btn-row">
@@ -5824,11 +5852,11 @@ function openTerminologyOverlay(regionOverride) {
       'Destruction is not required — quarantine and return to manufacturer both qualify.',
       '')}
 
-    ${term('Endelig bekreftet', 'Confirmed',
+    ${term('Løst', 'Resolved',
       'Butikksjefen eller utpekt koordinator har bekreftet at tilbaketrekkingsresponsen er fullstendig for denne butikken.',
       'The store manager has confirmed the recall response is complete for this store.',
-      'Siste steg. Når bekreftet, låses butikkens svarpost. Navn, rolle og tidsstempel registreres.',
-      "Final step. Once confirmed, the store's record is locked. Staff name, role, and timestamp are recorded.",
+      'Siste steg. Når løst, låses butikkens svarpost. Navn, rolle og tidsstempel registreres.',
+      "Final step. Once resolved, the store's record is locked. Staff name, role, and timestamp are recorded.",
       r('Matloven §16', 'FDA 21 CFR 7.55'))}
 
     ${section('Partinummer og sporing', 'Lot codes & traceability')}
@@ -5861,29 +5889,17 @@ function openTerminologyOverlay(regionOverride) {
       'Enabling this toggle requires the expiry date to be entered instead. Not counted as a complete traceability record.',
       '')}
 
-    ${section('Hvor du finner partikoder', 'Where to find lot codes')}
+    ${section('Hva er en partikode?', 'What is a lot code?')}
 
     <div style="padding:8px 0 14px;">
-      <div style="font-size:13px;color:var(--muted);line-height:1.65;margin-bottom:12px;">
-        ${isNO
-          ? 'Partikoder er små inkjet- eller laser-etsede klynger nær holdbarhetsdatoen. Se etter L, Parti, produksjonsdato, eller bare en serie tall.'
-          : 'Lot codes are small inkjet or laser-etched clusters near the best-by date. Look for L, LOT, BATCH, MFG DATE, or just a string of numbers.'}
-      </div>
-      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">
-        ${_lotHelpCard(_lotHelpSVGs.dairy,   'lothelp.dairy')}
-        ${_lotHelpCard(_lotHelpSVGs.yoghurt, 'lothelp.yoghurt')}
-        ${_lotHelpCard(_lotHelpSVGs.canned,  'lothelp.canned')}
-        ${_lotHelpCard(_lotHelpSVGs.cereal,  'lothelp.cereal')}
-        ${_lotHelpCard(_lotHelpSVGs.frozen,  'lothelp.frozen')}
-        ${_lotHelpCard(_lotHelpSVGs.bottle,  'lothelp.bottle')}
-      </div>
+      ${_lotHelpContentHtml()}
     </div>
 
     ${section('Etterlevelse og dokumenter', 'Compliance & documents')}
 
     ${term('Felles tilbakekallingsrapport', 'Joint completion report',
-      'Formelt dokument generert av Batch\'d når alle butikker har nådd "Endelig bekreftet"-status.',
-      'Formal document generated when all stores reach Confirmed status.',
+      'Formelt dokument generert av Batch\'d når alle butikker har nådd "Løst"-status.',
+      'Formal document generated when all stores reach Resolved status.',
       'Inneholder: tilbaketrekkingsdetaljer, per-butikk responstab med tidsstempler, revisjonslogg og signaturblokker.',
       'Contains: recall details, per-store response table with timestamps, audit log, and signature blocks. Formatted for regulatory submission.',
       '')}
@@ -5922,110 +5938,99 @@ function closeTerminologyOverlay() {
 }
 
 // ─── Lot Code Helper Overlay ─────────────────────────────────────────────
-// First-use illustrated guide showing typical lot code locations on six
-// common package types. Auto-opens the first time staff enter Phase 2;
-// dismiss flag is stored in localStorage('batchd_lot_help_seen'). Persistent
-// '?' button in the Phase 2 header re-opens it on demand. Region-aware
-// terminology (US: LOT/BATCH; NO: Parti).
+// Educational guide that teaches what a lot code is and how to recognize
+// one — NOT a directory of "where on each package type" because lot
+// placement varies wildly by brand even within the same package category
+// (revised 2026-05 after Ian's feedback: showing "yoghurt = stamped on
+// lid" misleads staff because some yoghurt brands print on the side, the
+// foil edge, or a sticker).
 //
-// SVG illustrations are inline (no external assets) and use stroke="currentColor"
-// so they automatically theme for dark/light mode.
+// Auto-opens the first time staff enter Phase 2; dismiss flag is stored in
+// localStorage('batchd_lot_help_seen'). Persistent '?' button in the
+// Phase 2 header re-opens it on demand.
+//
+// Sections:
+//   1. Definition — what a lot code IS and why it matters
+//   2. Format examples — what they LOOK like (4 sample codes)
+//   3. Where to look — general guidance, not brand-specific
+//   4. What they're NOT — common look-alikes to avoid
+//   5. Tip — capture-everything fallback rule
 
-const _lotHelpSVGs = {
-  // Gable-top milk/dairy carton — lot stamped on side panel near best-by
-  dairy: `<svg viewBox="0 0 120 120" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:100%;height:auto;display:block;">
-    <path d="M40 102 V36 L60 24 L80 36 V102 Z"/>
-    <line x1="40" y1="36" x2="80" y2="36"/>
-    <line x1="60" y1="24" x2="60" y2="36" opacity="0.5"/>
-    <rect x="48" y="50" width="24" height="14" rx="2" fill="currentColor" opacity="0.12" stroke="none"/>
-    <line x1="52" y1="55" x2="68" y2="55" opacity="0.7"/>
-    <line x1="52" y1="60" x2="65" y2="60" opacity="0.7"/>
-    <path d="M22 57 L42 57" stroke-dasharray="3 2" opacity="0.65"/>
-    <path d="M40 53 L44 57 L40 61"/>
-  </svg>`,
-
-  // Yoghurt cup — lot stamped on lid
-  yoghurt: `<svg viewBox="0 0 120 120" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:100%;height:auto;display:block;">
-    <path d="M40 38 L46 100 L74 100 L80 38 Z"/>
-    <ellipse cx="60" cy="38" rx="20" ry="4"/>
-    <ellipse cx="60" cy="38" rx="14" ry="2.5" fill="currentColor" opacity="0.12" stroke="none"/>
-    <line x1="52" y1="38" x2="68" y2="38" opacity="0.65" stroke-dasharray="2 1.5"/>
-    <path d="M22 22 L42 32" stroke-dasharray="3 2" opacity="0.65"/>
-    <path d="M40 28 L44 33 L38 35"/>
-  </svg>`,
-
-  // Canned good (tin) — laser-etched on base
-  canned: `<svg viewBox="0 0 120 120" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:100%;height:auto;display:block;">
-    <ellipse cx="60" cy="32" rx="22" ry="5"/>
-    <line x1="38" y1="32" x2="38" y2="92"/>
-    <line x1="82" y1="32" x2="82" y2="92"/>
-    <ellipse cx="60" cy="92" rx="22" ry="5"/>
-    <ellipse cx="60" cy="92" rx="14" ry="3" fill="currentColor" opacity="0.12" stroke="none"/>
-    <line x1="52" y1="93" x2="68" y2="93" opacity="0.7"/>
-    <path d="M22 102 L42 96" stroke-dasharray="3 2" opacity="0.65"/>
-    <path d="M40 92 L44 96 L40 100"/>
-  </svg>`,
-
-  // Cereal box — printed on bottom of the box
-  cereal: `<svg viewBox="0 0 120 120" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:100%;height:auto;display:block;">
-    <rect x="38" y="22" width="44" height="80" rx="1.5"/>
-    <rect x="42" y="88" width="36" height="10" rx="1" fill="currentColor" opacity="0.12" stroke="none"/>
-    <line x1="46" y1="92" x2="68" y2="92" opacity="0.7"/>
-    <line x1="46" y1="96" x2="62" y2="96" opacity="0.7"/>
-    <path d="M22 110 L40 100" stroke-dasharray="3 2" opacity="0.65"/>
-    <path d="M38 96 L42 100 L38 104"/>
-  </svg>`,
-
-  // Frozen bag — printed on back seal near best-by
-  frozen: `<svg viewBox="0 0 120 120" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:100%;height:auto;display:block;">
-    <path d="M34 38 Q60 30 86 38 L86 96 Q60 102 34 96 Z"/>
-    <path d="M34 38 Q60 34 86 38" opacity="0.6"/>
-    <line x1="34" y1="38" x2="34" y2="96" stroke-dasharray="2 1.5" opacity="0.55"/>
-    <line x1="86" y1="38" x2="86" y2="96" stroke-dasharray="2 1.5" opacity="0.55"/>
-    <rect x="42" y="44" width="36" height="10" rx="1" fill="currentColor" opacity="0.12" stroke="none"/>
-    <line x1="46" y1="48" x2="68" y2="48" opacity="0.7"/>
-    <line x1="46" y1="52" x2="62" y2="52" opacity="0.7"/>
-    <path d="M22 30 L40 44" stroke-dasharray="3 2" opacity="0.65"/>
-    <path d="M38 40 L42 45 L36 47"/>
-  </svg>`,
-
-  // Bottled beverage — printed on shoulder or base
-  bottle: `<svg viewBox="0 0 120 120" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:100%;height:auto;display:block;">
-    <path d="M52 22 L52 44 Q44 48 44 60 L44 100 L76 100 L76 60 Q76 48 68 44 L68 22 Z"/>
-    <line x1="52" y1="30" x2="68" y2="30" opacity="0.55"/>
-    <rect x="48" y="54" width="24" height="10" rx="1" fill="currentColor" opacity="0.12" stroke="none"/>
-    <line x1="52" y1="58" x2="66" y2="58" opacity="0.7"/>
-    <line x1="52" y1="62" x2="62" y2="62" opacity="0.7"/>
-    <path d="M22 60 L42 60" stroke-dasharray="3 2" opacity="0.65"/>
-    <path d="M40 56 L44 60 L40 64"/>
-  </svg>`
-};
-
-function _lotHelpCard(svg, captionKey) {
+// Reusable card builder for code-format examples. Renders a styled
+// monospace sample with a caption underneath.
+function _lotHelpExampleCard(sampleText, captionKey) {
   return `
-    <div style="display:flex;flex-direction:column;align-items:center;gap:10px;padding:14px 12px;background:var(--surface);border:1px solid var(--border);border-radius:12px;">
-      <div style="width:96px;height:96px;color:var(--text);">${svg}</div>
-      <div style="font-size:12px;color:var(--muted);text-align:center;line-height:1.5;">${t(captionKey)}</div>
+    <div style="display:flex;flex-direction:column;gap:8px;padding:14px 14px;background:var(--surface);border:1px solid var(--border);border-radius:12px;">
+      <div style="font-family:'DM Mono',monospace;font-size:14px;font-weight:700;letter-spacing:0.05em;color:var(--text);background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;text-align:center;line-height:1.4;">${esc(sampleText)}</div>
+      <div style="font-size:11.5px;color:var(--muted);text-align:center;line-height:1.5;">${t(captionKey)}</div>
+    </div>`;
+}
+
+// Bullet item for the "Where to look" / "What they're NOT" lists.
+function _lotHelpBullet(textKey, marker) {
+  return `
+    <div style="display:flex;gap:10px;align-items:flex-start;padding:6px 0;font-size:12.5px;color:var(--text);line-height:1.55;">
+      <span style="flex-shrink:0;color:var(--muted);font-family:'DM Mono',monospace;font-size:14px;line-height:1.2;width:14px;text-align:center;">${marker || '·'}</span>
+      <span>${t(textKey)}</span>
+    </div>`;
+}
+
+// Build the lot-help inner content. Used by both the standalone overlay
+// and (a slimmed reference of it) by the Terminology overlay.
+function _lotHelpContentHtml() {
+  const examples = `
+    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:8px;">
+      ${_lotHelpExampleCard('17.06.26 T707',           'lothelp.eg1')}
+      ${_lotHelpExampleCard('06.06.26*1599 10:48-7',   'lothelp.eg2')}
+      ${_lotHelpExampleCard('Batch: 1324820',          'lothelp.eg3')}
+      ${_lotHelpExampleCard('L24-2851',                'lothelp.eg4')}
+    </div>`;
+
+  const whereList = `
+    <div style="margin-top:6px;">
+      ${_lotHelpBullet('lothelp.spot1', '·')}
+      ${_lotHelpBullet('lothelp.spot2', '·')}
+      ${_lotHelpBullet('lothelp.spot3', '·')}
+      ${_lotHelpBullet('lothelp.spot4', '·')}
+      ${_lotHelpBullet('lothelp.spot5', '·')}
+      ${_lotHelpBullet('lothelp.spot6', '·')}
+    </div>`;
+
+  const notList = `
+    <div style="margin-top:6px;">
+      ${_lotHelpBullet('lothelp.not1', '×')}
+      ${_lotHelpBullet('lothelp.not2', '×')}
+      ${_lotHelpBullet('lothelp.not3', '×')}
+      ${_lotHelpBullet('lothelp.not4', '×')}
+    </div>`;
+
+  const sectionH = (key) => `
+    <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;font-weight:700;color:var(--accent);margin-top:22px;margin-bottom:6px;">${t(key)}</div>`;
+
+  return `
+    <div style="font-size:13px;color:var(--muted);line-height:1.65;padding:4px 2px 6px;">${t('lothelp.intro')}</div>
+
+    ${sectionH('lothelp.examplesH')}
+    ${examples}
+
+    ${sectionH('lothelp.whereH')}
+    <div style="font-size:12.5px;color:var(--text);line-height:1.55;">${t('lothelp.whereLead')}</div>
+    ${whereList}
+
+    ${sectionH('lothelp.notH')}
+    ${notList}
+
+    <div style="margin-top:18px;padding:12px 14px;background:rgba(77,201,154,0.06);border:1px solid var(--accent-dim, rgba(77,201,154,0.3));border-radius:10px;">
+      <div style="display:flex;gap:10px;align-items:flex-start;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px;"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+        <div style="font-size:12px;color:var(--text);line-height:1.55;"><strong style="color:var(--accent);">${t('lothelp.tipLabel')}</strong> ${t('lothelp.tip')}</div>
+      </div>
     </div>`;
 }
 
 function openLotHelpOverlay() {
-  const lang = currentLang || 'en';
-  const isNO = lang === 'no';
-
-  const grid = `
-    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:14px;">
-      ${_lotHelpCard(_lotHelpSVGs.dairy,   'lothelp.dairy')}
-      ${_lotHelpCard(_lotHelpSVGs.yoghurt, 'lothelp.yoghurt')}
-      ${_lotHelpCard(_lotHelpSVGs.canned,  'lothelp.canned')}
-      ${_lotHelpCard(_lotHelpSVGs.cereal,  'lothelp.cereal')}
-      ${_lotHelpCard(_lotHelpSVGs.frozen,  'lothelp.frozen')}
-      ${_lotHelpCard(_lotHelpSVGs.bottle,  'lothelp.bottle')}
-    </div>`;
-
   document.getElementById('lot-help-content').innerHTML = `
-    <div style="font-size:13px;color:var(--muted);line-height:1.65;padding:4px 2px 8px;">${t('lothelp.subtitle')}</div>
-    ${grid}
+    ${_lotHelpContentHtml()}
     <div style="margin-top:18px;display:flex;justify-content:center;">
       <button onclick="closeLotHelpOverlay()"
               style="background:var(--accent);color:#04120e;border:none;border-radius:10px;padding:11px 28px;font-family:'Figtree',sans-serif;font-weight:700;font-size:14px;cursor:pointer;">
@@ -11272,7 +11277,7 @@ async function runQuickCheck() {
         html += `
           <div style="padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:10px;margin-bottom:10px;">
             <div style="font-size:11px;color:var(--muted);">
-              ${isNO ? `${removed.length} post${removed.length!==1?'er':''} fjernet / bekreftet` : `${removed.length} record${removed.length!==1?'s':''} removed / resolved`}
+              ${isNO ? `${removed.length} post${removed.length!==1?'er':''} fjernet / løst` : `${removed.length} record${removed.length!==1?'s':''} removed / resolved`}
             </div>
           </div>`;
       }
@@ -12713,18 +12718,20 @@ async function snapRawCluster() {
 
   if (analyzing) analyzing.style.display = 'none';
 
-  const input = document.getElementById('field-raw-capture');
-  if (input) {
-    input.value = raw || '';
-  }
+  // Render the OCR result as multi-field rows. _renderRawFields also
+  // updates the hidden canonical #field-raw-capture so confirmRawCapture
+  // and downstream code (extractBestBefore, populateReview, submitScan)
+  // see the joined value.
+  _renderRawFields(raw || '');
 
   _showP2ConfirmState();
 
-  // Focus and select the text so the user can immediately edit if needed —
-  // run after the state swap so the input is actually visible/focusable.
-  if (input) {
-    setTimeout(() => { input.focus(); input.select(); }, 50);
-  }
+  // Focus the first row's input so the user can immediately edit if
+  // needed. Run after the state swap so the inputs are visible.
+  setTimeout(() => {
+    const firstInput = document.querySelector('#raw-fields-list .raw-field-input');
+    if (firstInput) { firstInput.focus(); firstInput.select(); }
+  }, 50);
 }
 
 async function extractRawClusterFromImage(blob) {
@@ -12756,6 +12763,11 @@ function retakeRawCapture() {
   barcodeBlob = null;
   const input = document.getElementById('field-raw-capture');
   if (input) input.value = '';
+  // Clear the multi-field rows so the next capture starts fresh
+  const list = document.getElementById('raw-fields-list');
+  if (list) list.innerHTML = '';
+  const warn = document.getElementById('raw-missing-lot-warning');
+  if (warn) warn.style.display = 'none';
   const thumb = document.getElementById('p2-captured-thumb');
   if (thumb) thumb.removeAttribute('src');
   _showP2CaptureState();
@@ -12771,6 +12783,110 @@ function skipLotCapture() {
   const expiryEl = document.getElementById('field-expiry');
   if (expiryEl) expiryEl.value = '';
   goToPhase(3);
+}
+
+// ── Multi-field captured-row UI helpers ──────────────────────
+// The Phase 2 confirm state shows the OCR result as a list of editable
+// rows (one per ' · '-separated field) instead of a single input. This
+// makes it obvious to staff what was captured and what's missing,
+// because each labeled field stands on its own. The canonical store is
+// still #field-raw-capture (hidden) — these helpers keep it in sync
+// with the visible rows.
+
+// Heuristic: does the captured string contain something that looks like
+// a batch/lot number? Strips known date and time patterns and field
+// labels, then checks for any alphanumeric sequence of 4+ chars. Used
+// by the soft warning shown when only a date was captured.
+function _hasLotPattern(raw) {
+  if (!raw) return false;
+  const stripped = raw
+    .replace(/\b\d{2}[./]\d{2}[./]\d{2,4}\b/g, '')   // DD.MM.YY, DD/MM/YYYY etc
+    .replace(/\b\d{4}-\d{2}-\d{2}\b/g, '')           // ISO dates
+    .replace(/\b\d{1,2}:\d{2}\b/g, '')               // time stamps HH:MM
+    .replace(/(Siste forbruksdag|Best før|Best by|Use by|EXP|Pakkedato|Produksjonsdato|MFG|Packed on)/gi, '');
+  return /[A-Za-z0-9]{4,}/.test(stripped);
+}
+
+// Render the captured raw string as a list of editable rows. Splits on
+// ' · ' (the separator the OCR prompt asks Sonnet to use between
+// distinct traceability fields). If the input is empty, renders one
+// empty row so the user can type manually.
+function _renderRawFields(rawString) {
+  const list = document.getElementById('raw-fields-list');
+  if (!list) return;
+  list.innerHTML = '';
+  const segments = String(rawString || '').split(' · ').map(s => s.trim()).filter(Boolean);
+  if (segments.length === 0) {
+    list.appendChild(_makeRawFieldRow(''));
+  } else {
+    segments.forEach(seg => list.appendChild(_makeRawFieldRow(seg)));
+  }
+  _updateRawCaptureFromRows();
+}
+
+// Build a single editable row. Caller appends to #raw-fields-list.
+function _makeRawFieldRow(value) {
+  const row = document.createElement('div');
+  row.className = 'raw-field-row';
+  row.style.cssText = 'display:flex;gap:6px;align-items:center;';
+  // Escape user content for the value attr (avoid breaking the markup
+  // with a stray quote in the captured string).
+  const safeVal = String(value || '').replace(/"/g, '&quot;');
+  row.innerHTML = `
+    <input type="text" class="raw-field-input"
+           value="${safeVal}"
+           placeholder="—"
+           style="flex:1;min-width:0;font-family:'DM Mono',monospace;font-size:15px;font-weight:600;letter-spacing:0.04em;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:9px;padding:11px 14px;box-sizing:border-box;"
+           oninput="_updateRawCaptureFromRows()"
+           autocorrect="off" autocapitalize="characters" spellcheck="false" />
+    <button type="button"
+            onclick="_removeRawField(this.closest('.raw-field-row'))"
+            title="Remove this field"
+            aria-label="Remove this field"
+            style="width:36px;height:36px;flex-shrink:0;border-radius:8px;background:none;border:1px solid var(--border);color:var(--muted);font-size:18px;line-height:1;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;padding:0;">×</button>
+  `;
+  return row;
+}
+
+// Remove a row, then re-sync the canonical store + warning visibility.
+function _removeRawField(rowEl) {
+  if (!rowEl) return;
+  rowEl.remove();
+  _updateRawCaptureFromRows();
+}
+
+// Append an empty row and focus it. Called by the "+ Add a field" button
+// for fields the AI missed.
+function addRawField() {
+  const list = document.getElementById('raw-fields-list');
+  if (!list) return;
+  const row = _makeRawFieldRow('');
+  list.appendChild(row);
+  _updateRawCaptureFromRows();
+  const input = row.querySelector('.raw-field-input');
+  if (input) setTimeout(() => input.focus(), 30);
+}
+
+// Re-collect all visible rows into the canonical hidden #field-raw-capture
+// input (joined by ' · '), then update the soft "missing lot" warning.
+// Called on every row edit, add, and remove.
+function _updateRawCaptureFromRows() {
+  const list = document.getElementById('raw-fields-list');
+  const inputs = list ? list.querySelectorAll('.raw-field-input') : [];
+  const values = [];
+  inputs.forEach(inp => {
+    const v = (inp.value || '').trim();
+    if (v) values.push(v);
+  });
+  const joined = values.join(' · ');
+  const canonical = document.getElementById('field-raw-capture');
+  if (canonical) canonical.value = joined;
+
+  const warn = document.getElementById('raw-missing-lot-warning');
+  if (warn) {
+    const showWarn = !!joined && !_hasLotPattern(joined);
+    warn.style.display = showWarn ? 'flex' : 'none';
+  }
 }
 
 // extractBestBefore — pure JS, no API. Best-effort ISO date pulled from the
@@ -15516,16 +15632,35 @@ const TRANSLATIONS = {
     'p2.looksGood': 'Looks good',
     'p2.noLotCode': 'No lot code on this product',
     'p2.backToStep1': '← Back to product',
+    'p2.addField': '+ Add a field',
+    'p2.warnNoLot': "Looks like only a date was captured — did Batch'd miss the batch or lot number? Add it manually below or retake the photo.",
 
-    // Lot Code Helper overlay — first-use illustrated guide for finding lot codes
-    'lothelp.title': 'Where to find lot codes',
-    'lothelp.subtitle': 'Lot codes are small inkjet or laser-etched clusters near the best-by date. Look for L, LOT, BATCH, MFG DATE, or just a string of numbers.',
-    'lothelp.dairy': 'Milk / dairy carton — side panel near the best-by date',
-    'lothelp.yoghurt': 'Yoghurt cup — stamped on the lid',
-    'lothelp.canned': 'Canned good — laser-etched on the base',
-    'lothelp.cereal': 'Cereal box — bottom of the box',
-    'lothelp.frozen': 'Frozen bag — back seal near the best-by date',
-    'lothelp.bottle': 'Bottled beverage — shoulder or base',
+    // Lot Code Helper overlay — educational guide on what a lot code is and
+    // how to recognize one (revised 2026-05 — was previously a per-package
+    // location guide, but lot placement varies too much by brand for that
+    // to be reliable).
+    'lothelp.title': 'What is a lot code?',
+    'lothelp.intro': "A lot code (also called a batch number) identifies a specific production run of a food product. It's how recalls find their way to your store — and how Batch'd matches your scans to active recall alerts. If a product is on your shelf without its lot code captured, a recall might miss it.",
+    'lothelp.examplesH': 'What they look like',
+    'lothelp.eg1': 'Inkjet date + lot — most common across cartons and bags',
+    'lothelp.eg2': 'Two-line stamp with asterisk — common on dairy products',
+    'lothelp.eg3': 'Labeled "Batch:" or "Lot:" — sticker labels on deli, meat, fish',
+    'lothelp.eg4': 'Short alphanumeric — common on US packaged goods',
+    'lothelp.whereH': 'Where to look',
+    'lothelp.whereLead': 'Almost always printed close to the best-by or expiry date. Common spots include:',
+    'lothelp.spot1': 'Bottom of cans, jars, and tubs',
+    'lothelp.spot2': 'Back panel or seal of bagged products',
+    'lothelp.spot3': 'Top edge or fold of cartons',
+    'lothelp.spot4': 'Stamped on lids of yoghurt and other cups',
+    'lothelp.spot5': 'Crimped end of tubes (Kavli, Stabburet, etc.)',
+    'lothelp.spot6': 'Printed sticker label on deli, meat, and fish products',
+    'lothelp.notH': "What they're NOT",
+    'lothelp.not1': 'The barcode (digits under the parallel lines)',
+    'lothelp.not2': 'The country / plant approval (e.g. "NO 1234 EF")',
+    'lothelp.not3': 'The net weight ("0,400 kg" or "200g")',
+    'lothelp.not4': 'The use-by date by itself — that\'s a date, not a lot code',
+    'lothelp.tipLabel': 'Tip:',
+    'lothelp.tip': "When in doubt, capture EVERYTHING small printed near the best-by date. Batch'd will sort out which characters matter.",
     'lothelp.gotit': 'Got it',
     // Phase 3
     'p3.title': 'Confirm & Place on Shelf',
@@ -15925,16 +16060,32 @@ const TRANSLATIONS = {
     'p2.looksGood': 'Ser bra ut',
     'p2.noLotCode': 'Ingen partikode på dette produktet',
     'p2.backToStep1': '← Tilbake til produkt',
+    'p2.addField': '+ Legg til et felt',
+    'p2.warnNoLot': "Det ser ut som bare datoen ble fanget — gikk Batch'd glipp av parti- eller lotnummeret? Legg det til manuelt nedenfor eller ta bildet på nytt.",
 
-    // Lot Code Helper overlay — first-use illustrated guide for finding lot codes
-    'lothelp.title': 'Hvor du finner partikoder',
-    'lothelp.subtitle': 'Partikoder er små inkjet- eller laser-etsede klynger nær holdbarhetsdatoen. Se etter L, Parti, produksjonsdato, eller bare en serie tall.',
-    'lothelp.dairy': 'Melk / meierikartong — sidepanel nær holdbarhetsdatoen',
-    'lothelp.yoghurt': 'Yoghurtbeger — stemplet på lokket',
-    'lothelp.canned': 'Hermetikk — laser-etset på bunnen',
-    'lothelp.cereal': 'Kornblandingseske — bunnen av esken',
-    'lothelp.frozen': 'Frossenpose — bakre sveis nær holdbarhetsdatoen',
-    'lothelp.bottle': 'Flaskedrikke — skulder eller bunn',
+    // Lot Code Helper overlay — educational guide
+    'lothelp.title': 'Hva er en partikode?',
+    'lothelp.intro': "En partikode (også kalt parti, partinummer, batch eller charge) identifiserer en spesifikk produksjonsbatch av et matprodukt. Det er sånn tilbaketrekkinger finner veien til butikken din — og slik Batch'd matcher skanningene dine mot aktive tilbaketrekkingsvarsler. Hvis et produkt er i hyllen din uten at partikoden er fanget, kan et tilbaketrekk gå glipp av det.",
+    'lothelp.examplesH': 'Slik ser de ut',
+    'lothelp.eg1': 'Inkjet-dato + parti — vanligst på kartonger og poser',
+    'lothelp.eg2': 'To-linjes stempel med stjerne — vanlig på meieriprodukter',
+    'lothelp.eg3': 'Etikett med "Batch:", "Lot:" eller "Parti:" — fersk kjøtt, fisk, deli',
+    'lothelp.eg4': 'Kort alfanumerisk kode — vanlig på amerikanske produkter',
+    'lothelp.whereH': 'Hvor skal du lete',
+    'lothelp.whereLead': 'Nesten alltid trykket nær holdbarhetsdatoen. Vanlige steder:',
+    'lothelp.spot1': 'Bunnen av bokser, glass og beholdere',
+    'lothelp.spot2': 'Bakpanelet eller forseglingen på poser',
+    'lothelp.spot3': 'Toppen eller falsen på kartonger',
+    'lothelp.spot4': 'Stemplet på lokket av yoghurt og andre beger',
+    'lothelp.spot5': 'Den krympede enden av tuber (Kavli, Stabburet, osv.)',
+    'lothelp.spot6': 'Trykket etikett på fersk kjøtt, fisk og delikatesseprodukter',
+    'lothelp.notH': 'Hva de IKKE er',
+    'lothelp.not1': 'Strekkoden (tallene under de parallelle strekene)',
+    'lothelp.not2': 'Plantenummer (f.eks. "NO 1234 EF")',
+    'lothelp.not3': 'Nettovekten ("0,400 kg" eller "200g")',
+    'lothelp.not4': 'Holdbarhetsdatoen alene — det er en dato, ikke en partikode',
+    'lothelp.tipLabel': 'Tips:',
+    'lothelp.tip': "Ved tvil — fang ALT som er trykt med små tegn nær holdbarhetsdatoen. Batch'd sorterer ut hvilke tegn som betyr noe.",
     'lothelp.gotit': 'Forstått',
     // Phase 3
     'p3.title': 'Bekreft & legg på hylla',
@@ -18902,8 +19053,11 @@ let _recallActionRecord = null;
 let _recallLinkedAck = null; // recall_acknowledgements row linked to this scan via manufacturer push
 
 // ── Dashboard ack chain sync helpers ──────────────────────────
+// ACK_STEPS: canonical DB enum values (do not change — matches recall_acknowledgements.status).
+// ACK_LABELS: UI display strings. Step 5 was renamed Confirmed→Resolved on 2026-05.
+// The DB enum stays 'confirmed' for backward compat with existing rows, triggers, and queries.
 const ACK_STEPS = ['notified','acknowledged','pulled','disposed','confirmed'];
-const ACK_LABELS = { notified:'Notified', acknowledged:'Acknowledged', pulled:'Pulled', disposed:'Disposed', confirmed:'Confirmed' };
+const ACK_LABELS = { notified:'Notified', acknowledged:'Acknowledged', pulled:'Pulled', disposed:'Disposed', confirmed:'Resolved' };
 
 function _renderAckStrip(ack) {
   const strip = document.getElementById('recall-sheet-ack-strip');
@@ -20630,7 +20784,7 @@ async function loadRecallsView() {
         exposureHtml += '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);font-family:DM Mono,monospace;margin-bottom:8px;">Exposure Summary</div>';
         exposureHtml += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px;">';
         exposureHtml += '<div style="text-align:center;"><div style="font-family:Figtree,sans-serif;font-weight:800;font-size:20px;color:' + urgency + ';">' + unitsOnShelf + '</div><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;">Still on shelf</div></div>';
-        exposureHtml += '<div style="text-align:center;"><div style="font-family:Figtree,sans-serif;font-weight:800;font-size:20px;color:var(--accent);">' + unitsPulled + '</div><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;">Confirmed pulled</div></div>';
+        exposureHtml += '<div style="text-align:center;"><div style="font-family:Figtree,sans-serif;font-weight:800;font-size:20px;color:var(--accent);">' + unitsPulled + '</div><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;">Removed</div></div>';
         exposureHtml += '<div style="text-align:center;"><div style="font-family:Figtree,sans-serif;font-weight:800;font-size:20px;color:var(--text);">' + stores.length + '</div><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;">Store' + (stores.length !== 1 ? 's' : '') + '</div></div>';
         exposureHtml += '</div>';
         if (stores.length) exposureHtml += '<div style="font-size:11px;color:var(--muted);font-family:DM Mono,monospace;margin-bottom:4px;">Stores: <span style="color:var(--text);">' + stores.map(s => esc(s)).join(' · ') + '</span></div>';
