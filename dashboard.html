@@ -3726,10 +3726,11 @@ function _mapFmtAgo(iso) {
 }
 
 // Mounts the map. `stores` should already have `_status` (one of
-// 'healthy'|'active'|'stalled'|'dark'), and optionally `_lastScan`
-// (ISO string) and `_activeRecallCount` (number) for the popup.
-// Returns the Leaflet map instance so callers can manipulate it
-// (e.g. fitBounds to a recall's affected stores in Step 4).
+// 'active'|'resolved'|'none'), and optionally `_activeRecallCount`
+// and `_recentResolvedCount` for the popup.
+// Returns a controller object: { map, setFilter(status), markersByStatus }
+// — Step 3 uses setFilter() from filter pills; Step 4 will use the
+// markers refs to focus the map on a specific recall's stores.
 function renderStoreMap(container, stores, options) {
   options = options || {};
 
@@ -3761,12 +3762,13 @@ function renderStoreMap(container, stores, options) {
     maxZoom: 19
   }).addTo(map);
 
-  // Markers
+  // Markers — also indexed by status so setFilter() can fade them in groups.
   const markers = [];
+  const markersByStatus = { active: [], resolved: [], none: [] };
   (stores || []).forEach(s => {
     if (s.latitude == null || s.longitude == null) return;
-    const status = s._status || 'healthy';
-    const color  = _MAP_STATUS_COLORS[status] || _MAP_STATUS_COLORS.healthy;
+    const status = s._status || 'none';
+    const color  = _MAP_STATUS_COLORS[status] || _MAP_STATUS_COLORS.none;
 
     const marker = L.circleMarker([s.latitude, s.longitude], {
       radius:      9,
@@ -3776,6 +3778,8 @@ function renderStoreMap(container, stores, options) {
       opacity:     1,
       fillOpacity: 0.92
     }).addTo(map);
+    marker._batchdStatus = status;
+    if (markersByStatus[status]) markersByStatus[status].push(marker);
 
     // Popup uses light styles (Leaflet popup is white by default).
     const activeLine = s._activeRecallCount > 0
@@ -3831,7 +3835,20 @@ function renderStoreMap(container, stores, options) {
   };
   legend.addTo(map);
 
-  return map;
+  // setFilter — fade non-matching markers without removing them, so the
+  // map keeps its full geographic context. Pass 'all' to clear the filter.
+  const FADE = { opacity: 0.18, fillOpacity: 0.06 };
+  const FULL = { opacity: 1,    fillOpacity: 0.92 };
+  function setFilter(filterValue) {
+    const f = filterValue || 'all';
+    Object.keys(markersByStatus).forEach(status => {
+      const visible = (f === 'all') || (status === f);
+      const styleApply = visible ? FULL : FADE;
+      markersByStatus[status].forEach(m => m.setStyle(styleApply));
+    });
+  }
+
+  return { map, setFilter, markersByStatus };
 }
 
 // Test panel — only reachable via ?panel=map-test in the URL. Builds
@@ -3907,16 +3924,31 @@ async function renderMapTest() {
     const counts = { active: 0, resolved: 0, none: 0 };
     stores.forEach(s => { counts[s._status] = (counts[s._status] || 0) + 1; });
 
+    // Filter pills definition. Counts come from `counts` so each pill
+    // shows live numbers — clicking the pill fades non-matching markers
+    // on the map (markers stay positioned for spatial context).
+    const pills = [
+      { key: 'all',      label: 'All',           count: stores.length, color: null                       },
+      { key: 'active',   label: 'Active',        count: counts.active,   color: _MAP_STATUS_COLORS.active   },
+      { key: 'resolved', label: 'Resolved · 7d', count: counts.resolved, color: _MAP_STATUS_COLORS.resolved },
+      { key: 'none',     label: 'No recalls',    count: counts.none,     color: _MAP_STATUS_COLORS.none     }
+    ];
+
     el.innerHTML = `
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
+      <div style="display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:14px;">
         <div>
           <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:18px;color:var(--text);">Network · Live (test preview)</div>
           <div style="font-size:11px;color:var(--muted);margin-top:2px;">${stores.length} store${stores.length===1?'':'s'} on the map · ${offMapCount} not yet placed</div>
         </div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);align-items:center;">
-          <span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:7px;height:7px;border-radius:50%;background:${_MAP_STATUS_COLORS.active};"></span>${counts.active} active</span>
-          <span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:7px;height:7px;border-radius:50%;background:${_MAP_STATUS_COLORS.resolved};"></span>${counts.resolved} resolved (7d)</span>
-          <span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:7px;height:7px;border-radius:50%;background:${_MAP_STATUS_COLORS.none};"></span>${counts.none} none</span>
+        <div id="map-filter-pills" style="display:inline-flex;gap:4px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:4px;">
+          ${pills.map(p => `
+            <button data-filter="${p.key}"
+                    class="map-filter-pill ${p.key === 'all' ? 'active' : ''}"
+                    style="display:inline-flex;align-items:center;gap:6px;font-family:'DM Mono',monospace;font-size:11px;padding:6px 10px;border-radius:7px;border:none;background:none;color:var(--muted);cursor:pointer;transition:background 0.15s,color 0.15s;letter-spacing:0.02em;">
+              ${p.color ? `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${p.color};flex-shrink:0;"></span>` : ''}
+              <span>${p.label}</span>
+              <span style="opacity:0.6;font-weight:600;">${p.count}</span>
+            </button>`).join('')}
         </div>
       </div>
       <div id="map-test-container"></div>
@@ -3928,10 +3960,33 @@ async function renderMapTest() {
             : 'Add an active store with a complete address from <strong style="color:var(--text);">Store Network</strong> to see it here.'}
         </div>` : ''}
       <div style="margin-top:10px;font-size:10.5px;color:var(--muted);font-family:'DM Mono',monospace;letter-spacing:0.02em;">
-        Step 2 preview — filter pills, right-rail Active Recalls, and the Push-a-Recall hero arrive in Steps 3-6.
+        Step 3 preview — right-rail Active Recalls, quick stats, and the Push-a-Recall hero arrive in Steps 4-6.
       </div>`;
 
-    renderStoreMap(document.getElementById('map-test-container'), stores, { height: '620px' });
+    const ctrl = renderStoreMap(document.getElementById('map-test-container'), stores, { height: '620px' });
+
+    // Wire pill clicks — toggle the active class and call setFilter().
+    // Active pill style: solid surface2 background + bright text.
+    document.querySelectorAll('#map-filter-pills .map-filter-pill').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('#map-filter-pills .map-filter-pill').forEach(b => {
+          b.classList.remove('active');
+          b.style.background = 'none';
+          b.style.color = 'var(--muted)';
+        });
+        btn.classList.add('active');
+        btn.style.background = 'var(--surface2)';
+        btn.style.color = 'var(--text)';
+        ctrl.setFilter(btn.dataset.filter);
+      });
+    });
+    // Apply initial active style to the "All" pill so it visually matches
+    // the .active class state we set in the markup.
+    const initialActive = document.querySelector('#map-filter-pills .map-filter-pill.active');
+    if (initialActive) {
+      initialActive.style.background = 'var(--surface2)';
+      initialActive.style.color = 'var(--text)';
+    }
   } catch (e) {
     console.error('[renderMapTest]', e);
     el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading map: ${esc(e.message)}</div>`;
