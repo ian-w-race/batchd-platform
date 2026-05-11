@@ -4679,6 +4679,61 @@ async function renderRecallDetail() {
     };
     const allResolved = total > 0 && stageCounts.confirmed === total;
 
+    // ── Per-stage sub-info for the 5-tile counter strip (Step 3) ────
+    // Each tile shows count/total + a small sub-info line. Sub-info is
+    // median time between stages for stages that have data, "first:
+    // storename · time" for RESOLVED, and "dispatched X ago" for NOTIFIED.
+
+    // Median (in ms) of (a[toKey] - a[fromKey]) across acks that have both timestamps.
+    const _medianStageDuration = (fromKey, toKey) => {
+      const durations = acks
+        .filter(a => a[fromKey] && a[toKey])
+        .map(a => new Date(a[toKey]).getTime() - new Date(a[fromKey]).getTime())
+        .filter(ms => ms >= 0);
+      return _median(durations);
+    };
+
+    // NOTIFIED — earliest dispatch timestamp across all acks.
+    let notifiedSub = '—';
+    if (acks.length > 0) {
+      const earliest = acks.reduce((min, a) => {
+        const t = a.created_at ? new Date(a.created_at).getTime() : Infinity;
+        return t < min ? t : min;
+      }, Infinity);
+      if (isFinite(earliest)) notifiedSub = 'dispatched ' + _fmtElapsed(new Date(earliest).toISOString());
+    }
+
+    const ackMedianMs      = _medianStageDuration('created_at',      'acknowledged_at');
+    const pulledMedianMs   = _medianStageDuration('acknowledged_at', 'pulled_at');
+    const disposedMedianMs = _medianStageDuration('pulled_at',       'disposed_at');
+
+    const ackSub      = ackMedianMs      != null ? 'median ' + _fmtDuration(ackMedianMs)      : 'no acks yet';
+    const pulledSub   = pulledMedianMs   != null ? 'median ' + _fmtDuration(pulledMedianMs)   : 'no pulls yet';
+    const disposedSub = disposedMedianMs != null ? 'median ' + _fmtDuration(disposedMedianMs) : 'no disposals yet';
+
+    // RESOLVED — first store to reach confirmed.
+    let resolvedSub = 'not resolved yet';
+    const resolvedAcks = acks.filter(a => a.confirmed_at);
+    if (resolvedAcks.length > 0) {
+      const first = resolvedAcks.reduce((earliest, a) => {
+        if (!earliest) return a;
+        return new Date(a.confirmed_at).getTime() < new Date(earliest.confirmed_at).getTime() ? a : earliest;
+      }, null);
+      if (first) {
+        const storeName = first.stores?.name || 'first store';
+        resolvedSub = esc(storeName) + ' · ' + _fmtElapsed(first.confirmed_at);
+      }
+    }
+
+    // Tile definitions for the strip render
+    const counterTiles = [
+      { label: 'NOTIFIED',     count: stageCounts.notified,     sub: notifiedSub },
+      { label: 'ACKNOWLEDGED', count: stageCounts.acknowledged, sub: ackSub      },
+      { label: 'PULLED',       count: stageCounts.pulled,       sub: pulledSub   },
+      { label: 'DISPOSED',     count: stageCounts.disposed,     sub: disposedSub },
+      { label: 'RESOLVED',     count: stageCounts.confirmed,    sub: resolvedSub }
+    ];
+
     // Severity badge (Class I / II / III with colored token from
     // _severityLabel). Falls back to "—" if no severity on file.
     const sev = _severityLabel(ev.severity);
@@ -4757,6 +4812,38 @@ async function renderRecallDetail() {
         </div>
       </div>
 
+      <!-- 5-stage counter strip — at-a-glance status. Each tile shows
+           count/total + stage label + sub-info (median time between
+           stages, or "first store · time ago" for RESOLVED). Auto-fits
+           to 1 row on desktop, wraps to 2-3 per row on narrow widths. -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px;">
+        ${counterTiles.map(t => {
+          const pct = total > 0 ? Math.round((t.count / total) * 100) : 0;
+          const isComplete = total > 0 && t.count === total;
+          const isPartial  = t.count > 0 && t.count < total;
+          const barColor   = isComplete ? 'var(--accent)'
+                            : isPartial  ? 'var(--accent-dim, rgba(77,201,154,0.55))'
+                                          : 'var(--border)';
+          const countColor = isComplete ? 'var(--accent)' : (isPartial ? 'var(--text)' : 'var(--muted)');
+          return `
+            <div style="position:relative;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px 12px;overflow:hidden;">
+              <!-- Progress bar at the top of the tile -->
+              <div style="position:absolute;top:0;left:0;right:0;height:3px;background:var(--border);">
+                <div style="height:100%;width:${pct}%;background:${barColor};transition:width 0.3s;"></div>
+              </div>
+              <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:24px;color:${countColor};line-height:1;margin-top:8px;">
+                ${t.count}<span style="color:var(--muted);font-weight:600;font-size:15px;">/${total || 0}</span>
+              </div>
+              <div style="font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;font-weight:700;color:var(--muted);margin-top:5px;">
+                ${t.label}
+              </div>
+              <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.4;min-height:14px;">
+                ${t.sub}
+              </div>
+            </div>`;
+        }).join('')}
+      </div>
+
       <!-- FSMA 204 records production hero -->
       <div style="background:linear-gradient(135deg, rgba(70,130,255,0.07), rgba(70,130,255,0.015) 65%);border:1px solid rgba(70,130,255,0.35);border-radius:12px;padding:18px 22px;margin-bottom:14px;">
         <div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap;">
@@ -4778,17 +4865,10 @@ async function renderRecallDetail() {
         </div>
       </div>
 
-      <!-- Step 2 preview marker — gets replaced by counter strip in Step 3. -->
-      <div style="background:var(--surface);border:1px dashed var(--border);border-radius:10px;padding:14px 16px;font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);line-height:1.6;">
-        <div style="font-weight:700;color:var(--text);margin-bottom:4px;">Step 2 preview — header + FSMA 204 export wired ✓</div>
-        <div>Stage counts (preview):
-          NOTIF ${stageCounts.notified}/${total} ·
-          ACK ${stageCounts.acknowledged}/${total} ·
-          PULL ${stageCounts.pulled}/${total} ·
-          DISP ${stageCounts.disposed}/${total} ·
-          RSLV ${stageCounts.confirmed}/${total}</div>
-        <div style="margin-top:6px;">Scan-recall matches: ${srm.length}</div>
-        <div style="margin-top:8px;color:var(--accent);">Step 3 next: proper 5-stage counter strip with per-stage detail.</div>
+      <!-- Step 3 progress marker — replaced as steps 4-7 ship. -->
+      <div style="margin-top:6px;font-size:10.5px;color:var(--muted);font-family:'DM Mono',monospace;letter-spacing:0.02em;line-height:1.6;">
+        Step 3 preview — map + stores list + event ticker + action buttons arrive in Steps 4-7.
+        ${srm.length > 0 ? `<span style="margin-left:8px;color:var(--accent);">${srm.length} scan-recall match${srm.length === 1 ? '' : 'es'}</span>` : ''}
       </div>`;
 
   } catch (e) {
