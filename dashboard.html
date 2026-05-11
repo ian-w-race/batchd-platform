@@ -4701,6 +4701,120 @@ async function produceFsma204Records(recallEventId) {
   }
 }
 
+// ── Live Recall action handlers (Step 7) ─────────────────────
+// Three buttons in the recall detail header. Each stamps audit-trail
+// timestamps on the relevant rows; outbound notification delivery
+// (email/SMS/push) is intentionally a separate piece — these handlers
+// record the recordable action, the delivery layer wires up later.
+
+// Resend reminders → for stores still at 'notified' stage, stamp the
+// existing escalation_2h_sent_at column. The event ticker already
+// renders these as a yellow "SLA reminder sent" row.
+async function resendRecallReminders(recallEventId) {
+  try {
+    const { data: acks, error } = await sb.from('recall_acknowledgements')
+      .select('id, status')
+      .eq('recall_event_id', recallEventId)
+      .eq('organisation_id', _orgId);
+    if (error) throw error;
+
+    const targets = (acks || []).filter(a => a.status === 'notified');
+    if (targets.length === 0) {
+      showToast('All stores have already acknowledged — no reminders needed.', 'info', 3500);
+      return;
+    }
+
+    if (!confirm(`Send reminders to ${targets.length} store${targets.length === 1 ? '' : 's'} that haven\'t acknowledged?\n\nThis stamps the audit trail. Email/SMS delivery is wired separately — the timestamp is the record.`)) return;
+
+    const now = new Date().toISOString();
+    const { error: upErr } = await sb.from('recall_acknowledgements')
+      .update({ escalation_2h_sent_at: now })
+      .in('id', targets.map(a => a.id))
+      .eq('organisation_id', _orgId);
+    if (upErr) throw upErr;
+
+    showToast(`Reminders stamped on ${targets.length} store${targets.length === 1 ? '' : 's'}.`, 'ok', 3000);
+    setTimeout(() => renderRecallDetail(), 500);
+  } catch (e) {
+    showToast('Could not send reminders: ' + (e.message || 'unknown error'), 'error', 4500);
+  }
+}
+
+// Escalate → for every store that hasn't reached the final 'confirmed'
+// stage, stamp escalation_24h_sent_at. Event ticker renders these as a
+// red "SLA escalation sent" row.
+async function escalateRecall(recallEventId) {
+  try {
+    const { data: acks, error } = await sb.from('recall_acknowledgements')
+      .select('id, status')
+      .eq('recall_event_id', recallEventId)
+      .eq('organisation_id', _orgId);
+    if (error) throw error;
+
+    const targets = (acks || []).filter(a => a.status !== 'confirmed');
+    if (targets.length === 0) {
+      showToast('All stores already resolved — nothing to escalate.', 'info', 3500);
+      return;
+    }
+
+    if (!confirm(`Escalate this recall for ${targets.length} store${targets.length === 1 ? '' : 's'} that haven\'t reached Resolved?\n\nThis stamps the audit trail with an escalation event. Notification delivery is wired separately.`)) return;
+
+    const now = new Date().toISOString();
+    const { error: upErr } = await sb.from('recall_acknowledgements')
+      .update({ escalation_24h_sent_at: now })
+      .in('id', targets.map(a => a.id))
+      .eq('organisation_id', _orgId);
+    if (upErr) throw upErr;
+
+    showToast(`Escalated for ${targets.length} store${targets.length === 1 ? '' : 's'}.`, 'ok', 3000);
+    setTimeout(() => renderRecallDetail(), 500);
+  } catch (e) {
+    showToast('Could not escalate: ' + (e.message || 'unknown error'), 'error', 4500);
+  }
+}
+
+// Mark complete → administratively close the recall, even if some stores
+// haven't independently reached 'confirmed'. Requires migration 008
+// (closed_at, closed_by, closed_note on recall_events). Shows a clear
+// message if the migration hasn't been run.
+async function markRecallComplete(recallEventId) {
+  const note = prompt(
+    'Mark this recall as administratively complete?\n\n' +
+    'Optional: record a reason (e.g., "store deactivated", "product line discontinued"). Leave blank to skip.\n\n' +
+    'This locks the audit trail. You can still view the recall but can\'t re-open it.'
+  );
+  if (note === null) return; // user canceled
+
+  try {
+    const { error } = await sb.from('recall_events')
+      .update({
+        closed_at:   new Date().toISOString(),
+        closed_by:   _userId || null,
+        closed_note: note || null
+      })
+      .eq('id', recallEventId);
+
+    if (error) {
+      // Migration 008 not yet applied — surface specific guidance
+      const msg = (error.message || '').toLowerCase();
+      if (error.code === '42703' || msg.includes('closed_at') || msg.includes('closed_by') || msg.includes('closed_note')) {
+        showToast(
+          'Mark Complete needs migration 008. Run migrations/008_recall_events_closure.sql in Supabase SQL Editor, then try again.',
+          'warn',
+          6500
+        );
+        return;
+      }
+      throw error;
+    }
+
+    showToast('Recall closed. Audit trail locked.', 'ok', 3000);
+    setTimeout(() => renderRecallDetail(), 500);
+  } catch (e) {
+    showToast('Could not mark complete: ' + (e.message || 'unknown error'), 'error', 4500);
+  }
+}
+
 // ── Live Recall Detail page ──────────────────────────────────
 // Step 1 of the Live Recall pivot (2026-05). Per-recall operational
 // view: header + recall info + 5-stage counters + map of affected
@@ -4746,7 +4860,7 @@ async function renderRecallDetail() {
     // records export).
     const [evRes, acksRes, srmRes] = await Promise.all([
       sb.from('recall_events')
-        .select('id, product_name, lot_number, severity, reason, is_drill, published_at, source_org_id, created_at')
+        .select('id, product_name, lot_number, severity, reason, is_drill, published_at, source_org_id, created_at, closed_at, closed_by, closed_note')
         .eq('id', recallEventId)
         .single(),
       sb.from('recall_acknowledgements')
@@ -4760,8 +4874,27 @@ async function renderRecallDetail() {
         .eq('organisation_id', _orgId)
     ]);
 
-    if (evRes.error) throw evRes.error;
-    const ev   = evRes.data;
+    // Migration 008 adds closed_at/closed_by/closed_note to recall_events
+    // for the "Mark complete" action. If the migration hasn't been run
+    // yet, the SELECT above fails with 42703 (undefined_column). Detect
+    // that and silently retry without the closure columns so the page
+    // keeps working — Mark complete will surface its own message when
+    // the user clicks it.
+    let ev = evRes.data;
+    if (evRes.error) {
+      const msg = (evRes.error.message || '').toLowerCase();
+      const isMissingClosure = evRes.error.code === '42703' || msg.includes('closed_at') || msg.includes('closed_by') || msg.includes('closed_note');
+      if (isMissingClosure) {
+        const retry = await sb.from('recall_events')
+          .select('id, product_name, lot_number, severity, reason, is_drill, published_at, source_org_id, created_at')
+          .eq('id', recallEventId)
+          .single();
+        if (retry.error) throw retry.error;
+        ev = retry.data;
+      } else {
+        throw evRes.error;
+      }
+    }
     const acks = acksRes.data || [];
     const srm  = srmRes.data  || [];
 
@@ -4792,6 +4925,11 @@ async function renderRecallDetail() {
       confirmed:    acks.filter(a => a.status === 'confirmed').length
     };
     const allResolved = total > 0 && stageCounts.confirmed === total;
+    // Administrative closure (migration 008). isClosed wins over
+    // allResolved for badge wording — "CLOSED" reads more accurately
+    // when the coordinator force-closed before all stores resolved.
+    const isClosed   = !!ev.closed_at;
+    const isLocked   = isClosed || allResolved; // either way, audit trail locked
 
     // ── Per-stage sub-info for the 5-tile counter strip (Step 3) ────
     // Each tile shows count/total + a small sub-info line. Sub-info is
@@ -5130,11 +5268,35 @@ async function renderRecallDetail() {
       ? `<span style="display:inline-flex;align-items:center;font-family:'DM Mono',monospace;font-size:11px;font-weight:700;letter-spacing:0.05em;padding:4px 10px;border-radius:6px;background:${sev.bg};border:1px solid ${sev.border};color:${sev.fg};">${esc(sev.txt)}${ev.is_drill ? ' (sim.)' : ''}</span>`
       : '<span style="font-family:\'DM Mono\',monospace;font-size:11px;color:var(--muted);">—</span>';
 
-    // LIVE / COMPLETED badge. Pulses for active recalls, muted when done.
+    // LIVE / COMPLETED / CLOSED badge. Pulses for active recalls; muted
+    // when naturally completed; warn-amber when administratively closed.
+    let badgeText, badgeBg, badgeBorder, badgeColor, badgeDot, badgePulse;
+    if (isClosed) {
+      badgeText   = 'CLOSED';
+      badgeBg     = 'rgba(245,166,35,0.10)';
+      badgeBorder = 'rgba(245,166,35,0.35)';
+      badgeColor  = '#f5a623';
+      badgeDot    = '#f5a623';
+      badgePulse  = '';
+    } else if (allResolved) {
+      badgeText   = 'COMPLETED';
+      badgeBg     = 'var(--surface2)';
+      badgeBorder = 'var(--border)';
+      badgeColor  = 'var(--muted)';
+      badgeDot    = 'var(--muted)';
+      badgePulse  = '';
+    } else {
+      badgeText   = 'LIVE';
+      badgeBg     = 'rgba(255,92,92,0.1)';
+      badgeBorder = 'rgba(255,92,92,0.35)';
+      badgeColor  = 'var(--danger)';
+      badgeDot    = 'var(--danger)';
+      badgePulse  = 'animation:pulse 1.8s infinite;';
+    }
     const liveBadge = `
-      <div style="display:inline-flex;align-items:center;gap:7px;background:${allResolved ? 'var(--surface2)' : 'rgba(255,92,92,0.1)'};border:1px solid ${allResolved ? 'var(--border)' : 'rgba(255,92,92,0.35)'};color:${allResolved ? 'var(--muted)' : 'var(--danger)'};font-family:'DM Mono',monospace;font-size:11px;font-weight:700;padding:6px 13px;border-radius:7px;letter-spacing:0.05em;">
-        <span style="width:7px;height:7px;border-radius:50%;background:${allResolved ? 'var(--muted)' : 'var(--danger)'};${allResolved ? '' : 'animation:pulse 1.8s infinite;'}"></span>
-        ${allResolved ? 'COMPLETED' : 'LIVE'} · ${total} STORES
+      <div style="display:inline-flex;align-items:center;gap:7px;background:${badgeBg};border:1px solid ${badgeBorder};color:${badgeColor};font-family:'DM Mono',monospace;font-size:11px;font-weight:700;padding:6px 13px;border-radius:7px;letter-spacing:0.05em;">
+        <span style="width:7px;height:7px;border-radius:50%;background:${badgeDot};${badgePulse}"></span>
+        ${badgeText} · ${total} STORES
       </div>`;
 
     // Drill badge for the title row.
@@ -5147,12 +5309,22 @@ async function renderRecallDetail() {
       day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
     }) : '—';
 
-    // Stub-action handler — surfaces a toast pointing to Step 7. Real
-    // implementations land in Step 7 (resend/escalate/mark complete).
-    const stubBtn = (label, slug) =>
-      `<button onclick="showToast('This action ships in Step 7 of the Live Recall pivot.', 'info', 3500)"
-               style="font-family:'DM Mono',monospace;font-size:11px;padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--muted);cursor:pointer;letter-spacing:0.02em;"
-               data-action="${slug}">${esc(label)}</button>`;
+    // Action button factory. Disabled (greyed out + tooltip) when the
+    // recall is locked (administratively closed OR all stores resolved).
+    const actionBtn = (label, onclickJs, opts) => {
+      opts = opts || {};
+      const disabled = !!opts.disabled;
+      const hoverColor = opts.hoverColor || 'var(--accent)';
+      return `<button
+        ${disabled ? 'disabled' : `onclick="${onclickJs}"`}
+        title="${disabled ? esc(opts.disabledTooltip || 'Audit trail locked.') : ''}"
+        style="font-family:'DM Mono',monospace;font-size:11px;padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--muted);cursor:${disabled ? 'not-allowed' : 'pointer'};letter-spacing:0.02em;opacity:${disabled ? '0.5' : '1'};transition:border-color 0.15s,color 0.15s;"
+        ${disabled ? '' : `onmouseenter="this.style.borderColor='${hoverColor}';this.style.color='${hoverColor}'" onmouseleave="this.style.borderColor='var(--border)';this.style.color='var(--muted)'"`}
+      >${esc(label)}</button>`;
+    };
+    const disabledTooltip = isClosed
+      ? 'Recall is administratively closed.'
+      : 'All stores have reached Resolved — audit trail locked.';
 
     el.innerHTML = `
       <!-- Top row: back button + action buttons -->
@@ -5162,9 +5334,9 @@ async function renderRecallDetail() {
           ← Dashboard
         </button>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          ${stubBtn('Resend reminders', 'resend')}
-          ${stubBtn('Escalate',         'escalate')}
-          ${stubBtn('Mark complete',    'complete')}
+          ${actionBtn('Resend reminders', `resendRecallReminders('${ev.id}')`, { disabled: isLocked, disabledTooltip, hoverColor: '#f5a623' })}
+          ${actionBtn('Escalate',         `escalateRecall('${ev.id}')`,        { disabled: isLocked, disabledTooltip, hoverColor: 'var(--danger)' })}
+          ${actionBtn('Mark complete',    `markRecallComplete('${ev.id}')`,    { disabled: isLocked, disabledTooltip, hoverColor: 'var(--accent)' })}
         </div>
       </div>
 
@@ -5200,6 +5372,24 @@ async function renderRecallDetail() {
           </div>
         </div>
       </div>
+
+      <!-- Closure banner — only when administratively closed via Mark
+           complete (closed_at set). Distinct from the natural all-
+           stores-resolved state which is conveyed by the COMPLETED
+           badge in the header. -->
+      ${isClosed ? `
+        <div style="background:rgba(245,166,35,0.06);border:1px solid rgba(245,166,35,0.25);border-radius:10px;padding:12px 16px;margin-bottom:14px;display:flex;align-items:flex-start;gap:12px;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f5a623" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px;">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+          </svg>
+          <div style="flex:1;min-width:0;">
+            <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:13px;color:var(--text);margin-bottom:3px;">Audit trail locked — recall closed by coordinator</div>
+            <div style="font-size:11.5px;color:var(--muted);line-height:1.55;">
+              Closed ${fmtDate(ev.closed_at)}${ev.closed_note ? ' · ' + esc(ev.closed_note) : ''}
+            </div>
+          </div>
+        </div>` : ''}
 
       <!-- 5-stage counter strip — at-a-glance status. Each tile shows
            count/total + stage label + sub-info (median time between
@@ -5280,15 +5470,14 @@ async function renderRecallDetail() {
            row with coords to jump to its marker on the map above. -->
       ${storesAckListHtml}
 
-      <!-- Live event ticker (Step 6) — newest-first chronological feed
-           of stage transitions, recall pushes, and SLA escalations. -->
+      <!-- Live event ticker — newest-first chronological feed of
+           stage transitions, recall pushes, and SLA escalations. -->
       ${eventTickerHtml}
 
-      <!-- Step 6 progress marker — replaced when Step 7 ships. -->
-      <div style="margin-top:6px;font-size:10.5px;color:var(--muted);font-family:'DM Mono',monospace;letter-spacing:0.02em;line-height:1.6;">
-        Step 6 preview — Step 7 wires the action buttons (Resend reminders / Escalate / Mark complete).
-        ${srm.length > 0 ? `<span style="margin-left:8px;color:var(--accent);">${srm.length} scan-recall match${srm.length === 1 ? '' : 'es'}</span>` : ''}
-      </div>`;
+      ${srm.length > 0 ? `
+        <div style="margin-top:6px;font-size:10.5px;color:var(--accent);font-family:'DM Mono',monospace;letter-spacing:0.02em;line-height:1.6;">
+          ${srm.length} scan-recall match${srm.length === 1 ? '' : 'es'} on file for this recall
+        </div>` : ''}`;
 
     // Mount the map after the container is in the DOM. Stash the
     // controller so the stores list row clicks below can zoom + open
