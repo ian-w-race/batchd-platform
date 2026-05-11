@@ -3853,6 +3853,25 @@ const _RECALL_STAGE_ORDER = [
   { key: 'confirmed',    label: 'RSLV'  }
 ];
 
+// Stage palette for the Live Recall Detail map (Step 4). Each marker
+// is colored by the store's current ack stage — red urgent (still
+// notified) gradates through orange/yellow/light-green to green
+// (resolved). Used as the `colors` override passed into renderStoreMap.
+const _RECALL_DETAIL_STAGE_COLORS = {
+  notified:     '#ff5c5c', // red — has not acknowledged
+  acknowledged: '#f5a623', // orange — in progress
+  pulled:       '#f9d56e', // yellow — making progress
+  disposed:     '#8be9c4', // light green — almost done
+  confirmed:    '#4DC99A'  // green — resolved (UI label; DB enum stays 'confirmed')
+};
+const _RECALL_DETAIL_STAGE_LABELS = {
+  notified:     'Notified',
+  acknowledged: 'Acknowledged',
+  pulled:       'Pulled',
+  disposed:     'Disposed',
+  confirmed:    'Resolved'
+};
+
 // Window for time-based quick-stat tiles ("median ack time over last X days").
 const _STATS_LOOKBACK_MS      = 30 * 24 * 3600_000;
 
@@ -3911,14 +3930,30 @@ function _fmtElapsed(iso) {
   return `${totalMin}m`;
 }
 
-// Mounts the map. `stores` should already have `_status` (one of
-// 'active'|'resolved'|'none'), and optionally `_activeRecallCount`
-// and `_recentResolvedCount` for the popup.
+// Mounts the map. `stores` should already have `_status` set per store
+// (any string — keys must match the keys in `options.colors`).
 // Returns a controller object: { map, setFilter(status), markersByStatus }
-// — Step 3 uses setFilter() from filter pills; Step 4 will use the
-// markers refs to focus the map on a specific recall's stores.
+//
+// Options:
+//   height        — CSS height, defaults '600px'
+//   colors        — { statusKey: hexColor } palette; defaults _MAP_STATUS_COLORS
+//   labels        — { statusKey: humanLabel } for legend; defaults _MAP_STATUS_LABELS
+//   legendNote    — small footer text under the legend (pass null/'' to hide)
+//   popupBuilder  — optional function(store) → HTML string; default builds
+//                   the Command Center popup (name, address, status, counts)
+//
+// Used from:
+//   - renderCommandCenter (Command Center home, default palette: active/resolved/none)
+//   - renderRecallDetail   (Live Recall Detail, stage palette: notified→…→confirmed)
 function renderStoreMap(container, stores, options) {
   options = options || {};
+  const colors       = options.colors || _MAP_STATUS_COLORS;
+  const labels       = options.labels || _MAP_STATUS_LABELS;
+  const legendNote   = options.legendNote !== undefined
+    ? options.legendNote
+    : "Mock drills track separately and don't<br>affect map markers.";
+  const popupBuilder = typeof options.popupBuilder === 'function' ? options.popupBuilder : null;
+  const fallbackColor = '#7a8985';
 
   if (typeof L === 'undefined') {
     container.innerHTML = '<div style="padding:20px;color:var(--danger);font-size:12px;">Map library failed to load. Check network/CDN access.</div>';
@@ -3949,12 +3984,15 @@ function renderStoreMap(container, stores, options) {
   }).addTo(map);
 
   // Markers — also indexed by status so setFilter() can fade them in groups.
+  // markersByStatus is built dynamically from the colors keys so the same
+  // function works for any palette (3-state CC, 5-state recall detail, etc.)
   const markers = [];
-  const markersByStatus = { active: [], resolved: [], none: [] };
+  const markersByStatus = {};
+  Object.keys(colors).forEach(k => { markersByStatus[k] = []; });
   (stores || []).forEach(s => {
     if (s.latitude == null || s.longitude == null) return;
-    const status = s._status || 'none';
-    const color  = _MAP_STATUS_COLORS[status] || _MAP_STATUS_COLORS.none;
+    const status = s._status || Object.keys(colors)[0] || 'none';
+    const color  = colors[status] || fallbackColor;
 
     const marker = L.circleMarker([s.latitude, s.longitude], {
       radius:      9,
@@ -3965,27 +4003,36 @@ function renderStoreMap(container, stores, options) {
       fillOpacity: 0.92
     }).addTo(map);
     marker._batchdStatus = status;
-    if (markersByStatus[status]) markersByStatus[status].push(marker);
+    if (!markersByStatus[status]) markersByStatus[status] = [];
+    markersByStatus[status].push(marker);
 
     // Popup uses light styles (Leaflet popup is white by default).
-    const activeLine = s._activeRecallCount > 0
-      ? `<div style="font-size:10px;color:#a52a2a;margin-top:6px;font-family:'DM Mono',monospace;">${s._activeRecallCount} active recall${s._activeRecallCount === 1 ? '' : 's'}</div>`
-      : '';
-    const resolvedLine = s._recentResolvedCount > 0
-      ? `<div style="font-size:10px;color:#0f7a55;margin-top:4px;font-family:'DM Mono',monospace;">${s._recentResolvedCount} resolved in last 7 days</div>`
-      : '';
+    // Default popup builder (Command Center variant). If the caller
+    // provided `options.popupBuilder`, use that instead — lets the
+    // recall detail page render a stage-aware popup.
+    let popupHtml;
+    if (popupBuilder) {
+      popupHtml = popupBuilder(s);
+    } else {
+      const activeLine = s._activeRecallCount > 0
+        ? `<div style="font-size:10px;color:#a52a2a;margin-top:6px;font-family:'DM Mono',monospace;">${s._activeRecallCount} active recall${s._activeRecallCount === 1 ? '' : 's'}</div>`
+        : '';
+      const resolvedLine = s._recentResolvedCount > 0
+        ? `<div style="font-size:10px;color:#0f7a55;margin-top:4px;font-family:'DM Mono',monospace;">${s._recentResolvedCount} resolved in last 7 days</div>`
+        : '';
 
-    const popupHtml = `
-      <div style="font-family:'Figtree',sans-serif;font-size:12px;line-height:1.5;min-width:200px;">
-        <div style="font-weight:700;font-size:13px;margin-bottom:4px;color:#1a201d;">${esc(s.name || 'Unnamed store')}</div>
-        <div style="color:#5a6661;font-size:11px;margin-bottom:6px;">${esc(s.address || '')}</div>
-        <div style="display:flex;align-items:center;gap:6px;font-size:11px;">
-          <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};"></span>
-          <span style="color:#1a201d;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;font-size:10px;">${esc(_MAP_STATUS_LABELS[status] || status)}</span>
-        </div>
-        ${activeLine}
-        ${resolvedLine}
-      </div>`;
+      popupHtml = `
+        <div style="font-family:'Figtree',sans-serif;font-size:12px;line-height:1.5;min-width:200px;">
+          <div style="font-weight:700;font-size:13px;margin-bottom:4px;color:#1a201d;">${esc(s.name || 'Unnamed store')}</div>
+          <div style="color:#5a6661;font-size:11px;margin-bottom:6px;">${esc(s.address || '')}</div>
+          <div style="display:flex;align-items:center;gap:6px;font-size:11px;">
+            <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};"></span>
+            <span style="color:#1a201d;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;font-size:10px;">${esc(labels[status] || status)}</span>
+          </div>
+          ${activeLine}
+          ${resolvedLine}
+        </div>`;
+    }
     marker.bindPopup(popupHtml, { closeButton: true, autoClose: true, maxWidth: 280 });
 
     markers.push(marker);
@@ -4010,13 +4057,13 @@ function renderStoreMap(container, stores, options) {
   legend.onAdd = function () {
     const div = L.DomUtil.create('div', 'batchd-map-legend');
     div.style.cssText = 'background:rgba(17,25,24,0.92);border:1px solid rgba(52,211,153,0.18);border-radius:10px;padding:10px 14px;font-family:Figtree,sans-serif;font-size:11px;color:#f0f3f1;min-width:170px;line-height:1.5;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);';
-    div.innerHTML = `
-      <div style="display:flex;flex-direction:column;gap:6px;">
-        <div style="display:flex;align-items:center;gap:8px;"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${_MAP_STATUS_COLORS.active};flex-shrink:0;"></span>${_MAP_STATUS_LABELS.active}</div>
-        <div style="display:flex;align-items:center;gap:8px;"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${_MAP_STATUS_COLORS.resolved};flex-shrink:0;"></span>${_MAP_STATUS_LABELS.resolved}</div>
-        <div style="display:flex;align-items:center;gap:8px;"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${_MAP_STATUS_COLORS.none};flex-shrink:0;"></span>${_MAP_STATUS_LABELS.none}</div>
-        <div style="font-size:9.5px;color:#9aa6a1;margin-top:6px;border-top:1px solid rgba(52,211,153,0.14);padding-top:6px;letter-spacing:0.02em;">Mock drills track separately and don't<br>affect map markers.</div>
-      </div>`;
+    const legendItems = Object.keys(labels).map(k => `
+      <div style="display:flex;align-items:center;gap:8px;"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${colors[k] || fallbackColor};flex-shrink:0;"></span>${labels[k]}</div>
+    `).join('');
+    const noteHtml = legendNote
+      ? `<div style="font-size:9.5px;color:#9aa6a1;margin-top:6px;border-top:1px solid rgba(52,211,153,0.14);padding-top:6px;letter-spacing:0.02em;">${legendNote}</div>`
+      : '';
+    div.innerHTML = `<div style="display:flex;flex-direction:column;gap:6px;">${legendItems}${noteHtml}</div>`;
     return div;
   };
   legend.addTo(map);
@@ -4800,6 +4847,58 @@ async function renderRecallDetail() {
       { label: 'RESOLVED',     count: stageCounts.confirmed,    sub: resolvedSub }
     ];
 
+    // ── Affected-stores list for the map (Step 4) ─────────────────
+    // Each ack row has an embedded `stores` relation with coords. We
+    // tag each store with its current ack stage so renderStoreMap
+    // colors the marker by stage. Stage timestamps are stashed on the
+    // store object for the popup builder.
+    const mapStores = (acks || []).filter(a => a.stores).map(a => ({
+      ...a.stores,
+      _status:        a.status || 'notified',
+      _ackedAt:       a.acknowledged_at,
+      _pulledAt:      a.pulled_at,
+      _disposedAt:    a.disposed_at,
+      _confirmedAt:   a.confirmed_at,
+      _notifiedAt:    a.created_at,
+      _unitsPulled:   a.units_pulled,
+      _disposalMethod: a.disposal_method
+    }));
+    const storesOnMap     = mapStores.filter(s => s.latitude != null && s.longitude != null);
+    const storesOffMap    = mapStores.filter(s => s.latitude == null || s.longitude == null);
+
+    // Custom popup builder for the recall detail map. Shows store
+    // name + address + current stage badge + relative time since
+    // entering that stage. Inherits the light-theme popup styling
+    // Leaflet uses by default.
+    const _recallDetailPopup = (s) => {
+      const stage      = s._status || 'notified';
+      const stageLabel = _RECALL_DETAIL_STAGE_LABELS[stage] || stage;
+      const stageColor = _RECALL_DETAIL_STAGE_COLORS[stage] || '#7a8985';
+      // Most recent stage timestamp — newest stage advances forward
+      const stageTs = s._confirmedAt || s._disposedAt || s._pulledAt || s._ackedAt || s._notifiedAt || null;
+      const stageTsLine = stageTs
+        ? `<div style="font-size:10px;color:#5a6661;margin-top:6px;font-family:'DM Mono',monospace;">${esc(stageLabel.toLowerCase())} · ${_fmtElapsed(stageTs)}</div>`
+        : '';
+      const unitsLine = (s._unitsPulled != null && s._unitsPulled > 0)
+        ? `<div style="font-size:10px;color:#5a6661;margin-top:4px;font-family:'DM Mono',monospace;">${s._unitsPulled} unit${s._unitsPulled === 1 ? '' : 's'} pulled</div>`
+        : '';
+      const disposalLine = s._disposalMethod
+        ? `<div style="font-size:10px;color:#5a6661;margin-top:4px;font-family:'DM Mono',monospace;">Disposal: ${esc(s._disposalMethod)}</div>`
+        : '';
+      return `
+        <div style="font-family:'Figtree',sans-serif;font-size:12px;line-height:1.5;min-width:210px;">
+          <div style="font-weight:700;font-size:13px;margin-bottom:4px;color:#1a201d;">${esc(s.name || 'Unnamed store')}</div>
+          <div style="color:#5a6661;font-size:11px;margin-bottom:6px;">${esc(s.address || '')}</div>
+          <div style="display:flex;align-items:center;gap:6px;font-size:11px;">
+            <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${stageColor};"></span>
+            <span style="color:#1a201d;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;font-size:10px;">${esc(stageLabel)}</span>
+          </div>
+          ${stageTsLine}
+          ${unitsLine}
+          ${disposalLine}
+        </div>`;
+    };
+
     // Severity badge (Class I / II / III with colored token from
     // _severityLabel). Falls back to "—" if no severity on file.
     const sev = _severityLabel(ev.severity);
@@ -4931,11 +5030,49 @@ async function renderRecallDetail() {
         </div>
       </div>
 
-      <!-- Step 3 progress marker — replaced as steps 4-7 ship. -->
+      <!-- Affected stores map (Step 4). Reuses renderStoreMap with the
+           stage palette and a recall-aware popup. Empty state when no
+           affected stores have coordinates yet. -->
+      ${storesOnMap.length > 0 ? `
+        <div style="margin-bottom:14px;">
+          <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:10px;">
+            <div>
+              <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:14px;color:var(--text);">Stores affected</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:2px;">
+                ${storesOnMap.length} on the map${storesOffMap.length > 0 ? ' · ' + storesOffMap.length + ' not yet placed' : ''}
+              </div>
+            </div>
+          </div>
+          <div id="recall-detail-map"></div>
+        </div>` : `
+        <div style="margin-bottom:14px;padding:14px 16px;background:var(--surface);border:1px solid var(--border);border-radius:10px;font-size:12px;color:var(--muted);line-height:1.6;">
+          <strong style="color:var(--text);">No affected stores on the map yet.</strong>
+          ${storesOffMap.length > 0
+            ? ` ${storesOffMap.length} affected store${storesOffMap.length===1?' has':'s have'} an address but no coordinates. Verify the address in <strong style="color:var(--text);">Store Network</strong> so Batch'd can geocode it.`
+            : ' This recall has no stores assigned.'}
+        </div>`}
+
+      <!-- Step 4 progress marker — replaced as steps 5-7 ship. -->
       <div style="margin-top:6px;font-size:10.5px;color:var(--muted);font-family:'DM Mono',monospace;letter-spacing:0.02em;line-height:1.6;">
-        Step 3 preview — map + stores list + event ticker + action buttons arrive in Steps 4-7.
+        Step 4 preview — per-store ack list, live event ticker, and action buttons arrive in Steps 5-7.
         ${srm.length > 0 ? `<span style="margin-left:8px;color:var(--accent);">${srm.length} scan-recall match${srm.length === 1 ? '' : 'es'}</span>` : ''}
       </div>`;
+
+    // Mount the map after the container is in the DOM
+    if (storesOnMap.length > 0) {
+      const mapContainer = document.getElementById('recall-detail-map');
+      if (mapContainer) {
+        renderStoreMap(mapContainer, storesOnMap, {
+          height: '480px',
+          colors: _RECALL_DETAIL_STAGE_COLORS,
+          labels: _RECALL_DETAIL_STAGE_LABELS,
+          legendNote: ev.is_drill
+            ? 'Mock drill — stores progress through the same 5-stage chain.'
+            : 'Each marker shows the store\'s current stage in the recall response chain.',
+          popupBuilder: _recallDetailPopup
+        });
+      }
+    }
 
   } catch (e) {
     console.error('[renderRecallDetail]', e);
