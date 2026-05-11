@@ -12727,10 +12727,44 @@ async function snapRawCluster() {
   setTimeout(() => URL.revokeObjectURL(url), 3000);
 
   let raw = '';
+  let sonnetFailed = false;
   try {
     raw = await extractRawClusterFromImage(apiBlob);
   } catch (e) {
     console.warn('extract_raw_cluster failed:', e);
+    sonnetFailed = true;
+  }
+
+  // Tesseract fallback. Triggered when Sonnet returns nothing — either
+  // because it threw (network/API error) or because the model returned
+  // an empty string ("nothing readable here"). Tesseract sometimes
+  // catches what Sonnet missed, especially on degraded or glare-affected
+  // images. _tesseractReady becomes true once Phase 1's prewarm finishes
+  // (typically before the user reaches Phase 2). Sends the same
+  // preprocessed image Sonnet saw so the upscale + contrast benefits
+  // both engines.
+  if (!raw && _tesseractReady) {
+    try {
+      const t0 = performance.now();
+      const tessText = await runTesseractOnImage(apiBlob);
+      if (tessText && tessText.length > 0) {
+        raw = tessText;
+        if (typeof console !== 'undefined' && console.debug) {
+          console.debug('[ocr] Tesseract fallback recovered "' + tessText.slice(0, 60) + '" in', Math.round(performance.now() - t0) + 'ms');
+        }
+      } else if (typeof console !== 'undefined' && console.debug) {
+        console.debug('[ocr] Tesseract fallback returned empty');
+      }
+    } catch (e) {
+      console.warn('[ocr] Tesseract fallback failed:', e);
+    }
+  }
+
+  // Toast only when there was an API failure AND the fallback didn't
+  // recover. A legitimate empty result from Sonnet (model saw the image
+  // and confirmed no traceability text) shouldn't toast — staff can use
+  // the "No lot code" skip path or type manually in the multi-field UI.
+  if (sonnetFailed && !raw) {
     showToast(currentLang === 'no' ? 'AI-lesing feilet — du kan skrive partikoden manuelt.' : 'AI read failed — you can type the lot manually.', 'warn', 3500);
   }
 
