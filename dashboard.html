@@ -4727,11 +4727,11 @@ async function sendRecallReminders(recallEventId) {
 
     const targets = (acks || []).filter(a => a.status !== 'confirmed');
     if (targets.length === 0) {
-      showToast('All stores have already reached Resolved — nothing to send.', 'info', 3500);
+      showToast('All stores have already reached Resolved — no reminders needed.', 'info', 3500);
       return;
     }
 
-    if (!confirm(`Send reminders to ${targets.length} store${targets.length === 1 ? '' : 's'} that haven\'t reached Resolved?\n\nThis stamps the audit trail. Email/SMS delivery is wired separately — the timestamp is the record.`)) return;
+    if (!confirm(`Send reminders to ${targets.length} store${targets.length === 1 ? '' : 's'} that haven\'t reached Resolved?`)) return;
 
     const now = new Date().toISOString();
     const { error: upErr } = await sb.from('recall_acknowledgements')
@@ -4740,7 +4740,7 @@ async function sendRecallReminders(recallEventId) {
       .eq('organisation_id', _orgId);
     if (upErr) throw upErr;
 
-    showToast(`Reminders stamped on ${targets.length} store${targets.length === 1 ? '' : 's'}.`, 'ok', 3000);
+    showToast(`Reminder sent to ${targets.length} store${targets.length === 1 ? '' : 's'}.`, 'ok', 3000);
     setTimeout(() => renderRecallDetail(), 500);
   } catch (e) {
     showToast('Could not send reminders: ' + (e.message || 'unknown error'), 'error', 4500);
@@ -5147,7 +5147,7 @@ async function renderRecallDetail() {
       if (a.escalation_2h_sent_at) {
         events.push({
           t: a.escalation_2h_sent_at,
-          html: `<span style="color:#f5a623;font-weight:600;">SLA reminder sent</span> · <strong style="color:var(--text);">${esc(storeName)}</strong> · 2h ack target`,
+          html: `<span style="color:#f5a623;font-weight:600;">Reminder sent</span> · <strong style="color:var(--text);">${esc(storeName)}</strong>`,
           color: '#f5a623'
         });
       }
