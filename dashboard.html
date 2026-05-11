@@ -1263,6 +1263,12 @@ async function createInvestigationFromPattern(productName, lots, complaintCount,
 
 let _storeName = '';
 let _activePanel = 'overview';
+
+// Live Recall Detail page — set before navigating to the 'recall-detail'
+// panel so renderRecallDetail() knows which recall_event_id to render.
+// Settable from (a) Command Center recall card click, (b) URL deep-link
+// (?panel=recall-detail&id=<uuid>) via handleDeepLink.
+let _currentRecallDetailId = null;
 // ── renderOverview cache — 2 minute TTL ──────────────────────
 // Overview fires 10 Supabase queries on every panel switch.
 // Cache the result for 2 minutes so navigating away and back is instant.
@@ -1539,7 +1545,7 @@ function showPanel(name) {
     document.getElementById('mobile-overlay')?.classList.remove('active');
   }
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-  const panels = { overview:'Dashboard', onboarding:'Getting started', recalls:'Recalls', stores:'Store Network', traceability:'Scan History', staff:'Staff Activity', compliance:'Compliance', reports:'Reports and Exports', settings:'Settings', triage:'Complaint Triage', 'consumer-notify':'Consumer Notify', investigations:'Investigations', terminology:'Terminology & Help', lotcheck:'Lot Lookup' };
+  const panels = { overview:'Dashboard', onboarding:'Getting started', recalls:'Recalls', stores:'Store Network', traceability:'Scan History', staff:'Staff Activity', compliance:'Compliance', reports:'Reports and Exports', settings:'Settings', triage:'Complaint Triage', 'consumer-notify':'Consumer Notify', investigations:'Investigations', terminology:'Terminology & Help', lotcheck:'Lot Lookup', 'recall-detail':'Live Recall' };
   document.getElementById('topbar-title').textContent = panels[name] || name;
   document.querySelectorAll('.nav-item').forEach(el => {
     if (el.getAttribute('onclick')?.includes(`'${name}'`)) el.classList.add('active');
@@ -1549,7 +1555,10 @@ function showPanel(name) {
   // 2026-05). To revert to the legacy pre-pivot dashboard, change this
   // line back to `overview: _renderOverviewLegacy` — the legacy function
   // is preserved in code below renderRecalls.
-  const fns = { overview: renderCommandCenter, onboarding: renderOnboarding, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, triage: renderDashboardTriage, investigations: renderDashInvestigations, 'consumer-notify': renderConsumerNotification, terminology: renderTerminology, lotcheck: renderLotCheck };
+  // recall-detail → renderRecallDetail. Reached only via deep link
+  // (?panel=recall-detail&id=X) or by clicking a recall card on the
+  // Command Center right rail; no sidebar entry on purpose.
+  const fns = { overview: renderCommandCenter, onboarding: renderOnboarding, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, triage: renderDashboardTriage, investigations: renderDashInvestigations, 'consumer-notify': renderConsumerNotification, terminology: renderTerminology, lotcheck: renderLotCheck, 'recall-detail': renderRecallDetail };
   (fns[name] || renderComingSoon)(name);
 }
 
@@ -2088,8 +2097,15 @@ function handleDeepLink() {
   const panel  = params.get('panel');
   const highlight = params.get('highlight') || params.get('recall_event_id');
   const lot    = params.get('lot');
+  const detailId = params.get('id'); // generic id param — used by recall-detail
   if (highlight) _deepLinkHighlight = highlight;
   if (lot)       _deepLinkHighlight = lot;
+  // recall-detail panel needs the recall_event id stashed BEFORE
+  // showPanel runs, since renderRecallDetail reads _currentRecallDetailId
+  // synchronously to know which recall to load.
+  if (panel === 'recall-detail' && detailId) {
+    _currentRecallDetailId = detailId;
+  }
   const target = (panel && panel !== 'overview') ? panel : 'overview';
   if (params.toString()) {
     window.history.replaceState({}, '', window.location.pathname);
@@ -4352,49 +4368,173 @@ async function renderCommandCenter() {
     // Apply initial active style to the "All" pill
     _activatePill('all');
 
-    // Wire recall card clicks → focus map on affected stores + switch
-    // filter to "Active". Drills don't appear on the map, so clicking a
-    // drill card just shows a soft hint instead of trying to focus.
-    const storesById = {};
-    stores.forEach(s => { storesById[s.id] = s; });
-
+    // Wire recall card clicks → navigate to the Live Recall Detail page.
+    // Drills navigate too — the detail page renders them with a DRILL
+    // badge and the same ack-chain view, since drills exercise the same
+    // workflow. Just no map markers for drill participants (they're not
+    // really "affected stores" in the recall-response sense).
     document.querySelectorAll('.batchd-recall-card').forEach(card => {
       card.addEventListener('click', () => {
         const eventId = card.dataset.eventId;
-        const recall = activeRecalls.find(r => r.id === eventId);
-        if (!recall) return;
-
-        if (recall.isDrill) {
-          showToast('Mock drills track separately and don\'t appear on the map.', 'info', 3000);
-          return;
-        }
-
-        // Find affected stores that are on the map (have coords)
-        const affected = recall.affectedStoreIds
-          .map(sid => storesById[sid])
-          .filter(s => s && s.latitude != null && s.longitude != null);
-
-        if (affected.length === 0) {
-          showToast('Affected stores are not yet placed on the map.', 'info', 3000);
-          return;
-        }
-
-        // Switch filter to Active so the relevant markers are bright
-        _activatePill('active');
-        ctrl.setFilter('active');
-
-        // Fit bounds to affected stores (with padding)
-        try {
-          const bounds = L.latLngBounds(affected.map(s => [s.latitude, s.longitude]));
-          ctrl.map.fitBounds(bounds.pad(0.25), { maxZoom: 11, animate: true });
-        } catch (_) {
-          ctrl.map.setView([affected[0].latitude, affected[0].longitude], 10);
-        }
+        if (!eventId) return;
+        _currentRecallDetailId = eventId;
+        showPanel('recall-detail');
       });
     });
   } catch (e) {
     console.error('[renderCommandCenter]', e);
     el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading dashboard: ${esc(e.message)}</div>`;
+  }
+}
+
+// ── Live Recall Detail page ──────────────────────────────────
+// Step 1 of the Live Recall pivot (2026-05). Per-recall operational
+// view: header + recall info + 5-stage counters + map of affected
+// stores + per-store ack list + live event ticker + FSMA 204 records
+// production button.
+//
+// Reached via:
+//   - Clicking a recall card on the Command Center right rail
+//   - Deep link ?panel=recall-detail&id=<recall_event_id>
+//
+// _currentRecallDetailId must be set BEFORE this function runs.
+// handleDeepLink sets it from the URL; the Command Center click
+// handler sets it directly. If null, we render an error state with a
+// link back to the dashboard.
+//
+// This step ships the data fetch + placeholder layout. Steps 2-7
+// fill in the actual sections (header card, counter strip, map,
+// stores list, event ticker, FSMA 204 records export, action buttons).
+async function renderRecallDetail() {
+  const el = document.getElementById('main-content');
+  const recallEventId = _currentRecallDetailId;
+
+  // Update the topbar title — overridden per-recall after data loads
+  const topbar = document.getElementById('topbar-title');
+  if (topbar) topbar.textContent = 'Live Recall';
+
+  if (!recallEventId) {
+    el.innerHTML = `
+      <div style="max-width:520px;padding:24px;background:var(--surface);border:1px solid var(--border);border-radius:12px;">
+        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:15px;color:var(--text);margin-bottom:6px;">No recall selected</div>
+        <div style="font-size:12px;color:var(--muted);line-height:1.55;margin-bottom:14px;">This page needs a recall id. Open a recall from the Active Recalls panel on the dashboard.</div>
+        <button onclick="showPanel('overview')" style="font-family:'DM Mono',monospace;font-size:11px;padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);cursor:pointer;">← Back to Dashboard</button>
+      </div>`;
+    return;
+  }
+
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);padding:4px 0;"><div class="spinner"></div> Loading recall…</div>`;
+
+  try {
+    // Parallel fetch: the event itself, all acks for it (with embedded
+    // store name/coords for the map and list), and any scan_recall_matches
+    // (used in Step 2 to count what's still on shelf for the FSMA 204
+    // records export).
+    const [evRes, acksRes, srmRes] = await Promise.all([
+      sb.from('recall_events')
+        .select('id, product_name, lot_number, severity, reason, is_drill, published_at, source_org_id, created_at')
+        .eq('id', recallEventId)
+        .single(),
+      sb.from('recall_acknowledgements')
+        .select('id, store_id, status, acknowledged_at, pulled_at, disposed_at, confirmed_at, created_at, units_pulled, units_pulled_confirmed_at, escalation_2h_sent_at, escalation_24h_sent_at, disposal_method, notes, acknowledged_by, stores(id, name, store_code, address, latitude, longitude, region, country, city)')
+        .eq('recall_event_id', recallEventId)
+        .eq('organisation_id', _orgId)
+        .order('created_at', { ascending: true }),
+      sb.from('scan_recall_matches')
+        .select('id, scan_id, recall_id, recall_event_id, store_id, lot_number, product_name, quantity, removed_at')
+        .or(`recall_event_id.eq.${recallEventId},recall_id.eq.${recallEventId}`)
+        .eq('organisation_id', _orgId)
+    ]);
+
+    if (evRes.error) throw evRes.error;
+    const ev   = evRes.data;
+    const acks = acksRes.data || [];
+    const srm  = srmRes.data  || [];
+
+    if (!ev) {
+      el.innerHTML = `
+        <div style="max-width:520px;padding:24px;background:var(--surface);border:1px solid var(--border);border-radius:12px;">
+          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:15px;color:var(--text);margin-bottom:6px;">Recall not found</div>
+          <div style="font-size:12px;color:var(--muted);line-height:1.55;margin-bottom:14px;">This recall doesn't exist or your org doesn't have access to it.</div>
+          <button onclick="showPanel('overview')" style="font-family:'DM Mono',monospace;font-size:11px;padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);cursor:pointer;">← Back to Dashboard</button>
+        </div>`;
+      return;
+    }
+
+    // Update the topbar title to reflect the actual recall
+    if (topbar) {
+      topbar.textContent = ev.is_drill
+        ? `Mock drill — ${ev.product_name || 'recall'}`
+        : `Live recall — ${ev.product_name || 'recall'}`;
+    }
+
+    // Stage counts — same formula the right rail uses
+    const total = acks.length;
+    const stageCounts = {
+      notified:     total,
+      acknowledged: acks.filter(a => ['acknowledged','pulled','disposed','confirmed'].includes(a.status)).length,
+      pulled:       acks.filter(a => ['pulled','disposed','confirmed'].includes(a.status)).length,
+      disposed:     acks.filter(a => ['disposed','confirmed'].includes(a.status)).length,
+      confirmed:    acks.filter(a => a.status === 'confirmed').length
+    };
+    const allResolved = total > 0 && stageCounts.confirmed === total;
+
+    // Placeholder render for Step 1 — confirms data loaded.
+    // Steps 2-7 replace this body with the real layout.
+    el.innerHTML = `
+      <div style="margin-bottom:14px;">
+        <button onclick="showPanel('overview')"
+                style="font-family:'DM Mono',monospace;font-size:11px;padding:7px 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--muted);cursor:pointer;">
+          ← Command Center
+        </button>
+      </div>
+
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:14px;">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:8px;">
+          <div>
+            <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:20px;color:var(--text);line-height:1.3;">
+              ${ev.is_drill ? '<span style="display:inline-block;font-family:\'DM Mono\',monospace;font-size:10px;font-weight:700;padding:3px 8px;border-radius:5px;background:rgba(245,166,35,0.14);border:1px solid rgba(245,166,35,0.4);color:#f5a623;margin-right:8px;vertical-align:middle;">DRILL</span>' : ''}
+              ${esc(ev.product_name || 'Recall')}
+            </div>
+            <div style="font-size:12px;color:var(--muted);margin-top:4px;">${esc(ev.reason || '')}</div>
+          </div>
+          <div style="display:inline-flex;align-items:center;gap:6px;background:${allResolved ? 'var(--surface2)' : 'rgba(255,92,92,0.1)'};border:1px solid ${allResolved ? 'var(--border)' : 'rgba(255,92,92,0.35)'};color:${allResolved ? 'var(--muted)' : 'var(--danger)'};font-family:'DM Mono',monospace;font-size:11px;font-weight:700;padding:5px 12px;border-radius:7px;letter-spacing:0.04em;">
+            <span style="width:7px;height:7px;border-radius:50%;background:${allResolved ? 'var(--muted)' : 'var(--danger)'};${allResolved ? '' : 'animation:pulse 1.8s infinite;'}"></span>
+            ${allResolved ? 'COMPLETED' : 'LIVE'} · ${total} STORES
+          </div>
+        </div>
+        <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);margin-top:6px;">
+          ${ev.severity ? 'Severity: <span style="color:var(--text);font-weight:700;">' + esc(ev.severity) + '</span> · ' : ''}
+          ${ev.lot_number ? 'Lots: <span style="color:var(--text);font-weight:700;">' + esc(ev.lot_number) + '</span> · ' : ''}
+          ID: <span style="color:var(--text);font-weight:700;">${esc(ev.id.slice(0, 8))}…</span> ·
+          Published: <span style="color:var(--text);font-weight:700;">${ev.published_at ? new Date(ev.published_at).toLocaleString(_dashLocale()) : '—'}</span>
+        </div>
+      </div>
+
+      <!-- Step 1 preview indicator — the real header/counters/map/list/ticker/FSMA arrive in Steps 2-7. -->
+      <div style="background:var(--surface);border:1px dashed var(--border);border-radius:10px;padding:16px;font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);line-height:1.7;">
+        <div style="font-weight:700;color:var(--text);margin-bottom:6px;">Step 1 preview — data loaded ✓</div>
+        <div>Acks fetched: <span style="color:var(--text);">${acks.length}</span></div>
+        <div>Scan-recall matches: <span style="color:var(--text);">${srm.length}</span></div>
+        <div>Stage counts:</div>
+        <div style="padding-left:14px;">
+          NOTIFIED ${stageCounts.notified}/${total}<br>
+          ACKNOWLEDGED ${stageCounts.acknowledged}/${total}<br>
+          PULLED ${stageCounts.pulled}/${total}<br>
+          DISPOSED ${stageCounts.disposed}/${total}<br>
+          RESOLVED ${stageCounts.confirmed}/${total}
+        </div>
+        <div style="margin-top:8px;color:var(--accent);">Step 2 next: header action buttons + working FSMA 204 records CSV export.</div>
+      </div>`;
+
+  } catch (e) {
+    console.error('[renderRecallDetail]', e);
+    el.innerHTML = `
+      <div style="max-width:520px;padding:24px;background:var(--surface);border:1px solid rgba(255,92,92,0.3);border-radius:12px;">
+        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:15px;color:var(--danger);margin-bottom:6px;">Error loading recall</div>
+        <div style="font-size:12px;color:var(--muted);line-height:1.55;margin-bottom:14px;">${esc(e.message || 'Unknown error')}</div>
+        <button onclick="showPanel('overview')" style="font-family:'DM Mono',monospace;font-size:11px;padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);cursor:pointer;">← Back to Dashboard</button>
+      </div>`;
   }
 }
 
