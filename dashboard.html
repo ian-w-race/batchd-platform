@@ -4707,15 +4707,16 @@ async function produceFsma204Records(recallEventId) {
 // (email/SMS/push) is intentionally a separate piece — these handlers
 // record the recordable action, the delivery layer wires up later.
 
-// Send reminders → consolidated nudge that auto-decides what to stamp
-// per store based on the store's current stage:
-//   - Still at Step 1 (status === 'notified') → stamps escalation_2h_sent_at
-//     (event ticker renders as a yellow "SLA reminder sent" row)
-//   - Past Step 1 but not yet Resolved → stamps escalation_24h_sent_at
-//     (event ticker renders as a red "SLA escalation sent" row)
-// One click for the coordinator, two distinct audit cadences preserved.
-// Eventually this should fire automatically on a schedule (2h reminder
-// + 24h escalation cron) — the manual button becomes an override.
+// Send reminders → for every store that hasn't yet reached Resolved
+// (status !== 'confirmed'), stamps escalation_2h_sent_at with the
+// current time. The event ticker renders these as yellow "SLA reminder
+// sent" rows. One cadence, one click — no more escalation/reminder split.
+// Eventually this should fire automatically on a schedule; the manual
+// button becomes the override.
+//
+// Note: the column name (escalation_2h_sent_at) is legacy — it just
+// stores "when the last reminder went out." We're not renaming it
+// because nothing else cares about the column name.
 async function sendRecallReminders(recallEventId) {
   try {
     const { data: acks, error } = await sb.from('recall_acknowledgements')
@@ -4724,53 +4725,22 @@ async function sendRecallReminders(recallEventId) {
       .eq('organisation_id', _orgId);
     if (error) throw error;
 
-    const list = acks || [];
-    const reminderTargets   = list.filter(a => a.status === 'notified');
-    const escalationTargets = list.filter(a => a.status !== 'notified' && a.status !== 'confirmed');
-
-    const total = reminderTargets.length + escalationTargets.length;
-    if (total === 0) {
+    const targets = (acks || []).filter(a => a.status !== 'confirmed');
+    if (targets.length === 0) {
       showToast('All stores have already reached Resolved — nothing to send.', 'info', 3500);
       return;
     }
 
-    // Build a dynamic confirm message that reflects what'll actually be
-    // stamped. If only one group has rows we just describe that group;
-    // if both have rows we list both.
-    const lines = ['Send reminders for this recall?', ''];
-    if (reminderTargets.length) {
-      lines.push(`  • ${reminderTargets.length} store${reminderTargets.length === 1 ? '' : 's'} haven't acknowledged yet — will record a reminder (Step 1 nudge)`);
-    }
-    if (escalationTargets.length) {
-      lines.push(`  • ${escalationTargets.length} store${escalationTargets.length === 1 ? '' : 's'} acknowledged but haven't reached Resolved — will record an escalation`);
-    }
-    lines.push('');
-    lines.push('This stamps the audit trail. Email/SMS delivery is wired separately — the timestamp is the record.');
-    if (!confirm(lines.join('\n'))) return;
+    if (!confirm(`Send reminders to ${targets.length} store${targets.length === 1 ? '' : 's'} that haven\'t reached Resolved?\n\nThis stamps the audit trail. Email/SMS delivery is wired separately — the timestamp is the record.`)) return;
 
     const now = new Date().toISOString();
+    const { error: upErr } = await sb.from('recall_acknowledgements')
+      .update({ escalation_2h_sent_at: now })
+      .in('id', targets.map(a => a.id))
+      .eq('organisation_id', _orgId);
+    if (upErr) throw upErr;
 
-    if (reminderTargets.length) {
-      const { error: r1 } = await sb.from('recall_acknowledgements')
-        .update({ escalation_2h_sent_at: now })
-        .in('id', reminderTargets.map(a => a.id))
-        .eq('organisation_id', _orgId);
-      if (r1) throw r1;
-    }
-
-    if (escalationTargets.length) {
-      const { error: r2 } = await sb.from('recall_acknowledgements')
-        .update({ escalation_24h_sent_at: now })
-        .in('id', escalationTargets.map(a => a.id))
-        .eq('organisation_id', _orgId);
-      if (r2) throw r2;
-    }
-
-    // Toast wording mirrors what actually got stamped.
-    const parts = [];
-    if (reminderTargets.length)   parts.push(`${reminderTargets.length} reminder${reminderTargets.length === 1 ? '' : 's'}`);
-    if (escalationTargets.length) parts.push(`${escalationTargets.length} escalation${escalationTargets.length === 1 ? '' : 's'}`);
-    showToast(`Stamped ${parts.join(' + ')}.`, 'ok', 3000);
+    showToast(`Reminders stamped on ${targets.length} store${targets.length === 1 ? '' : 's'}.`, 'ok', 3000);
     setTimeout(() => renderRecallDetail(), 500);
   } catch (e) {
     showToast('Could not send reminders: ' + (e.message || 'unknown error'), 'error', 4500);
