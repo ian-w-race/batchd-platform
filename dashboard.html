@@ -3762,6 +3762,31 @@ const _MAP_STATUS_LABELS = {
 // Window for the "recently resolved" green state. Tuneable.
 const _MAP_RESOLVED_WINDOW_MS = 7 * 24 * 3600_000;
 
+// Severity badge helper — converts the recall_events.severity field
+// (variants: 'class_i', 'Class I', 'I', '1', etc.) into a { txt, bg,
+// border, fg } token bundle. Used by the Command Center right rail AND
+// the Live Recall Detail page header. Returns null for empty severity.
+function _severityLabel(sev) {
+  if (!sev) return null;
+  const s = String(sev).toLowerCase();
+  if (s.includes('iii') || s === '3' || s === 'class_iii') return { txt: 'Class III', bg: 'rgba(70,130,255,0.12)',  border: 'rgba(70,130,255,0.4)',  fg: '#7ba9ff' };
+  if (s.includes('ii')  || s === '2' || s === 'class_ii')  return { txt: 'Class II',  bg: 'rgba(245,166,35,0.12)',  border: 'rgba(245,166,35,0.4)',  fg: '#f5a623' };
+  if (s.includes('i')   || s === '1' || s === 'class_i')   return { txt: 'Class I',   bg: 'rgba(255,92,92,0.12)',   border: 'rgba(255,92,92,0.4)',   fg: '#ff5c5c' };
+  return { txt: String(sev), bg: 'var(--surface2)', border: 'var(--border)', fg: 'var(--muted)' };
+}
+
+// Ordered 5-stage chain. The DB enum stays 'confirmed' for the final
+// step (see project_resolved_rename.md); the UI label is "Resolved"
+// platform-wide. RSLV is the short form for the counter strip + recall
+// cards.
+const _RECALL_STAGE_ORDER = [
+  { key: 'notified',     label: 'NOTIF' },
+  { key: 'acknowledged', label: 'ACK'   },
+  { key: 'pulled',       label: 'PULL'  },
+  { key: 'disposed',     label: 'DISP'  },
+  { key: 'confirmed',    label: 'RSLV'  }
+];
+
 // Window for time-based quick-stat tiles ("median ack time over last X days").
 const _STATS_LOOKBACK_MS      = 30 * 24 * 3600_000;
 
@@ -4174,23 +4199,9 @@ async function renderCommandCenter() {
     ];
 
     // ── Recall card builder ──────────────────────────────────────
-    // Renders one card. Click handler is wired after innerHTML is set.
-    const _severityLabel = sev => {
-      if (!sev) return null;
-      const s = String(sev).toLowerCase();
-      if (s.includes('iii') || s === '3' || s === 'class_iii') return { txt: 'Class III', bg: 'rgba(70,130,255,0.12)',  border: 'rgba(70,130,255,0.4)',  fg: '#7ba9ff' };
-      if (s.includes('ii')  || s === '2' || s === 'class_ii')  return { txt: 'Class II',  bg: 'rgba(245,166,35,0.12)',  border: 'rgba(245,166,35,0.4)',  fg: '#f5a623' };
-      if (s.includes('i')   || s === '1' || s === 'class_i')   return { txt: 'Class I',   bg: 'rgba(255,92,92,0.12)',   border: 'rgba(255,92,92,0.4)',   fg: '#ff5c5c' };
-      // Pass-through for anything we don't recognise
-      return { txt: String(sev), bg: 'var(--surface2)', border: 'var(--border)', fg: 'var(--muted)' };
-    };
-    const _stageOrder = [
-      { key: 'notified',     label: 'NOTIF' },
-      { key: 'acknowledged', label: 'ACK'   },
-      { key: 'pulled',       label: 'PULL'  },
-      { key: 'disposed',     label: 'DISP'  },
-      { key: 'confirmed',    label: 'RSLV'  }   // UI label "Resolved" — DB enum stays 'confirmed'
-    ];
+    // Uses module-level _severityLabel and _RECALL_STAGE_ORDER (see top
+    // of the renderStoreMap block) so the same helpers power the right
+    // rail here and the Live Recall Detail page.
     const _renderRecallCard = r => {
       const sev = _severityLabel(r.ev.severity);
       const lots = (r.ev.lot_number || '').trim();
@@ -4204,7 +4215,7 @@ async function renderCommandCenter() {
       const sevBadge = sev
         ? `<span style="display:inline-flex;align-items:center;font-family:'DM Mono',monospace;font-size:10px;font-weight:700;letter-spacing:0.06em;padding:3px 8px;border-radius:5px;background:${sev.bg};border:1px solid ${sev.border};color:${sev.fg};">${esc(sev.txt)}${r.isDrill?' (sim.)':''}</span>` : '';
 
-      const stagesHtml = _stageOrder.map(st => {
+      const stagesHtml = _RECALL_STAGE_ORDER.map(st => {
         const count = r.stageCounts[st.key] || 0;
         const pct = r.total > 0 ? Math.round((count / r.total) * 100) : 0;
         return `
@@ -4387,6 +4398,195 @@ async function renderCommandCenter() {
   }
 }
 
+// ── FSMA 204 — 24-hour records production ────────────────────
+// 21 CFR 1.1455: when the FDA invokes the records request, retailers
+// have 24 hours to produce "an electronic sortable spreadsheet" of the
+// Receiving KDEs for the affected lot. This function builds exactly
+// that, scoped to a single recall.
+//
+// Matching strategy: pull every scan whose lot_number OR raw_capture
+// contains any of the recall's lot codes (substring match — same
+// approach as the recall-match path elsewhere). Deduplicate by id.
+//
+// Output: a single CSV with cover-block metadata (org, recall id,
+// product, lots, generated-at) followed by per-scan rows. UTF-8 BOM
+// included so Excel opens it cleanly. Filename embeds the recall id
+// shortform + date.
+//
+// Drills are flagged in the cover block ("MOCK DRILL — TEST EXPORT")
+// so an exported drill record can't accidentally be sent to a regulator
+// as a real submission.
+async function produceFsma204Records(recallEventId) {
+  const btn = document.getElementById('btn-produce-fsma204');
+  const setBusy = (busy) => {
+    if (!btn) return;
+    btn.disabled = busy;
+    btn.style.opacity = busy ? '0.6' : '1';
+    btn.style.cursor  = busy ? 'wait' : 'pointer';
+  };
+
+  setBusy(true);
+
+  try {
+    // 1. Refetch the recall event so we always export against current state
+    const { data: ev, error: evErr } = await sb.from('recall_events')
+      .select('id, product_name, lot_number, severity, reason, is_drill, published_at, source_org_id, created_at')
+      .eq('id', recallEventId)
+      .single();
+    if (evErr || !ev) throw new Error('Could not load recall details');
+
+    const lotsRaw = (ev.lot_number || '').trim();
+    if (!lotsRaw) {
+      showToast('This recall has no lot number on file — cannot produce records.', 'warn', 4500);
+      return;
+    }
+
+    // 2. Split the lot field — handles multi-lot recalls like
+    //    "L24-2851, L24-2852, L24-2855" or "DRILL-2026-04-26 / DRILL-2026-04-27"
+    const lots = lotsRaw.split(/[,;|/]+/).map(s => s.trim()).filter(Boolean);
+    if (lots.length === 0) lots.push(lotsRaw);
+
+    // 3. Match scans against each lot via raw_capture or lot_number substring.
+    //    Multiple parallel queries — one per lot — then dedupe.
+    const lotQueries = lots.map(lot =>
+      sb.from('scans')
+        .select('id, lot_number, raw_capture, product_name, barcode_number, store_name, store_id, supplier_name, scanned_by, created_at, quantity, removed_from_shelf_at, removed_from_shelf_by, recall_resolved, recall_resolved_at, expiry_date')
+        .eq('organisation_id', _orgId)
+        .or(`raw_capture.ilike.%${lot}%,lot_number.ilike.%${lot}%`)
+    );
+    const results = await Promise.all(lotQueries);
+
+    const seen = new Set();
+    const scans = [];
+    results.forEach(({ data, error }) => {
+      if (error) { console.warn('[FSMA 204] lot query failed:', error.message); return; }
+      (data || []).forEach(s => {
+        if (!seen.has(s.id)) { seen.add(s.id); scans.push(s); }
+      });
+    });
+
+    if (scans.length === 0) {
+      showToast("No scans on file match this recall's lot codes.", 'warn', 4500);
+      return;
+    }
+
+    // 4. Hydrate store info (address, region, country) for the rows
+    const storeIds = [...new Set(scans.map(s => s.store_id).filter(Boolean))];
+    const storesById = {};
+    if (storeIds.length > 0) {
+      const { data: storeRows } = await sb.from('stores')
+        .select('id, name, store_code, street_address, city, region, postal_code, country, address, phone')
+        .in('id', storeIds);
+      (storeRows || []).forEach(s => { storesById[s.id] = s; });
+    }
+
+    // 5. Build CSV
+    const escape = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+    const generatedAt = new Date();
+    const recallLots = lots.join(' / ');
+    const orgName = _orgName || 'Organisation';
+
+    const coverBlock = [
+      ['# FSMA 204 — 24-Hour Records Production'],
+      ['# 21 CFR 1.1455 — Electronic Sortable Spreadsheet of Receiving KDEs'],
+      [],
+      ['Organisation',         orgName],
+      ['Recall ID',            ev.id],
+      ['Recall Product',       ev.product_name || ''],
+      ['Recall Lot Code(s)',   recallLots],
+      ['Recall Reason',        ev.reason || ''],
+      ['Recall Severity',      ev.severity || ''],
+      ['Recall Published',     ev.published_at ? new Date(ev.published_at).toISOString() : ''],
+      ['Generated At',         generatedAt.toISOString()],
+      ['Total Records',        String(scans.length)],
+    ];
+
+    if (ev.is_drill) {
+      coverBlock.unshift([]);
+      coverBlock.unshift(['# MOCK DRILL — TEST EXPORT — NOT FOR REGULATORY SUBMISSION']);
+    }
+
+    const dataHeaders = [
+      'Traceability Lot Code',
+      'Product Name',
+      'Barcode',
+      'Best-by / Expiry',
+      'Store Name',
+      'Store Code',
+      'Street Address',
+      'City',
+      'Region',
+      'Postal Code',
+      'Country',
+      'Date Received (placed on shelf)',
+      'Quantity',
+      'Staff Member',
+      'Supplier / Source',
+      'Status',
+      'Date Removed'
+    ];
+
+    const dataRows = scans
+      // Stable order: oldest first, matches an inspector's expected timeline
+      .sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0))
+      .map(s => {
+        const store = storesById[s.store_id] || {};
+        const status = s.removed_from_shelf_at ? 'Removed from shelf' : 'On shelf';
+        return [
+          s.lot_number || s.raw_capture || '',
+          s.product_name || '',
+          s.barcode_number || '',
+          s.expiry_date || '',
+          store.name || s.store_name || '',
+          store.store_code || '',
+          store.street_address || store.address || '',
+          store.city || '',
+          store.region || '',
+          store.postal_code || '',
+          store.country || '',
+          s.created_at ? new Date(s.created_at).toISOString() : '',
+          s.quantity != null ? String(s.quantity) : '',
+          s.scanned_by || '',
+          s.supplier_name || '',
+          status,
+          s.removed_from_shelf_at ? new Date(s.removed_from_shelf_at).toISOString() : ''
+        ];
+      });
+
+    const csvLines = [
+      ...coverBlock.map(row => row.map(escape).join(',')),
+      [],   // blank separator
+      dataHeaders.map(escape).join(','),
+      ...dataRows.map(row => row.map(escape).join(','))
+    ].map(l => Array.isArray(l) ? l : l).join('\n').replace(/\n+/g, '\n');
+
+    // BOM so Excel auto-detects UTF-8 (important for Norwegian chars)
+    const blob = new Blob(['﻿' + csvLines], { type: 'text/csv;charset=utf-8;' });
+
+    const dateStr = generatedAt.toISOString().slice(0, 10);
+    const shortId = ev.id.slice(0, 8);
+    const drillTag = ev.is_drill ? 'DRILL-' : '';
+    const filename = `FSMA-204-records_${drillTag}${shortId}_${dateStr}.csv`;
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    showToast(`Exported ${scans.length} record${scans.length === 1 ? '' : 's'} — ${filename}`, 'ok', 5000);
+
+  } catch (e) {
+    console.error('[FSMA 204] export failed:', e);
+    showToast('Could not produce FSMA 204 records: ' + (e.message || 'unknown error'), 'error', 5000);
+  } finally {
+    setBusy(false);
+  }
+}
+
 // ── Live Recall Detail page ──────────────────────────────────
 // Step 1 of the Live Recall pivot (2026-05). Per-recall operational
 // view: header + recall info + 5-stage counters + map of affected
@@ -4479,52 +4679,116 @@ async function renderRecallDetail() {
     };
     const allResolved = total > 0 && stageCounts.confirmed === total;
 
-    // Placeholder render for Step 1 — confirms data loaded.
-    // Steps 2-7 replace this body with the real layout.
+    // Severity badge (Class I / II / III with colored token from
+    // _severityLabel). Falls back to "—" if no severity on file.
+    const sev = _severityLabel(ev.severity);
+    const sevBadge = sev
+      ? `<span style="display:inline-flex;align-items:center;font-family:'DM Mono',monospace;font-size:11px;font-weight:700;letter-spacing:0.05em;padding:4px 10px;border-radius:6px;background:${sev.bg};border:1px solid ${sev.border};color:${sev.fg};">${esc(sev.txt)}${ev.is_drill ? ' (sim.)' : ''}</span>`
+      : '<span style="font-family:\'DM Mono\',monospace;font-size:11px;color:var(--muted);">—</span>';
+
+    // LIVE / COMPLETED badge. Pulses for active recalls, muted when done.
+    const liveBadge = `
+      <div style="display:inline-flex;align-items:center;gap:7px;background:${allResolved ? 'var(--surface2)' : 'rgba(255,92,92,0.1)'};border:1px solid ${allResolved ? 'var(--border)' : 'rgba(255,92,92,0.35)'};color:${allResolved ? 'var(--muted)' : 'var(--danger)'};font-family:'DM Mono',monospace;font-size:11px;font-weight:700;padding:6px 13px;border-radius:7px;letter-spacing:0.05em;">
+        <span style="width:7px;height:7px;border-radius:50%;background:${allResolved ? 'var(--muted)' : 'var(--danger)'};${allResolved ? '' : 'animation:pulse 1.8s infinite;'}"></span>
+        ${allResolved ? 'COMPLETED' : 'LIVE'} · ${total} STORES
+      </div>`;
+
+    // Drill badge for the title row.
+    const drillBadge = ev.is_drill
+      ? `<span style="display:inline-block;font-family:'DM Mono',monospace;font-size:10px;font-weight:700;padding:4px 9px;border-radius:5px;background:rgba(245,166,35,0.14);border:1px solid rgba(245,166,35,0.4);color:#f5a623;margin-right:10px;vertical-align:middle;letter-spacing:0.05em;">DRILL</span>`
+      : '';
+
+    // Pretty date for the metadata row.
+    const fmtDate = (iso) => iso ? new Date(iso).toLocaleString(_dashLocale(), {
+      day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
+    }) : '—';
+
+    // Stub-action handler — surfaces a toast pointing to Step 7. Real
+    // implementations land in Step 7 (resend/escalate/mark complete).
+    const stubBtn = (label, slug) =>
+      `<button onclick="showToast('This action ships in Step 7 of the Live Recall pivot.', 'info', 3500)"
+               style="font-family:'DM Mono',monospace;font-size:11px;padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--muted);cursor:pointer;letter-spacing:0.02em;"
+               data-action="${slug}">${esc(label)}</button>`;
+
     el.innerHTML = `
-      <div style="margin-bottom:14px;">
+      <!-- Top row: back button + action buttons -->
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px;flex-wrap:wrap;">
         <button onclick="showPanel('overview')"
-                style="font-family:'DM Mono',monospace;font-size:11px;padding:7px 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--muted);cursor:pointer;">
+                style="font-family:'DM Mono',monospace;font-size:11px;padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--muted);cursor:pointer;letter-spacing:0.02em;">
           ← Command Center
         </button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          ${stubBtn('Resend reminders', 'resend')}
+          ${stubBtn('Escalate',         'escalate')}
+          ${stubBtn('Mark complete',    'complete')}
+        </div>
       </div>
 
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:14px;">
-        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:8px;">
-          <div>
-            <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:20px;color:var(--text);line-height:1.3;">
-              ${ev.is_drill ? '<span style="display:inline-block;font-family:\'DM Mono\',monospace;font-size:10px;font-weight:700;padding:3px 8px;border-radius:5px;background:rgba(245,166,35,0.14);border:1px solid rgba(245,166,35,0.4);color:#f5a623;margin-right:8px;vertical-align:middle;">DRILL</span>' : ''}
-              ${esc(ev.product_name || 'Recall')}
+      <!-- Recall info card -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px 22px;margin-bottom:14px;">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:12px;">
+          <div style="flex:1;min-width:240px;">
+            <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:22px;color:var(--text);line-height:1.3;">
+              ${drillBadge}${esc(ev.product_name || 'Recall')}
             </div>
-            <div style="font-size:12px;color:var(--muted);margin-top:4px;">${esc(ev.reason || '')}</div>
+            ${ev.reason ? `<div style="font-size:13px;color:var(--muted);margin-top:6px;line-height:1.55;">${esc(ev.reason)}</div>` : ''}
           </div>
-          <div style="display:inline-flex;align-items:center;gap:6px;background:${allResolved ? 'var(--surface2)' : 'rgba(255,92,92,0.1)'};border:1px solid ${allResolved ? 'var(--border)' : 'rgba(255,92,92,0.35)'};color:${allResolved ? 'var(--muted)' : 'var(--danger)'};font-family:'DM Mono',monospace;font-size:11px;font-weight:700;padding:5px 12px;border-radius:7px;letter-spacing:0.04em;">
-            <span style="width:7px;height:7px;border-radius:50%;background:${allResolved ? 'var(--muted)' : 'var(--danger)'};${allResolved ? '' : 'animation:pulse 1.8s infinite;'}"></span>
-            ${allResolved ? 'COMPLETED' : 'LIVE'} · ${total} STORES
-          </div>
+          ${liveBadge}
         </div>
-        <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);margin-top:6px;">
-          ${ev.severity ? 'Severity: <span style="color:var(--text);font-weight:700;">' + esc(ev.severity) + '</span> · ' : ''}
-          ${ev.lot_number ? 'Lots: <span style="color:var(--text);font-weight:700;">' + esc(ev.lot_number) + '</span> · ' : ''}
-          ID: <span style="color:var(--text);font-weight:700;">${esc(ev.id.slice(0, 8))}…</span> ·
-          Published: <span style="color:var(--text);font-weight:700;">${ev.published_at ? new Date(ev.published_at).toLocaleString(_dashLocale()) : '—'}</span>
+
+        <!-- Metadata row -->
+        <div style="display:flex;flex-wrap:wrap;gap:24px;margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
+          <div>
+            <div style="font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:5px;">Severity</div>
+            <div>${sevBadge}</div>
+          </div>
+          <div>
+            <div style="font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:5px;">Lot code${(ev.lot_number || '').includes(',') ? 's' : ''}</div>
+            <div style="font-family:'DM Mono',monospace;font-size:12.5px;font-weight:600;color:var(--text);">${esc(ev.lot_number || '—')}</div>
+          </div>
+          <div>
+            <div style="font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:5px;">Recall ID</div>
+            <div style="font-family:'DM Mono',monospace;font-size:12.5px;font-weight:600;color:var(--text);">${esc(ev.id.slice(0, 8))}…</div>
+          </div>
+          <div>
+            <div style="font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:5px;">Published</div>
+            <div style="font-size:12.5px;color:var(--text);">${fmtDate(ev.published_at)}</div>
+          </div>
         </div>
       </div>
 
-      <!-- Step 1 preview indicator — the real header/counters/map/list/ticker/FSMA arrive in Steps 2-7. -->
-      <div style="background:var(--surface);border:1px dashed var(--border);border-radius:10px;padding:16px;font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);line-height:1.7;">
-        <div style="font-weight:700;color:var(--text);margin-bottom:6px;">Step 1 preview — data loaded ✓</div>
-        <div>Acks fetched: <span style="color:var(--text);">${acks.length}</span></div>
-        <div>Scan-recall matches: <span style="color:var(--text);">${srm.length}</span></div>
-        <div>Stage counts:</div>
-        <div style="padding-left:14px;">
-          NOTIFIED ${stageCounts.notified}/${total}<br>
-          ACKNOWLEDGED ${stageCounts.acknowledged}/${total}<br>
-          PULLED ${stageCounts.pulled}/${total}<br>
-          DISPOSED ${stageCounts.disposed}/${total}<br>
-          RESOLVED ${stageCounts.confirmed}/${total}
+      <!-- FSMA 204 records production hero -->
+      <div style="background:linear-gradient(135deg, rgba(70,130,255,0.07), rgba(70,130,255,0.015) 65%);border:1px solid rgba(70,130,255,0.35);border-radius:12px;padding:18px 22px;margin-bottom:14px;">
+        <div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap;">
+          <div style="width:38px;height:38px;border-radius:10px;background:rgba(70,130,255,0.14);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7ba9ff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          </div>
+          <div style="flex:1;min-width:260px;">
+            <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:14px;color:var(--text);margin-bottom:3px;">FSMA 204 — 24-hour records production</div>
+            <div style="font-size:12px;color:var(--muted);line-height:1.55;">When the FDA invokes <strong style="color:#7ba9ff;font-family:'DM Mono',monospace;">21 CFR 1.1455</strong>, you have 24 hours to produce an electronic sortable spreadsheet of the Receiving KDEs for this lot. Batch'd has them — one click exports the regulator-ready CSV.</div>
+          </div>
+          <button id="btn-produce-fsma204"
+                  onclick="produceFsma204Records('${ev.id}')"
+                  style="display:inline-flex;align-items:center;gap:8px;font-family:'Figtree',sans-serif;font-weight:700;font-size:13px;padding:11px 22px;border-radius:10px;border:none;background:#4682ff;color:#fff;cursor:pointer;box-shadow:0 4px 14px rgba(70,130,255,0.25);transition:transform 0.15s,box-shadow 0.15s;flex-shrink:0;"
+                  onmouseenter="this.style.transform='translateY(-1px)';this.style.boxShadow='0 6px 18px rgba(70,130,255,0.35)'"
+                  onmouseleave="this.style.transform='none';this.style.boxShadow='0 4px 14px rgba(70,130,255,0.25)'">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Produce records
+          </button>
         </div>
-        <div style="margin-top:8px;color:var(--accent);">Step 2 next: header action buttons + working FSMA 204 records CSV export.</div>
+      </div>
+
+      <!-- Step 2 preview marker — gets replaced by counter strip in Step 3. -->
+      <div style="background:var(--surface);border:1px dashed var(--border);border-radius:10px;padding:14px 16px;font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);line-height:1.6;">
+        <div style="font-weight:700;color:var(--text);margin-bottom:4px;">Step 2 preview — header + FSMA 204 export wired ✓</div>
+        <div>Stage counts (preview):
+          NOTIF ${stageCounts.notified}/${total} ·
+          ACK ${stageCounts.acknowledged}/${total} ·
+          PULL ${stageCounts.pulled}/${total} ·
+          DISP ${stageCounts.disposed}/${total} ·
+          RSLV ${stageCounts.confirmed}/${total}</div>
+        <div style="margin-top:6px;">Scan-recall matches: ${srm.length}</div>
+        <div style="margin-top:8px;color:var(--accent);">Step 3 next: proper 5-stage counter strip with per-stage detail.</div>
       </div>`;
 
   } catch (e) {
