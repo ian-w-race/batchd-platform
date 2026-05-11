@@ -4866,6 +4866,90 @@ async function renderRecallDetail() {
     const storesOnMap     = mapStores.filter(s => s.latitude != null && s.longitude != null);
     const storesOffMap    = mapStores.filter(s => s.latitude == null || s.longitude == null);
 
+    // ── Stores ack list (Step 5) — sorted by urgency ──────────────
+    // Stage rank: notified first (most urgent — hasn't acted) through
+    // confirmed last (done). Within a stage, oldest stage-timestamp
+    // first so the longest-stuck stores rise to the top.
+    const _stageRank = { notified: 0, acknowledged: 1, pulled: 2, disposed: 3, confirmed: 4 };
+    const _stageEnteredAt = (s) => {
+      // Timestamp when the store entered its current stage
+      const map = {
+        notified:     s._notifiedAt,
+        acknowledged: s._ackedAt,
+        pulled:       s._pulledAt,
+        disposed:     s._disposedAt,
+        confirmed:    s._confirmedAt
+      };
+      const ts = map[s._status];
+      return ts ? new Date(ts).getTime() : 0;
+    };
+    const sortedStores = mapStores.slice().sort((a, b) => {
+      const rA = _stageRank[a._status] != null ? _stageRank[a._status] : 99;
+      const rB = _stageRank[b._status] != null ? _stageRank[b._status] : 99;
+      if (rA !== rB) return rA - rB;
+      // Same stage: oldest stage-entered-at first
+      return _stageEnteredAt(a) - _stageEnteredAt(b);
+    });
+
+    // Stage badge backgrounds — alpha-tinted versions of the marker colors
+    const _RECALL_DETAIL_STAGE_BG = {
+      notified:     'rgba(255,92,92,0.12)',
+      acknowledged: 'rgba(245,166,35,0.12)',
+      pulled:       'rgba(249,213,110,0.14)',
+      disposed:     'rgba(139,233,196,0.14)',
+      confirmed:    'rgba(77,201,154,0.12)'
+    };
+
+    // Build one row of the stores ack list.
+    const _renderStoreAckRow = (s) => {
+      const stage      = s._status || 'notified';
+      const stageColor = _RECALL_DETAIL_STAGE_COLORS[stage] || '#7a8985';
+      const stageBg    = _RECALL_DETAIL_STAGE_BG[stage]     || 'var(--surface2)';
+      const stageLabel = _RECALL_DETAIL_STAGE_LABELS[stage] || stage;
+      const enteredAtMs = _stageEnteredAt(s);
+      const relTime    = enteredAtMs > 0 ? _fmtElapsed(new Date(enteredAtMs).toISOString()) : null;
+      const absTime    = enteredAtMs > 0 ? new Date(enteredAtMs).toLocaleString(_dashLocale()) : '';
+      const hasCoords  = s.latitude != null && s.longitude != null;
+
+      const subParts = [];
+      if (s.store_code) subParts.push(esc(s.store_code));
+      if (s.city)       subParts.push(esc(s.city));
+      if (relTime)      subParts.push('<span title="' + esc(absTime) + '">entered ' + esc(stageLabel.toLowerCase()) + ' · ' + esc(relTime) + '</span>');
+      const subLine = subParts.join(' · ');
+
+      return `
+        <div class="batchd-store-ack-row" data-store-id="${esc(s.id || '')}"
+             style="display:flex;align-items:center;gap:12px;padding:11px 14px;background:var(--surface);border:1px solid var(--border);border-radius:10px;margin-bottom:6px;cursor:${hasCoords ? 'pointer' : 'default'};transition:background 0.15s,border-color 0.15s;"
+             ${hasCoords ? `onmouseenter="this.style.background='var(--surface2)';this.style.borderColor='var(--accent-dim, rgba(77,201,154,0.4))'" onmouseleave="this.style.background='var(--surface)';this.style.borderColor='var(--border)'"` : ''}>
+          <span style="width:10px;height:10px;border-radius:50%;background:${stageColor};flex-shrink:0;"></span>
+          <div style="flex:1;min-width:0;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:3px;">
+              <span style="font-family:'Figtree',sans-serif;font-weight:600;font-size:13px;color:var(--text);">${esc(s.name || 'Unnamed store')}</span>
+              <span style="font-family:'DM Mono',monospace;font-size:10px;font-weight:700;letter-spacing:0.05em;padding:2px 7px;border-radius:5px;background:${stageBg};color:${stageColor};">${esc(stageLabel.toUpperCase())}</span>
+            </div>
+            <div style="font-family:'DM Mono',monospace;font-size:10.5px;color:var(--muted);line-height:1.5;">
+              ${subLine || '—'}
+            </div>
+          </div>
+          ${hasCoords
+            ? `<span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:0.04em;flex-shrink:0;">↗ Map</span>`
+            : `<span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);opacity:0.6;flex-shrink:0;" title="No coordinates — verify address in Store Network">no coords</span>`}
+        </div>`;
+    };
+
+    const storesAckListHtml = sortedStores.length > 0 ? `
+      <div style="margin-bottom:14px;">
+        <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:10px;">
+          <div>
+            <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:14px;color:var(--text);">Stores · ack progress</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px;">${sortedStores.length} affected · sorted most-urgent first</div>
+          </div>
+        </div>
+        <div id="recall-detail-stores-list">
+          ${sortedStores.map(_renderStoreAckRow).join('')}
+        </div>
+      </div>` : '';
+
     // Custom popup builder for the recall detail map. Shows store
     // name + address + current stage badge + relative time since
     // entering that stage. Inherits the light-theme popup styling
@@ -5052,17 +5136,24 @@ async function renderRecallDetail() {
             : ' This recall has no stores assigned.'}
         </div>`}
 
-      <!-- Step 4 progress marker — replaced as steps 5-7 ship. -->
+      <!-- Stores ack list (Step 5) — sorted most-urgent first. Click a
+           row with coords to jump to its marker on the map above. -->
+      ${storesAckListHtml}
+
+      <!-- Step 5 progress marker — replaced as steps 6-7 ship. -->
       <div style="margin-top:6px;font-size:10.5px;color:var(--muted);font-family:'DM Mono',monospace;letter-spacing:0.02em;line-height:1.6;">
-        Step 4 preview — per-store ack list, live event ticker, and action buttons arrive in Steps 5-7.
+        Step 5 preview — live event ticker and action buttons arrive in Steps 6-7.
         ${srm.length > 0 ? `<span style="margin-left:8px;color:var(--accent);">${srm.length} scan-recall match${srm.length === 1 ? '' : 'es'}</span>` : ''}
       </div>`;
 
-    // Mount the map after the container is in the DOM
+    // Mount the map after the container is in the DOM. Stash the
+    // controller so the stores list row clicks below can zoom + open
+    // the corresponding marker's popup.
+    let mapCtrl = null;
     if (storesOnMap.length > 0) {
       const mapContainer = document.getElementById('recall-detail-map');
       if (mapContainer) {
-        renderStoreMap(mapContainer, storesOnMap, {
+        mapCtrl = renderStoreMap(mapContainer, storesOnMap, {
           height: '480px',
           colors: _RECALL_DETAIL_STAGE_COLORS,
           labels: _RECALL_DETAIL_STAGE_LABELS,
@@ -5073,6 +5164,40 @@ async function renderRecallDetail() {
         });
       }
     }
+
+    // Wire stores ack list row clicks → scroll to map + open marker popup.
+    // Rows without coordinates show a toast pointing to Store Network.
+    document.querySelectorAll('.batchd-store-ack-row').forEach(row => {
+      row.addEventListener('click', () => {
+        const sid = row.dataset.storeId;
+        const store = mapStores.find(s => s.id === sid);
+        if (!store) return;
+        if (store.latitude == null || store.longitude == null) {
+          showToast("This store isn't on the map yet. Verify its address in Store Network.", 'info', 3500);
+          return;
+        }
+        if (!mapCtrl || !mapCtrl.map) return;
+
+        // Scroll the map into view (smooth) then zoom + open popup.
+        // 350ms delay so the smooth scroll has time to complete before
+        // Leaflet animates the pan — looks much better than instant.
+        const mapContainer = document.getElementById('recall-detail-map');
+        if (mapContainer) mapContainer.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setTimeout(() => {
+          try {
+            mapCtrl.map.setView([store.latitude, store.longitude], 12, { animate: true });
+            // Find the corresponding marker by matching lat/lng.
+            // markersByStatus is keyed by stage, so flatten across all stages.
+            const allMarkers = Object.values(mapCtrl.markersByStatus).flat();
+            const marker = allMarkers.find(m => {
+              const ll = m.getLatLng();
+              return Math.abs(ll.lat - store.latitude) < 0.0001 && Math.abs(ll.lng - store.longitude) < 0.0001;
+            });
+            if (marker) marker.openPopup();
+          } catch (_) { /* swallow — non-fatal */ }
+        }, 350);
+      });
+    });
 
   } catch (e) {
     console.error('[renderRecallDetail]', e);
