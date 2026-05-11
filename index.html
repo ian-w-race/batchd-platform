@@ -12663,13 +12663,31 @@ async function snapRawCluster() {
   apiCanvas.height = srcH;
   apiCanvas.getContext('2d').drawImage(vid, srcX, srcY, srcW, srcH, 0, 0, srcW, srcH);
 
+  // Preprocess for OCR: upscale + contrast + sharpening. Targets the
+  // dot-matrix character-substitution failure mode (1↔T, 0↔O, etc.).
+  // See _preprocessForOcr for the pipeline. Falls back to the raw crop
+  // if anything throws.
+  let ocrCanvas = apiCanvas;
+  try {
+    const t0 = performance.now();
+    ocrCanvas = _preprocessForOcr(apiCanvas);
+    if (typeof console !== 'undefined' && console.debug) {
+      console.debug('[ocr] preprocess', apiCanvas.width + 'x' + apiCanvas.height,
+                    '→', ocrCanvas.width + 'x' + ocrCanvas.height,
+                    'in', Math.round(performance.now() - t0) + 'ms');
+    }
+  } catch (e) {
+    console.warn('[ocr] preprocess failed, sending raw crop:', e);
+    ocrCanvas = apiCanvas;
+  }
+
   // Encode in parallel — total time = max(t1, t2) instead of t1 + t2.
-  // 0.92 for the thumbnail (good visual preservation), 0.95 for the API
-  // payload (Sonnet's pipeline benefits from the extra fidelity on tiny
-  // inkjet glyphs).
+  // 0.92 for the thumbnail (good visual preservation, shown to user).
+  // 0.95 for the API payload (post-preprocessed; Sonnet benefits from
+  // the extra fidelity on the sharpened glyph edges).
   const [dispBlob, apiBlob] = await Promise.all([
     new Promise(r => dispCanvas.toBlob(r, 'image/jpeg', 0.92)),
-    new Promise(r => apiCanvas.toBlob(r, 'image/jpeg', 0.95)),
+    new Promise(r => ocrCanvas.toBlob(r, 'image/jpeg', 0.95)),
   ]);
 
   if (!dispBlob || !apiBlob) {
@@ -12732,6 +12750,79 @@ async function snapRawCluster() {
     const firstInput = document.querySelector('#raw-fields-list .raw-field-input');
     if (firstInput) { firstInput.focus(); firstInput.select(); }
   }, 50);
+}
+
+// Preprocess a canvas before sending to OCR. Targets the failure mode
+// where small dot-matrix inkjet characters get substituted by the vision
+// model (1↔T, 0↔O, 8↔B, 5↔S, etc.) because the pixel-level differences
+// are smaller than the model's character-discrimination resolution.
+//
+// Three-step pipeline:
+//   1. Upscale (up to 1.5x, capped at 1568px max edge — Anthropic's
+//      vision API resizes anything larger anyway, so going above is
+//      wasted tokens).
+//   2. Contrast/brightness lift via canvas filter — GPU-accelerated,
+//      essentially free. Separates ink from background.
+//   3. 3x3 sharpening kernel (0 -1 0 / -1 5 -1 / 0 -1 0) — tightens
+//      edges so dot-matrix dots become clearly distinct instead of
+//      bleeding together into ambiguous shapes.
+//
+// Returns a new canvas with the processed image. Caller encodes/sends.
+// Typical cost: ~30-100ms on modern phones.
+function _preprocessForOcr(srcCanvas) {
+  // Cap upscale so we don't send pixels Anthropic will just downscale
+  const naturalScale = 1.5;
+  const maxEdge = Math.max(srcCanvas.width, srcCanvas.height);
+  const scale = Math.max(1, Math.min(naturalScale, 1568 / maxEdge));
+  const w = Math.round(srcCanvas.width  * scale);
+  const h = Math.round(srcCanvas.height * scale);
+
+  // Step 1+2: upscale (or same-size copy) with contrast/brightness lift.
+  // ctx.filter applies during drawImage — single composite operation.
+  const out = document.createElement('canvas');
+  out.width  = w;
+  out.height = h;
+  const ctx = out.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.filter = 'contrast(1.35) brightness(1.05)';
+  ctx.drawImage(srcCanvas, 0, 0, w, h);
+  // Reset filter so subsequent putImageData isn't affected (Safari quirk)
+  ctx.filter = 'none';
+
+  // Step 3: 3x3 sharpening convolution. Edge pixels (1px border) are
+  // left unsharpened to avoid bounds-checks in the hot loop — inkjet
+  // text is well inside the crop region.
+  try {
+    const imageData = ctx.getImageData(0, 0, w, h);
+    const src = imageData.data;
+    const dst = new Uint8ClampedArray(src);
+    const stride = w * 4;
+    for (let y = 1; y < h - 1; y++) {
+      const yi = y * stride;
+      for (let x = 1; x < w - 1; x++) {
+        const i = yi + x * 4;
+        for (let c = 0; c < 3; c++) {
+          const v = src[i + c] * 5
+                  - src[i - stride + c]
+                  - src[i + stride + c]
+                  - src[i - 4      + c]
+                  - src[i + 4      + c];
+          dst[i + c] = v < 0 ? 0 : (v > 255 ? 255 : v);
+        }
+        // Alpha unchanged
+      }
+    }
+    imageData.data.set(dst);
+    ctx.putImageData(imageData, 0, 0);
+  } catch (e) {
+    // getImageData throws if the canvas is tainted (cross-origin source).
+    // Not possible here since src is our own video frame, but defensive.
+    // Fall back to the upscaled-but-unsharpened canvas.
+    console.warn('[preprocess] sharpen pass skipped:', e);
+  }
+
+  return out;
 }
 
 async function extractRawClusterFromImage(blob) {
