@@ -3083,11 +3083,11 @@ async function renderRecalls() {
             </div>
             ${evAcks.sort((a,b)=>a.acknowledged_at>b.acknowledged_at?1:-1).map(a => {
               const steps = [
-                { status:'notified',    time:a.created_at,         label:'Notified' },
-                { status:'acknowledged',time:a.acknowledged_at,    label:'Acknowledged' },
-                { status:'pulled',      time:a.pulled_at,          label:'Pulled from shelf' },
-                { status:'disposed',    time:a.disposed_at,        label:'Disposed' },
-                { status:'confirmed',   time:a.confirmed_at,       label:'Resolved — all clear' },
+                { status:'notified',    time:a.created_at,         label:'Step 1 · Notified' },
+                { status:'acknowledged',time:a.acknowledged_at,    label:'Step 2 · Acknowledged' },
+                { status:'pulled',      time:a.pulled_at,          label:'Step 3 · Pulled from shelf' },
+                { status:'disposed',    time:a.disposed_at,        label:'Step 4 · Disposed' },
+                { status:'confirmed',   time:a.confirmed_at,       label:'Step 5 · Resolved — all clear' },
               ].filter(s => {
                 const storeIdx = STEPS.indexOf(a.status);
                 return STEPS.indexOf(s.status) <= storeIdx && s.time;
@@ -3844,13 +3844,14 @@ function _severityLabel(sev) {
 // Ordered 5-stage chain. The DB enum stays 'confirmed' for the final
 // step (see project_resolved_rename.md); the UI label is "Resolved"
 // platform-wide. RSLV is the short form for the counter strip + recall
-// cards.
+// cards. The `step` field surfaces the procedural sequence (1-5) so
+// staff see the stages must be completed in order.
 const _RECALL_STAGE_ORDER = [
-  { key: 'notified',     label: 'NOTIF' },
-  { key: 'acknowledged', label: 'ACK'   },
-  { key: 'pulled',       label: 'PULL'  },
-  { key: 'disposed',     label: 'DISP'  },
-  { key: 'confirmed',    label: 'RSLV'  }
+  { key: 'notified',     label: 'NOTIF', step: 1 },
+  { key: 'acknowledged', label: 'ACK',   step: 2 },
+  { key: 'pulled',       label: 'PULL',  step: 3 },
+  { key: 'disposed',     label: 'DISP',  step: 4 },
+  { key: 'confirmed',    label: 'RSLV',  step: 5 }
 ];
 
 // Stage palette for the Live Recall Detail map (Step 4). Each marker
@@ -3865,11 +3866,11 @@ const _RECALL_DETAIL_STAGE_COLORS = {
   confirmed:    '#4DC99A'  // green — resolved (UI label; DB enum stays 'confirmed')
 };
 const _RECALL_DETAIL_STAGE_LABELS = {
-  notified:     'Notified',
-  acknowledged: 'Acknowledged',
-  pulled:       'Pulled',
-  disposed:     'Disposed',
-  confirmed:    'Resolved'
+  notified:     'Step 1 · Notified',
+  acknowledged: 'Step 2 · Acknowledged',
+  pulled:       'Step 3 · Pulled',
+  disposed:     'Step 4 · Disposed',
+  confirmed:    'Step 5 · Resolved'
 };
 
 // Window for time-based quick-stat tiles ("median ack time over last X days").
@@ -4337,7 +4338,7 @@ async function renderCommandCenter() {
               <div style="width:${pct}%;height:100%;background:var(--accent);transition:width 0.25s;"></div>
             </div>
             <div style="font-family:'DM Mono',monospace;font-size:8.5px;color:var(--muted);letter-spacing:0.05em;text-align:center;line-height:1.4;white-space:nowrap;">
-              <div style="font-weight:700;color:var(--text);">${st.label}</div>
+              <div style="font-weight:700;color:var(--text);">${st.step} · ${st.label}</div>
               <div>${count}/${r.total}</div>
             </div>
           </div>`;
@@ -4840,11 +4841,11 @@ async function renderRecallDetail() {
 
     // Tile definitions for the strip render
     const counterTiles = [
-      { label: 'NOTIFIED',     count: stageCounts.notified,     sub: notifiedSub },
-      { label: 'ACKNOWLEDGED', count: stageCounts.acknowledged, sub: ackSub      },
-      { label: 'PULLED',       count: stageCounts.pulled,       sub: pulledSub   },
-      { label: 'DISPOSED',     count: stageCounts.disposed,     sub: disposedSub },
-      { label: 'RESOLVED',     count: stageCounts.confirmed,    sub: resolvedSub }
+      { label: 'STEP 1 · NOTIFIED',     count: stageCounts.notified,     sub: notifiedSub },
+      { label: 'STEP 2 · ACKNOWLEDGED', count: stageCounts.acknowledged, sub: ackSub      },
+      { label: 'STEP 3 · PULLED',       count: stageCounts.pulled,       sub: pulledSub   },
+      { label: 'STEP 4 · DISPOSED',     count: stageCounts.disposed,     sub: disposedSub },
+      { label: 'STEP 5 · RESOLVED',     count: stageCounts.confirmed,    sub: resolvedSub }
     ];
 
     // ── Affected-stores list for the map (Step 4) ─────────────────
@@ -4950,6 +4951,145 @@ async function renderRecallDetail() {
         </div>
       </div>` : '';
 
+    // ── Live event ticker (Step 6) ────────────────────────────────
+    // Chronological feed of stage transitions, recall publication, and
+    // backend-recorded SLA escalations. Sourced from timestamps already
+    // on the ack rows + the recall_event itself. Newest-first.
+    //
+    // Format: time label (left, mono) + event description (right).
+    // Today's events show "HH:MM"; older show "DD Mon HH:MM". Hover the
+    // time to see the full absolute timestamp via the title attr.
+    const _eventTimeLabel = (iso) => {
+      if (!iso) return '—';
+      const t = new Date(iso);
+      if (!isFinite(t.getTime())) return '—';
+      const sameDay = t.toDateString() === new Date().toDateString();
+      return sameDay
+        ? t.toLocaleTimeString(_dashLocale(), { hour: '2-digit', minute: '2-digit', hour12: false })
+        : t.toLocaleString(_dashLocale(), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
+    };
+    const _eventAbsTime = (iso) => iso ? new Date(iso).toLocaleString(_dashLocale()) : '';
+
+    const events = [];
+
+    // Recall publication itself — the bottommost event in the feed
+    if (ev.published_at) {
+      events.push({
+        t: ev.published_at,
+        html: ev.is_drill
+          ? `<span style="color:#f5a623;font-weight:600;">Mock drill launched</span> — ${esc(ev.product_name || 'recall')}`
+          : `<strong style="color:var(--text);">Recall pushed</strong> to ${total} store${total === 1 ? '' : 's'} — ${esc(ev.product_name || '')}`,
+        color: 'var(--text)'
+      });
+    }
+
+    // Per-ack timeline events
+    (acks || []).forEach(a => {
+      const storeName = a.stores?.name || a.stores?.store_code || 'Store';
+
+      if (a.created_at) {
+        events.push({
+          t: a.created_at,
+          html: `<strong style="color:var(--text);">${esc(storeName)}</strong> notified`,
+          color: 'var(--muted)'
+        });
+      }
+      if (a.acknowledged_at) {
+        events.push({
+          t: a.acknowledged_at,
+          html: `<strong style="color:var(--text);">${esc(storeName)}</strong> acknowledged`,
+          color: 'var(--text)'
+        });
+      }
+      if (a.pulled_at) {
+        const units = (a.units_pulled != null && a.units_pulled > 0)
+          ? ` · <span style="font-family:'DM Mono',monospace;color:var(--text);">${a.units_pulled} unit${a.units_pulled === 1 ? '' : 's'}</span>`
+          : '';
+        events.push({
+          t: a.pulled_at,
+          html: `<strong style="color:var(--text);">${esc(storeName)}</strong> pulled from shelf${units}`,
+          color: 'var(--text)'
+        });
+      }
+      if (a.disposed_at) {
+        const method = a.disposal_method
+          ? ` · <span style="color:var(--muted);">${esc(a.disposal_method)}</span>`
+          : '';
+        events.push({
+          t: a.disposed_at,
+          html: `<strong style="color:var(--text);">${esc(storeName)}</strong> disposed${method}`,
+          color: 'var(--text)'
+        });
+      }
+      if (a.confirmed_at) {
+        events.push({
+          t: a.confirmed_at,
+          html: `<strong style="color:var(--text);">${esc(storeName)}</strong> <span style="color:var(--accent);font-weight:600;">resolved</span>`,
+          color: 'var(--accent)'
+        });
+      }
+      // Backend-recorded SLA escalations (when populated by the
+      // recall-escalation cron). These are real notifications, not
+      // computed/inferred — they only appear if escalation_*_sent_at
+      // got stamped.
+      if (a.escalation_2h_sent_at) {
+        events.push({
+          t: a.escalation_2h_sent_at,
+          html: `<span style="color:#f5a623;font-weight:600;">SLA reminder sent</span> · <strong style="color:var(--text);">${esc(storeName)}</strong> · 2h ack target`,
+          color: '#f5a623'
+        });
+      }
+      if (a.escalation_24h_sent_at) {
+        events.push({
+          t: a.escalation_24h_sent_at,
+          html: `<span style="color:var(--danger);font-weight:600;">SLA escalation sent</span> · <strong style="color:var(--text);">${esc(storeName)}</strong> · 24h target`,
+          color: 'var(--danger)'
+        });
+      }
+    });
+
+    // Newest first
+    events.sort((a, b) => new Date(b.t).getTime() - new Date(a.t).getTime());
+
+    // Cap at 50 — older events still accessible by scrolling within the
+    // ticker container, but we don't want to render thousands of rows
+    // for very long-lived recalls. (50 is a soft cap; bump if needed.)
+    const TICKER_LIMIT = 50;
+    const tickerEvents = events.slice(0, TICKER_LIMIT);
+    const tickerOverflow = events.length - tickerEvents.length;
+
+    const _renderEventRow = (e) => `
+      <div style="display:flex;gap:14px;padding:10px 14px;border-bottom:1px solid var(--border);align-items:flex-start;">
+        <div title="${esc(_eventAbsTime(e.t))}" style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);min-width:90px;flex-shrink:0;letter-spacing:0.02em;line-height:1.6;">
+          ${esc(_eventTimeLabel(e.t))}
+        </div>
+        <div style="flex:1;font-size:12px;color:${e.color};line-height:1.6;">
+          ${e.html}
+        </div>
+      </div>`;
+
+    const eventTickerHtml = `
+      <div style="margin-bottom:14px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:10px;">
+          <div>
+            <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:14px;color:var(--text);">Event ticker</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px;">
+              ${events.length} event${events.length === 1 ? '' : 's'} · newest first
+              ${tickerOverflow > 0 ? ` · showing latest ${TICKER_LIMIT}` : ''}
+            </div>
+          </div>
+          ${!allResolved ? `
+            <div style="display:inline-flex;align-items:center;gap:6px;font-family:'DM Mono',monospace;font-size:10px;color:var(--danger);letter-spacing:0.06em;font-weight:700;">
+              <span style="width:6px;height:6px;border-radius:50%;background:var(--danger);animation:pulse 1.8s infinite;"></span>LIVE
+            </div>` : ''}
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;max-height:420px;overflow-y:auto;">
+          ${tickerEvents.length === 0
+            ? '<div style="padding:14px 16px;font-size:11px;color:var(--muted);">No events yet.</div>'
+            : tickerEvents.map(_renderEventRow).join('')}
+        </div>
+      </div>`;
+
     // Custom popup builder for the recall detail map. Shows store
     // name + address + current stage badge + relative time since
     // entering that stage. Inherits the light-theme popup styling
@@ -5019,7 +5159,7 @@ async function renderRecallDetail() {
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px;flex-wrap:wrap;">
         <button onclick="showPanel('overview')"
                 style="font-family:'DM Mono',monospace;font-size:11px;padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--muted);cursor:pointer;letter-spacing:0.02em;">
-          ← Command Center
+          ← Dashboard
         </button>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           ${stubBtn('Resend reminders', 'resend')}
@@ -5140,9 +5280,13 @@ async function renderRecallDetail() {
            row with coords to jump to its marker on the map above. -->
       ${storesAckListHtml}
 
-      <!-- Step 5 progress marker — replaced as steps 6-7 ship. -->
+      <!-- Live event ticker (Step 6) — newest-first chronological feed
+           of stage transitions, recall pushes, and SLA escalations. -->
+      ${eventTickerHtml}
+
+      <!-- Step 6 progress marker — replaced when Step 7 ships. -->
       <div style="margin-top:6px;font-size:10.5px;color:var(--muted);font-family:'DM Mono',monospace;letter-spacing:0.02em;line-height:1.6;">
-        Step 5 preview — live event ticker and action buttons arrive in Steps 6-7.
+        Step 6 preview — Step 7 wires the action buttons (Resend reminders / Escalate / Mark complete).
         ${srm.length > 0 ? `<span style="margin-left:8px;color:var(--accent);">${srm.length} scan-recall match${srm.length === 1 ? '' : 'es'}</span>` : ''}
       </div>`;
 
@@ -8677,23 +8821,23 @@ function renderTerminology() {
 
       ${section('Recall response chain', 'The five mandatory steps each store completes when a recall is active. Every step is timestamped and attributed to a named staff member.')}
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:0 18px;margin-top:8px;">
-        ${term('Notified',
+        ${term('Step 1 · Notified',
           'The store has received the recall alert. This status is set automatically the moment a manufacturer pushes a recall and the store is included in the distribution list.',
           'Notified does <strong>not</strong> mean any staff member has seen the alert. It confirms only that the alert was delivered to the store\'s Batch\'d account. The timestamp of this step is the legal record of when the store was informed.',
           isUS ? 'FDA 21 CFR 7.46' : 'Matloven §16')}
-        ${term('Acknowledged',
+        ${term('Step 2 · Acknowledged',
           'A staff member or manager at the store has opened the recall alert and confirmed they have read and understood it.',
           'This is the first step that requires a human action. The name of the person who acknowledged, and the exact timestamp, are recorded. In a regulatory inspection, this step demonstrates that staff were made aware of the recall.',
           isUS ? 'FDA 21 CFR 7.46' : 'Matloven §16')}
-        ${term('Pulled from shelf',
+        ${term('Step 3 · Pulled from shelf',
           'Staff have physically located and removed all units of the affected product from every shelf, display area, and accessible back-of-store location.',
           'The number of units removed and the shelf location are recorded if provided. This step does not cover stock in the warehouse or receiving area — those should be noted in the Notes field. "Pulled from shelf" creates the legal record that the product was removed from public access.',
           isUS ? 'FDA 21 CFR Part 7' : 'Matloven §16')}
-        ${term('Disposed',
+        ${term('Step 4 · Disposed',
           'The removed product has been physically quarantined, returned to the manufacturer, destroyed, or otherwise handled in accordance with the recall instructions.',
           'The method of disposal is at the discretion of the recall issuer unless instructions specify otherwise. This step does not require the product to be destroyed — quarantine and return to manufacturer both qualify. The timestamp is the legal record that the product was taken out of the supply chain.',
           '')}
-        ${term('Resolved',
+        ${term('Step 5 · Resolved',
           'The store manager or designated recall coordinator has reviewed all previous steps and confirmed the recall response is complete for this store.',
           'This is the final step in the chain. Once resolved, the store\'s response record is locked. Batch\'d records the resolving staff member\'s name, their role, and the exact timestamp. A store that reaches Resolved status has a complete, legally defensible recall response record.',
           isUS ? 'FDA 21 CFR 7.55' : 'Matloven §16')}
