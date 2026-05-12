@@ -1545,7 +1545,7 @@ function showPanel(name) {
     document.getElementById('mobile-overlay')?.classList.remove('active');
   }
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-  const panels = { overview:'Dashboard', onboarding:'Getting started', recalls:'Recalls', stores:'Store Network', traceability:'Scan History', staff:'Staff Activity', compliance:'Compliance', reports:'Reports and Exports', settings:'Settings', triage:'Complaint Triage', 'consumer-notify':'Consumer Notify', investigations:'Investigations', terminology:'Terminology & Help', lotcheck:'Lot Lookup', 'recall-detail':'Live Recall' };
+  const panels = { overview:'Dashboard', onboarding:'Getting started', recalls:'Recalls', stores:'Store Network', traceability:'Scan History', staff:'Staff Activity', compliance:'Compliance', reports:'Reports and Exports', settings:'Settings', triage:'Complaint Triage', 'consumer-notify':'Consumer Notify', investigations:'Investigations', terminology:'Terminology & Help', lotcheck:'Lot Lookup', 'recall-detail':'Live Recall', 'recall-composer':'Compose recall' };
   document.getElementById('topbar-title').textContent = panels[name] || name;
   document.querySelectorAll('.nav-item').forEach(el => {
     if (el.getAttribute('onclick')?.includes(`'${name}'`)) el.classList.add('active');
@@ -1558,7 +1558,7 @@ function showPanel(name) {
   // recall-detail → renderRecallDetail. Reached only via deep link
   // (?panel=recall-detail&id=X) or by clicking a recall card on the
   // Command Center right rail; no sidebar entry on purpose.
-  const fns = { overview: renderCommandCenter, onboarding: renderOnboarding, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, triage: renderDashboardTriage, investigations: renderDashInvestigations, 'consumer-notify': renderConsumerNotification, terminology: renderTerminology, lotcheck: renderLotCheck, 'recall-detail': renderRecallDetail };
+  const fns = { overview: renderCommandCenter, onboarding: renderOnboarding, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, triage: renderDashboardTriage, investigations: renderDashInvestigations, 'consumer-notify': renderConsumerNotification, terminology: renderTerminology, lotcheck: renderLotCheck, 'recall-detail': renderRecallDetail, 'recall-composer': renderRecallComposer };
   (fns[name] || renderComingSoon)(name);
 }
 
@@ -3593,6 +3593,710 @@ async function saveManualRecall() {
 }
 
 
+// ═══════════════════════════════════════════════════════════════
+// ── Guided Recall Composer (v1 — 2026-05) ─────────────────────
+// ═══════════════════════════════════════════════════════════════
+// Full-page 4-step flow reached from the dashboard hero "Push a
+// Recall" button. Replaces the legacy 6-field form as the front
+// door for initiating recalls. The legacy "Add a recall manually"
+// tab on the Recalls panel is preserved as the quick-add path
+// (e.g. for externally-originated recalls you only need to track).
+//
+// Architecture:
+//   - State lives in module-level _composerState; reset on entry
+//   - Each step renders into #main-content via renderRecallComposer
+//   - "Back" / "Continue" mutate state.step then re-render
+//   - Step 1 triggers an async lookup against scans to surface
+//     distribution scope ("23 stores, latest scan 5d ago")
+//   - Step 4 generates a print-friendly HTML coordination sheet
+//     in a new tab AND inserts the recall (same payload shape as
+//     saveManualRecall — strategy fields folded into description)
+//
+// Schema note: this writes to the existing recalls table only.
+// No new columns. Recall strategy data (depth, public warning,
+// effectiveness level) is appended to the description text so the
+// data is recoverable later when a v2 migration adds proper columns.
+// ═══════════════════════════════════════════════════════════════
+
+let _composerState = null;
+
+function openRecallComposer() {
+  // Reset state on every entry — no half-finished draft persistence in v1
+  _composerState = {
+    step: 1,
+    product: '', lot: '', barcode: '',
+    severity: 'unknown', hazardType: '', reason: '',
+    depth: 'retail', publicWarning: false, effectiveness: 'B',
+    // Populated by _composerLookupDistribution after Step 1 entry
+    scope: null,        // { stores: [{id,name,latest,units}], totalStores, totalUnits, latestScanAt }
+    scopeLoading: false,
+    scopeError: null,
+  };
+  showPanel('recall-composer');
+}
+
+function renderRecallComposer() {
+  if (!_composerState) {
+    // Direct deep-link hit without going through openRecallComposer —
+    // initialise state with defaults
+    _composerState = {
+      step: 1, product:'', lot:'', barcode:'',
+      severity:'unknown', hazardType:'', reason:'',
+      depth:'retail', publicWarning:false, effectiveness:'B',
+      scope:null, scopeLoading:false, scopeError:null,
+    };
+  }
+  const el = document.getElementById('main-content');
+  if (!el) return;
+  const s = _composerState;
+
+  // Stepper header — visible on all steps
+  const STEPS = [
+    { n:1, label:'Identify' },
+    { n:2, label:'Classify' },
+    { n:3, label:'Strategy' },
+    { n:4, label:'Review' },
+  ];
+  const stepper = `
+    <div style="display:flex;align-items:center;gap:0;margin-bottom:22px;flex-wrap:wrap;">
+      ${STEPS.map((st, i) => {
+        const done = s.step > st.n, current = s.step === st.n;
+        const dotBg = done ? 'var(--accent)' : current ? 'var(--accent)' : 'var(--surface2)';
+        const dotColor = (done || current) ? '#04120e' : 'var(--muted)';
+        const lineColor = done ? 'var(--accent)' : 'var(--border)';
+        const labelColor = current ? 'var(--text)' : done ? 'var(--muted)' : 'var(--muted)';
+        return `
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div style="width:26px;height:26px;border-radius:50%;background:${dotBg};color:${dotColor};display:inline-flex;align-items:center;justify-content:center;font-family:'DM Mono',monospace;font-size:11px;font-weight:700;border:1px solid ${current ? 'var(--accent)' : 'transparent'};">${done ? '✓' : st.n}</div>
+            <div style="font-family:'DM Mono',monospace;font-size:11px;color:${labelColor};letter-spacing:0.04em;text-transform:uppercase;font-weight:${current?'700':'500'};">${st.label}</div>
+          </div>
+          ${i < STEPS.length-1 ? `<div style="flex:1;height:1.5px;background:${lineColor};margin:0 12px;min-width:24px;"></div>` : ''}
+        `;
+      }).join('')}
+    </div>`;
+
+  // Back-to-dashboard + cancel row
+  const topRow = `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:18px;flex-wrap:wrap;">
+      <button onclick="_composerCancel()"
+              style="font-family:'DM Mono',monospace;font-size:11px;padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--muted);cursor:pointer;letter-spacing:0.02em;">
+        ← Cancel and return to dashboard
+      </button>
+      <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:0.06em;text-transform:uppercase;">
+        Step ${s.step} of 4
+      </div>
+    </div>`;
+
+  let stepHtml = '';
+  if      (s.step === 1) stepHtml = _composerStep1Identify(s);
+  else if (s.step === 2) stepHtml = _composerStep2Classify(s);
+  else if (s.step === 3) stepHtml = _composerStep3Strategy(s);
+  else if (s.step === 4) stepHtml = _composerStep4Review(s);
+
+  el.innerHTML = `
+    <div style="max-width:760px;margin:0 auto;">
+      ${topRow}
+      ${stepper}
+      ${stepHtml}
+    </div>
+  `;
+}
+
+function _composerCancel() {
+  if (_composerState && (_composerState.product || _composerState.lot)) {
+    if (!confirm('Cancel and discard this draft recall?')) return;
+  }
+  _composerState = null;
+  showPanel('overview');
+}
+
+// ── Step 1: Identify the lot ──────────────────────────────────
+function _composerStep1Identify(s) {
+  const canContinue = !!(s.product && s.lot);
+  return `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px 26px;">
+      <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:20px;color:var(--text);margin-bottom:6px;">What's being recalled?</div>
+      <div style="font-size:12.5px;color:var(--muted);line-height:1.6;margin-bottom:22px;max-width:60ch;">
+        Enter the product and lot details. As soon as we have a lot or barcode, Batch'd checks your scan history to show how widely this lot is distributed across your stores.
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr;gap:14px;">
+        <div>
+          <label style="display:block;font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:5px;">Product name</label>
+          <input id="composer-product" type="text" value="${esc(s.product)}"
+                 oninput="_composerState.product=this.value;_composerUpdateContinueBtn()"
+                 placeholder="e.g. Gilde Kjøttdeig 400g"
+                 style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:'Figtree',sans-serif;font-size:14px;" />
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+          <div>
+            <label style="display:block;font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:5px;">Lot / batch number</label>
+            <input id="composer-lot" type="text" value="${esc(s.lot)}"
+                   oninput="_composerState.lot=this.value;_composerUpdateContinueBtn()"
+                   onblur="_composerLookupDistribution()"
+                   placeholder="L2026-04-01A"
+                   style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:'DM Mono',monospace;font-size:13px;" />
+          </div>
+          <div>
+            <label style="display:block;font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:5px;">Barcode (EAN/UPC) — optional</label>
+            <input id="composer-barcode" type="text" value="${esc(s.barcode)}"
+                   oninput="_composerState.barcode=this.value"
+                   onblur="_composerLookupDistribution()"
+                   placeholder="7038010054501"
+                   style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:'DM Mono',monospace;font-size:13px;" />
+          </div>
+        </div>
+      </div>
+
+      <!-- Distribution scope preview — updates after lot/barcode blur -->
+      <div id="composer-scope" style="margin-top:18px;">
+        ${_composerScopeHtml(s)}
+      </div>
+    </div>
+
+    ${_composerNavRow(false, canContinue, 'Continue to Classify →')}
+  `;
+}
+
+function _composerScopeHtml(s) {
+  if (s.scopeLoading) {
+    return `<div style="padding:14px 16px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;font-size:12px;color:var(--muted);display:flex;align-items:center;gap:10px;">
+      <div class="spinner"></div> Checking your scan history…
+    </div>`;
+  }
+  if (s.scopeError) {
+    return `<div style="padding:14px 16px;background:rgba(255,92,92,0.05);border:1px solid rgba(255,92,92,0.2);border-radius:10px;font-size:12px;color:var(--danger);">
+      Couldn't check scan history: ${esc(s.scopeError)}
+    </div>`;
+  }
+  if (!s.scope) {
+    return `<div style="padding:14px 16px;background:var(--surface2);border:1px dashed var(--border);border-radius:10px;font-size:12px;color:var(--muted);line-height:1.55;">
+      Enter a lot number or barcode above — Batch'd will check your scan history to show distribution scope across your store network.
+    </div>`;
+  }
+  const sc = s.scope;
+  if (sc.totalStores === 0) {
+    return `<div style="padding:14px 16px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;font-size:12px;color:var(--muted);line-height:1.55;">
+      <strong style="color:var(--text);">No matches in scan history.</strong> The recall will still publish — Batch'd will match against future scans automatically as your team logs new products.
+    </div>`;
+  }
+  const latestRel = sc.latestScanAt ? _fmtElapsed(new Date(sc.latestScanAt).getTime()) : '—';
+  const topStores = sc.stores.slice(0, 6);
+  return `
+    <div style="padding:16px 18px;background:rgba(77,201,154,0.06);border:1px solid var(--accent-dim);border-radius:10px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12 11 14 15 10"/><circle cx="12" cy="12" r="10"/></svg>
+        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:13px;color:var(--accent);">Match found in your scan history</div>
+      </div>
+      <div style="font-size:12.5px;color:var(--text);line-height:1.7;margin-bottom:10px;">
+        This lot has been scanned at <strong>${sc.totalStores}</strong> store${sc.totalStores===1?'':'s'} · <strong>${sc.totalUnits}</strong> total scan${sc.totalUnits===1?'':'s'} on shelf · latest scan <strong>${latestRel}</strong> ago.
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;">
+        ${topStores.map(st => `<span style="font-family:'DM Mono',monospace;font-size:10.5px;padding:3px 9px;border-radius:10px;background:var(--surface);border:1px solid var(--border);color:var(--muted);">${esc(st.name)}</span>`).join('')}
+        ${sc.stores.length > topStores.length ? `<span style="font-family:'DM Mono',monospace;font-size:10.5px;padding:3px 9px;color:var(--muted);">+${sc.stores.length - topStores.length} more</span>` : ''}
+      </div>
+    </div>`;
+}
+
+async function _composerLookupDistribution() {
+  const s = _composerState;
+  if (!s) return;
+  const lot = (s.lot || '').trim();
+  const barcode = (s.barcode || '').trim();
+  if (!lot && !barcode) { s.scope = null; _composerRefreshScope(); return; }
+
+  s.scopeLoading = true; s.scopeError = null;
+  _composerRefreshScope();
+
+  try {
+    // Pull recent scans for this org. Filter client-side via lotsMatch so
+    // fuzzy/prefix matches work the same as elsewhere in the dashboard.
+    // Limit 1000 is generous for a single-org single-lot scope check.
+    let q = sb.from('scans')
+      .select('id, store_id, store_name, lot_number, barcode, created_at, removed_from_shelf_at')
+      .eq('organisation_id', _orgId)
+      .order('created_at', { ascending: false })
+      .limit(1000);
+    const { data, error } = await q;
+    if (error) throw error;
+
+    const matched = (data || []).filter(sc => {
+      const lotHit = lot     && lotsMatch(sc.lot_number, lot);
+      const bcHit  = barcode && sc.barcode && sc.barcode.trim() === barcode;
+      return lotHit || bcHit;
+    });
+    // Only on-shelf scans count for "distribution scope" — removed scans
+    // are no longer in inventory.
+    const onShelf = matched.filter(sc => !sc.removed_from_shelf_at);
+
+    // Group by store_id
+    const byStore = {};
+    let latest = null;
+    onShelf.forEach(sc => {
+      const sid = sc.store_id || sc.store_name || '__unknown';
+      if (!byStore[sid]) byStore[sid] = { id: sid, name: sc.store_name || 'Unknown store', units: 0, latest: null };
+      byStore[sid].units += 1;
+      if (!byStore[sid].latest || new Date(sc.created_at) > new Date(byStore[sid].latest)) {
+        byStore[sid].latest = sc.created_at;
+      }
+      if (!latest || new Date(sc.created_at) > new Date(latest)) latest = sc.created_at;
+    });
+    const stores = Object.values(byStore).sort((a,b) => (b.units - a.units));
+
+    s.scope = {
+      stores,
+      totalStores: stores.length,
+      totalUnits: onShelf.length,
+      latestScanAt: latest,
+    };
+  } catch (e) {
+    s.scopeError = e.message || 'unknown error';
+    s.scope = null;
+  } finally {
+    s.scopeLoading = false;
+    _composerRefreshScope();
+  }
+}
+
+function _composerRefreshScope() {
+  const target = document.getElementById('composer-scope');
+  if (target) target.innerHTML = _composerScopeHtml(_composerState);
+}
+
+// ── Step 2: Classify ──────────────────────────────────────────
+function _composerStep2Classify(s) {
+  const canContinue = !!(s.severity && s.severity !== 'unknown' && s.hazardType && s.reason && s.reason.length >= 12);
+  // FDA severity classes — same labels regardless of org region in v1.
+  // v2 will swap in Mattilsynet equivalents under _orgRegion === 'no'.
+  const sevOpts = [
+    { v:'class_i',          title:'Class I',           sub:'Reasonable probability of serious adverse health consequences or death.', tone:'danger' },
+    { v:'class_ii',         title:'Class II',          sub:'Temporary or medically reversible health consequence; remote probability of serious harm.', tone:'warn' },
+    { v:'class_iii',        title:'Class III',         sub:'Not likely to cause adverse health consequences (e.g., labeling defect, weight short).', tone:'muted' },
+    { v:'market_withdrawal',title:'Market withdrawal', sub:'Minor violation that would not be subject to FDA legal action, or no violation at all.', tone:'muted' },
+  ];
+  const hazardOpts = [
+    { v:'allergen',       label:'Undeclared allergen' },
+    { v:'contamination',  label:'Microbial / pathogen contamination' },
+    { v:'foreign_object', label:'Foreign object' },
+    { v:'mislabeling',    label:'Mislabeling / wrong product' },
+    { v:'chemical',       label:'Chemical / heavy metal contamination' },
+    { v:'spoilage',       label:'Spoilage / off-spec' },
+    { v:'packaging',      label:'Packaging defect' },
+    { v:'other',          label:'Other' },
+  ];
+  return `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px 26px;">
+      <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:20px;color:var(--text);margin-bottom:6px;">How serious is this recall?</div>
+      <div style="font-size:12.5px;color:var(--muted);line-height:1.6;margin-bottom:22px;max-width:60ch;">
+        Pick the FDA recall class that best matches the health risk. The class determines how quickly stores must act, whether a public warning is required, and how aggressively Batch'd nudges store managers in the response chain.
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:22px;">
+        ${sevOpts.map(o => {
+          const selected = s.severity === o.v;
+          const toneBorder = selected
+            ? (o.tone === 'danger' ? 'var(--danger)' : o.tone === 'warn' ? 'var(--warn)' : 'var(--accent)')
+            : 'var(--border)';
+          const toneBg = selected ? (o.tone === 'danger' ? 'rgba(255,92,92,0.05)' : o.tone === 'warn' ? 'rgba(245,166,35,0.05)' : 'rgba(77,201,154,0.04)') : 'var(--surface2)';
+          return `
+            <label style="display:flex;gap:12px;padding:14px 16px;background:${toneBg};border:1.5px solid ${toneBorder};border-radius:10px;cursor:pointer;align-items:flex-start;transition:border-color 0.15s,background 0.15s;">
+              <input type="radio" name="composer-sev" value="${o.v}" ${selected?'checked':''}
+                     onchange="_composerState.severity=this.value;renderRecallComposer()"
+                     style="margin-top:3px;accent-color:var(--accent);" />
+              <div style="flex:1;">
+                <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:14px;color:var(--text);margin-bottom:3px;">${esc(o.title)}</div>
+                <div style="font-size:12px;color:var(--muted);line-height:1.55;">${esc(o.sub)}</div>
+              </div>
+            </label>`;
+        }).join('')}
+      </div>
+
+      <div style="margin-bottom:18px;">
+        <label style="display:block;font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">Hazard type</label>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;">
+          ${hazardOpts.map(o => {
+            const sel = s.hazardType === o.v;
+            return `<button type="button" onclick="_composerState.hazardType='${o.v}';renderRecallComposer()"
+              style="font-family:'DM Mono',monospace;font-size:11px;padding:7px 13px;border-radius:8px;border:1px solid ${sel?'var(--accent)':'var(--border)'};background:${sel?'rgba(77,201,154,0.1)':'var(--surface2)'};color:${sel?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.02em;">${esc(o.label)}</button>`;
+          }).join('')}
+        </div>
+      </div>
+
+      <div>
+        <label style="display:block;font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:5px;">Reason / hazard description</label>
+        <textarea id="composer-reason" rows="4"
+                  oninput="_composerState.reason=this.value;_composerUpdateContinueBtn()"
+                  placeholder="Describe what was found, when, by whom, and the affected lot range. This text appears on the regulator-facing record."
+                  style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:'Figtree',sans-serif;font-size:13px;resize:vertical;line-height:1.55;">${esc(s.reason)}</textarea>
+        <div style="font-size:10.5px;color:var(--muted);margin-top:5px;">Minimum 12 characters.</div>
+      </div>
+    </div>
+
+    ${_composerNavRow(true, canContinue, 'Continue to Strategy →')}
+  `;
+}
+
+// ── Step 3: Strategy ──────────────────────────────────────────
+function _composerStep3Strategy(s) {
+  const depthOpts = [
+    { v:'consumer',  title:'Consumer level',   sub:'Recover product from end consumers via public warning + retail pull. Required when product may have reached households.' },
+    { v:'retail',    title:'Retail level',     sub:'Pull from retailer shelves before consumer purchase. Standard for in-store catch.' },
+    { v:'wholesale', title:'Wholesale level',  sub:'Recover from distribution centres / wholesalers only — product has not reached retail shelves.' },
+  ];
+  // FDA-standard effectiveness check levels
+  const effOpts = [
+    { v:'A', title:'Level A — 100% of consignees', sub:'Class I recalls or where the recall message is critical' },
+    { v:'B', title:'Level B — partial sample',     sub:'Default for Class II; Batch\'d audits 10–100% based on risk' },
+    { v:'C', title:'Level C — 10% sample',         sub:'Class III / market withdrawals; low-risk verification' },
+  ];
+  // Auto-suggest public warning ON for Class I
+  if (s.severity === 'class_i' && !s.publicWarning && !s._userOverrodePublicWarning) {
+    s.publicWarning = true;
+  }
+  return `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px 26px;">
+      <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:20px;color:var(--text);margin-bottom:6px;">Recall strategy</div>
+      <div style="font-size:12.5px;color:var(--muted);line-height:1.6;margin-bottom:22px;max-width:60ch;">
+        How deep does this recall need to reach, and how aggressively should Batch'd verify it worked? These choices go on the coordination sheet and are referenced in the FDA notification (v2).
+      </div>
+
+      <div style="margin-bottom:22px;">
+        <div style="font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">Recall depth</div>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          ${depthOpts.map(o => {
+            const sel = s.depth === o.v;
+            return `
+              <label style="display:flex;gap:12px;padding:13px 15px;background:${sel?'rgba(77,201,154,0.05)':'var(--surface2)'};border:1.5px solid ${sel?'var(--accent)':'var(--border)'};border-radius:10px;cursor:pointer;align-items:flex-start;">
+                <input type="radio" name="composer-depth" value="${o.v}" ${sel?'checked':''}
+                       onchange="_composerState.depth=this.value;renderRecallComposer()"
+                       style="margin-top:3px;accent-color:var(--accent);" />
+                <div style="flex:1;">
+                  <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:13.5px;color:var(--text);margin-bottom:2px;">${esc(o.title)}</div>
+                  <div style="font-size:11.5px;color:var(--muted);line-height:1.55;">${esc(o.sub)}</div>
+                </div>
+              </label>`;
+          }).join('')}
+        </div>
+      </div>
+
+      <div style="margin-bottom:22px;padding:14px 16px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;">
+        <label style="display:flex;gap:12px;cursor:pointer;align-items:flex-start;">
+          <input type="checkbox" ${s.publicWarning?'checked':''}
+                 onchange="_composerState.publicWarning=this.checked;_composerState._userOverrodePublicWarning=true;"
+                 style="margin-top:3px;accent-color:var(--accent);width:16px;height:16px;" />
+          <div style="flex:1;">
+            <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:13.5px;color:var(--text);margin-bottom:2px;">Public warning required</div>
+            <div style="font-size:11.5px;color:var(--muted);line-height:1.55;">
+              Issue a press release or other public notification (consumer-facing). Required for most Class I recalls where the product may have reached households. ${s.severity === 'class_i' ? '<strong style="color:var(--warn);">Recommended for this Class I recall.</strong>' : ''}
+            </div>
+          </div>
+        </label>
+      </div>
+
+      <div>
+        <div style="font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">Effectiveness check level</div>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          ${effOpts.map(o => {
+            const sel = s.effectiveness === o.v;
+            return `
+              <label style="display:flex;gap:12px;padding:13px 15px;background:${sel?'rgba(77,201,154,0.05)':'var(--surface2)'};border:1.5px solid ${sel?'var(--accent)':'var(--border)'};border-radius:10px;cursor:pointer;align-items:flex-start;">
+                <input type="radio" name="composer-eff" value="${o.v}" ${sel?'checked':''}
+                       onchange="_composerState.effectiveness=this.value;renderRecallComposer()"
+                       style="margin-top:3px;accent-color:var(--accent);" />
+                <div style="flex:1;">
+                  <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:13.5px;color:var(--text);margin-bottom:2px;">${esc(o.title)}</div>
+                  <div style="font-size:11.5px;color:var(--muted);line-height:1.55;">${esc(o.sub)}</div>
+                </div>
+              </label>`;
+          }).join('')}
+        </div>
+      </div>
+    </div>
+
+    ${_composerNavRow(true, true, 'Continue to Review →')}
+  `;
+}
+
+// ── Step 4: Review & push ─────────────────────────────────────
+function _composerStep4Review(s) {
+  const sevTitle = ({class_i:'Class I',class_ii:'Class II',class_iii:'Class III',market_withdrawal:'Market withdrawal'})[s.severity] || s.severity;
+  const depthTitle = ({consumer:'Consumer level',retail:'Retail level',wholesale:'Wholesale level'})[s.depth] || s.depth;
+  const effTitle = ({A:'Level A · 100% sample',B:'Level B · partial sample',C:'Level C · 10% sample'})[s.effectiveness] || s.effectiveness;
+  const hazardLabel = ({allergen:'Undeclared allergen',contamination:'Microbial / pathogen contamination',foreign_object:'Foreign object',mislabeling:'Mislabeling / wrong product',chemical:'Chemical / heavy metal contamination',spoilage:'Spoilage / off-spec',packaging:'Packaging defect',other:'Other'})[s.hazardType] || s.hazardType;
+  const scopeStr = s.scope
+    ? (s.scope.totalStores > 0
+        ? `${s.scope.totalStores} store${s.scope.totalStores===1?'':'s'} · ${s.scope.totalUnits} on-shelf scan${s.scope.totalUnits===1?'':'s'}`
+        : 'No on-shelf matches in scan history')
+    : 'Not checked';
+
+  const row = (label, value) => `
+    <div style="display:flex;justify-content:space-between;gap:16px;padding:9px 0;border-bottom:1px solid var(--border);">
+      <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;">${esc(label)}</div>
+      <div style="font-size:13px;color:var(--text);text-align:right;max-width:60%;line-height:1.5;">${value}</div>
+    </div>`;
+
+  return `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px 26px;margin-bottom:14px;">
+      <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:20px;color:var(--text);margin-bottom:6px;">Review and push</div>
+      <div style="font-size:12.5px;color:var(--muted);line-height:1.6;margin-bottom:18px;max-width:60ch;">
+        Confirm the details below. Generate the coordination sheet to download a print-ready record of this recall — the same data Batch'd will hand to a regulator on request. Click <strong>Push recall</strong> to publish.
+      </div>
+
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:6px 16px;">
+        ${row('Product',        esc(s.product || '—'))}
+        ${row('Lot',            `<span style="font-family:'DM Mono',monospace;">${esc(s.lot || '—')}</span>`)}
+        ${row('Barcode',        s.barcode ? `<span style="font-family:'DM Mono',monospace;">${esc(s.barcode)}</span>` : '<span style="color:var(--muted);">—</span>')}
+        ${row('Severity',       esc(sevTitle))}
+        ${row('Hazard type',    esc(hazardLabel || '—'))}
+        ${row('Reason',         `<div style="white-space:pre-wrap;text-align:right;">${esc(s.reason || '—')}</div>`)}
+        ${row('Recall depth',   esc(depthTitle))}
+        ${row('Public warning', s.publicWarning ? 'Required' : 'Not required')}
+        ${row('Effectiveness',  esc(effTitle))}
+        ${row('Distribution',   esc(scopeStr))}
+      </div>
+    </div>
+
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+      <button onclick="_composerBack()"
+              style="font-family:'DM Mono',monospace;font-size:11px;padding:9px 16px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--muted);cursor:pointer;letter-spacing:0.02em;">
+        ← Back to Strategy
+      </button>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <button onclick="_composerOpenCoordinationSheet()"
+                style="font-family:'DM Mono',monospace;font-size:11px;padding:10px 18px;border-radius:8px;border:1px solid var(--accent);background:none;color:var(--accent);cursor:pointer;letter-spacing:0.02em;">
+          📄 Coordination sheet
+        </button>
+        <button id="composer-push-btn" onclick="_composerPushRecall()"
+                style="display:inline-flex;align-items:center;gap:8px;font-family:'Figtree',sans-serif;font-weight:700;font-size:14px;padding:10px 22px;border-radius:10px;border:none;background:var(--accent);color:#04120e;cursor:pointer;box-shadow:0 4px 14px rgba(77,201,154,0.22);">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+          Push recall
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+// ── Nav row helper (Back + Continue) ──────────────────────────
+function _composerNavRow(showBack, canContinue, continueLabel) {
+  return `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:14px;flex-wrap:wrap;">
+      ${showBack ? `<button onclick="_composerBack()" style="font-family:'DM Mono',monospace;font-size:11px;padding:9px 16px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--muted);cursor:pointer;letter-spacing:0.02em;">← Back</button>` : '<div></div>'}
+      <button id="composer-continue-btn"
+              onclick="${canContinue ? '_composerAdvance()' : ''}"
+              style="font-family:'Figtree',sans-serif;font-weight:700;font-size:14px;padding:10px 22px;border-radius:10px;border:none;background:${canContinue ? 'var(--accent)' : 'var(--surface2)'};color:${canContinue ? '#04120e' : 'var(--muted)'};cursor:${canContinue ? 'pointer' : 'not-allowed'};box-shadow:${canContinue ? '0 4px 14px rgba(77,201,154,0.22)' : 'none'};">
+        ${esc(continueLabel)}
+      </button>
+    </div>`;
+}
+
+function _composerAdvance() {
+  if (!_composerState) return;
+  if (_composerState.step < 4) _composerState.step += 1;
+  renderRecallComposer();
+}
+function _composerBack() {
+  if (!_composerState) return;
+  if (_composerState.step > 1) _composerState.step -= 1;
+  renderRecallComposer();
+}
+
+// Live-enable the continue button as the user types without forcing a
+// full re-render (which would blur the input and lose cursor position).
+function _composerUpdateContinueBtn() {
+  const s = _composerState;
+  if (!s) return;
+  const btn = document.getElementById('composer-continue-btn');
+  if (!btn) return;
+  let ok = false;
+  if (s.step === 1) ok = !!(s.product && s.lot);
+  if (s.step === 2) ok = !!(s.severity && s.severity !== 'unknown' && s.hazardType && s.reason && s.reason.length >= 12);
+  btn.onclick = ok ? _composerAdvance : null;
+  btn.style.background = ok ? 'var(--accent)' : 'var(--surface2)';
+  btn.style.color      = ok ? '#04120e'      : 'var(--muted)';
+  btn.style.cursor     = ok ? 'pointer'      : 'not-allowed';
+  btn.style.boxShadow  = ok ? '0 4px 14px rgba(77,201,154,0.22)' : 'none';
+}
+
+// ── Coordination sheet — print-friendly HTML in a new tab ─────
+function _composerOpenCoordinationSheet() {
+  const s = _composerState;
+  if (!s) return;
+  const sevTitle = ({class_i:'Class I — Health hazard (serious / life-threatening)',class_ii:'Class II — Temporary health consequence',class_iii:'Class III — Unlikely health consequence',market_withdrawal:'Market withdrawal'})[s.severity] || s.severity;
+  const depthTitle = ({consumer:'Consumer level',retail:'Retail level',wholesale:'Wholesale level'})[s.depth] || s.depth;
+  const effTitle = ({A:'Level A — 100% of consignees verified',B:'Level B — partial sample (default Class II)',C:'Level C — 10% sample (Class III / market withdrawal)'})[s.effectiveness] || s.effectiveness;
+  const hazardLabel = ({allergen:'Undeclared allergen',contamination:'Microbial / pathogen contamination',foreign_object:'Foreign object',mislabeling:'Mislabeling / wrong product',chemical:'Chemical / heavy metal contamination',spoilage:'Spoilage / off-spec',packaging:'Packaging defect',other:'Other'})[s.hazardType] || s.hazardType;
+  const orgName = _orgName || 'Your organisation';
+  const today   = new Date();
+  const dateStr = today.toLocaleDateString(undefined, { year:'numeric', month:'long', day:'numeric' });
+
+  const storeRows = (s.scope?.stores || []).map(st => `
+    <tr>
+      <td>${esc(st.name)}</td>
+      <td style="font-family:monospace;">${st.units}</td>
+      <td>${st.latest ? new Date(st.latest).toLocaleDateString() : '—'}</td>
+    </tr>`).join('') || `<tr><td colspan="3" style="color:#888;font-style:italic;">No on-shelf matches in scan history at time of coordination sheet generation.</td></tr>`;
+
+  const w = window.open('', '_blank');
+  if (!w) {
+    showToast('Pop-up blocked. Allow pop-ups for this site and try again.', 'error', 4500);
+    return;
+  }
+  w.document.write(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Recall Coordination Sheet — ${esc(s.product || 'Untitled')}</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm 18mm 16mm; }
+  body { font-family: 'Helvetica Neue', Arial, sans-serif; color:#1a201d; max-width: 780px; margin: 0 auto; padding: 24px; background:#fff; line-height:1.55; font-size:13px; }
+  h1 { font-size: 22px; margin: 0 0 4px 0; letter-spacing:-0.01em; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color:#555; margin: 22px 0 10px; border-bottom: 1.5px solid #1a201d; padding-bottom: 4px; }
+  .header-meta { display:flex; justify-content:space-between; font-size:11px; color:#666; margin-bottom: 14px; }
+  .severity-band { display:inline-block; padding:5px 10px; border-radius: 4px; font-weight: 700; font-size: 11px; letter-spacing:0.04em; }
+  .sev-class_i { background:#ffe1e1; color:#a01010; }
+  .sev-class_ii { background:#fff3d1; color:#7a5400; }
+  .sev-class_iii { background:#e3eef8; color:#1a4a78; }
+  .sev-market_withdrawal { background:#e8eaeb; color:#444; }
+  .field { display:flex; justify-content:space-between; gap:18px; padding:7px 0; border-bottom: 1px solid #eee; }
+  .field-label { font-size:11px; color:#666; text-transform:uppercase; letter-spacing:0.06em; flex-shrink:0; }
+  .field-value { text-align:right; max-width:60%; word-break: break-word; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+  th, td { text-align:left; padding: 7px 10px; border-bottom: 1px solid #eee; }
+  th { background:#f5f7f6; font-size:10.5px; text-transform:uppercase; letter-spacing:0.06em; color:#555; font-weight:600; }
+  .signature-row { display:flex; gap:24px; margin-top: 36px; }
+  .signature-block { flex:1; }
+  .signature-line { border-bottom: 1px solid #1a201d; height: 38px; margin-bottom: 6px; }
+  .signature-caption { font-size: 10px; color:#666; text-transform:uppercase; letter-spacing:0.06em; }
+  .footnote { font-size: 10px; color:#888; margin-top: 30px; line-height:1.5; border-top: 1px solid #eee; padding-top: 12px; }
+  .reason-box { background:#f9fafa; border:1px solid #e5e7e8; padding: 11px 14px; border-radius:4px; white-space: pre-wrap; font-size:12.5px; }
+  @media print {
+    body { padding: 0; }
+    h2 { page-break-after: avoid; }
+    table { page-break-inside: auto; }
+    tr { page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header-meta">
+  <div><strong>${esc(orgName)}</strong></div>
+  <div>Generated: ${esc(dateStr)}</div>
+</div>
+
+<h1>Recall Coordination Sheet</h1>
+<div style="margin-top:6px;margin-bottom:14px;"><span class="severity-band sev-${esc(s.severity)}">${esc(sevTitle)}</span></div>
+
+<h2>Product identification</h2>
+<div class="field"><div class="field-label">Product</div><div class="field-value"><strong>${esc(s.product || '—')}</strong></div></div>
+<div class="field"><div class="field-label">Lot / batch</div><div class="field-value" style="font-family:monospace;">${esc(s.lot || '—')}</div></div>
+<div class="field"><div class="field-label">Barcode</div><div class="field-value" style="font-family:monospace;">${esc(s.barcode || '—')}</div></div>
+
+<h2>Hazard</h2>
+<div class="field"><div class="field-label">Hazard type</div><div class="field-value">${esc(hazardLabel || '—')}</div></div>
+<div style="margin-top:10px;"><div class="field-label" style="margin-bottom:6px;">Description</div><div class="reason-box">${esc(s.reason || '—')}</div></div>
+
+<h2>Recall strategy</h2>
+<div class="field"><div class="field-label">Depth</div><div class="field-value">${esc(depthTitle)}</div></div>
+<div class="field"><div class="field-label">Public warning</div><div class="field-value">${s.publicWarning ? 'Required' : 'Not required'}</div></div>
+<div class="field"><div class="field-label">Effectiveness check</div><div class="field-value">${esc(effTitle)}</div></div>
+
+<h2>Distribution scope at initiation</h2>
+${s.scope && s.scope.totalStores > 0 ? `
+  <div class="field"><div class="field-label">Stores with on-shelf matches</div><div class="field-value"><strong>${s.scope.totalStores}</strong></div></div>
+  <div class="field"><div class="field-label">Total on-shelf scans</div><div class="field-value"><strong>${s.scope.totalUnits}</strong></div></div>
+  <div class="field"><div class="field-label">Most recent scan</div><div class="field-value">${s.scope.latestScanAt ? new Date(s.scope.latestScanAt).toLocaleString() : '—'}</div></div>
+  <table>
+    <thead><tr><th>Store</th><th>On-shelf scans</th><th>Latest scan</th></tr></thead>
+    <tbody>${storeRows}</tbody>
+  </table>
+` : `<p style="font-size:12.5px;color:#666;">No on-shelf matches in scan history at the time this sheet was generated. Distribution scope will be updated automatically as new scans match this lot.</p>`}
+
+<h2>Coordination notes</h2>
+<div style="border:1px dashed #c8ccca;padding:14px 16px;border-radius:4px;min-height:90px;font-size:12px;color:#888;">
+  Recall coordinator: ________________________________&nbsp;&nbsp;&nbsp;&nbsp;Date initiated: __________________<br><br>
+  Manufacturer / supplier contacted: ____________________________________________________<br><br>
+  Regulator notified (FDA / Mattilsynet): ______________________________________________<br><br>
+  Reference number(s): __________________________________________________________________
+</div>
+
+<div class="signature-row">
+  <div class="signature-block">
+    <div class="signature-line"></div>
+    <div class="signature-caption">Recall coordinator — signature / date</div>
+  </div>
+  <div class="signature-block">
+    <div class="signature-line"></div>
+    <div class="signature-caption">Compliance officer — signature / date</div>
+  </div>
+</div>
+
+<div class="footnote">
+  Generated by Batch'd · This is an internal coordination record. The FDA-facing recall notification (21 CFR 7.46) is a separate document — request the regulator-format export from your Batch'd Recalls panel.
+</div>
+
+</body>
+</html>`);
+  w.document.close();
+}
+
+// ── Push recall — write to DB, redirect to Recalls panel ──────
+async function _composerPushRecall() {
+  const s = _composerState;
+  if (!s) return;
+  const btn = document.getElementById('composer-push-btn');
+  if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; btn.style.cursor = 'wait'; btn.innerHTML = 'Pushing…'; }
+
+  // Fold strategy fields into description (same pattern saveManualRecall
+  // uses for severity). Schema-stable across the existing recalls table.
+  const descParts = [];
+  if (s.reason) descParts.push(s.reason);
+  if (s.severity)      descParts.push(`Severity: ${s.severity}`);
+  if (s.hazardType)    descParts.push(`Hazard: ${s.hazardType}`);
+  if (s.depth)         descParts.push(`Depth: ${s.depth}`);
+  if (s.publicWarning) descParts.push('Public warning: yes');
+  if (s.effectiveness) descParts.push(`Effectiveness: ${s.effectiveness}`);
+
+  const insertPayload = {
+    product_name:  s.product,
+    lot_number:    s.lot,
+    barcode_number: s.barcode || null,
+    description:   descParts.join(' · '),
+    source:        'manual',
+    active:        true,
+    organisation_id: _orgId,
+  };
+
+  try {
+    const { data: inserted, error } = await sb.from('recalls')
+      .insert(insertPayload)
+      .select('id').single();
+    if (error) throw error;
+
+    // Retroactive sweep — same as saveManualRecall. Best-effort.
+    if (inserted?.id) {
+      try {
+        await sb.rpc('sweep_recall_matches', {
+          p_recall_id:       inserted.id,
+          p_organisation_id: _orgId,
+          p_lookback_days:   180,
+        });
+      } catch (sweepErr) {
+        console.warn('[composer push] sweep failed:', sweepErr?.message);
+      }
+    }
+
+    showToast('Recall pushed', 'ok', 3000);
+    invalidateOverviewCache();
+    _composerState = null;
+    _recallsTab = 'active';
+    showPanel('recalls');
+  } catch (e) {
+    showToast('Could not push recall: ' + (e.message || 'unknown error'), 'error', 5000);
+    if (btn) { btn.disabled = false; btn.style.opacity = '1'; btn.style.cursor = 'pointer'; btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg> Push recall'; }
+  }
+}
+
 // Audit fix (#13): mark a manual / feed recall as resolved from the dashboard.
 // Previously the dashboard had no way to flip a recall's active=false — only
 // the scanning app's mgrToggleRecall could do it. Manual recalls created here
@@ -4376,8 +5080,10 @@ async function renderCommandCenter() {
       : activeRecalls.map(_renderRecallCard).join('<div style="height:10px;"></div>');
 
     el.innerHTML = `
-      <!-- Push a Recall hero — primary CTA for the dashboard. Click goes
-           to the existing recall composer (Recalls panel, Add tab). The
+      <!-- Push a Recall hero — primary CTA for the dashboard. Click
+           opens the guided recall composer (renderRecallComposer, a
+           full-page 4-step flow). The legacy "Add a recall manually" tab
+           in Recalls is preserved as the power-user quick-add path. The
            secondary "Run a drill" button opens the existing drill launcher
            modal so the safe-practice path is one click away too. -->
       <div style="display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap;padding:18px 22px;margin-bottom:14px;background:linear-gradient(135deg, rgba(77,201,154,0.08), rgba(77,201,154,0.015) 60%);border:1px solid var(--accent-dim);border-radius:14px;">
@@ -4399,7 +5105,7 @@ async function renderCommandCenter() {
                   onmouseleave="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">
             Or run a drill
           </button>
-          <button onclick="_recallsTab='add';showPanel('recalls')"
+          <button onclick="openRecallComposer()"
                   style="display:inline-flex;align-items:center;gap:8px;font-family:'Figtree',sans-serif;font-weight:700;font-size:14px;padding:11px 22px;border-radius:10px;border:none;background:var(--accent);color:#04120e;cursor:pointer;box-shadow:0 4px 14px rgba(77,201,154,0.22);transition:transform 0.15s,box-shadow 0.15s;"
                   onmouseenter="this.style.transform='translateY(-1px)';this.style.boxShadow='0 6px 18px rgba(77,201,154,0.32)'"
                   onmouseleave="this.style.transform='none';this.style.boxShadow='0 4px 14px rgba(77,201,154,0.22)'">
