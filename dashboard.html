@@ -4513,7 +4513,13 @@ function _generateFdaRecallNotification(d) {
   const initiatedStr = d.initiatedAt instanceof Date ? d.initiatedAt.toLocaleDateString(undefined, { year:'numeric', month:'long', day:'numeric' }) : '_________________';
   const today = new Date().toLocaleDateString(undefined, { year:'numeric', month:'long', day:'numeric' });
 
-  const ph = (txt) => `<span style="display:inline-block;min-width:200px;border-bottom:1.2px solid #1a201d;color:#888;font-style:italic;font-size:11.5px;padding:0 4px;">${txt || ' '}</span>`;
+  // Editable placeholder span — user clicks to type. Italic gray hint
+  // text disappears on focus; if blurred while empty, hint is restored.
+  // The contenteditable + data-placeholder pattern is wired up by the
+  // runtime <script> at the bottom of the generated doc.
+  const ph = (txt) => `<span class="ph" contenteditable="true" data-placeholder="${esc(txt || '')}" style="display:inline-block;min-width:200px;border-bottom:1.2px solid #1a201d;color:#888;font-style:italic;font-size:11.5px;padding:0 4px;outline:none;cursor:text;">${esc(txt || ' ')}</span>`;
+  // Block-level placeholder for multi-line fields (description, plans, etc.)
+  const phBlock = (txt) => `<div class="ph ph-block" contenteditable="true" data-placeholder="${esc(txt || '')}" style="background:#f9fafa;border:1px solid #e5e7e8;padding:10px 13px;border-radius:4px;white-space:pre-wrap;font-size:12px;color:#888;font-style:italic;min-height:48px;outline:none;cursor:text;line-height:1.6;">${esc(txt || ' ')}</div>`;
   const fld = (label, value, opts) => `
     <div style="display:flex;gap:14px;padding:8px 0;border-bottom:1px solid #eee;${opts?.block ? 'flex-direction:column;align-items:flex-start;' : 'justify-content:space-between;align-items:flex-start;'}">
       <div style="font-size:10.5px;color:#666;text-transform:uppercase;letter-spacing:0.06em;flex-shrink:0;${opts?.block ? 'margin-bottom:6px;' : ''}min-width:200px;">${label}</div>
@@ -4567,15 +4573,47 @@ function _generateFdaRecallNotification(d) {
   .signature-caption { font-size: 10px; color:#666; text-transform:uppercase; letter-spacing:0.06em; }
   .draft-watermark { position:fixed; top:50%; left:50%; transform: translate(-50%,-50%) rotate(-30deg); font-size: 100px; color: rgba(220,180,30,0.07); font-weight: 800; letter-spacing: 0.2em; pointer-events: none; z-index: 0; user-select: none; }
   .doc-footer { font-size: 10px; color:#888; margin-top: 36px; line-height:1.55; border-top: 1px solid #ddd; padding-top: 12px; }
+  /* Action bar — sticky banner at top of doc with Save / Print buttons.
+     Hidden when printing or in saved-HTML copies. */
+  .doc-actions { position:sticky; top:0; background:#1a201d; color:#fff; padding:11px 18px; display:flex; gap:12px; align-items:center; justify-content:space-between; margin:-22px -22px 14px -22px; z-index:10; border-bottom:2px solid #4682ff; flex-wrap:wrap; }
+  .doc-actions .hint { font-size:11px; color:#aab; letter-spacing:0.02em; }
+  .doc-actions .hint strong { color:#fff; }
+  .doc-actions button { display:inline-flex; align-items:center; gap:6px; font-family:'Helvetica Neue',Arial,sans-serif; font-size:11.5px; font-weight:600; padding:7px 14px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(255,255,255,0.06); color:#fff; cursor:pointer; transition:background 0.15s; }
+  .doc-actions button:hover { background:rgba(123,169,255,0.25); border-color:#7ba9ff; }
+  .doc-actions button.primary { background:#4682ff; border-color:#4682ff; }
+  .doc-actions button.primary:hover { background:#5a92ff; }
+  /* Editable placeholder feedback — when user focuses a placeholder it
+     gets a subtle yellow tint so they know it's interactive. */
+  .ph:focus, .ph-block:focus { background:#fffbe8 !important; }
+  /* Match a filled reason-box's look (light gray bg, dark text, normal style) */
+  .reason-box[contenteditable]:focus { background:#fffbe8 !important; outline:none; }
   @media print {
     body { padding: 0; }
     .section-h { page-break-after: avoid; }
     table { page-break-inside: auto; }
     tr { page-break-inside: avoid; }
+    .doc-actions { display: none !important; }
+    .draft-watermark { color: rgba(220,180,30,0.10); }
   }
 </style>
 </head>
 <body>
+
+<div class="doc-actions">
+  <div class="hint">
+    <strong>Editable draft.</strong> Click any underlined field below to fill it in. Save when done.
+  </div>
+  <div style="display:flex;gap:8px;">
+    <button onclick="window.print()" class="primary" title="Open the browser's print dialog — choose 'Save as PDF' as the destination to download as PDF">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+      Save as PDF / Print
+    </button>
+    <button onclick="saveAsHtml()" title="Download the current state of this form (with your edits) as an HTML file you can email or open in Word">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Save as HTML
+    </button>
+  </div>
+</div>
 
 <div class="draft-watermark">DRAFT</div>
 
@@ -4626,7 +4664,10 @@ function _generateFdaRecallNotification(d) {
 <div class="section">
   <div class="section-h"><span class="section-n">§4</span>Reason for recall</div>
   ${fld('Hazard type', esc(hazardLabel))}
-  ${fld('Description', `<div class="reason-box">${esc(d.reason || '_________________')}</div>`, { block: true })}
+  ${fld('Description', d.reason
+    ? `<div class="reason-box" contenteditable="true" style="outline:none;cursor:text;color:#1a201d;font-style:normal;">${esc(d.reason)}</div>`
+    : phBlock('Describe the recall reason — what was found, when, where, and how it affects the product.'),
+    { block: true })}
   ${fld('How problem was discovered', ph('Customer complaint / routine testing / supplier alert / etc.'))}
   ${fld('Date problem discovered', ph('YYYY-MM-DD'))}
 </div>
@@ -4634,7 +4675,7 @@ function _generateFdaRecallNotification(d) {
 <div class="section">
   <div class="section-h"><span class="section-n">§5</span>Health hazard assessment</div>
   ${fld('Proposed classification', esc(sevTitle))}
-  ${fld('Health risk description', `<div class="reason-box">${ph('Describe the nature of the health risk: severity, reversibility, onset time, mode of exposure. Reference any relevant scientific literature or precedent.')}</div>`, { block: true })}
+  ${fld('Health risk description', phBlock('Describe the nature of the health risk: severity, reversibility, onset time, mode of exposure. Reference any relevant scientific literature or precedent.'), { block: true })}
   ${fld('Populations at greatest risk', ph('Children, elderly, immunocompromised, allergic individuals, etc.'))}
 </div>
 
@@ -4698,6 +4739,65 @@ function _generateFdaRecallNotification(d) {
   <strong>Submission:</strong> File with the FDA Recall Coordinator for the applicable district office, or via FDA Industry Systems (<span style="font-family:monospace;">access.fda.gov</span>). Per 21 CFR 7.46(a), the firm should notify the FDA within 24 hours of initiating a recall.<br><br>
   <strong>Document status:</strong> ${esc(d.status || 'Draft')}. Auto-generated by Batch'd from recall record dated ${esc(initiatedStr)}. Batch'd provides this draft as a productivity aid; the recalling firm is solely responsible for the accuracy and completeness of the final submission. Batch'd makes no warranty as to regulatory acceptance.
 </div>
+
+<script data-runtime>
+// ── Runtime helpers for the editable doc ─────────────────────
+// (1) Placeholder behavior: italic gray hint clears on focus, restores
+//     on blur if the user typed nothing.
+// (2) saveAsHtml(): clones the document, strips the action bar +
+//     runtime script (so the saved file is a clean self-contained
+//     archive), then triggers a download.
+
+(function initPlaceholders() {
+  document.querySelectorAll('.ph, .ph-block').forEach(function (el) {
+    var hint = el.dataset.placeholder || '';
+    function looksLikeHint() {
+      return el.textContent.trim() === hint.trim();
+    }
+    el.addEventListener('focus', function () {
+      if (looksLikeHint()) {
+        el.textContent = '';
+        el.style.color = '#1a201d';
+        el.style.fontStyle = 'normal';
+      }
+    });
+    el.addEventListener('blur', function () {
+      if (!el.textContent.trim()) {
+        el.textContent = hint;
+        el.style.color = '#888';
+        el.style.fontStyle = 'italic';
+      }
+    });
+  });
+})();
+
+function saveAsHtml() {
+  // Make sure any unfilled placeholders show their hint text in the
+  // saved copy (rather than showing as empty fields).
+  document.querySelectorAll('.ph, .ph-block').forEach(function (el) {
+    if (!el.textContent.trim()) {
+      el.textContent = el.dataset.placeholder || '';
+      el.style.color = '#888';
+      el.style.fontStyle = 'italic';
+    }
+  });
+  // Clone whole doc; strip the action bar and the runtime script so
+  // the saved file is clean and self-contained.
+  var clone = document.documentElement.cloneNode(true);
+  clone.querySelectorAll('.doc-actions, script[data-runtime]').forEach(function (n) { n.remove(); });
+  // contenteditable attributes are fine to leave — they allow the
+  // recipient to keep editing if they open the file in a browser.
+  var html = '<!DOCTYPE html>\n' + clone.outerHTML;
+  var blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = 'FDA-Recall-Notification-' + new Date().toISOString().slice(0,10) + '.html';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function () { document.body.removeChild(a); URL.revokeObjectURL(url); }, 200);
+}
+<\/script>
 
 </body>
 </html>`);
