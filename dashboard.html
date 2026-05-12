@@ -4280,10 +4280,10 @@ async function renderCommandCenter() {
           : 'In flight right now'
       },
       {
-        label: 'Median ack time',
+        label: 'Median time to acknowledge',
         value: medianAckMs != null ? _fmtDuration(medianAckMs) : '—',
         detail: ackDurations.length > 0
-          ? `${ackDurations.length} ack${ackDurations.length === 1 ? '' : 's'} · last 30 days`
+          ? `${ackDurations.length} acknowledgement${ackDurations.length === 1 ? '' : 's'} · last 30 days`
           : 'No data in last 30 days'
       },
       {
@@ -4389,7 +4389,7 @@ async function renderCommandCenter() {
             <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:18px;color:var(--text);">Push a Recall</div>
           </div>
           <div style="font-size:12.5px;color:var(--muted);line-height:1.55;max-width:62ch;">
-            Notify every affected store in your network instantly. Each store works through the 5-stage chain — Notified → Acknowledged → Pulled → Disposed → Resolved — with a timestamped audit trail Batch'd will hand to a regulator on request.
+            Notify every affected store in your network instantly. Each store works through the 5-step chain — Notified → Acknowledged → Pulled → Disposed → Resolved — with a timestamped audit trail Batch'd will hand to a regulator on request.
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap;">
@@ -4838,7 +4838,7 @@ async function renderRecallDetail() {
         .eq('id', recallEventId)
         .single(),
       sb.from('recall_acknowledgements')
-        .select('id, store_id, status, acknowledged_at, pulled_at, disposed_at, confirmed_at, created_at, units_pulled, units_pulled_confirmed_at, escalation_2h_sent_at, escalation_24h_sent_at, disposal_method, notes, acknowledged_by, stores(id, name, store_code, address, latitude, longitude, region, country, city)')
+        .select('id, store_id, status, acknowledged_at, pulled_at, disposed_at, confirmed_at, created_at, units_pulled, units_pulled_confirmed_at, escalation_2h_sent_at, disposal_method, notes, acknowledged_by, stores(id, name, store_code, address, latitude, longitude, region, country, city)')
         .eq('recall_event_id', recallEventId)
         .eq('organisation_id', _orgId)
         .order('created_at', { ascending: true }),
@@ -5054,7 +5054,7 @@ async function renderRecallDetail() {
       <div style="margin-bottom:14px;">
         <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:10px;">
           <div>
-            <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:14px;color:var(--text);">Stores · ack progress</div>
+            <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:14px;color:var(--text);">Stores · response progress</div>
             <div style="font-size:11px;color:var(--muted);margin-top:2px;">${sortedStores.length} affected · sorted most-urgent first</div>
           </div>
         </div>
@@ -5064,9 +5064,9 @@ async function renderRecallDetail() {
       </div>` : '';
 
     // ── Live event ticker (Step 6) ────────────────────────────────
-    // Chronological feed of stage transitions, recall publication, and
-    // backend-recorded SLA escalations. Sourced from timestamps already
-    // on the ack rows + the recall_event itself. Newest-first.
+    // Chronological feed of step transitions, recall publication, and
+    // reminders sent. Sourced from timestamps already on the
+    // recall_acknowledgements rows + the recall_event itself. Newest-first.
     //
     // Format: time label (left, mono) + event description (right).
     // Today's events show "HH:MM"; older show "DD Mon HH:MM". Hover the
@@ -5140,22 +5140,15 @@ async function renderRecallDetail() {
           color: 'var(--accent)'
         });
       }
-      // Backend-recorded SLA escalations (when populated by the
-      // recall-escalation cron). These are real notifications, not
-      // computed/inferred — they only appear if escalation_*_sent_at
-      // got stamped.
+      // Reminder events — populated by the Send-reminders button on
+      // this page, and (eventually) by an automated cron. Only the 2h
+      // column is used now; the 24h column was for an old reminder/
+      // escalation split that no longer exists.
       if (a.escalation_2h_sent_at) {
         events.push({
           t: a.escalation_2h_sent_at,
           html: `<span style="color:#f5a623;font-weight:600;">Reminder sent</span> · <strong style="color:var(--text);">${esc(storeName)}</strong>`,
           color: '#f5a623'
-        });
-      }
-      if (a.escalation_24h_sent_at) {
-        events.push({
-          t: a.escalation_24h_sent_at,
-          html: `<span style="color:var(--danger);font-weight:600;">SLA escalation sent</span> · <strong style="color:var(--text);">${esc(storeName)}</strong> · 24h target`,
-          color: 'var(--danger)'
         });
       }
     });
@@ -5439,12 +5432,13 @@ async function renderRecallDetail() {
             : ' This recall has no stores assigned.'}
         </div>`}
 
-      <!-- Stores ack list (Step 5) — sorted most-urgent first. Click a
-           row with coords to jump to its marker on the map above. -->
+      <!-- Stores response-progress list (Step 5) — sorted most-urgent
+           first. Click a row with coords to jump to its marker on the
+           map above. -->
       ${storesAckListHtml}
 
       <!-- Live event ticker — newest-first chronological feed of
-           stage transitions, recall pushes, and SLA escalations. -->
+           step transitions, recall pushes, and reminders sent. -->
       ${eventTickerHtml}
 
       ${srm.length > 0 ? `
