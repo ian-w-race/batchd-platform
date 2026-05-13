@@ -4175,6 +4175,7 @@ function _composerOpenCoordinationSheet() {
   .signature-caption { font-size: 10px; color:#666; text-transform:uppercase; letter-spacing:0.06em; }
   .footnote { font-size: 10px; color:#888; margin-top: 30px; line-height:1.5; border-top: 1px solid #eee; padding-top: 12px; }
   .reason-box { background:#f9fafa; border:1px solid #e5e7e8; padding: 11px 14px; border-radius:4px; white-space: pre-wrap; font-size:12.5px; }
+  ${_batchdDocStyles()}
   @media print {
     body { padding: 0; }
     h2 { page-break-after: avoid; }
@@ -4184,6 +4185,8 @@ function _composerOpenCoordinationSheet() {
 </style>
 </head>
 <body>
+
+${_batchdDocActionBar('Recall-Coordination-Sheet')}
 
 <div class="header-meta">
   <div><strong>${esc(orgName)}</strong></div>
@@ -4219,11 +4222,29 @@ ${s.scope && s.scope.totalStores > 0 ? `
 ` : `<p style="font-size:12.5px;color:#666;">No on-shelf matches in scan history at the time this sheet was generated. Distribution scope will be updated automatically as new scans match this lot.</p>`}
 
 <h2>Coordination notes</h2>
-<div style="border:1px dashed #c8ccca;padding:14px 16px;border-radius:4px;min-height:90px;font-size:12px;color:#888;">
-  Recall coordinator: ________________________________&nbsp;&nbsp;&nbsp;&nbsp;Date initiated: __________________<br><br>
-  Manufacturer / supplier contacted: ____________________________________________________<br><br>
-  Regulator notified (FDA / Mattilsynet): ______________________________________________<br><br>
-  Reference number(s): __________________________________________________________________
+<div style="border:1px dashed #c8ccca;padding:14px 16px;border-radius:4px;font-size:12px;color:#1a201d;line-height:2.4;">
+  <div style="display:flex;gap:14px;flex-wrap:wrap;">
+    <div style="flex:1 1 280px;">
+      <span style="font-size:10.5px;color:#666;text-transform:uppercase;letter-spacing:0.06em;">Recall coordinator:</span>
+      <span class="ph" contenteditable="true" data-placeholder="Name &amp; title">Name &amp; title</span>
+    </div>
+    <div style="flex:1 1 200px;">
+      <span style="font-size:10.5px;color:#666;text-transform:uppercase;letter-spacing:0.06em;">Date initiated:</span>
+      <span class="ph" contenteditable="true" data-placeholder="${esc(dateStr)}">${esc(dateStr)}</span>
+    </div>
+  </div>
+  <div>
+    <span style="font-size:10.5px;color:#666;text-transform:uppercase;letter-spacing:0.06em;">Manufacturer / supplier contacted:</span>
+    <span class="ph" contenteditable="true" data-placeholder="Company &amp; contact name / date" style="min-width:360px;">Company &amp; contact name / date</span>
+  </div>
+  <div>
+    <span style="font-size:10.5px;color:#666;text-transform:uppercase;letter-spacing:0.06em;">Regulator notified (FDA / Mattilsynet):</span>
+    <span class="ph" contenteditable="true" data-placeholder="Agency, contact, date" style="min-width:340px;">Agency, contact, date</span>
+  </div>
+  <div>
+    <span style="font-size:10.5px;color:#666;text-transform:uppercase;letter-spacing:0.06em;">Reference number(s):</span>
+    <span class="ph" contenteditable="true" data-placeholder="FDA recall number / internal case ID" style="min-width:340px;">FDA recall number / internal case ID</span>
+  </div>
 </div>
 
 <div class="signature-row">
@@ -4242,6 +4263,8 @@ ${s.scope && s.scope.totalStores > 0 ? `
 </div>
 
 ${_batchdDocFooter()}
+
+${_batchdDocRuntime()}
 
 </body>
 </html>`);
@@ -4575,60 +4598,19 @@ function _generateFdaRecallNotification(d) {
   .signature-caption { font-size: 10px; color:#666; text-transform:uppercase; letter-spacing:0.06em; }
   .draft-watermark { position:fixed; top:50%; left:50%; transform: translate(-50%,-50%) rotate(-30deg); font-size: 100px; color: rgba(220,180,30,0.07); font-weight: 800; letter-spacing: 0.2em; pointer-events: none; z-index: 0; user-select: none; }
   .doc-footer { font-size: 10px; color:#888; margin-top: 36px; line-height:1.55; border-top: 1px solid #ddd; padding-top: 12px; }
-  /* Action bar — sticky banner at top of doc with Save / Print buttons.
-     Hidden when printing or in saved-HTML copies. */
-  .doc-actions { position:sticky; top:0; background:#1a201d; color:#fff; padding:11px 18px; display:flex; gap:12px; align-items:center; justify-content:space-between; margin:-22px -22px 14px -22px; z-index:10; border-bottom:2px solid #4682ff; flex-wrap:wrap; }
-  .doc-actions .hint { font-size:11px; color:#aab; letter-spacing:0.02em; }
-  .doc-actions .hint strong { color:#fff; }
-  .doc-actions button { display:inline-flex; align-items:center; gap:6px; font-family:'Helvetica Neue',Arial,sans-serif; font-size:11.5px; font-weight:600; padding:7px 14px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(255,255,255,0.06); color:#fff; cursor:pointer; transition:background 0.15s; }
-  .doc-actions button:hover { background:rgba(123,169,255,0.25); border-color:#7ba9ff; }
-  .doc-actions button.primary { background:#4682ff; border-color:#4682ff; }
-  .doc-actions button.primary:hover { background:#5a92ff; }
-  /* Editable placeholder feedback — when user focuses a placeholder it
-     gets a subtle yellow tint so they know it's interactive. */
-  .ph:focus, .ph-block:focus { background:#fffbe8 !important; }
-  /* Match a filled reason-box's look (light gray bg, dark text, normal style) */
-  .reason-box[contenteditable]:focus { background:#fffbe8 !important; outline:none; }
+  ${_batchdDocStyles()}
   @media print {
     body { padding: 0; }
     .section-h { page-break-after: avoid; }
     table { page-break-inside: auto; }
     tr { page-break-inside: avoid; }
-    .doc-actions, #pdf-help-banner { display: none !important; }
     .draft-watermark { color: rgba(220,180,30,0.10); }
   }
 </style>
 </head>
 <body>
 
-<div class="doc-actions">
-  <div class="hint">
-    <strong>Editable draft.</strong> Click any underlined field below to fill it in. Save when done.
-  </div>
-  <div style="display:flex;gap:8px;">
-    <button onclick="saveAsPdf()" class="primary" title="Save this filled-in form as a PDF file you can email to the FDA or archive">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
-      Save as PDF
-    </button>
-    <button onclick="saveAsHtml()" title="Download the current state of this form (with your edits) as an HTML file you can email or open in Word">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-      Save as HTML
-    </button>
-  </div>
-</div>
-
-<!-- One-time instructional banner that explains the print-dialog mechanism.
-     Hidden after user confirms they understand. The browser's print dialog
-     defaults to the last-used physical printer, so users can't just hit
-     Save — they need to change the Destination dropdown to "Save as PDF".
-     This step is non-obvious and was tripping up coordinators. -->
-<div id="pdf-help-banner" style="background:#e3eef8;border:1px solid #4682ff;border-radius:6px;padding:11px 14px;margin-bottom:14px;font-size:11.5px;color:#1a4a78;line-height:1.6;display:flex;align-items:flex-start;gap:10px;">
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4682ff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:2px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-  <div style="flex:1;">
-    <strong>How "Save as PDF" works:</strong> Your browser's print dialog opens. In the <strong>Destination</strong> dropdown at the top of that dialog, choose <strong>"Save as PDF"</strong> (instead of a physical printer), then click <strong>Save</strong>.
-  </div>
-  <button onclick="this.parentElement.style.display='none'" style="background:none;border:none;color:#4682ff;cursor:pointer;font-size:11px;font-weight:600;padding:0 4px;letter-spacing:0.02em;flex-shrink:0;">Got it ✕</button>
-</div>
+${_batchdDocActionBar('FDA-Recall-Notification')}
 
 <div class="draft-watermark">DRAFT</div>
 
@@ -4757,85 +4739,7 @@ function _generateFdaRecallNotification(d) {
 
 ${_batchdDocFooter()}
 
-<script data-runtime>
-// ── Runtime helpers for the editable doc ─────────────────────
-// (1) Placeholder behavior: italic gray hint clears on focus, restores
-//     on blur if the user typed nothing.
-// (2) saveAsPdf(): opens the browser print dialog. First click also
-//     pops a confirm() with explicit "set Destination to Save as PDF"
-//     instructions, since Chrome/Edge default to the last-used physical
-//     printer and many users won't realise they need to change it.
-// (3) saveAsHtml(): clones the document, strips the action bar +
-//     runtime script (so the saved file is a clean self-contained
-//     archive), then triggers a download.
-
-(function initPlaceholders() {
-  document.querySelectorAll('.ph, .ph-block').forEach(function (el) {
-    var hint = el.dataset.placeholder || '';
-    function looksLikeHint() {
-      return el.textContent.trim() === hint.trim();
-    }
-    el.addEventListener('focus', function () {
-      if (looksLikeHint()) {
-        el.textContent = '';
-        el.style.color = '#1a201d';
-        el.style.fontStyle = 'normal';
-      }
-    });
-    el.addEventListener('blur', function () {
-      if (!el.textContent.trim()) {
-        el.textContent = hint;
-        el.style.color = '#888';
-        el.style.fontStyle = 'italic';
-      }
-    });
-  });
-})();
-
-var _pdfHintShown = false;
-function saveAsPdf() {
-  if (!_pdfHintShown) {
-    _pdfHintShown = true;
-    var proceed = confirm(
-      "Save as PDF\n" +
-      "─────────────────\n\n" +
-      "The browser's print dialog will open next.\n\n" +
-      "IMPORTANT: In the dialog, find the \"Destination\" dropdown at the top and change it to \"Save as PDF\" (instead of a physical printer). Then click Save.\n\n" +
-      "If you just click Print without changing Destination, the form will print on paper instead of saving as a file.\n\n" +
-      "Continue?"
-    );
-    if (!proceed) return;
-  }
-  window.print();
-}
-
-function saveAsHtml() {
-  // Make sure any unfilled placeholders show their hint text in the
-  // saved copy (rather than showing as empty fields).
-  document.querySelectorAll('.ph, .ph-block').forEach(function (el) {
-    if (!el.textContent.trim()) {
-      el.textContent = el.dataset.placeholder || '';
-      el.style.color = '#888';
-      el.style.fontStyle = 'italic';
-    }
-  });
-  // Clone whole doc; strip the action bar, help banner, and the runtime
-  // script so the saved file is clean and self-contained.
-  var clone = document.documentElement.cloneNode(true);
-  clone.querySelectorAll('.doc-actions, #pdf-help-banner, script[data-runtime]').forEach(function (n) { n.remove(); });
-  // contenteditable attributes are fine to leave — they allow the
-  // recipient to keep editing if they open the file in a browser.
-  var html = '<!DOCTYPE html>\n' + clone.outerHTML;
-  var blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-  var url = URL.createObjectURL(blob);
-  var a = document.createElement('a');
-  a.href = url;
-  a.download = 'FDA-Recall-Notification-' + new Date().toISOString().slice(0,10) + '.html';
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(function () { document.body.removeChild(a); URL.revokeObjectURL(url); }, 200);
-}
-<\/script>
+${_batchdDocRuntime()}
 
 </body>
 </html>`);
@@ -8620,6 +8524,133 @@ function _batchdDocFooter() {
   <div style="margin-top:3px;text-transform:uppercase;letter-spacing:0.12em;font-size:9px;color:#666;font-weight:600;">Food Traceability &amp; Recall Management</div>
   <div style="margin-top:7px;font-size:10.5px;color:#888;">Document generated automatically by Batch'd &middot; <span style="font-family:'SF Mono','Menlo',monospace;color:#666;">batchd.no</span></div>
 </div>`;
+}
+
+// ── Shared interactive-doc helpers ────────────────────────────
+// All Batch'd generated documents that should be editable + savable
+// share three pieces of UI/behavior: a sticky action bar at the top,
+// a one-time blue help banner explaining how Save as PDF works in
+// browsers, and a runtime <script> that handles placeholder
+// focus/blur + the Save as PDF / Save as HTML actions.
+//
+// IMPORTANT: these helpers are embedded inside backtick template
+// literals at call sites (w.document.write(`...${helper()}...`)).
+// Any `\n`, `\"`, `\\`, or `${` inside the helper output gets
+// evaluated by the OUTER template literal before being written to
+// the new tab. To survive that, every JS escape sequence in the
+// runtime script must be DOUBLE-escaped here (e.g. \\n produces \n
+// in the output, which the runtime JS parser then reads as a
+// newline). Forgetting this collision was the v2 escape bug.
+
+function _batchdDocStyles() {
+  return `
+  /* Sticky action bar at top of doc */
+  .doc-actions { position:sticky; top:0; background:#1a201d; color:#fff; padding:11px 18px; display:flex; gap:12px; align-items:center; justify-content:space-between; margin:-24px -24px 14px -24px; z-index:10; border-bottom:2px solid #4682ff; flex-wrap:wrap; }
+  .doc-actions .hint { font-size:11px; color:#aab; letter-spacing:0.02em; }
+  .doc-actions .hint strong { color:#fff; }
+  .doc-actions button { display:inline-flex; align-items:center; gap:6px; font-family:'Helvetica Neue',Arial,sans-serif; font-size:11.5px; font-weight:600; padding:7px 14px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(255,255,255,0.06); color:#fff; cursor:pointer; transition:background 0.15s; }
+  .doc-actions button:hover { background:rgba(123,169,255,0.25); border-color:#7ba9ff; }
+  .doc-actions button.primary { background:#4682ff; border-color:#4682ff; }
+  .doc-actions button.primary:hover { background:#5a92ff; }
+  /* One-time blue help banner */
+  .pdf-help-banner { background:#e3eef8; border:1px solid #4682ff; border-radius:6px; padding:11px 14px; margin-bottom:14px; font-size:11.5px; color:#1a4a78; line-height:1.6; display:flex; align-items:flex-start; gap:10px; }
+  /* Editable placeholders */
+  .ph { display:inline-block; min-width:200px; border-bottom:1.2px solid #1a201d; color:#888; font-style:italic; font-size:11.5px; padding:0 4px; outline:none; cursor:text; }
+  .ph-block { background:#f9fafa; border:1px solid #e5e7e8; padding:10px 13px; border-radius:4px; white-space:pre-wrap; font-size:12px; color:#888; font-style:italic; min-height:48px; outline:none; cursor:text; line-height:1.6; }
+  .ph:focus, .ph-block:focus { background:#fffbe8 !important; }
+  .reason-box[contenteditable]:focus { background:#fffbe8 !important; outline:none; }
+  @media print {
+    .doc-actions, .pdf-help-banner { display:none !important; }
+  }`;
+}
+
+function _batchdDocActionBar(savePrefix) {
+  const sp = (savePrefix || 'Batchd-Document').replace(/'/g, "\\'");
+  return `<div class="doc-actions">
+  <div class="hint">
+    <strong>Editable draft.</strong> Click any underlined field below to fill it in. Save when done.
+  </div>
+  <div style="display:flex;gap:8px;">
+    <button onclick="saveAsPdf()" class="primary" title="Save this filled-in form as a PDF file you can email or archive">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+      Save as PDF / Print
+    </button>
+    <button onclick="saveAsHtml('${sp}')" title="Download the current state of this form (with your edits) as an HTML file you can email or open in Word">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Save as HTML
+    </button>
+  </div>
+</div>
+
+<div id="pdf-help-banner" class="pdf-help-banner">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4682ff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:2px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+  <div style="flex:1;">
+    <strong>How "Save as PDF" works:</strong> Your browser's print dialog opens. In the <strong>Destination</strong> dropdown at the top of that dialog, choose <strong>"Save as PDF"</strong> (instead of a physical printer), then click <strong>Save</strong>.
+  </div>
+  <button onclick="this.parentElement.style.display='none'" style="background:none;border:none;color:#4682ff;cursor:pointer;font-size:11px;font-weight:600;padding:0 4px;letter-spacing:0.02em;flex-shrink:0;">Got it &times;</button>
+</div>`;
+}
+
+function _batchdDocRuntime() {
+  // CRITICAL: every \n, \", \\ below is DOUBLE-escaped (\\n, \\", \\\\)
+  // so it survives the outer template literal evaluation when this
+  // function's return value is embedded into a w.document.write
+  // template literal. The single-escaped versions would become literal
+  // newlines/quotes/backslashes in the output and break the runtime
+  // script's syntax.
+  return `<script data-runtime>
+(function initPlaceholders() {
+  document.querySelectorAll('.ph, .ph-block').forEach(function (el) {
+    var hint = el.dataset.placeholder || '';
+    function looksLikeHint() { return el.textContent.trim() === hint.trim(); }
+    el.addEventListener('focus', function () {
+      if (looksLikeHint()) {
+        el.textContent = '';
+        el.style.color = '#1a201d';
+        el.style.fontStyle = 'normal';
+      }
+    });
+    el.addEventListener('blur', function () {
+      if (!el.textContent.trim()) {
+        el.textContent = hint;
+        el.style.color = '#888';
+        el.style.fontStyle = 'italic';
+      }
+    });
+  });
+})();
+
+var _pdfHintShown = false;
+function saveAsPdf() {
+  if (!_pdfHintShown) {
+    _pdfHintShown = true;
+    var msg = "Save as PDF\\n\\nThe browser's print dialog will open next.\\n\\nIMPORTANT: In the dialog, change the \\"Destination\\" dropdown at the top to \\"Save as PDF\\" (instead of a physical printer). Then click Save.\\n\\nIf you just click Print without changing Destination, the form will print on paper instead of saving as a file.\\n\\nContinue?";
+    if (!confirm(msg)) return;
+  }
+  window.print();
+}
+
+function saveAsHtml(prefix) {
+  document.querySelectorAll('.ph, .ph-block').forEach(function (el) {
+    if (!el.textContent.trim()) {
+      el.textContent = el.dataset.placeholder || '';
+      el.style.color = '#888';
+      el.style.fontStyle = 'italic';
+    }
+  });
+  var clone = document.documentElement.cloneNode(true);
+  clone.querySelectorAll('.doc-actions, #pdf-help-banner, script[data-runtime]').forEach(function (n) { n.remove(); });
+  var html = '<!DOCTYPE html>\\n' + clone.outerHTML;
+  var blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = (prefix || 'Batchd-Document') + '-' + new Date().toISOString().slice(0,10) + '.html';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function () { document.body.removeChild(a); URL.revokeObjectURL(url); }, 200);
+}
+<\/script>`;
 }
 
 function injectPrintButton(html) {
