@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Accept invite — Batch'd</title>
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg:       #111918;
+      --surface:  #1E2E2A;
+      --surface2: #283C37;
+      --border:   rgba(255,255,255,0.08);
+      --text:     #E8F0EE;
+      --muted:    #8FA39E;
+      --accent:   #4DC99A;
+      --accent-d: #077A55;
+      --danger:   #ff5c5c;
+      --warn:     #f5a623;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
+      font-family: 'Figtree', sans-serif; font-size: 14px; line-height: 1.55;
+      display: flex; align-items: flex-start; justify-content: center;
+      padding: 40px 20px;
+    }
+    .card {
+      width: 100%; max-width: 480px;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+      padding: 32px 30px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    }
+    .brand {
+      display: flex; flex-direction: column; align-items: center;
+      margin-bottom: 22px; padding-bottom: 18px; border-bottom: 1px solid var(--border);
+    }
+    .brand-text {
+      font-weight: 800; font-size: 22px; color: var(--accent);
+      letter-spacing: -0.01em;
+    }
+    .brand-sub {
+      margin-top: 4px; font-size: 9px; color: var(--muted);
+      letter-spacing: 0.12em; text-transform: uppercase; font-weight: 600;
+    }
+    .step-title {
+      font-size: 18px; font-weight: 800; margin: 0 0 6px 0;
+    }
+    .step-sub {
+      font-size: 13px; color: var(--muted); margin: 0 0 22px 0;
+    }
+    .field { margin-bottom: 14px; }
+    label {
+      display: block; font-family: 'DM Mono', monospace; font-size: 10px;
+      text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
+      margin-bottom: 5px;
+    }
+    input, select {
+      width: 100%; background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 8px; padding: 10px 12px; color: var(--text);
+      font-family: 'Figtree', sans-serif; font-size: 14px;
+      transition: border-color 0.15s;
+    }
+    input:focus, select:focus {
+      outline: none; border-color: var(--accent);
+    }
+    input[readonly] { color: var(--muted); cursor: default; }
+    .summary {
+      background: rgba(77,201,154,0.06); border: 1px solid rgba(77,201,154,0.25);
+      border-radius: 10px; padding: 14px 16px; margin-bottom: 22px;
+      font-size: 13px; line-height: 1.7;
+    }
+    .summary-label {
+      font-family: 'DM Mono', monospace; font-size: 10px;
+      text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
+    }
+    button.primary {
+      width: 100%; background: var(--accent); color: #04120e; border: none;
+      padding: 13px; border-radius: 10px; font-family: 'Figtree', sans-serif;
+      font-weight: 700; font-size: 14px; cursor: pointer; margin-top: 8px;
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+    button.primary:hover { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(77,201,154,0.3); }
+    button.primary:disabled { opacity: 0.6; cursor: wait; transform: none; box-shadow: none; }
+    .msg {
+      padding: 12px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 14px;
+      display: none;
+    }
+    .msg.error { background: rgba(255,92,92,0.08); border: 1px solid rgba(255,92,92,0.3); color: #ffb5b5; display: block; }
+    .msg.warn  { background: rgba(245,166,35,0.08); border: 1px solid rgba(245,166,35,0.3); color: #ffd699; display: block; }
+    .msg.ok    { background: rgba(77,201,154,0.08); border: 1px solid rgba(77,201,154,0.3); color: #a8e8c8; display: block; }
+    .spinner-row {
+      display: flex; align-items: center; justify-content: center; gap: 12px;
+      padding: 24px 0; color: var(--muted); font-size: 13px;
+    }
+    .spinner {
+      width: 18px; height: 18px; border: 2px solid var(--border);
+      border-top-color: var(--accent); border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .footer {
+      margin-top: 22px; padding-top: 14px; border-top: 1px solid var(--border);
+      font-size: 11px; color: var(--muted); text-align: center;
+    }
+    .footer code { font-family: 'DM Mono', monospace; color: var(--muted); }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  </style>
+</head>
+<body>
+
+<div class="card">
+  <div class="brand">
+    <div class="brand-text">Batch'd</div>
+    <div class="brand-sub">Food Traceability &amp; Recall Management</div>
+  </div>
+
+  <!-- Loading state — fetching invitation details -->
+  <div id="state-loading" class="spinner-row">
+    <div class="spinner"></div>
+    <div>Checking your invitation…</div>
+  </div>
+
+  <!-- Error state — invalid/expired/already-accepted -->
+  <div id="state-error" style="display:none;">
+    <h1 class="step-title">Invitation unavailable</h1>
+    <p class="step-sub" id="error-text">Something went wrong.</p>
+    <div class="footer">
+      Need help? Email <a href="mailto:support@batchdapp.com">support@batchdapp.com</a>
+    </div>
+  </div>
+
+  <!-- Accept form -->
+  <div id="state-form" style="display:none;">
+    <h1 class="step-title">You're invited to join <span id="org-name-inline">Batch'd</span></h1>
+    <p class="step-sub" id="invitation-subtitle">Set a password to finish creating your account.</p>
+
+    <div id="msg" class="msg"></div>
+
+    <div class="summary">
+      <div><span class="summary-label">Email:</span> <span id="summary-email"></span></div>
+      <div><span class="summary-label">Role:</span> <span id="summary-role"></span></div>
+      <div id="summary-store-row"><span class="summary-label">Store:</span> <span id="summary-store"></span></div>
+    </div>
+
+    <form id="accept-form">
+      <div class="field">
+        <label for="full_name">Full name</label>
+        <input type="text" id="full_name" name="full_name" required>
+      </div>
+
+      <div class="field">
+        <label for="phone_number">Phone number</label>
+        <input type="tel" id="phone_number" name="phone_number">
+      </div>
+
+      <div class="field">
+        <label for="store_role">Store role (optional)</label>
+        <input type="text" id="store_role" name="store_role" placeholder="e.g. cashier, stocker, front-end">
+      </div>
+
+      <div class="field">
+        <label for="employee_id">Employee / badge ID (optional)</label>
+        <input type="text" id="employee_id" name="employee_id">
+      </div>
+
+      <div class="field">
+        <label for="hire_date">Hire date (optional)</label>
+        <input type="date" id="hire_date" name="hire_date">
+      </div>
+
+      <div class="field">
+        <label for="password">Set a password</label>
+        <input type="password" id="password" name="password" minlength="8" required>
+        <div class="hint">At least 8 characters.</div>
+      </div>
+
+      <div class="field">
+        <label for="password_confirm">Confirm password</label>
+        <input type="password" id="password_confirm" minlength="8" required>
+      </div>
+
+      <button type="submit" class="primary" id="submit-btn">Accept invite &amp; create account</button>
+    </form>
+  </div>
+
+  <!-- Success state -->
+  <div id="state-success" style="display:none;">
+    <h1 class="step-title">Account created</h1>
+    <p class="step-sub">You're all set. Sign in to start using Batch'd.</p>
+    <a href="/dashboard.html" id="signin-link"><button class="primary" type="button">Sign in to Batch'd →</button></a>
+  </div>
+
+  <div class="footer">
+    Batch'd · <code>batchd.no</code>
+  </div>
+</div>
+
+<script>
+(function () {
+  const ROLE_LABELS = {
+    corp_admin:    'Corporate admin',
+    store_manager: 'Store manager',
+    staff:         'Store staff',
+  };
+  const FN_VALIDATE = '/.netlify/functions/staff-invite-accept';
+  const FN_ACCEPT   = '/.netlify/functions/staff-invite-accept';
+
+  const $ = (id) => document.getElementById(id);
+  const showOnly = (id) => {
+    ['state-loading','state-error','state-form','state-success'].forEach(s => {
+      $(s).style.display = (s === id) ? 'block' : 'none';
+    });
+  };
+  const showMsg = (text, tone) => {
+    const m = $('msg');
+    m.textContent = text;
+    m.className = 'msg ' + (tone || 'error');
+  };
+  const clearMsg = () => { $('msg').className = 'msg'; $('msg').textContent = ''; };
+
+  // ── Parse token from URL
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get('token');
+  if (!token) {
+    showOnly('state-error');
+    $('error-text').textContent = "This link is missing its invitation token. If you received an email from Batch'd, please click the link in that email directly.";
+    return;
+  }
+
+  // ── Validate token + render form
+  fetch(FN_VALIDATE + '?token=' + encodeURIComponent(token))
+    .then(r => r.json().then(body => ({ ok: r.ok, status: r.status, body })))
+    .then(({ ok, body }) => {
+      if (!ok || body.status !== 'valid') {
+        showOnly('state-error');
+        const messages = {
+          accepted:  "This invitation was already accepted. If you've already created your account, sign in directly.",
+          expired:   "This invitation has expired. Ask the person who invited you to send a new one.",
+          cancelled: "This invitation was cancelled. Ask the person who invited you to send a new one.",
+          not_found: "We couldn't find this invitation. The link may be malformed.",
+        };
+        $('error-text').textContent = messages[body.status] || body.error || "We couldn't verify this invitation.";
+        return;
+      }
+
+      // Fill in the form fields
+      $('org-name-inline').textContent = body.organisation_name || 'Batch\'d';
+      $('summary-email').textContent = body.email;
+      $('summary-role').textContent  = ROLE_LABELS[body.intended_role] || body.intended_role;
+
+      // Store context line
+      const storeRow = $('summary-store-row');
+      const storeEl  = $('summary-store');
+      if (body.primary_store_name) {
+        storeEl.textContent = body.primary_store_name;
+      } else if (Array.isArray(body.manager_store_names) && body.manager_store_names.length) {
+        storeEl.textContent = body.manager_store_names.join(', ');
+      } else if (body.intended_role === 'corp_admin') {
+        storeEl.textContent = 'All stores (corporate)';
+      } else {
+        storeRow.style.display = 'none';
+      }
+
+      // Pre-fill editable HR fields
+      if (body.intended_full_name)     $('full_name').value     = body.intended_full_name;
+      if (body.intended_phone_number)  $('phone_number').value  = body.intended_phone_number;
+      if (body.intended_hire_date)     $('hire_date').value     = body.intended_hire_date;
+      if (body.intended_store_role)    $('store_role').value    = body.intended_store_role;
+      if (body.intended_employee_id)   $('employee_id').value   = body.intended_employee_id;
+
+      // Set the sign-in destination based on intended role
+      const signinHref = (body.intended_role === 'staff')
+        ? '/index.html'  // scanner app — same domain serves both
+        : '/dashboard.html';
+      $('signin-link').setAttribute('href', signinHref);
+
+      showOnly('state-form');
+    })
+    .catch(err => {
+      showOnly('state-error');
+      $('error-text').textContent = 'Could not reach the Batch\'d server. ' + (err?.message || '');
+    });
+
+  // ── Submit handler
+  $('accept-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    clearMsg();
+
+    const password        = $('password').value;
+    const passwordConfirm = $('password_confirm').value;
+    const fullName        = $('full_name').value.trim();
+    const phone           = $('phone_number').value.trim();
+    const storeRole       = $('store_role').value.trim();
+    const employeeId      = $('employee_id').value.trim();
+    const hireDate        = $('hire_date').value;
+
+    if (!fullName) { showMsg('Please enter your full name.'); return; }
+    if (password.length < 8) { showMsg('Password must be at least 8 characters.'); return; }
+    if (password !== passwordConfirm) { showMsg('Passwords don\'t match.'); return; }
+
+    const submitBtn = $('submit-btn');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Creating account…';
+
+    try {
+      const res = await fetch(FN_ACCEPT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token,
+          password,
+          full_name:    fullName,
+          phone_number: phone || null,
+          hire_date:    hireDate || null,
+          store_role:   storeRole || null,
+          employee_id:  employeeId || null,
+        }),
+      });
+      const body = await res.json();
+
+      if (res.ok && body.success) {
+        showOnly('state-success');
+        return;
+      }
+
+      if (res.status === 409 && body.code === 'email_exists') {
+        showMsg(body.error + ' If you forgot your password, use "Forgot password" on the sign-in page.', 'warn');
+      } else {
+        showMsg(body.error || 'Could not accept the invitation. Please try again.', 'error');
+      }
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Accept invite & create account';
+    } catch (err) {
+      showMsg('Network error: ' + (err?.message || 'unknown'), 'error');
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Accept invite & create account';
+    }
+  });
+})();
+</script>
+
+</body>
+</html>
