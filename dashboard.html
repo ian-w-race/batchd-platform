@@ -7471,6 +7471,8 @@ async function renderStaff() {
       <div class="panel-header"><div class="panel-title">Invite a team member</div></div>
       <div class="panel-body">
         <div id="invite-msg" style="display:none;font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;"></div>
+
+        <!-- Required fields: email + role -->
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
           <div class="field" style="margin:0;">
             <label>Email address</label>
@@ -7485,14 +7487,58 @@ async function renderStaff() {
             </select>
           </div>
         </div>
+
+        <!-- Store assignment — shape changes by role:
+             staff       → single store dropdown (becomes primary_store_id)
+             corp_admin  → hidden (corp admins are not store-scoped)
+             store_manager → multi-select checkbox list (becomes manager_store_ids) -->
         <div class="field" id="inv-store-wrap" style="margin-bottom:12px;">
-          <label>Assign to store <span style="color:var(--muted);font-size:10px;">required for store manager and staff</span></label>
+          <label id="inv-store-label">Assign to store <span style="color:var(--muted);font-size:10px;">required</span></label>
           <select id="inv-store">
             <option value="">— Select store —</option>
             ${stores.map(s => `<option value="${s.id}">${s.name}</option>`).join('')}
           </select>
+          <div id="inv-store-multi" style="display:none;margin-top:6px;max-height:180px;overflow-y:auto;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;">
+            ${stores.map(s => `
+              <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;font-size:13px;">
+                <input type="checkbox" class="inv-store-cb" value="${s.id}" style="accent-color:var(--accent);">
+                <span>${s.name}</span>
+              </label>`).join('')}
+          </div>
         </div>
-        <div style="display:flex;gap:8px;">
+
+        <!-- Optional HR pre-fill block. Invitee can edit on accept. -->
+        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border);">
+          <div style="font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:10px;">
+            Profile details · optional <span style="text-transform:none;letter-spacing:0;color:var(--muted);">— pre-fills the invitee's profile; they can edit before final account creation</span>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:10px;">
+            <div class="field" style="margin:0;">
+              <label>Full name</label>
+              <input id="inv-full-name" type="text" placeholder="Anna Larsen" />
+            </div>
+            <div class="field" style="margin:0;">
+              <label>Phone number</label>
+              <input id="inv-phone" type="tel" placeholder="+47 ..." />
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+            <div class="field" style="margin:0;">
+              <label>Store role</label>
+              <input id="inv-store-role" type="text" placeholder="cashier · stocker · deli" />
+            </div>
+            <div class="field" style="margin:0;">
+              <label>Employee / badge ID</label>
+              <input id="inv-employee-id" type="text" placeholder="" />
+            </div>
+            <div class="field" style="margin:0;">
+              <label>Hire date</label>
+              <input id="inv-hire-date" type="date" />
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:8px;margin-top:14px;">
           <button class="btn-primary" onclick="sendInvitation()" id="btn-send-invite" style="flex:1;">
             Send invitation email →
           </button>
@@ -7639,46 +7685,112 @@ function openInviteForm() {
 
 function closeInviteForm() {
   document.getElementById('invite-form').style.display = 'none';
-  document.getElementById('inv-email').value = '';
+  ['inv-email','inv-full-name','inv-phone','inv-store-role','inv-employee-id','inv-hire-date'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  document.querySelectorAll('.inv-store-cb').forEach(cb => cb.checked = false);
   document.getElementById('invite-msg').style.display = 'none';
 }
 
 function onInvRoleChange() {
-  const role = document.getElementById('inv-role').value;
-  const storeWrap = document.getElementById('inv-store-wrap');
-  storeWrap.style.display = role === 'corp_admin' ? 'none' : 'block';
+  const role        = document.getElementById('inv-role').value;
+  const storeWrap   = document.getElementById('inv-store-wrap');
+  const storeLabel  = document.getElementById('inv-store-label');
+  const singleSel   = document.getElementById('inv-store');
+  const multiSel    = document.getElementById('inv-store-multi');
+
+  if (role === 'corp_admin') {
+    storeWrap.style.display = 'none';
+    return;
+  }
+  storeWrap.style.display = 'block';
+
+  if (role === 'store_manager') {
+    // Multi-store: managers can cover one or many stores.
+    storeLabel.innerHTML = 'Stores this manager will oversee <span style="color:var(--muted);font-size:10px;">tick one or more</span>';
+    singleSel.style.display = 'none';
+    multiSel.style.display  = 'block';
+  } else {
+    // Staff: single primary store.
+    storeLabel.innerHTML = 'Assign to store <span style="color:var(--muted);font-size:10px;">required</span>';
+    singleSel.style.display = '';
+    multiSel.style.display  = 'none';
+  }
 }
 
 async function sendInvitation() {
-  const email    = document.getElementById('inv-email').value.trim();
-  const role     = document.getElementById('inv-role').value;
-  const storeId  = document.getElementById('inv-store')?.value || null;
-  const msgEl    = document.getElementById('invite-msg');
-  const btn      = document.getElementById('btn-send-invite');
+  const email      = document.getElementById('inv-email').value.trim();
+  const role       = document.getElementById('inv-role').value;
+  const msgEl      = document.getElementById('invite-msg');
+  const btn        = document.getElementById('btn-send-invite');
 
   msgEl.style.display = 'none';
 
   if (!email || !email.includes('@')) {
     showInvMsg('Please enter a valid email address.', 'error'); return;
   }
-  if (role !== 'corp_admin' && !storeId) {
-    showInvMsg('Please select a store for this team member.', 'error'); return;
+
+  // Resolve store assignment by role shape
+  //   staff       → single store (becomes primary on accept)
+  //   store_manager → multi-store array (becomes manager_store_ids)
+  //   corp_admin  → no store
+  let primaryStoreId = null;
+  let managerStoreIds = null;
+  if (role === 'staff') {
+    primaryStoreId = document.getElementById('inv-store')?.value || null;
+    if (!primaryStoreId) {
+      showInvMsg('Please select a store for this staff member.', 'error'); return;
+    }
+  } else if (role === 'store_manager') {
+    managerStoreIds = [...document.querySelectorAll('.inv-store-cb:checked')].map(cb => cb.value);
+    if (managerStoreIds.length === 0) {
+      showInvMsg('Please tick at least one store this manager will oversee.', 'error'); return;
+    }
   }
+
+  // Optional HR pre-fill — invitee can edit on accept
+  const fullName     = document.getElementById('inv-full-name')?.value?.trim()    || null;
+  const phoneNumber  = document.getElementById('inv-phone')?.value?.trim()        || null;
+  const storeRole    = document.getElementById('inv-store-role')?.value?.trim()   || null;
+  const employeeId   = document.getElementById('inv-employee-id')?.value?.trim()  || null;
+  const hireDate     = document.getElementById('inv-hire-date')?.value             || null;
 
   btn.disabled = true;
   btn.innerHTML = '<div class="spinner"></div> Sending…';
 
   try {
-    // Create invitation record in DB
+    // Step 1: create the base invitation row via the existing RPC.
+    // The RPC writes email/role/store_id/token under the canonical
+    // security-definer path and returns the token + display names.
     const { data: inv, error } = await sb.rpc('send_invitation', {
       p_organisation_id: _orgId,
       p_email: email,
-      p_role: role,
-      p_store_id: storeId || null,
+      p_role:  role,
+      // For managers we leave store_id NULL (manager_store_ids is canonical);
+      // for staff we pass the selected primary store.
+      p_store_id: primaryStoreId,
     });
     if (error) throw error;
 
-    // Send email via Netlify function
+    // Step 2: enrich the row with HR fields + multi-store manager array.
+    // The RPC doesn't know about these new columns (added in migration 010);
+    // we patch them in with a follow-up UPDATE, identified by token.
+    const updatePayload = {};
+    if (fullName)       updatePayload.full_name     = fullName;
+    if (phoneNumber)    updatePayload.phone_number  = phoneNumber;
+    if (storeRole)      updatePayload.store_role    = storeRole;
+    if (employeeId)     updatePayload.employee_id   = employeeId;
+    if (hireDate)       updatePayload.hire_date     = hireDate;
+    if (managerStoreIds) updatePayload.manager_store_ids = managerStoreIds;
+    if (Object.keys(updatePayload).length > 0) {
+      const { error: upErr } = await sb.from('invitations')
+        .update(updatePayload)
+        .eq('token', inv.token);
+      if (upErr) console.warn('[sendInvitation] HR field update failed:', upErr.message);
+      // Don't block on this — the invite still works without HR pre-fill.
+    }
+
+    // Step 3: email the invitee via Netlify function
     const inviteUrl = `https://batchdapp.com/join?token=${inv.token}`;
     const roleLabel = role.replace(/_/g, ' ');
 
@@ -7699,7 +7811,11 @@ async function sendInvitation() {
     showInvMsg(`Invitation sent to ${email} ✓`, 'success');
     btn.disabled = false;
     btn.innerHTML = 'Send invitation email →';
-    document.getElementById('inv-email').value = '';
+    // Reset the form so a second invite can't accidentally duplicate fields
+    ['inv-email','inv-full-name','inv-phone','inv-store-role','inv-employee-id','inv-hire-date'].forEach(id => {
+      const el = document.getElementById(id); if (el) el.value = '';
+    });
+    document.querySelectorAll('.inv-store-cb').forEach(cb => cb.checked = false);
     // Refresh staff panel after 1.5s
     setTimeout(() => renderStaff(), 1500);
 
