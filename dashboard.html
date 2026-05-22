@@ -7,7 +7,7 @@
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <meta name="theme-color" content="#34d399" />
-  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700;800;900&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800;900&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- Leaflet — for the live store map (Command Center pivot, 2026-05).
        Pulled from unpkg with SRI integrity hashes. v1.9.4 is the latest
@@ -25,98 +25,264 @@
     /* ── Theme: dark (default) ──
        Elevation model: bg → surface (L1 cards) → surface2 (L2 inputs)
        Accent desaturated ~22% · Text off-white · No pure black ── */
-    :root {
-      --bg:          #111918;         /* was #040c0e — deep teal-grey, ~#121212 brightness, avoids pure black */
-      --surface:     #1E2E2A;         /* elevation L1: +13/+21/+18 lift from bg — cards clearly visible */
-      --surface2:    #283C37;         /* elevation L2: inputs/insets clearly recessed within cards */
-      --border:      rgba(var(--accent-rgb),0.16); /* subtle teal tint */
-      --border-hard: #2E4840;
-      --accent:      #4DC99A;         /* was #34d399 — desaturated ~22%, less neon on dark bg */
-      --accent-dim:  #2E9068;         /* desaturated dim accent */
-      --text:        #E2EDEA;         /* was #f4fefb — off-white with teal warmth, ~#E0E0E0 brightness */
-      --muted:       #8CAEA8;         /* comfortable secondary text, ~8:1 contrast on --bg */
-      --danger:      #E87272;         /* was #ff5c5c — desaturated ~18% */
-      --warn:        #DCA040;         /* was #f5a623 — desaturated ~18% */
-      --info:        #52B4E0;         /* was #38bdf8 — desaturated ~18% */
-      --radius:      12px;
-      --blur-sm:     blur(8px);
-      --blur-md:     blur(14px);
-      --blur-lg:     blur(22px);
-      --sidebar-bg:  #0D1614;         /* slightly darker than bg — sidebar has depth */
-      --topbar-bg:   rgba(14,22,20,0.98); /* near-solid topbar */
-      --glass-border:rgba(var(--accent-rgb),0.22); /* card/panel borders */
-      --glow-a:      rgba(var(--accent-alt-rgb),0.10);  /* updated for desaturated accent */
-      --glow-b:      rgba(46,144,104,0.08);
-      --input-bg:    #283C37;         /* matches surface2 — inputs clearly recessed */
-      --auth-bg:     #1E2E2A;         /* matches surface */
-      /* ── Elevation shadows (light source on dark bg = muted; elevation is the primary depth cue) ── */
-      --shadow-sm:   0 2px 8px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.04);
-      --shadow-md:   0 6px 20px rgba(0,0,0,0.55), 0 2px 6px rgba(0,0,0,0.30);
-      --shadow-lg:   0 10px 36px rgba(0,0,0,0.60), 0 3px 10px rgba(0,0,0,0.35);
-      --shadow-xl:   0 18px 52px rgba(0,0,0,0.65), 0 5px 18px rgba(0,0,0,0.40);
-      --shadow-glow-danger: 0 0 20px rgba(232,114,114,0.18), 0 4px 16px rgba(0,0,0,0.40);
-      --shadow-glow-warn:   0 0 16px rgba(220,160,64,0.15),  0 4px 12px rgba(0,0,0,0.35);
-      --shadow-glow-accent: 0 0 20px rgba(var(--accent-alt-rgb),0.12),  0 4px 16px rgba(0,0,0,0.35);
+    /* ═══════════════════════════════════════════════════════════════
+       Batch'd Design System v2 (Claude Design handoff, 2026-05)
+       Source of truth: /assets/design-tokens.css
+       Architecture: semantic Layer 1 (--accent-primary, --text-primary,
+       --background-surface, etc.) with a Layer 2 legacy alias block at
+       the bottom so existing markup (--bg, --surface, --text, --muted,
+       etc.) keeps working unchanged.
+       Dark is canonical (on :root). Light is opt-in via <html data-theme="light">.
+       Never switch via prefers-color-scheme — compliance product; theme
+       is an explicit operator decision.
+       ═══════════════════════════════════════════════════════════════ */
 
-      /* ── Color-family RGB triples for translucent tints ──
-         Use as: rgba(var(--accent-rgb), 0.1) etc. so a single token
-         swap in [data-theme="light"] below recolors every tinted
-         background, chip, banner, glow on the page. Added 2026-05
-         to retire the ~975 hardcoded rgba(...) literals scattered
-         through inline styles. */
-      --accent-rgb:        52, 211, 153;   /* mint UI accent — primary */
-      --accent-alt-rgb:    77, 201, 154;   /* slightly desaturated accent variant */
-      --accent-muted-rgb:  106, 175, 158;  /* muted greenish */
-      --danger-rgb:        255, 92, 92;    /* recall red */
-      --warn-rgb:          245, 166, 35;   /* amber */
-      --info-rgb:          70, 130, 255;   /* FSMA / FDA blue */
-      --info-light-rgb:    56, 189, 248;   /* sky blue */
-      --info-soft-rgb:     123, 169, 255;  /* softer FDA blue */
-      --surface-tint-rgb:  22, 61, 55;     /* dark-mode green-tinted surface */
+    /* Self-hosted brand weight; other Figtree weights + DM Mono load
+       from Google Fonts via the <link> in <head>. */
+    @font-face {
+      font-family: 'Figtree';
+      font-style: normal;
+      font-weight: 800;
+      font-display: swap;
+      src: url('/fonts/Figtree-ExtraBold.ttf') format('truetype');
     }
 
-    /* ── Theme: light ──
-       Background off-white · Text #1A1A1A-class · Full-saturation brand accent ── */
-    [data-theme="light"] {
-      --bg:          #F5F7F6;         /* was #edf1f0 — ~#F5F5F5 per guidelines, brand-tinted */
-      --surface:     #FFFFFF;         /* white cards clearly pop on off-white bg */
-      --surface2:    #ECEEEC;         /* insets visibly recessed vs white card */
-      --border:      #9EBCB4;         /* was #8fb5ae — clearly visible dividers */
-      --border-hard: #7EA39A;         /* was #7aa39a */
-      --accent:      #077A55;         /* full saturation for light mode ✓ */
-      --accent-dim:  #055E40;
-      --text:        #1A201D;         /* was #111b18 — ~#1A1A1A per guidelines, brand-tinted */
-      --muted:       #4D7A6F;         /* comfortable secondary text */
-      --danger:      #DC2626;         /* full saturation for light mode */
-      --warn:        #D97706;
-      --info:        #0369A1;
-      --sidebar-bg:  #FFFFFF;
-      --topbar-bg:   rgba(255,255,255,0.98);
-      --glass-border:#9EBCB4;         /* matches --border */
-      --glow-a:      rgba(var(--accent-rgb),0.04);
-      --glow-b:      rgba(5,150,105,0.02);
-      --input-bg:    #FFFFFF;
-      --auth-bg:     #FFFFFF;
-      --shadow-sm:   0 1px 4px rgba(0,0,0,0.10), 0 0 0 1px rgba(0,0,0,0.05);
-      --shadow-md:   0 4px 14px rgba(0,0,0,0.10), 0 1px 4px rgba(0,0,0,0.06);
-      --shadow-lg:   0 8px 28px rgba(0,0,0,0.11), 0 2px 8px rgba(0,0,0,0.07);
-      --shadow-xl:   0 16px 44px rgba(0,0,0,0.13), 0 4px 12px rgba(0,0,0,0.08);
-      --shadow-glow-danger: 0 4px 16px rgba(var(--danger-rgb),0.15),  0 1px 4px rgba(0,0,0,0.06);
-      --shadow-glow-warn:   0 4px 12px rgba(var(--warn-rgb),0.15),  0 1px 4px rgba(0,0,0,0.05);
-      --shadow-glow-accent: 0 4px 16px rgba(var(--accent-rgb),0.12),   0 1px 4px rgba(0,0,0,0.05);
+    :root,
+    [data-theme="dark"] {
+      /* ── BACKGROUND / ELEVATION (dark elevates with lighter surface fills) ── */
+      --background-base:      #080f12;
+      --background-surface:   #0d1e1c;
+      --background-elevated:  #13302b;
+      --background-overlay:   rgba(8,15,18,0.85);
+      --background-input:     #13302b;
+      --background-disabled:  #0d1e1c;
 
-      /* Light-mode overrides for the color-family RGB triples.
-         Dark-mode mint becomes professional forest-green; the
-         neon red and amber soften to print-credible tones. */
+      /* ── TEXT (off-white primary, never pure #FFFFFF) ── */
+      --text-primary:    #EAF6F0;
+      --text-secondary:  #C3E0D4;
+      --text-muted:      #6AAF9E;
+      --text-disabled:   #486C63;
+      --text-on-accent:  #052E16;
+      --text-link:       var(--accent-primary);
+
+      /* ── BORDERS / RINGS ── */
+      --border-subtle:   rgba(234,246,240,0.08);
+      --border-default:  #163d37;
+      --border-strong:   rgba(52,211,153,0.35);
+      --border-focus:    #34D399;
+
+      /* ── ACCENT (mint — desaturated emerald) ── */
+      --accent-primary:           #34D399;
+      --accent-primary-hover:     #6EE7B7;
+      --accent-primary-active:    #1FA37A;
+      --accent-primary-disabled:  #1C3A31;
+      --accent-on-primary:        var(--text-on-accent);
+      --accent-soft:              rgba(52,211,153,0.10);
+      --accent-soft-strong:       rgba(52,211,153,0.18);
+
+      /* ── SEMANTIC ── */
+      --semantic-danger:       #FF6B6B;
+      --semantic-danger-hover: #FF8E8E;
+      --semantic-danger-tint:  rgba(255,107,107,0.10);
+      --semantic-warn:         #F5A623;
+      --semantic-warn-hover:   #FFC264;
+      --semantic-warn-tint:    rgba(245,166,35,0.10);
+      --semantic-info:         #5BC9F8;
+      --semantic-info-hover:   #8AD9FA;
+      --semantic-info-tint:    rgba(91,201,248,0.10);
+      --semantic-success:      var(--accent-primary);
+      --semantic-success-tint: var(--accent-soft);
+
+      /* ── ELEVATION (dark: surfaces step up, shadows nearly invisible) ── */
+      --shadow-xs: none;
+      --shadow-sm: 0 1px 4px rgba(0,0,0,0.35);
+      --shadow-md: 0 4px 16px rgba(0,0,0,0.40);
+      --shadow-lg: 0 16px 48px rgba(0,0,0,0.50), 0 4px 16px rgba(0,0,0,0.35);
+      --shadow-xl: 0 32px 80px rgba(0,0,0,0.55);
+      --shadow-accent: 0 4px 24px rgba(52,211,153,0.35);
+
+      /* ── FOCUS RING (halo: 2px base offset + 2px accent ≥ 3:1 vs any surface) ── */
+      --ring-focus: 0 0 0 2px var(--background-base), 0 0 0 4px var(--accent-primary);
+
+      /* ── RGB triples for translucent tints — used by inline rgba(var(--*-rgb), α) ── */
+      --accent-rgb:        52, 211, 153;
+      --accent-deep-rgb:   31, 163, 122;
+      --accent-alt-rgb:    52, 211, 153;
+      --accent-muted-rgb:  106, 175, 158;
+      --danger-rgb:        255, 107, 107;
+      --warn-rgb:          245, 166, 35;
+      --info-rgb:          91, 201, 248;
+      --info-light-rgb:    56, 189, 248;
+      --info-soft-rgb:     123, 169, 255;
+      --surface-tint-rgb:  22, 61, 55;
+
+      color-scheme: dark;
+    }
+
+    /* ── LIGHT — not an inversion; hues darkened/desaturated to hold AA on white ── */
+    [data-theme="light"] {
+      --background-base:      #F5F7F6;
+      --background-surface:   #FFFFFF;
+      --background-elevated:  #FFFFFF;
+      --background-overlay:   rgba(245,247,246,0.85);
+      --background-input:     #FFFFFF;
+      --background-disabled:  #ECEFED;
+
+      --text-primary:    #0E1F1A;
+      --text-secondary:  #2C3D37;
+      --text-muted:      #56756B;
+      --text-disabled:   #9FB5AC;
+      --text-on-accent:  #FFFFFF;
+
+      --border-subtle:   rgba(14,31,26,0.06);
+      --border-default:  rgba(7,122,85,0.22);
+      --border-strong:   rgba(7,122,85,0.45);
+      --border-focus:    #077A55;
+
+      --accent-primary:           #077A55;
+      --accent-primary-hover:     #066644;
+      --accent-primary-active:    #054F36;
+      --accent-primary-disabled:  #B5D5CA;
+      --accent-on-primary:        #FFFFFF;
+      --accent-soft:              rgba(7,122,85,0.08);
+      --accent-soft-strong:       rgba(7,122,85,0.14);
+
+      --semantic-danger:       #DC2626;
+      --semantic-danger-hover: #B91C1C;
+      --semantic-danger-tint:  rgba(220,38,38,0.10);
+      --semantic-warn:         #BE5A0E;
+      --semantic-warn-hover:   #92400E;
+      --semantic-warn-tint:    rgba(190,90,14,0.10);
+      --semantic-info:         #057AAB;
+      --semantic-info-hover:   #036186;
+      --semantic-info-tint:    rgba(5,122,171,0.10);
+      --semantic-success:      #08825C;
+      --semantic-success-tint: var(--accent-soft);
+
+      /* Light elevation = soft layered shadows */
+      --shadow-xs: 0 1px 1px rgba(7,30,25,0.04);
+      --shadow-sm: 0 1px 2px rgba(7,30,25,0.06), 0 1px 3px rgba(7,30,25,0.08);
+      --shadow-md: 0 4px 6px rgba(7,30,25,0.04), 0 10px 15px rgba(7,30,25,0.08);
+      --shadow-lg: 0 10px 15px rgba(7,30,25,0.05), 0 20px 25px rgba(7,30,25,0.10);
+      --shadow-xl: 0 25px 50px rgba(7,30,25,0.16);
+      --shadow-accent: 0 4px 14px rgba(7,122,85,0.28);
+
+      --ring-focus: 0 0 0 2px var(--background-base), 0 0 0 4px var(--accent-primary);
+
       --accent-rgb:        7, 122, 85;
+      --accent-deep-rgb:   5, 94, 64;
       --accent-alt-rgb:    7, 122, 85;
       --accent-muted-rgb:  20, 90, 65;
       --danger-rgb:        220, 38, 38;
-      --warn-rgb:          217, 119, 6;
-      --info-rgb:          37, 99, 235;
+      --warn-rgb:          190, 90, 14;
+      --info-rgb:          5, 122, 171;
       --info-light-rgb:    14, 165, 233;
       --info-soft-rgb:     59, 130, 246;
       --surface-tint-rgb:  220, 240, 230;
+
+      color-scheme: light;
+    }
+
+    /* ── Shared scale tokens (typography, spacing, radii, motion) ── */
+    :root {
+      --font-display: 'Figtree', system-ui, -apple-system, Segoe UI, sans-serif;
+      --font-body:    'Figtree', system-ui, -apple-system, Segoe UI, sans-serif;
+      --font-mono:    'DM Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+      --fs-eyebrow: 11px; --fs-label: 10px; --fs-meta: 12px;
+      --fs-body: 13px; --fs-body-lg: 15px;
+      --fs-h4: 17px; --fs-h3: 22px; --fs-h2: 28px; --fs-h1: 46px;
+      --fs-hero: clamp(40px, 7vw, 80px);
+
+      --lh-tight: 1.05; --lh-snug: 1.20; --lh-body: 1.65; --lh-loose: 1.75;
+      --ls-tight: -0.04em; --ls-tightish: -0.025em; --ls-mono: 0.06em; --ls-wide: 0.12em;
+
+      --fw-regular: 400; --fw-medium: 500; --fw-semibold: 600;
+      --fw-bold: 700; --fw-extrabold: 800; --fw-black: 900;
+
+      --r-xs: 6px; --r-sm: 8px; --r-md: 10px; --r-lg: 12px;
+      --r-xl: 16px; --r-2xl: 20px; --r-pill: 999px;
+
+      --s-1: 4px;  --s-2: 8px;   --s-3: 12px; --s-4: 16px;
+      --s-5: 20px; --s-6: 24px;  --s-8: 32px; --s-10: 40px;
+      --s-12: 48px; --s-16: 64px; --s-20: 80px; --s-24: 96px; --s-32: 128px;
+
+      --ease-out:    cubic-bezier(0, 0, 0.2, 1);
+      --ease-snap:   cubic-bezier(0.4, 0, 0.2, 1);
+      --dur-fast:    0.15s;
+      --dur-normal:  0.20s;
+      --dur-slow:    0.40s;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+       LEGACY ALIASES — bridge existing Batch'd token names to the new
+       semantic tokens. Existing markup (var(--bg), var(--surface),
+       var(--text), var(--muted), var(--accent), etc.) keeps working;
+       new code should prefer the semantic names above.
+       ═══════════════════════════════════════════════════════════════ */
+    :root, [data-theme] {
+      --batchd-green:        var(--accent-primary);
+      --batchd-green-hover:  var(--accent-primary-hover);
+      --batchd-green-dim:    var(--accent-primary-active);
+      --batchd-green-deep:   #055A46;
+      --batchd-ink-on-green: var(--accent-on-primary);
+      --accent:              var(--accent-primary);
+      --accent-dim:          var(--accent-primary-active);
+
+      --bg:           var(--background-base);
+      --surface:      var(--background-surface);
+      --surface2:     var(--background-elevated);
+      --bg-elev-0:    var(--background-surface);
+      --bg-elev-1:    var(--background-elevated);
+      --bg-elev-2:    var(--background-surface);
+      --bg-elev-3:    var(--background-elevated);
+      --sidebar-bg:   var(--background-surface);
+      --topbar-bg:    var(--background-overlay);
+      --auth-bg:      var(--background-surface);
+      --input-bg:     var(--background-input);
+      --overlay:      var(--background-overlay);
+      --header-bg:    var(--background-overlay);
+      --mobile-nav-bg:var(--background-overlay);
+
+      --text:         var(--text-primary);
+      --fg-1:         var(--text-primary);
+      --fg-2:         var(--text-primary);
+      --muted:        var(--text-muted);
+      --fg-mute:      var(--text-muted);
+      --fg-mute-soft: var(--text-muted);
+
+      --border:       var(--border-default);
+      --border-hard:  var(--border-strong);
+      --border-soft:  var(--border-strong);
+      --glass-border: var(--border-strong);
+
+      --danger:       var(--semantic-danger);
+      --warn:         var(--semantic-warn);
+      --info:         var(--semantic-info);
+      --success:      var(--semantic-success);
+      --tint-success: var(--accent-soft);
+      --tint-danger:  var(--semantic-danger-tint);
+      --tint-warn:    var(--semantic-warn-tint);
+      --tint-info:    var(--semantic-info-tint);
+
+      --glow-a:       var(--accent-soft);
+      --glow-b:       var(--accent-soft);
+
+      --shadow-mint:        var(--shadow-accent);
+      --shadow-mint-sm:     var(--shadow-md);
+      --shadow-glow-accent: var(--shadow-accent);
+      --shadow-glow-danger: var(--shadow-md);
+      --shadow-glow-warn:   var(--shadow-md);
+
+      --radius:       var(--r-lg);
+      --blur-sm:      blur(8px);
+      --blur-md:      blur(14px);
+      --blur-lg:      blur(22px);
+
+      --at06: var(--accent-soft);
+      --at10: var(--accent-soft);
+      --at15: var(--accent-soft-strong);
+      --at25: var(--accent-soft-strong);
     }
 
     /* ── Base ── */

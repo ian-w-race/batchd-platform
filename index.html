@@ -44,74 +44,211 @@
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" defer></script>
 <script src="https://unpkg.com/tesseract.js@5.1.0/dist/tesseract.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700;800&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800;900&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
 <style>
-  :root {
-    --bg: #080f12;
-    --surface: #0d1e1c;
-    --surface2: #13302b;
-    --border: rgba(var(--accent-rgb),0.2);
-    --accent: #34d399;
-    --accent-dim: #059669;
-    --text: #f4fefb;
-    --muted: #90ccbc;
-    --danger: #ff5c5c;
-    --warn: #f5a623;      /* amber */
-    --info: #38bdf8;
-    --overlay: rgba(8,15,18,0.88);
-    --header-bg: rgba(8,15,18,0.92);
-    --mobile-nav-bg: rgba(8,15,18,0.96);
+  /* ═══════════════════════════════════════════════════════════════
+     Batch'd Design System v2 (Claude Design handoff, 2026-05)
+     Source of truth: /assets/design-tokens.css
+     Semantic Layer 1 (--accent-primary, --text-primary,
+     --background-surface, etc.) with a Layer 2 legacy alias block
+     at the bottom so existing markup (--bg, --surface, --text,
+     --muted, etc.) keeps working unchanged.
+     Dark is canonical. Light is opt-in via <html data-theme="light">.
+     ═══════════════════════════════════════════════════════════════ */
+  @font-face {
+    font-family: 'Figtree';
+    font-style: normal;
+    font-weight: 800;
+    font-display: swap;
+    src: url('/fonts/Figtree-ExtraBold.ttf') format('truetype');
+  }
 
-    /* ── Color-family RGB triples for translucent tints ──
-       Use as: rgba(var(--accent-rgb), 0.1) etc. so the same alpha
-       gradient recolors correctly when [data-theme="light"]
-       overrides these triples below. Added 2026-05 to retire the
-       hardcoded rgba literals scattered through inline styles. */
-    --accent-rgb:        52, 211, 153;   /* dark-mode mint */
-    --accent-deep-rgb:   7, 122, 85;     /* darker accent variant (also used in dark mode) */
-    --danger-rgb:        255, 92, 92;
+  :root,
+  [data-theme="dark"] {
+    --background-base:      #080f12;
+    --background-surface:   #0d1e1c;
+    --background-elevated:  #13302b;
+    --background-overlay:   rgba(8,15,18,0.85);
+    --background-input:     #13302b;
+    --background-disabled:  #0d1e1c;
+
+    --text-primary:    #EAF6F0;
+    --text-secondary:  #C3E0D4;
+    --text-muted:      #6AAF9E;
+    --text-disabled:   #486C63;
+    --text-on-accent:  #052E16;
+    --text-link:       var(--accent-primary);
+
+    --border-subtle:   rgba(234,246,240,0.08);
+    --border-default:  #163d37;
+    --border-strong:   rgba(52,211,153,0.35);
+    --border-focus:    #34D399;
+
+    --accent-primary:           #34D399;
+    --accent-primary-hover:     #6EE7B7;
+    --accent-primary-active:    #1FA37A;
+    --accent-primary-disabled:  #1C3A31;
+    --accent-on-primary:        var(--text-on-accent);
+    --accent-soft:              rgba(52,211,153,0.10);
+    --accent-soft-strong:       rgba(52,211,153,0.18);
+
+    --semantic-danger:       #FF6B6B;
+    --semantic-danger-hover: #FF8E8E;
+    --semantic-danger-tint:  rgba(255,107,107,0.10);
+    --semantic-warn:         #F5A623;
+    --semantic-warn-hover:   #FFC264;
+    --semantic-warn-tint:    rgba(245,166,35,0.10);
+    --semantic-info:         #5BC9F8;
+    --semantic-info-hover:   #8AD9FA;
+    --semantic-info-tint:    rgba(91,201,248,0.10);
+    --semantic-success:      var(--accent-primary);
+    --semantic-success-tint: var(--accent-soft);
+
+    --shadow-xs: none;
+    --shadow-sm: 0 1px 4px rgba(0,0,0,0.35);
+    --shadow-md: 0 4px 16px rgba(0,0,0,0.40);
+    --shadow-lg: 0 16px 48px rgba(0,0,0,0.50), 0 4px 16px rgba(0,0,0,0.35);
+    --shadow-xl: 0 32px 80px rgba(0,0,0,0.55);
+    --shadow-accent: 0 4px 24px rgba(52,211,153,0.35);
+
+    --ring-focus: 0 0 0 2px var(--background-base), 0 0 0 4px var(--accent-primary);
+
+    /* RGB triples for translucent tints */
+    --accent-rgb:        52, 211, 153;
+    --accent-deep-rgb:   31, 163, 122;
+    --danger-rgb:        255, 107, 107;
     --warn-rgb:          245, 166, 35;
-    --info-rgb:          59, 130, 246;
+    --info-rgb:          91, 201, 248;
     --info-light-rgb:    56, 189, 248;
+
+    color-scheme: dark;
   }
 
   [data-theme="light"] {
-    /* ── Batch'd Light — neutral, clear contrast, no colour ambiguity ── */
-    --bg:            #f0f4f2;
-    --surface:       #ffffff;
-    --surface2:      #f6f9f7;
-    --border:        #a8bdb7;
-    --accent:        #077a55;
-    --accent-dim:    #055e40;
-    --text:          #0c1e18;
-    --muted:         #3b7a6a;
-    --danger:        #dc2626;   /* red — confirmed recall / critical */
-    --info:          #0369a1;
-    --warn:          #d97706;   /* dark amber for light mode readability */
-    --overlay:       rgba(12,30,24,0.72);
-    --header-bg:     rgba(255,255,255,0.97);
-    --mobile-nav-bg: rgba(255,255,255,0.99);
+    --background-base:      #F5F7F6;
+    --background-surface:   #FFFFFF;
+    --background-elevated:  #FFFFFF;
+    --background-overlay:   rgba(245,247,246,0.85);
+    --background-input:     #FFFFFF;
+    --background-disabled:  #ECEFED;
 
-    /* Light-mode overrides for the color-family RGB triples.
-       Mint becomes forest-green; neon red and amber soften to
-       print-credible tones for on-paper-feel light surfaces. */
+    --text-primary:    #0E1F1A;
+    --text-secondary:  #2C3D37;
+    --text-muted:      #56756B;
+    --text-disabled:   #9FB5AC;
+    --text-on-accent:  #FFFFFF;
+
+    --border-subtle:   rgba(14,31,26,0.06);
+    --border-default:  rgba(7,122,85,0.22);
+    --border-strong:   rgba(7,122,85,0.45);
+    --border-focus:    #077A55;
+
+    --accent-primary:           #077A55;
+    --accent-primary-hover:     #066644;
+    --accent-primary-active:    #054F36;
+    --accent-primary-disabled:  #B5D5CA;
+    --accent-on-primary:        #FFFFFF;
+    --accent-soft:              rgba(7,122,85,0.08);
+    --accent-soft-strong:       rgba(7,122,85,0.14);
+
+    --semantic-danger:       #DC2626;
+    --semantic-danger-hover: #B91C1C;
+    --semantic-danger-tint:  rgba(220,38,38,0.10);
+    --semantic-warn:         #BE5A0E;
+    --semantic-warn-hover:   #92400E;
+    --semantic-warn-tint:    rgba(190,90,14,0.10);
+    --semantic-info:         #057AAB;
+    --semantic-info-hover:   #036186;
+    --semantic-info-tint:    rgba(5,122,171,0.10);
+    --semantic-success:      #08825C;
+    --semantic-success-tint: var(--accent-soft);
+
+    --shadow-xs: 0 1px 1px rgba(7,30,25,0.04);
+    --shadow-sm: 0 1px 2px rgba(7,30,25,0.06), 0 1px 3px rgba(7,30,25,0.08);
+    --shadow-md: 0 4px 6px rgba(7,30,25,0.04), 0 10px 15px rgba(7,30,25,0.08);
+    --shadow-lg: 0 10px 15px rgba(7,30,25,0.05), 0 20px 25px rgba(7,30,25,0.10);
+    --shadow-xl: 0 25px 50px rgba(7,30,25,0.16);
+    --shadow-accent: 0 4px 14px rgba(7,122,85,0.28);
+
+    --ring-focus: 0 0 0 2px var(--background-base), 0 0 0 4px var(--accent-primary);
+
     --accent-rgb:        7, 122, 85;
     --accent-deep-rgb:   5, 94, 64;
     --danger-rgb:        220, 38, 38;
-    --warn-rgb:          217, 119, 6;
-    --info-rgb:          37, 99, 235;
+    --warn-rgb:          190, 90, 14;
+    --info-rgb:          5, 122, 171;
     --info-light-rgb:    14, 165, 233;
+
+    color-scheme: light;
   }
 
-  /* ── Accent tints: replace neon rgba(var(--accent-rgb),X) with forest-green equivalent ── */
-  [data-theme="light"] {
-    --at06: rgba(var(--accent-deep-rgb),0.06); --at10: rgba(var(--accent-deep-rgb),0.10); --at15: rgba(var(--accent-deep-rgb),0.15); --at25: rgba(var(--accent-deep-rgb),0.25);
-    --shadow-sm:   0 1px 3px rgba(0,0,0,0.07), 0 0 0 1px rgba(0,0,0,0.04);
-    --shadow-md:   0 4px 12px rgba(0,0,0,0.09), 0 1px 4px rgba(0,0,0,0.05);
-    --shadow-lg:   0 8px 24px rgba(0,0,0,0.11), 0 2px 8px rgba(0,0,0,0.06);
-    --shadow-xl:   0 16px 40px rgba(0,0,0,0.13), 0 4px 12px rgba(0,0,0,0.07);
-    --shadow-glow-accent: 0 4px 16px rgba(var(--accent-deep-rgb),0.14), 0 1px 4px rgba(0,0,0,0.05);
-    --shadow-glow-danger: 0 4px 16px rgba(var(--danger-rgb),0.14), 0 1px 4px rgba(0,0,0,0.05);
+  /* Shared scale tokens (typography, spacing, radii, motion) */
+  :root {
+    --font-display: 'Figtree', system-ui, -apple-system, Segoe UI, sans-serif;
+    --font-body:    'Figtree', system-ui, -apple-system, Segoe UI, sans-serif;
+    --font-mono:    'DM Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+    --fs-eyebrow: 11px; --fs-label: 10px; --fs-meta: 12px;
+    --fs-body: 13px; --fs-body-lg: 15px;
+    --fs-h4: 17px; --fs-h3: 22px; --fs-h2: 28px; --fs-h1: 46px;
+    --fs-hero: clamp(40px, 7vw, 80px);
+
+    --lh-tight: 1.05; --lh-snug: 1.20; --lh-body: 1.65; --lh-loose: 1.75;
+    --ls-tight: -0.04em; --ls-tightish: -0.025em; --ls-mono: 0.06em; --ls-wide: 0.12em;
+
+    --fw-regular: 400; --fw-medium: 500; --fw-semibold: 600;
+    --fw-bold: 700; --fw-extrabold: 800; --fw-black: 900;
+
+    --r-xs: 6px; --r-sm: 8px; --r-md: 10px; --r-lg: 12px;
+    --r-xl: 16px; --r-2xl: 20px; --r-pill: 999px;
+
+    --s-1: 4px;  --s-2: 8px;   --s-3: 12px; --s-4: 16px;
+    --s-5: 20px; --s-6: 24px;  --s-8: 32px; --s-10: 40px;
+    --s-12: 48px; --s-16: 64px; --s-20: 80px; --s-24: 96px; --s-32: 128px;
+
+    --ease-out:    cubic-bezier(0, 0, 0.2, 1);
+    --ease-snap:   cubic-bezier(0.4, 0, 0.2, 1);
+    --dur-fast:    0.15s;
+    --dur-normal:  0.20s;
+    --dur-slow:    0.40s;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════
+     LEGACY ALIASES — bridge existing Batch'd token names to the new
+     semantic tokens. Existing markup keeps working; new code should
+     prefer the semantic names above.
+     ═══════════════════════════════════════════════════════════════ */
+  :root, [data-theme] {
+    --batchd-green:        var(--accent-primary);
+    --batchd-green-hover:  var(--accent-primary-hover);
+    --batchd-green-dim:    var(--accent-primary-active);
+    --accent:              var(--accent-primary);
+    --accent-dim:          var(--accent-primary-active);
+
+    --bg:           var(--background-base);
+    --surface:      var(--background-surface);
+    --surface2:     var(--background-elevated);
+    --overlay:      var(--background-overlay);
+    --header-bg:    var(--background-overlay);
+    --mobile-nav-bg:var(--background-overlay);
+
+    --text:  var(--text-primary);
+    --muted: var(--text-muted);
+
+    --border: var(--border-default);
+
+    --danger:  var(--semantic-danger);
+    --warn:    var(--semantic-warn);
+    --info:    var(--semantic-info);
+    --success: var(--semantic-success);
+
+    --shadow-glow-accent: var(--shadow-accent);
+    --shadow-glow-danger: var(--shadow-md);
+
+    --at06: var(--accent-soft);
+    --at10: var(--accent-soft);
+    --at15: var(--accent-soft-strong);
+    --at25: var(--accent-soft-strong);
   }
 
   /* Nav active pill — keep text dark on green */
