@@ -514,6 +514,37 @@ exports.handler = async (event) => {
       }
     });
 
+    // 7b. Per-user notification emails to opted-in corp_admins +
+    // store_managers in the receiving org. Fire-and-forget — failure
+    // here doesn't block the complaint flow. notify-event.js handles
+    // role scoping, default-on prefs, and Resend delivery.
+    if (receiving_org_id) {
+      try {
+        const notifyRes = await fetch(`${process.env.URL || 'https://app.batchdapp.com'}/.netlify/functions/notify-event`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            event_type: 'complaint_filed',
+            org_id: receiving_org_id,
+            internal_secret: process.env.INTERNAL_NOTIFY_SECRET,
+            payload: {
+              complaint_number: complaint.complaint_number || null,
+              product_name:     product_name || null,
+              lot_number:       lot_number || null,
+              triage_level:     triage.triage_level || null,
+              store_name:       store_name || null,
+              store_id:         null,  // not resolved here; complaint_filed scopes corp_admins + all store_managers of the org if null
+            },
+          }),
+        });
+        if (!notifyRes.ok) {
+          console.warn('[triage-complaint] notify-event non-2xx:', notifyRes.status);
+        }
+      } catch (e) {
+        console.warn('[triage-complaint] notify-event call failed:', e?.message);
+      }
+    }
+
     // 8. Follow-up email
     if (customer_email) {
       try {
@@ -553,8 +584,12 @@ exports.handler = async (event) => {
         const windowCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
         const orgId = manufacturer_id || receiving_org_id;
         let recentQuery = `${SUPABASE_URL}/rest/v1/complaints?created_at=gte.${encodeURIComponent(windowCutoff)}&status=not.in.(closed,resolved)&limit=50&select=id,triage_level,product_name,barcode,lot_number,complaint_number`;
-        if (manufacturer_id) recentQuery += `&manufacturer_id=eq.${manufacturer_id}`;
-        else if (receiving_org_id) recentQuery += `&receiving_org_id=eq.${receiving_org_id}`;
+        // encodeURIComponent so a malformed org_id (e.g. one containing & or ?)
+        // can't inject extra PostgREST query parameters. Org_id is already
+        // validated against the organisations table earlier in the handler,
+        // but defence in depth is cheap.
+        if (manufacturer_id) recentQuery += `&manufacturer_id=eq.${encodeURIComponent(manufacturer_id)}`;
+        else if (receiving_org_id) recentQuery += `&receiving_org_id=eq.${encodeURIComponent(receiving_org_id)}`;
 
         const recentRes = await fetch(recentQuery, { method: 'GET', headers: sbHeaders() });
         const recentComplaints = await recentRes.json();
