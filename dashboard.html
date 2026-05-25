@@ -10794,9 +10794,23 @@ async function renderSettings() {
   const { data: org } = await sb.from('organisations').select('*').eq('id', _orgId).single();
 
   const userId = (await sb.auth.getUser()).data?.user?.id;
-  const { data: userSett } = await sb.from('user_settings').select('recall_coordinator_name, recall_coordinator_contact, recall_coordinator_backup, recall_lookback_days').eq('user_id', userId).single();
-  const coord = userSett || {};
+  // Pull the user_settings columns we use across the page in one go.
+  // recall_source + language are new in the "Your preferences" panel
+  // (migration 011 added language; recall_source has existed since
+  // the scanner-app onboarding flow). Both are nullable / optional.
+  const { data: userSett } = await sb.from('user_settings')
+    .select('recall_coordinator_name, recall_coordinator_contact, recall_coordinator_backup, recall_lookback_days, recall_source, language')
+    .eq('user_id', userId).maybeSingle();
+  const coord        = userSett || {};
   const lookbackDays = userSett?.recall_lookback_days || 180;
+  const userPref = {
+    theme:        localStorage.getItem('batchd-theme') || 'dark',
+    language:     userSett?.language || localStorage.getItem('batchd-language') || 'en',
+    recallSource: userSett?.recall_source || 'both',
+  };
+  // Seed the draft so a Save without any clicks preserves loaded values
+  // (rather than overwriting with the hard-coded fallback constants).
+  window._prefDraft = { ...userPref };
 
   el.innerHTML = `
     <div style="display:flex;flex-direction:column;gap:16px;max-width:860px;">
@@ -10838,7 +10852,53 @@ async function renderSettings() {
         </div>
       </div>
 
-      <!-- Row 2: Recall management — coordinator + lookback combined -->
+      <!-- Row 2: Your preferences — per-user settings (theme, language, feeds) -->
+      <div class="panel" style="margin:0;">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Your preferences</div>
+            <div class="panel-sub">Personal display + feed settings. Saved against your account; carry across devices where Batch'd has been wired to use them.</div>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div id="prefs-msg" style="display:none;font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;"></div>
+
+          <!-- Theme picker -->
+          <div style="margin-bottom:18px;">
+            <label style="display:block;font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">Theme</label>
+            <div style="display:flex;gap:8px;">
+              <button type="button" id="pref-theme-dark"  onclick="_setPrefTheme('dark')"  style="flex:1;font-family:'DM Mono',monospace;font-size:11px;padding:10px 14px;border-radius:8px;border:1.5px solid ${userPref.theme==='dark'?'var(--accent)':'var(--border)'};background:${userPref.theme==='dark'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.theme==='dark'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;text-transform:uppercase;">Dark</button>
+              <button type="button" id="pref-theme-light" onclick="_setPrefTheme('light')" style="flex:1;font-family:'DM Mono',monospace;font-size:11px;padding:10px 14px;border-radius:8px;border:1.5px solid ${userPref.theme==='light'?'var(--accent)':'var(--border)'};background:${userPref.theme==='light'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.theme==='light'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;text-transform:uppercase;">Light</button>
+            </div>
+            <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.55;">Applies immediately on this device. Also toggleable via the moon/sun icon in the topbar.</div>
+          </div>
+
+          <!-- Language picker -->
+          <div style="margin-bottom:18px;">
+            <label style="display:block;font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">Display language</label>
+            <div style="display:flex;gap:8px;">
+              <button type="button" id="pref-lang-en" onclick="_setPrefLang('en')" style="flex:1;font-family:'DM Mono',monospace;font-size:11px;padding:10px 14px;border-radius:8px;border:1.5px solid ${userPref.language==='en'?'var(--accent)':'var(--border)'};background:${userPref.language==='en'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.language==='en'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;">🇺🇸 English</button>
+              <button type="button" id="pref-lang-no" onclick="_setPrefLang('no')" style="flex:1;font-family:'DM Mono',monospace;font-size:11px;padding:10px 14px;border-radius:8px;border:1.5px solid ${userPref.language==='no'?'var(--accent)':'var(--border)'};background:${userPref.language==='no'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.language==='no'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;">🇳🇴 Norsk</button>
+            </div>
+            <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.55;">The scanning app is fully translated to both languages. The corporate dashboard is English-only today; your selection persists and the dashboard will respect it once translations land.</div>
+          </div>
+
+          <!-- Recall feeds / regulatory source -->
+          <div style="margin-bottom:14px;">
+            <label style="display:block;font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">Recall feeds</label>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button type="button" id="pref-feeds-fda"         onclick="_setPrefFeeds('fda')"         style="flex:1;min-width:140px;font-family:'DM Mono',monospace;font-size:11px;padding:10px 14px;border-radius:8px;border:1.5px solid ${userPref.recallSource==='fda'?'var(--accent)':'var(--border)'};background:${userPref.recallSource==='fda'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.recallSource==='fda'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;">🇺🇸 FDA only</button>
+              <button type="button" id="pref-feeds-mattilsynet" onclick="_setPrefFeeds('mattilsynet')" style="flex:1;min-width:140px;font-family:'DM Mono',monospace;font-size:11px;padding:10px 14px;border-radius:8px;border:1.5px solid ${userPref.recallSource==='mattilsynet'?'var(--accent)':'var(--border)'};background:${userPref.recallSource==='mattilsynet'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.recallSource==='mattilsynet'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;">🇳🇴 Mattilsynet only</button>
+              <button type="button" id="pref-feeds-both"        onclick="_setPrefFeeds('both')"        style="flex:1;min-width:140px;font-family:'DM Mono',monospace;font-size:11px;padding:10px 14px;border-radius:8px;border:1.5px solid ${userPref.recallSource==='both'?'var(--accent)':'var(--border)'};background:${userPref.recallSource==='both'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.recallSource==='both'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;">Both</button>
+            </div>
+            <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.55;">Which regulatory feeds Batch'd ingests for you. FDA covers US recalls; Mattilsynet (incl. RASFF) covers Norway/EU. <strong>Both</strong> is recommended for multi-region operators.</div>
+          </div>
+
+          <button class="btn-primary" id="btn-save-prefs" onclick="saveUserPreferences()">Save preferences</button>
+        </div>
+      </div>
+
+      <!-- Row 3: Recall management — coordinator + lookback combined -->
       <div class="panel" style="margin:0;">
         <div class="panel-header">
           <div>
@@ -10976,6 +11036,118 @@ async function saveCoordinatorSettings() {
   if (error) { setMsg(error.message, false); }
   else { setMsg('✓ Coordinator saved — named on all audit reports.', true); checkOnboardingStatus(); }
   if (btn) { btn.disabled=false; btn.textContent='Save coordinator'; }
+}
+
+// ── User preferences (Settings → Your preferences panel) ────────
+// Three personal settings, all per-user:
+//   - theme:     localStorage (per-device); also applied immediately
+//   - language:  user_settings.language + localStorage mirror
+//   - recall_source ('fda' | 'mattilsynet' | 'both'): user_settings
+//
+// In-memory state held in window._prefDraft so the three buttons
+// (radio-style) can update visually without a full re-render. The
+// Save button writes everything in one round trip.
+
+window._prefDraft = window._prefDraft || {};
+
+function _setPrefTheme(val) {
+  window._prefDraft.theme = val;
+  // Apply theme immediately for instant feedback (matches the topbar
+  // toggle behaviour — theme is the one preference that's expected to
+  // feel live, not deferred to a Save click).
+  document.documentElement.setAttribute('data-theme', val);
+  localStorage.setItem('batchd-theme', val);
+  if (typeof updateThemeIcon === 'function') updateThemeIcon(val);
+  // Visual: highlight the active button, dim the other.
+  _highlightPrefBtn('pref-theme-dark',  val === 'dark');
+  _highlightPrefBtn('pref-theme-light', val === 'light');
+}
+
+function _setPrefLang(val) {
+  window._prefDraft.language = val;
+  _highlightPrefBtn('pref-lang-en', val === 'en');
+  _highlightPrefBtn('pref-lang-no', val === 'no');
+}
+
+function _setPrefFeeds(val) {
+  window._prefDraft.recallSource = val;
+  _highlightPrefBtn('pref-feeds-fda',         val === 'fda');
+  _highlightPrefBtn('pref-feeds-mattilsynet', val === 'mattilsynet');
+  _highlightPrefBtn('pref-feeds-both',        val === 'both');
+}
+
+// Helper: re-style a preference button to active or inactive.
+// Matches the inline-style shape the render function produces.
+function _highlightPrefBtn(id, isActive) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.style.borderColor = isActive ? 'var(--accent)'                : 'var(--border)';
+  el.style.background  = isActive ? 'rgba(var(--accent-rgb),0.08)' : 'var(--surface2)';
+  el.style.color       = isActive ? 'var(--accent)'                : 'var(--muted)';
+}
+
+async function saveUserPreferences() {
+  const btn   = document.getElementById('btn-save-prefs');
+  const msgEl = document.getElementById('prefs-msg');
+  const setMsg = (txt, ok) => {
+    if (!msgEl) return;
+    msgEl.textContent = txt;
+    msgEl.style.cssText = 'display:block;font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;background:' +
+      (ok ? 'rgba(var(--accent-rgb),0.1)' : 'rgba(var(--danger-rgb),0.1)') +
+      ';border:1px solid ' + (ok ? 'rgba(var(--accent-rgb),0.3)' : 'rgba(var(--danger-rgb),0.3)') +
+      ';color:' + (ok ? 'var(--accent)' : 'var(--danger)') + ';';
+  };
+
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+  // Read draft state with sensible fallbacks (in case the user didn't
+  // touch a particular control before clicking Save).
+  const theme        = window._prefDraft.theme        || localStorage.getItem('batchd-theme')    || 'dark';
+  const language     = window._prefDraft.language     || localStorage.getItem('batchd-language') || 'en';
+  const recallSource = window._prefDraft.recallSource || 'both';
+
+  // Theme is already applied on click; localStorage already set there.
+  // Language: mirror to localStorage for instant client-side use.
+  localStorage.setItem('batchd-language', language);
+
+  try {
+    const userId = (await sb.auth.getUser()).data?.user?.id;
+    if (!userId) throw new Error('Not signed in');
+
+    // Try the full upsert first. If `language` column doesn't exist yet
+    // (migration 011 not run), retry without it so recall_source still
+    // saves cleanly. Surfaces a friendly warning so the user knows the
+    // migration is pending.
+    let { error } = await sb.from('user_settings').upsert({
+      user_id:        userId,
+      organisation_id: _orgId,
+      language,
+      recall_source:  recallSource,
+    }, { onConflict: 'user_id' });
+
+    let languagePending = false;
+    if (error && /column .*language.* does not exist/i.test(error.message || '')) {
+      languagePending = true;
+      const retry = await sb.from('user_settings').upsert({
+        user_id:        userId,
+        organisation_id: _orgId,
+        recall_source:  recallSource,
+      }, { onConflict: 'user_id' });
+      error = retry.error;
+    }
+
+    if (error) {
+      setMsg('Could not save: ' + error.message, false);
+    } else if (languagePending) {
+      setMsg('✓ Theme + recall feeds saved. (Language preference needs migration 011 — recall feeds + theme are live now.)', true);
+    } else {
+      setMsg('✓ Preferences saved.', true);
+    }
+  } catch (e) {
+    setMsg('Could not save: ' + (e.message || 'unknown error'), false);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Save preferences'; }
+  }
 }
 
 async function saveOrgSettings() {
