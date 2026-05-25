@@ -1184,6 +1184,17 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 let _session = null, _orgId = null, _orgName = '', _orgRegion = 'no', _orgDefaultRegion = 'no';
 let _userId = null, _userEmail = '', _userRole = null, _storeId = null;
 
+// Date-format override — hoisted up here (instead of next to _dashLocale)
+// because updateClock() fires at module-load time on line ~1501, calling
+// _dashLocale() before any function-scope code runs. If this `let` lived
+// next to its consumer (~line 1945) the early call would hit the temporal
+// dead zone and throw "Cannot access '_userDateFormat' before initialization"
+// on the sign-in screen. See migration 012 for the column definition.
+//   'us'   → en-US (MM/DD/YYYY)
+//   'eu'   → en-GB (DD/MM/YYYY)
+//   'auto' / null → derive from _orgRegion (pre-migration-012 behaviour)
+let _userDateFormat = null;
+
 // ═══════════════════════════════════════════════════════════════
 // ── Batch'd Intelligence Layer ──────────────────────────────────
 // ═══════════════════════════════════════════════════════════════
@@ -1938,11 +1949,14 @@ function sevPill(sev) {
 // Date-format locale resolver. Reads the user's explicit date_format
 // preference (loaded into _userDateFormat at login) — falls back to
 // "auto" (derive from region) which matches the pre-migration-012
-// behaviour. The four explicit choices map to BCP-47 locale tags
-// that produce the desired numeric format. Migration 012 added the
-// column; until it runs, _userDateFormat stays null and we fall
-// through to the region-derived locale.
-let _userDateFormat = null;  // 'auto' | 'us' | 'eu' | 'iso' | null
+// behaviour. The choices map to BCP-47 locale tags that produce the
+// desired numeric format. Migration 012 added the column; until it
+// runs, _userDateFormat stays null and we fall through to the
+// region-derived locale.
+//
+// NOTE: `let _userDateFormat` is declared up at the top of the
+// module (next to _orgRegion) — NOT here — because updateClock()
+// fires at module-load time and would TDZ-throw otherwise.
 function _dashLocale() {
   switch (_userDateFormat) {
     case 'us':  return 'en-US';   // MM/DD/YYYY
