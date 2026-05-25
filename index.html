@@ -9801,8 +9801,12 @@ async function initRecallSystem() {
     }
   } catch(_) {}
 
-  // Step 1: load this user's recall source preference
-  // Use a 5s timeout so a slow DB never blocks login
+  // Step 1: load recall source + lookback + region.
+  // recall_source is org-level since migration 012 (2026-05) — compliance
+  // decisions belong at org level. recall_lookback_days has been org-level
+  // for staff/managers for longer (same reasoning). Region remains personal
+  // (user_settings.region) since it's a per-user view preference.
+  // Use a 5s timeout so a slow DB never blocks login.
   try {
     const settingsPromise = sb.from('user_settings')
       .select('recall_source, recall_lookback_days, region')
@@ -9810,24 +9814,28 @@ async function initRecallSystem() {
       .maybeSingle();
     const timeoutPromise = new Promise(r => setTimeout(() => r({ data: null }), 5000));
     const { data } = await Promise.race([settingsPromise, timeoutPromise]);
+    // Legacy per-user recall_source kept as a fallback only — org value wins.
     recallSource = data?.recall_source || 'both';
     if (data?.region) { _userRegion = data.region; applyRegion(); }
     if (data?.recall_lookback_days) recallLookbackDays = data.recall_lookback_days;
 
-    // Blocker 2: For staff and store managers, org-level lookback set by
-    // the corp_admin overrides personal settings — compliance decisions
-    // belong at org level, not individual level.
-    if (_currentUserRole === 'staff' || _currentUserRole === 'store_manager') {
-      try {
-        const { data: orgData } = await sb.from('organisations')
-          .select('recall_lookback_days')
-          .eq('id', _currentOrgId)
-          .maybeSingle();
-        if (orgData?.recall_lookback_days) {
-          recallLookbackDays = orgData.recall_lookback_days;
-        }
-      } catch(e) { /* fall back to user setting silently */ }
-    }
+    // Org-level recall_source + lookback — applies to ALL users in the org
+    // (corp_admin, store_manager, staff alike for recall_source; staff +
+    // store_manager only for lookback since corp admins set their own).
+    // If migration 012 hasn't run, organisations.recall_source returns
+    // undefined and we fall through to the legacy per-user value above.
+    try {
+      const { data: orgData } = await sb.from('organisations')
+        .select('recall_source, recall_lookback_days')
+        .eq('id', _currentOrgId)
+        .maybeSingle();
+      if (orgData?.recall_source) recallSource = orgData.recall_source;
+      // Existing rule: staff + manager use org lookback; corp admin uses personal.
+      if ((_currentUserRole === 'staff' || _currentUserRole === 'store_manager') && orgData?.recall_lookback_days) {
+        recallLookbackDays = orgData.recall_lookback_days;
+      }
+    } catch (_) { /* migration 012 not yet run — legacy per-user value stays */ }
+
   } catch(e) { recallSource = 'both'; }
 
   // Step 2: fire recall fetch in the BACKGROUND — never block login on external APIs

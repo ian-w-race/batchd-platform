@@ -199,6 +199,16 @@ async function init() {
   if (orgData?.name) orgName = orgData.name;
   inv._orgName = orgName;
 
+  // Resolve manager_store_ids → store names for the multi-store chip display.
+  // Stays empty for non-manager invites or managers covering one store.
+  inv._managerStoreNames = [];
+  if (Array.isArray(inv.manager_store_ids) && inv.manager_store_ids.length > 0) {
+    const { data: storeRows } = await sb.from('stores')
+      .select('id, name')
+      .in('id', inv.manager_store_ids);
+    inv._managerStoreNames = (storeRows || []).map(s => s.name);
+  }
+
   _invitation = inv;
   showForm(inv);
 }
@@ -208,15 +218,29 @@ function showForm(inv) {
   const storeName = inv.stores?.name || null;
   const roleLabel = ROLE_LABELS[inv.role] || inv.role.replace(/_/g, ' ');
 
+  // Helper: HTML-escape any string we interpolate (defence against weird names)
+  const esc = (s) => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+  // Multi-store managers: build a chip per assigned store.
+  // _managerStoreNames is fetched separately below (RLS-safe lookup).
+  const managerStoreChips = (inv._managerStoreNames && inv._managerStoreNames.length > 0)
+    ? inv._managerStoreNames.map(n => `<span class="invite-chip store">📍 ${esc(n)}</span>`).join('')
+    : '';
+
   document.getElementById('card-content').innerHTML = `
     <div class="title">You're invited</div>
-    <div class="sub">Set up your Batch'd account to join <strong style="color:var(--text);">${orgName}</strong>.</div>
+    <div class="sub">Set up your Batch'd account to join <strong style="color:var(--text);">${esc(orgName)}</strong>.</div>
 
     <div class="invite-badge">
-      <div class="invite-org">${orgName}</div>
+      <div class="invite-org">${esc(orgName)}</div>
       <div class="invite-meta">
-        <span class="invite-chip">${roleLabel}</span>
-        ${storeName ? `<span class="invite-chip store">📍 ${storeName}</span>` : ''}
+        <span class="invite-chip">${esc(roleLabel)}</span>
+        ${managerStoreChips || (storeName ? `<span class="invite-chip store">📍 ${esc(storeName)}</span>` : '')}
       </div>
     </div>
 
@@ -224,13 +248,39 @@ function showForm(inv) {
 
     <div class="field">
       <label>Email address</label>
-      <input id="f-email" type="email" value="${inv.email}" disabled />
+      <input id="f-email" type="email" value="${esc(inv.email)}" disabled />
     </div>
     <div class="field">
       <label>Your full name</label>
-      <input id="f-name" type="text" placeholder="e.g. Anna Larsen" autocomplete="name" />
+      <input id="f-name" type="text" placeholder="e.g. Anna Larsen" autocomplete="name" value="${esc(inv.full_name || '')}" />
     </div>
-    <div class="field">
+
+    <!-- Optional pre-fillable profile details. If the inviter pre-filled
+         any of these on the dashboard form, they show pre-populated;
+         invitee can edit or leave blank. -->
+    <div style="margin-top:6px;padding-top:14px;border-top:1px solid var(--border);">
+      <div style="font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:10px;">
+        Profile details · optional
+      </div>
+      <div class="field">
+        <label>Phone number</label>
+        <input id="f-phone" type="tel" placeholder="+47 ..." value="${esc(inv.phone_number || '')}" autocomplete="tel" />
+      </div>
+      <div class="field">
+        <label>Store role</label>
+        <input id="f-store-role" type="text" placeholder="cashier · stocker · deli ..." value="${esc(inv.store_role || '')}" />
+      </div>
+      <div class="field">
+        <label>Employee / badge ID</label>
+        <input id="f-employee-id" type="text" placeholder="" value="${esc(inv.employee_id || '')}" />
+      </div>
+      <div class="field">
+        <label>Hire date</label>
+        <input id="f-hire-date" type="date" value="${esc(inv.hire_date || '')}" />
+      </div>
+    </div>
+
+    <div class="field" style="margin-top:6px;padding-top:14px;border-top:1px solid var(--border);">
       <label>Create a password</label>
       <input id="f-pw" type="password" placeholder="Min. 8 characters" oninput="checkPw(this.value)" autocomplete="new-password" onkeydown="if(event.key==='Enter')acceptInvitation()" />
       <div class="pw-strength">
@@ -245,7 +295,7 @@ function showForm(inv) {
     </div>
 
     <button class="btn" onclick="acceptInvitation()" id="btn-accept">
-      Join ${orgName} →
+      Join ${esc(orgName)} →
     </button>
 
     <div style="text-align:center;margin-top:16px;font-size:11px;color:var(--muted);">
@@ -278,6 +328,14 @@ async function acceptInvitation() {
   const name = document.getElementById('f-name').value.trim();
   const pw   = document.getElementById('f-pw').value;
   const btn  = document.getElementById('btn-accept');
+
+  // Optional HR fields — invitee may have edited the pre-filled values
+  // or left them blank. Trim + null-coerce so we don't write empty
+  // strings to the DB (cleaner querying later).
+  const phone       = document.getElementById('f-phone')?.value?.trim()        || null;
+  const storeRole   = document.getElementById('f-store-role')?.value?.trim()   || null;
+  const employeeId  = document.getElementById('f-employee-id')?.value?.trim()  || null;
+  const hireDate    = document.getElementById('f-hire-date')?.value             || null;
 
   if (!name) { showMsg('Please enter your full name.', 'error'); return; }
   if (pw.length < 8) { showMsg('Password must be at least 8 characters.', 'error'); return; }
@@ -326,12 +384,24 @@ async function acceptInvitation() {
     // Mark invitation accepted — do this regardless of whether account was new or existing
     await sb.from('invitations').update({ accepted: true, user_id: userId }).eq('id', _invitation.id);
 
-    // Add to organisation (idempotent — ignore duplicate key errors)
+    // Add to organisation (idempotent — ignore duplicate key errors).
+    // For store_manager invites with manager_store_ids, the canonical
+    // assignment lives in store_manager_stores (handled below);
+    // store_id on the org-member row is left NULL for managers because
+    // the join table is many-to-many.
+    const memberRowStoreId = (_invitation.role === 'store_manager' && Array.isArray(_invitation.manager_store_ids) && _invitation.manager_store_ids.length > 0)
+      ? null
+      : (_invitation.store_id || null);
     const { error: memberErr } = await sb.from('organisation_members').insert({
       organisation_id: _invitation.organisation_id,
       user_id:         userId,
       role:            _invitation.role,
-      store_id:        _invitation.store_id || null,
+      store_id:        memberRowStoreId,
+      full_name:       name,
+      phone_number:    phone,
+      hire_date:       hireDate,
+      store_role:      storeRole,
+      employee_id:     employeeId,
       joined_at:       new Date().toISOString(),
     });
     if (memberErr && !memberErr.message.includes('duplicate')) throw memberErr;
@@ -342,15 +412,39 @@ async function acceptInvitation() {
         id:         userId,
         is_manager: true,
       }, { onConflict: 'id' });
+
+      // Multi-store assignment: one row per (manager, store) in
+      // store_manager_stores. Best-effort — if some rows fail we
+      // surface a warning but don't block account creation, since
+      // a corp_admin can fix assignments after the fact.
+      if (Array.isArray(_invitation.manager_store_ids) && _invitation.manager_store_ids.length > 0) {
+        const smsRows = _invitation.manager_store_ids.map(storeId => ({
+          user_id:         userId,
+          store_id:        storeId,
+          organisation_id: _invitation.organisation_id,
+          assigned_by:     _invitation.invited_by || null,
+        }));
+        const { error: smsErr } = await sb.from('store_manager_stores').insert(smsRows);
+        if (smsErr) console.warn('[acceptInvitation] store_manager_stores insert failed:', smsErr.message);
+      }
     }
 
-    // Create user_settings with region from org (so scanning app skips onboarding)
-    const { data: orgSettings } = await sb.from('organisations')
-      .select('region').eq('id', _invitation.organisation_id).maybeSingle();
+    // Region precedence on invitation accept (migration 012, 2026-05):
+    //   1. invitations.region (set per-invite by the corp admin in the dashboard)
+    //   2. organisations.region (the org's default — original fallback)
+    //   3. 'no' (final fallback if neither is set, shouldn't happen in practice)
+    // recall_source is org-level since migration 012 — no longer written here.
+    // The scanner reads organisations.recall_source on login; this row only
+    // needs to mark onboarding_done and set the user's region preference.
+    let effectiveRegion = _invitation.region || null;
+    if (!effectiveRegion) {
+      const { data: orgSettings } = await sb.from('organisations')
+        .select('region').eq('id', _invitation.organisation_id).maybeSingle();
+      effectiveRegion = orgSettings?.region || 'no';
+    }
     await sb.from('user_settings').upsert({
       user_id:              userId,
-      region:               orgSettings?.region || 'no',
-      recall_source:        'both',
+      region:               effectiveRegion,
       recall_lookback_days: 180,
       onboarding_done:      true,
     }, { onConflict: 'user_id' });

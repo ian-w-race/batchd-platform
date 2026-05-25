@@ -1641,13 +1641,25 @@ async function initDashboard(user) {
   // panel renders. Without this, the dashboard mixes jurisdictions —
   // org-default copy appears even when the user picked a different
   // personal jurisdiction in Settings.
+  // date_format column is from migration 012; if not yet run, the select
+  // with date_format will 42703-fail. Try once, retry without the new
+  // column. Same pattern used for other forward-compat migrations.
+  const userSettPromise = (async () => {
+    let res = await sb.from('user_settings')
+      .select('region, date_format').eq('user_id', user.id).maybeSingle();
+    if (res.error && /column.*date_format.*does not exist/i.test(res.error.message || '')) {
+      res = await sb.from('user_settings').select('region').eq('user_id', user.id).maybeSingle();
+    }
+    return res;
+  })();
   const [orgRes, storeRes, userSettRes] = await Promise.all([
     sb.from('organisations').select('name, region').eq('id', _orgId).single(),
     _storeId
       ? sb.from('stores').select('name').eq('id', _storeId).single()
       : Promise.resolve({ data: null }),
-    sb.from('user_settings').select('region').eq('user_id', user.id).maybeSingle(),
+    userSettPromise,
   ]);
+  _userDateFormat = userSettRes.data?.date_format || null;
   const org      = orgRes.data;
   const userReg  = userSettRes.data?.region || null;
   _orgName       = org?.name || 'My Organisation';
@@ -1746,7 +1758,23 @@ function sevPill(sev) {
 }
 
 // Region-aware date formatting for the dashboard
-function _dashLocale() { return _orgRegion === 'us' ? 'en-US' : 'en-GB'; }
+// Date-format locale resolver. Reads the user's explicit date_format
+// preference (loaded into _userDateFormat at login) — falls back to
+// "auto" (derive from region) which matches the pre-migration-012
+// behaviour. The four explicit choices map to BCP-47 locale tags
+// that produce the desired numeric format. Migration 012 added the
+// column; until it runs, _userDateFormat stays null and we fall
+// through to the region-derived locale.
+let _userDateFormat = null;  // 'auto' | 'us' | 'eu' | 'iso' | null
+function _dashLocale() {
+  switch (_userDateFormat) {
+    case 'us':  return 'en-US';   // MM/DD/YYYY
+    case 'eu':  return 'en-GB';   // DD/MM/YYYY
+    case 'auto':
+    case null:
+    default:    return _orgRegion === 'us' ? 'en-US' : 'en-GB';
+  }
+}
 const _dashDateOpts = { day: 'numeric', month: 'short', year: 'numeric' };
 const _dashDTOpts   = { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' };
 
@@ -7751,6 +7779,20 @@ async function renderStaff() {
               <input id="inv-hire-date" type="date" />
             </div>
           </div>
+
+          <!-- Default region for the invitee (migration 012, 2026-05).
+               Useful for multi-region orgs that want to invite, e.g., a
+               Norwegian staff member into a US-default org. Defaults to
+               "Inherit org default" (NULL in DB) — same behaviour as
+               before this field existed. -->
+          <div class="field" style="margin-top:12px;margin-bottom:0;">
+            <label>Default region <span style="color:var(--muted);font-size:10px;text-transform:none;letter-spacing:0;">— invitee's region on first login</span></label>
+            <select id="inv-region">
+              <option value="">Inherit org default (${_orgDefaultRegion === 'us' ? 'United States' : 'Norway'})</option>
+              <option value="no">🇳🇴 Norway</option>
+              <option value="us">🇺🇸 United States</option>
+            </select>
+          </div>
         </div>
 
         <div style="display:flex;gap:8px;margin-top:14px;">
@@ -7900,7 +7942,7 @@ function openInviteForm() {
 
 function closeInviteForm() {
   document.getElementById('invite-form').style.display = 'none';
-  ['inv-email','inv-full-name','inv-phone','inv-store-role','inv-employee-id','inv-hire-date'].forEach(id => {
+  ['inv-email','inv-full-name','inv-phone','inv-store-role','inv-employee-id','inv-hire-date','inv-region'].forEach(id => {
     const el = document.getElementById(id); if (el) el.value = '';
   });
   document.querySelectorAll('.inv-store-cb').forEach(cb => cb.checked = false);
@@ -7969,6 +8011,9 @@ async function sendInvitation() {
   const storeRole    = document.getElementById('inv-store-role')?.value?.trim()   || null;
   const employeeId   = document.getElementById('inv-employee-id')?.value?.trim()  || null;
   const hireDate     = document.getElementById('inv-hire-date')?.value             || null;
+  // Default region for the invitee (migration 012). NULL means "inherit
+  // org default" — join.html falls back to organisations.region on accept.
+  const region       = document.getElementById('inv-region')?.value                || null;
 
   btn.disabled = true;
   btn.innerHTML = '<div class="spinner"></div> Sending…';
@@ -7996,6 +8041,7 @@ async function sendInvitation() {
     if (storeRole)      updatePayload.store_role    = storeRole;
     if (employeeId)     updatePayload.employee_id   = employeeId;
     if (hireDate)       updatePayload.hire_date     = hireDate;
+    if (region)         updatePayload.region        = region;
     if (managerStoreIds) updatePayload.manager_store_ids = managerStoreIds;
     if (Object.keys(updatePayload).length > 0) {
       const { error: upErr } = await sb.from('invitations')
@@ -8027,7 +8073,7 @@ async function sendInvitation() {
     btn.disabled = false;
     btn.innerHTML = 'Send invitation email →';
     // Reset the form so a second invite can't accidentally duplicate fields
-    ['inv-email','inv-full-name','inv-phone','inv-store-role','inv-employee-id','inv-hire-date'].forEach(id => {
+    ['inv-email','inv-full-name','inv-phone','inv-store-role','inv-employee-id','inv-hire-date','inv-region'].forEach(id => {
       const el = document.getElementById(id); if (el) el.value = '';
     });
     document.querySelectorAll('.inv-store-cb').forEach(cb => cb.checked = false);
@@ -10819,21 +10865,22 @@ async function renderSettings() {
   // (migration 011 added language; recall_source has existed since
   // the scanner-app onboarding flow). Both are nullable / optional.
   const { data: userSett } = await sb.from('user_settings')
-    .select('recall_coordinator_name, recall_coordinator_contact, recall_coordinator_backup, recall_lookback_days, recall_source, language')
+    .select('recall_coordinator_name, recall_coordinator_contact, recall_coordinator_backup, recall_lookback_days, recall_source, language, region')
     .eq('user_id', userId).maybeSingle();
   const coord        = userSett || {};
   const lookbackDays = userSett?.recall_lookback_days || 180;
-  // Pull region from user_settings too — falls back to org region if the
-  // user has no personal override yet (typical for fresh corp_admins).
-  const { data: userRegionRow } = await sb.from('user_settings')
-    .select('region')
-    .eq('user_id', userId).maybeSingle();
+  // Org-level recall_source is canonical (migration 012). Fall back to legacy
+  // user_settings.recall_source if the org column hasn't been populated yet,
+  // then to 'both' as final default. Once 012 is run + saved at least once,
+  // org.recall_source is authoritative for all reads (scanner + dashboard).
+  const orgRecallSource = org?.recall_source || userSett?.recall_source || 'both';
   const userPref = {
     theme:        localStorage.getItem('batchd-theme') || 'dark',
     language:     userSett?.language || localStorage.getItem('batchd-language') || 'en',
-    region:       userRegionRow?.region || _orgRegion || 'no',
-    recallSource: userSett?.recall_source || 'both',
+    region:       userSett?.region || _orgRegion || 'no',
+    dateFormat:   userSett?.date_format || 'auto',
   };
+  const isAdmin = _userRole === 'corp_admin';
   // Seed the draft so a Save without any clicks preserves loaded values
   // (rather than overwriting with the hard-coded fallback constants).
   window._prefDraft = { ...userPref };
@@ -10852,14 +10899,29 @@ async function renderSettings() {
             <div class="field"><label>Contact email</label>
               <input id="org-email-input" type="email" value="${org?.contact_email||''}" placeholder="e.g. safety@yourcompany.com" /></div>
             <div class="field"><label>Region <span style="color:var(--muted);font-size:10px;text-transform:none;letter-spacing:0;">— org-wide default</span></label>
-              <select id="org-region-input">
+              <select id="org-region-input" ${isAdmin ? '' : 'disabled style="opacity:0.55;cursor:not-allowed;"'}>
                 <option value="no" ${_orgDefaultRegion!=='us'?'selected':''}>Norway</option>
                 <option value="us" ${_orgDefaultRegion==='us'?'selected':''}>United States</option>
               </select>
               <div style="font-size:10.5px;color:var(--muted);margin-top:6px;line-height:1.55;">Org-level default inherited by new staff. Override your own view via <em>Your preferences → Region / Jurisdiction</em> below.</div></div>
+
+            <!-- Recall feeds — org-level (migration 012, 2026-05). Corp admin only. -->
+            <div class="field"><label>Recall feeds <span style="color:var(--muted);font-size:10px;text-transform:none;letter-spacing:0;">— compliance decision, applies to whole org</span></label>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                <button type="button" id="org-feeds-fda" ${isAdmin?'':'disabled'} onclick="${isAdmin?`_setOrgFeeds('fda')`:''}"
+                  style="flex:1;min-width:88px;font-family:'DM Mono',monospace;font-size:11px;padding:9px 10px;border-radius:8px;border:1.5px solid ${orgRecallSource==='fda'?'var(--accent)':'var(--border)'};background:${orgRecallSource==='fda'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${orgRecallSource==='fda'?'var(--accent)':'var(--muted)'};cursor:${isAdmin?'pointer':'not-allowed'};opacity:${isAdmin?'1':'0.7'};letter-spacing:0.04em;">🇺🇸 FDA</button>
+                <button type="button" id="org-feeds-mattilsynet" ${isAdmin?'':'disabled'} onclick="${isAdmin?`_setOrgFeeds('mattilsynet')`:''}"
+                  style="flex:1;min-width:118px;font-family:'DM Mono',monospace;font-size:11px;padding:9px 10px;border-radius:8px;border:1.5px solid ${orgRecallSource==='mattilsynet'?'var(--accent)':'var(--border)'};background:${orgRecallSource==='mattilsynet'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${orgRecallSource==='mattilsynet'?'var(--accent)':'var(--muted)'};cursor:${isAdmin?'pointer':'not-allowed'};opacity:${isAdmin?'1':'0.7'};letter-spacing:0.04em;">🇳🇴 Mattilsynet</button>
+                <button type="button" id="org-feeds-both" ${isAdmin?'':'disabled'} onclick="${isAdmin?`_setOrgFeeds('both')`:''}"
+                  style="flex:1;min-width:74px;font-family:'DM Mono',monospace;font-size:11px;padding:9px 10px;border-radius:8px;border:1.5px solid ${orgRecallSource==='both'?'var(--accent)':'var(--border)'};background:${orgRecallSource==='both'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${orgRecallSource==='both'?'var(--accent)':'var(--muted)'};cursor:${isAdmin?'pointer':'not-allowed'};opacity:${isAdmin?'1':'0.7'};letter-spacing:0.04em;">Both</button>
+              </div>
+              <div style="font-size:10.5px;color:var(--muted);margin-top:6px;line-height:1.55;">${isAdmin
+                ? `Which regulatory feeds Batch'd ingests for the whole org. Compliance decision — all staff inherit. FDA covers US recalls; Mattilsynet (incl. RASFF) covers Norway/EU. <strong>Both</strong> is recommended for multi-region operators.`
+                : `Set by your corp admin. All staff in this org inherit this feed selection.`}</div></div>
+
             <div class="field" style="margin-bottom:12px;"><label>Organisation ID</label>
               <input type="text" value="${_orgId}" readonly style="opacity:0.5;font-size:10px;" /></div>
-            <button class="btn-primary" onclick="saveOrgSettings()" id="btn-save-org">Save changes</button>
+            <button class="btn-primary" onclick="saveOrgSettings()" id="btn-save-org" ${isAdmin?'':'disabled style="opacity:0.5;cursor:not-allowed;"'}>${isAdmin?'Save changes':'View only · ask corp admin to change'}</button>
           </div>
         </div>
         <div class="panel" style="margin:0;">
@@ -10932,15 +10994,30 @@ async function renderSettings() {
             <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.55;">Changes which regulations, recall databases, and compliance copy you see. This is your <strong>personal</strong> jurisdiction — distinct from the <em>Organisation → Region</em> field at the top, which is the org-wide default. Useful when a multi-region operator wants a different view than the org default.</div>
           </div>
 
-          <!-- Recall feeds / regulatory source -->
-          <div style="margin-bottom:14px;">
-            <label style="display:block;font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">Recall feeds</label>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;">
-              <button type="button" id="pref-feeds-fda"         onclick="_setPrefFeeds('fda')"         style="flex:1;min-width:140px;font-family:'DM Mono',monospace;font-size:11px;padding:10px 14px;border-radius:8px;border:1.5px solid ${userPref.recallSource==='fda'?'var(--accent)':'var(--border)'};background:${userPref.recallSource==='fda'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.recallSource==='fda'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;">🇺🇸 FDA only</button>
-              <button type="button" id="pref-feeds-mattilsynet" onclick="_setPrefFeeds('mattilsynet')" style="flex:1;min-width:140px;font-family:'DM Mono',monospace;font-size:11px;padding:10px 14px;border-radius:8px;border:1.5px solid ${userPref.recallSource==='mattilsynet'?'var(--accent)':'var(--border)'};background:${userPref.recallSource==='mattilsynet'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.recallSource==='mattilsynet'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;">🇳🇴 Mattilsynet only</button>
-              <button type="button" id="pref-feeds-both"        onclick="_setPrefFeeds('both')"        style="flex:1;min-width:140px;font-family:'DM Mono',monospace;font-size:11px;padding:10px 14px;border-radius:8px;border:1.5px solid ${userPref.recallSource==='both'?'var(--accent)':'var(--border)'};background:${userPref.recallSource==='both'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.recallSource==='both'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;">Both</button>
+          <!-- Date / time format — explicit override (migration 012, 2026-05).
+               "Auto" derives from the user's effective region (US → MM/DD/YYYY,
+               NO → DD/MM/YYYY); the explicit choices ignore region entirely. -->
+          <div style="margin-bottom:18px;">
+            <label style="display:block;font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">Date / time format</label>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <button type="button" id="pref-date-auto" onclick="_setPrefDateFormat('auto')"
+                style="flex:1;min-width:140px;font-family:'DM Mono',monospace;font-size:11px;padding:10px 12px;border-radius:8px;border:1.5px solid ${userPref.dateFormat==='auto'?'var(--accent)':'var(--border)'};background:${userPref.dateFormat==='auto'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.dateFormat==='auto'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;">Auto · region</button>
+              <button type="button" id="pref-date-us" onclick="_setPrefDateFormat('us')"
+                style="flex:1;min-width:140px;font-family:'DM Mono',monospace;font-size:11px;padding:10px 12px;border-radius:8px;border:1.5px solid ${userPref.dateFormat==='us'?'var(--accent)':'var(--border)'};background:${userPref.dateFormat==='us'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.dateFormat==='us'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;">US · MM/DD/YYYY</button>
+              <button type="button" id="pref-date-eu" onclick="_setPrefDateFormat('eu')"
+                style="flex:1;min-width:140px;font-family:'DM Mono',monospace;font-size:11px;padding:10px 12px;border-radius:8px;border:1.5px solid ${userPref.dateFormat==='eu'?'var(--accent)':'var(--border)'};background:${userPref.dateFormat==='eu'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.dateFormat==='eu'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;">EU · DD/MM/YYYY</button>
             </div>
-            <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.55;">Which regulatory feeds Batch'd ingests for you. FDA covers US recalls; Mattilsynet (incl. RASFF) covers Norway/EU. <strong>Both</strong> is recommended for multi-region operators.</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.55;">Controls how dates render across the dashboard — recall timestamps, audit logs, exports. <strong>Auto</strong> matches your Region (US → MM/DD/YYYY, Norway → DD/MM/YYYY).</div>
+          </div>
+
+          <!-- Recall feeds moved to the Organisation card (migration 012,
+               2026-05). Compliance decision — applies whole-org, not per
+               user. Surface a one-line read-only echo here so users know
+               where to find it. -->
+          <div style="margin-bottom:14px;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;font-size:11px;color:var(--muted);line-height:1.6;">
+            <strong style="color:var(--text);font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;">Recall feeds</strong>
+            <span style="margin-left:10px;font-family:'DM Mono',monospace;font-size:11px;color:var(--accent);">${({fda:'🇺🇸 FDA only',mattilsynet:'🇳🇴 Mattilsynet only',both:'Both'})[orgRecallSource]||'Both'}</span>
+            <div style="margin-top:4px;">Set at the org level by your corp admin · see <em>Organisation → Recall feeds</em> above.</div>
           </div>
 
           <button class="btn-primary" id="btn-save-prefs" onclick="saveUserPreferences()">Save preferences</button>
@@ -11124,11 +11201,24 @@ function _setPrefRegion(val) {
   _highlightPrefBtn('pref-region-us', val === 'us');
 }
 
-function _setPrefFeeds(val) {
-  window._prefDraft.recallSource = val;
-  _highlightPrefBtn('pref-feeds-fda',         val === 'fda');
-  _highlightPrefBtn('pref-feeds-mattilsynet', val === 'mattilsynet');
-  _highlightPrefBtn('pref-feeds-both',        val === 'both');
+function _setPrefDateFormat(val) {
+  window._prefDraft.dateFormat = val;
+  ['auto','us','eu'].forEach(k => _highlightPrefBtn('pref-date-' + k, k === val));
+}
+
+// Org-level recall feeds picker (migration 012, 2026-05). Corp admin only.
+// Updates the draft on the Organisation card; saveOrgSettings() writes it.
+function _setOrgFeeds(val) {
+  if (_userRole !== 'corp_admin') return;
+  window._orgFeedsDraft = val;
+  ['fda','mattilsynet','both'].forEach(k => {
+    const el = document.getElementById('org-feeds-' + k);
+    if (!el) return;
+    const active = (k === val);
+    el.style.borderColor = active ? 'var(--accent)'                : 'var(--border)';
+    el.style.background  = active ? 'rgba(var(--accent-rgb),0.08)' : 'var(--surface2)';
+    el.style.color       = active ? 'var(--accent)'                : 'var(--muted)';
+  });
 }
 
 // Helper: re-style a preference button to active or inactive.
@@ -11157,10 +11247,10 @@ async function saveUserPreferences() {
 
   // Read draft state with sensible fallbacks (in case the user didn't
   // touch a particular control before clicking Save).
-  const theme        = window._prefDraft.theme        || localStorage.getItem('batchd-theme')    || 'dark';
-  const language     = window._prefDraft.language     || localStorage.getItem('batchd-language') || 'en';
-  const region       = window._prefDraft.region       || _orgRegion                              || 'no';
-  const recallSource = window._prefDraft.recallSource || 'both';
+  const theme      = window._prefDraft.theme      || localStorage.getItem('batchd-theme')    || 'dark';
+  const language   = window._prefDraft.language   || localStorage.getItem('batchd-language') || 'en';
+  const region     = window._prefDraft.region     || _orgRegion                              || 'no';
+  const dateFormat = window._prefDraft.dateFormat || 'auto';
 
   // Theme is already applied on click; localStorage already set there.
   // Language: mirror to localStorage for instant client-side use.
@@ -11173,52 +11263,63 @@ async function saveUserPreferences() {
     const userId = (await sb.auth.getUser()).data?.user?.id;
     if (!userId) throw new Error('Not signed in');
 
-    // Try the full upsert first. If `language` column doesn't exist yet
-    // (migration 011 not run), retry without it so recall_source/region
-    // still save cleanly. Surfaces a friendly warning so the user knows
-    // the migration is pending.
+    // Try the full upsert first. If a forward-compat column doesn't
+    // exist yet (migration 011 for language, 012 for date_format),
+    // retry with a smaller payload so the rest still saves cleanly.
+    // recall_source is no longer written here — it's an org-level
+    // setting now (migration 012).
     let { error } = await sb.from('user_settings').upsert({
-      user_id:        userId,
+      user_id:         userId,
       organisation_id: _orgId,
       language,
       region,
-      recall_source:  recallSource,
+      date_format:     dateFormat,
     }, { onConflict: 'user_id' });
 
     let languagePending = false;
-    if (error && /column .*language.* does not exist/i.test(error.message || '')) {
-      languagePending = true;
-      const retry = await sb.from('user_settings').upsert({
-        user_id:        userId,
-        organisation_id: _orgId,
-        region,
-        recall_source:  recallSource,
-      }, { onConflict: 'user_id' });
+    let dateFormatPending = false;
+    // Retry-on-missing-column: drop the failing column and try again.
+    while (error && /column .*(language|date_format).* does not exist/i.test(error.message || '')) {
+      if (/language/i.test(error.message)) languagePending = true;
+      if (/date_format/i.test(error.message)) dateFormatPending = true;
+      const payload = { user_id: userId, organisation_id: _orgId, region };
+      if (!languagePending)   payload.language    = language;
+      if (!dateFormatPending) payload.date_format = dateFormat;
+      const retry = await sb.from('user_settings').upsert(payload, { onConflict: 'user_id' });
       error = retry.error;
+      // Prevent infinite loop if a third column also fails
+      if (error && Object.keys(payload).length <= 3) break;
     }
 
     if (error) {
       setMsg('Could not save: ' + error.message, false);
     } else {
-      // Apply the new effective region in memory + re-render the active panel
-      // so every regulatory surface (FSMA/EU copy, recall coordinator note,
-      // compliance page, terminology entries, etc.) reflects the new choice
-      // immediately — no reload required. CRITICAL: this honours the
-      // jurisdiction-precedence rule documented in CLAUDE.md.
+      // Apply the new effective region + date format in memory and re-render
+      // the active panel so every regulatory surface (FSMA/EU copy, recall
+      // coordinator note, compliance page, terminology entries, audit
+      // timestamps) reflects the new choice immediately — no reload
+      // required. Honours the jurisdiction-precedence rule documented in
+      // CLAUDE.md.
       const regionChanged = (region && region !== _orgRegion);
+      const dateFormatChanged = (dateFormat && dateFormat !== _userDateFormat);
       if (regionChanged) {
         _orgRegion = region;
         invalidateOverviewCache && invalidateOverviewCache();
       }
-      if (languagePending) {
-        setMsg('✓ Theme + region + recall feeds saved. (Language preference needs migration 011 — the rest is live now.)', true);
+      if (dateFormatChanged) {
+        _userDateFormat = dateFormat;
+      }
+      const warnings = [];
+      if (languagePending)   warnings.push('Language needs migration 011');
+      if (dateFormatPending) warnings.push('Date format needs migration 012');
+      if (warnings.length) {
+        setMsg('✓ Saved. (' + warnings.join('; ') + ' — the rest is live now.)', true);
       } else {
         setMsg('✓ Preferences saved.', true);
       }
-      // Re-render to apply region changes across the page. Settings panel
-      // re-runs renderSettings on a small delay so the toast remains
-      // visible; switching panels uses showPanel for a fresh fetch.
-      if (regionChanged) {
+      // Re-render whenever region OR date format changed — both affect
+      // multiple panels' rendered output.
+      if (regionChanged || dateFormatChanged) {
         setTimeout(() => { if (typeof showPanel === 'function' && _activePanel) showPanel(_activePanel); }, 800);
       }
     }
@@ -11230,9 +11331,11 @@ async function saveUserPreferences() {
 }
 
 async function saveOrgSettings() {
+  if (_userRole !== 'corp_admin') return;  // safety guard — UI is also disabled
   const name   = document.getElementById('org-name-input').value.trim();
   const email  = document.getElementById('org-email-input').value.trim();
   const region = document.getElementById('org-region-input').value;
+  const recallSource = window._orgFeedsDraft || _readOrgFeedsCurrent();
   const btn    = document.getElementById('btn-save-org');
   const msgEl  = document.getElementById('org-settings-msg');
 
@@ -11245,11 +11348,25 @@ async function saveOrgSettings() {
   btn.disabled = true;
   btn.innerHTML = '<div class="spinner" style="border-top-color:var(--accent-on-primary);"></div> Saving…';
 
-  const { error } = await sb.from('organisations').update({
+  // Try full update including recall_source. If 012 hasn't been run yet,
+  // retry without it so the other fields still save cleanly.
+  let { error } = await sb.from('organisations').update({
     name,
     contact_email: email || null,
     region,
+    recall_source: recallSource,
   }).eq('id', _orgId);
+
+  let recallSourcePending = false;
+  if (error && /column .*recall_source.* does not exist/i.test(error.message || '')) {
+    recallSourcePending = true;
+    const retry = await sb.from('organisations').update({
+      name,
+      contact_email: email || null,
+      region,
+    }).eq('id', _orgId);
+    error = retry.error;
+  }
 
   if (error) {
     msgEl.textContent = error.message || 'Could not save settings.';
@@ -11272,10 +11389,29 @@ async function saveOrgSettings() {
   }
   document.getElementById('topbar-sub').textContent = _orgName + ' · ' + (_orgRegion === 'us' ? 'United States' : 'Norway');
 
-  msgEl.textContent = '✓ Settings saved.';
+  msgEl.textContent = recallSourcePending
+    ? '✓ Saved (recall feeds need migration 012; the rest is live now).'
+    : '✓ Settings saved.';
   msgEl.style.cssText = 'display:block;background:rgba(var(--accent-rgb),0.1);border:1px solid rgba(var(--accent-rgb),0.3);color:var(--accent);font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;';
   btn.disabled = false;
   btn.innerHTML = 'Save changes';
+}
+
+// Read the currently-active org feeds choice from the DOM (no draft yet).
+// Used by saveOrgSettings when the admin clicks Save without first toggling.
+function _readOrgFeedsCurrent() {
+  for (const k of ['fda','mattilsynet','both']) {
+    const el = document.getElementById('org-feeds-' + k);
+    if (el && el.style.borderColor && el.style.borderColor.includes('accent')) return k;
+  }
+  // Fallback: scan computed border-color value for whichever has accent
+  for (const k of ['fda','mattilsynet','both']) {
+    const el = document.getElementById('org-feeds-' + k);
+    if (!el) continue;
+    const bg = el.style.background || '';
+    if (bg.includes('accent-rgb')) return k;
+  }
+  return 'both';
 }
 
 // ── Coming soon ────────────────────────────────────────────────
