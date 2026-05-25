@@ -10803,9 +10803,15 @@ async function renderSettings() {
     .eq('user_id', userId).maybeSingle();
   const coord        = userSett || {};
   const lookbackDays = userSett?.recall_lookback_days || 180;
+  // Pull region from user_settings too — falls back to org region if the
+  // user has no personal override yet (typical for fresh corp_admins).
+  const { data: userRegionRow } = await sb.from('user_settings')
+    .select('region')
+    .eq('user_id', userId).maybeSingle();
   const userPref = {
     theme:        localStorage.getItem('batchd-theme') || 'dark',
     language:     userSett?.language || localStorage.getItem('batchd-language') || 'en',
+    region:       userRegionRow?.region || _orgRegion || 'no',
     recallSource: userSett?.recall_source || 'both',
   };
   // Seed the draft so a Save without any clicks preserves loaded values
@@ -10881,6 +10887,28 @@ async function renderSettings() {
               <button type="button" id="pref-lang-no" onclick="_setPrefLang('no')" style="flex:1;font-family:'DM Mono',monospace;font-size:11px;padding:10px 14px;border-radius:8px;border:1.5px solid ${userPref.language==='no'?'var(--accent)':'var(--border)'};background:${userPref.language==='no'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.language==='no'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;">🇳🇴 Norsk</button>
             </div>
             <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.55;">The scanning app is fully translated to both languages. The corporate dashboard is English-only today; your selection persists and the dashboard will respect it once translations land.</div>
+          </div>
+
+          <!-- Region / Jurisdiction (personal — overrides org region for this user) -->
+          <div style="margin-bottom:18px;">
+            <label style="display:block;font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">Region / Jurisdiction</label>
+            <div style="display:flex;gap:8px;">
+              <button type="button" id="pref-region-no" onclick="_setPrefRegion('no')" style="flex:1;font-family:'DM Mono',monospace;font-size:11px;padding:10px 14px;border-radius:8px;border:1.5px solid ${userPref.region==='no'?'var(--accent)':'var(--border)'};background:${userPref.region==='no'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.region==='no'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;text-align:left;display:flex;align-items:center;gap:10px;">
+                <span style="font-size:18px;">🇳🇴</span>
+                <span style="display:flex;flex-direction:column;align-items:flex-start;gap:2px;">
+                  <span style="font-size:12px;font-weight:700;">Norway</span>
+                  <span style="font-size:9px;text-transform:none;letter-spacing:0;opacity:0.75;">Mattilsynet · Matloven</span>
+                </span>
+              </button>
+              <button type="button" id="pref-region-us" onclick="_setPrefRegion('us')" style="flex:1;font-family:'DM Mono',monospace;font-size:11px;padding:10px 14px;border-radius:8px;border:1.5px solid ${userPref.region==='us'?'var(--accent)':'var(--border)'};background:${userPref.region==='us'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.region==='us'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;text-align:left;display:flex;align-items:center;gap:10px;">
+                <span style="font-size:18px;">🇺🇸</span>
+                <span style="display:flex;flex-direction:column;align-items:flex-start;gap:2px;">
+                  <span style="font-size:12px;font-weight:700;">United States</span>
+                  <span style="font-size:9px;text-transform:none;letter-spacing:0;opacity:0.75;">FDA · FSMA 204</span>
+                </span>
+              </button>
+            </div>
+            <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.55;">Changes which regulations, recall databases, and compliance copy you see. This is your <strong>personal</strong> jurisdiction — distinct from the <em>Organisation → Region</em> field at the top, which is the org-wide default. Useful when a multi-region operator wants a different view than the org default.</div>
           </div>
 
           <!-- Recall feeds / regulatory source -->
@@ -11069,6 +11097,12 @@ function _setPrefLang(val) {
   _highlightPrefBtn('pref-lang-no', val === 'no');
 }
 
+function _setPrefRegion(val) {
+  window._prefDraft.region = val;
+  _highlightPrefBtn('pref-region-no', val === 'no');
+  _highlightPrefBtn('pref-region-us', val === 'us');
+}
+
 function _setPrefFeeds(val) {
   window._prefDraft.recallSource = val;
   _highlightPrefBtn('pref-feeds-fda',         val === 'fda');
@@ -11104,24 +11138,29 @@ async function saveUserPreferences() {
   // touch a particular control before clicking Save).
   const theme        = window._prefDraft.theme        || localStorage.getItem('batchd-theme')    || 'dark';
   const language     = window._prefDraft.language     || localStorage.getItem('batchd-language') || 'en';
+  const region       = window._prefDraft.region       || _orgRegion                              || 'no';
   const recallSource = window._prefDraft.recallSource || 'both';
 
   // Theme is already applied on click; localStorage already set there.
   // Language: mirror to localStorage for instant client-side use.
   localStorage.setItem('batchd-language', language);
+  // Region: mirror to localStorage so the scanner app picks it up
+  // immediately if the user logs in there on the same browser.
+  localStorage.setItem('batched_region', region);
 
   try {
     const userId = (await sb.auth.getUser()).data?.user?.id;
     if (!userId) throw new Error('Not signed in');
 
     // Try the full upsert first. If `language` column doesn't exist yet
-    // (migration 011 not run), retry without it so recall_source still
-    // saves cleanly. Surfaces a friendly warning so the user knows the
-    // migration is pending.
+    // (migration 011 not run), retry without it so recall_source/region
+    // still save cleanly. Surfaces a friendly warning so the user knows
+    // the migration is pending.
     let { error } = await sb.from('user_settings').upsert({
       user_id:        userId,
       organisation_id: _orgId,
       language,
+      region,
       recall_source:  recallSource,
     }, { onConflict: 'user_id' });
 
@@ -11131,6 +11170,7 @@ async function saveUserPreferences() {
       const retry = await sb.from('user_settings').upsert({
         user_id:        userId,
         organisation_id: _orgId,
+        region,
         recall_source:  recallSource,
       }, { onConflict: 'user_id' });
       error = retry.error;
@@ -11139,7 +11179,7 @@ async function saveUserPreferences() {
     if (error) {
       setMsg('Could not save: ' + error.message, false);
     } else if (languagePending) {
-      setMsg('✓ Theme + recall feeds saved. (Language preference needs migration 011 — recall feeds + theme are live now.)', true);
+      setMsg('✓ Theme + region + recall feeds saved. (Language preference needs migration 011 — the rest is live now.)', true);
     } else {
       setMsg('✓ Preferences saved.', true);
     }
