@@ -11138,6 +11138,13 @@ async function renderSettings() {
   const { data: org } = await sb.from('organisations').select('*').eq('id', _orgId).single();
 
   const userId = (await sb.auth.getUser()).data?.user?.id;
+  // Role helper — hoisted up here (instead of next to the template
+  // literal further down) because _mfaEnrolled and _mfaEligible both
+  // read it before the template renders. Leaving it next to its main
+  // template-literal consumer triggered "Cannot access 'isAdmin' before
+  // initialization" on the Settings load. Same fix shape as
+  // _userDateFormat at the top of the module.
+  const isAdmin = _userRole === 'corp_admin';
   // Pull the user_settings columns we use across the page in one go.
   // recall_source + language are new in the "Your preferences" panel
   // (migration 011 added language; recall_source has existed since
@@ -11190,7 +11197,7 @@ async function renderSettings() {
     notifyComplaint: nprefs.complaint_filed  !== false,
     notifyDrill:     nprefs.drill_scheduled  !== false,
   };
-  const isAdmin = _userRole === 'corp_admin';
+  // (isAdmin declared above — moved up to satisfy _mfaEnrolled/_mfaEligible)
   // Seed the draft so a Save without any clicks preserves loaded values
   // (rather than overwriting with the hard-coded fallback constants).
   window._prefDraft = { ...userPref };
