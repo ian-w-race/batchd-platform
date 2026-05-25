@@ -126,16 +126,177 @@ Mock drills never count toward active recall numbers.
 - Primary market: United States (FSMA 204 compliance)
 - Testing ground: Norway (EU 178/2002)
 - Ian is a US citizen living in Norway temporarily
-- _orgRegion drives all jurisdiction switching — never 
-  hardcode regulatory copy for one region only
 
-## Design system
-- Dark mode: elevation-based (#111918 bg, #1E2E2A cards, 
-  #283C37 inputs) — no pure black, desaturated accents
-- Light mode: #F5F7F6 bg, #1A201D text, white cards
-- Accent: #4DC99A dark / #077A55 light
-- dashboard.html and index.html are the two live UIs to 
-  keep visually consistent (manufacturer.html is retired)
+## Jurisdiction precedence (CRITICAL — never mix jurisdictions)
+
+Batch'd is a regulatory-assistance platform. The product **must never**
+display regulatory copy, regulator names, phone prefixes, currency,
+retention rules, or compliance frameworks from one jurisdiction while
+the user has selected another. A FDA/US user must never see Mattilsynet
+phrases, Norwegian phone prefixes, EU 178/2002 references, or kr
+currency — and vice versa.
+
+### How the precedence works
+
+Two layers of region exist per user/org:
+
+| Variable | Source | Meaning | Used by |
+|---|---|---|---|
+| `_orgDefaultRegion` | `organisations.region` | The org's stated home region | **Only** the Settings → Organisation card dropdown (so org admins can see/edit the org-level default) |
+| `_orgRegion` | `user_settings.region` ?? `organisations.region` | **Effective region** for the current user — personal override wins | **Everything else** — all regulatory copy, FSMA/EU references, regulator contacts, retention rules, recall coordinator notes, terminology entries, currency, date format, phone prefix examples |
+
+### The rules
+
+1. **Every line of regulatory copy** must gate on `_orgRegion` (NOT
+   `organisations.region`, NOT `_orgDefaultRegion`, NOT a hardcoded
+   region literal). This includes inline ternaries like
+   `_orgRegion === 'us' ? 'FDA 21 CFR 7.49' : 'Mattilsynet §16'`.
+2. **The scanner** uses `_userRegion` (which mirrors `user_settings.region`
+   on its side) for the same purpose. Same rule.
+3. **Region changes apply live** — Settings → Your preferences →
+   Region/Jurisdiction triggers a re-render after save so the active
+   panel reflects the new jurisdiction without a reload.
+4. **The org-level dropdown** in Settings → Organisation is the ONLY
+   surface that reads `_orgDefaultRegion`. Everywhere else: `_orgRegion`.
+5. **Never construct regulatory copy by string-mixing fields from
+   different regions.** If you find a card pulling, e.g. coordinator
+   contact from one region and the regulator name from another, that's
+   a bug. Both come from the same `_orgRegion` switch.
+
+### Things that get region-switched (non-exhaustive)
+
+- Regulator name (FDA / Mattilsynet)
+- Statute citations (21 CFR 7.49 / Mattilsynet §16, FSMA 204 / EU 178/2002)
+- Phone prefix examples (`+1` / `+47`)
+- Retention windows (24 mo FSMA / shelf-life + 6 mo Matloven)
+- Compliance score thresholds + category labels
+- Severity labels (Class I/II/III vs Klasse I/II/III)
+- Regulator portal URLs (access.fda.gov / mattilsynet.no)
+- Date format (`MM/DD/YYYY` US vs `DD.MM.YYYY` NO)
+- Terminology page entries
+- Recall feed sources (FDA enforcement reports / Mattilsynet RSS)
+
+If you add a feature that touches any of these, the region gate must
+live at the leaf — not at a panel level — so changing region re-renders
+the leaf correctly.
+
+## Design system v2 (Claude Design handoff, 2026-05)
+
+Source of truth: `/assets/design-tokens.css` (the canonical
+file from the Claude Design bundle). Both `dashboard.html` and
+`index.html` embed the same tokens inline — keep them in sync.
+
+### Token architecture — two layers
+- **Layer 1 (semantic)** — `--accent-primary`, `--text-primary`, 
+  `--background-base/-surface/-elevated/-input`, 
+  `--border-default/-strong/-focus`, `--semantic-danger/-warn/-info`, 
+  `--shadow-xs/-sm/-md/-lg/-xl/-accent`, `--ring-focus`. 
+  Use these in new code.
+- **Layer 2 (legacy aliases)** — `--bg`, `--surface`, `--text`, 
+  `--muted`, `--accent`, `--danger`, `--warn`, `--info`, etc. 
+  resolve to Layer 1 via aliases at the bottom of each file's 
+  `:root` block. Existing markup keeps working unchanged.
+
+### Color palette
+| Token | Dark (canonical) | Light (opt-in) |
+|---|---|---|
+| `--background-base` | `#080F12` deep green-black | `#F5F7F6` warm off-white |
+| `--background-surface` | `#0D1E1C` (+1 elev) | `#FFFFFF` |
+| `--background-elevated` | `#13302B` (+2 elev) | `#FFFFFF` + `--shadow-md` |
+| `--text-primary` | `#EAF6F0` off-white (NEVER `#FFFFFF`) | `#0E1F1A` deep green-black |
+| `--accent-primary` | `#34D399` mint | `#077A55` emerald |
+| `--semantic-danger` | `#FF6B6B` | `#DC2626` |
+| `--semantic-warn` | `#F5A623` | `#BE5A0E` |
+| `--semantic-info` | `#5BC9F8` | `#057AAB` |
+
+### Hard rules (non-negotiable)
+- **Dark never uses `#000000`** (eye strain on emissive screens). 
+  Use `var(--background-base)` (`#080F12`).
+- **Dark text never uses `#FFFFFF`** (optical vibration). 
+  Use `var(--text-primary)` (`#EAF6F0`).
+- **Light is NOT an inversion** — hues are darkened/desaturated so 
+  contrast holds against white.
+- **Theme is `<html data-theme="dark|light">`**, persisted in 
+  `localStorage`. NEVER switch via `prefers-color-scheme` — this 
+  is a compliance product; theme is an explicit operator decision.
+- **No emoji** except 🇺🇸 🇪🇺 🇳🇴 regulatory flags.
+- **No purple/blue gradients.** No left-border accent cards.
+- **One saturated color** — mint/emerald. Red/orange/blue are 
+  state signals, never decoration.
+
+### Translucent tints — `--*-rgb` triples
+For inline `rgba(...)` translucent backgrounds/chips/banners, use 
+`rgba(var(--accent-rgb), 0.1)` etc. Both themes override the RGB 
+triples so the same alpha gradient recolors correctly per theme. 
+Tokens: `--accent-rgb`, `--accent-deep-rgb`, `--danger-rgb`, 
+`--warn-rgb`, `--info-rgb`, `--info-light-rgb` (and dashboard 
+adds `--accent-alt-rgb`, `--accent-muted-rgb`, `--info-soft-rgb`, 
+`--surface-tint-rgb`).
+
+### Typography
+- **Display + body:** Figtree (Google Fonts: 400, 500, 600, 700, 
+  800, 900). `Figtree-ExtraBold.ttf` (weight 800) is self-hosted 
+  from `/fonts/` as the brand weight; other weights load from 
+  Google Fonts CDN.
+- **Mono:** DM Mono (300, 400, 500). Used for eyebrows, form labels, 
+  micro-meta, badges. UPPERCASE + letter-spacing for these.
+- **Type ladder:** `--fs-eyebrow 11 / --fs-label 10 / --fs-meta 12 / 
+  --fs-body 13 / --fs-body-lg 15 / --fs-h4 17 / --fs-h3 22 / 
+  --fs-h2 28 / --fs-h1 46 / --fs-hero clamp(40px, 7vw, 80px)`.
+- **Line-height:** `--lh-tight 1.05` (H1/hero) / `--lh-snug 1.20` 
+  (H2/H3) / `--lh-body 1.65` (body) / `--lh-loose 1.75` (long-form).
+- **Weights as variables:** `--fw-regular/-medium/-semibold/-bold/
+  -extrabold/-black`. Don't pass raw numbers.
+
+### Spacing, radii, motion
+- **Spacing (4px base):** `--s-1` (4px) through `--s-32` (128px).
+- **Radii:** `--r-xs 6 / -sm 8 / -md 10 (button/input) / -lg 12 
+  (card) / -xl 16 / -2xl 20 / -pill 999`.
+- **Motion:** `--dur-fast 0.15s / -normal 0.20s / -slow 0.40s`. 
+  Easings: `--ease-out` default, `--ease-snap` for state transitions. 
+  No bounces, no springs, no parallax.
+
+### Iconography
+Hand-rolled inline SVG, **stroke-only**, `stroke-width: 2`–`2.5`, 
+`currentColor`, 24×24 viewBox at 14–22px. Visual family = Lucide / 
+Feather. **Triangle-with-exclamation** is the canonical recall-alert 
+glyph (left nav, Push-a-Recall button, all recall surfaces).
+
+### WCAG 2.1 AA — required, not aspirational
+- Body text ≥ **4.5 : 1** · Large text ≥ **3.0 : 1** · Non-text UI ≥ **3.0 : 1**.
+- Focus rings use `var(--ring-focus)` — 2px base offset + 2px accent.
+- Audit grid: `preview/theme-contrast-pairs.html` in the design bundle.
+
+### Voice & copy
+- Statements over slogans. Brand line: *"When a recall fires, every 
+  second counts."*
+- Numbers are load-bearing — use them in headlines (24h, 4.5:1, etc.).
+- Procedural verbs: *push, match, acknowledge, confirm, pull, dispose, 
+  audit*. Never marketing-ese ("revolutionary", "synergy").
+- **Sentence case** for body, buttons, links.
+- **UPPERCASE + DM Mono + 0.06–0.12em tracking** for eyebrows, 
+  form labels, badges.
+- Person: "**you**" for the reader; "**Batch'd**" as third-person 
+  actor; **never "we"** in product copy.
+
+### Files / Assets
+- `/assets/design-tokens.css` — canonical token source. Don't edit 
+  in the HTML inline copies; update this first, then mirror.
+- `/assets/batchd-logo-mark.svg` (dark bg) and 
+  `/assets/batchd-logo-mark-dark.svg` (light bg) — 2×2 grid mark.
+- `/assets/batchd-wordmark.svg` — Figtree-900 wordmark.
+- `/assets/batchd-square-logo.png` — social square logo.
+- `/assets/favicon.png`, `/assets/icon-192.png`, `/assets/icon-512.png`, 
+  `/assets/apple-touch-icon.png` — PWA / favicons.
+- `/fonts/Figtree-ExtraBold.ttf` — self-hosted brand weight (loaded 
+  via `@font-face` in both HTML files).
+
+### Out of scope (kept as Phase 2)
+The inline `style="..."` attributes scattered across both files still 
+reference legacy token names. They keep rendering correctly via the 
+alias bridge but should be migrated to semantic tokens incrementally 
+for new components. Don't try to do a sweep — the migration is 
+incremental per feature.
 
 ## UI conventions
 - Every panel has exactly ONE page-title — the topbar text 
