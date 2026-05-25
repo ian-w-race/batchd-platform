@@ -1067,7 +1067,7 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
         Investigations
       </button>
-      <button class="nav-item" onclick="showPanel('consumer-notify')">
+      <button class="nav-item" onclick="showPanel('consumer-notify')" id="nav-consumer-notify">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
         Consumer Notify
       </button>
@@ -1077,7 +1077,7 @@
         <span id="triage-badge" style="display:none;margin-left:auto;background:var(--danger);color:#fff;font-size:10px;padding:1px 6px;border-radius:10px;"></span>
       </button>
       <div class="nav-section">Stores</div>
-      <button class="nav-item" onclick="showPanel('stores')">
+      <button class="nav-item" onclick="showPanel('stores')" id="nav-stores">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
         Store Network
       </button>
@@ -1093,12 +1093,12 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
         Scan History
       </button>
-      <div class="nav-section">Compliance</div>
-      <button class="nav-item" onclick="showPanel('compliance')">
+      <div class="nav-section" id="nav-section-compliance">Compliance</div>
+      <button class="nav-item" onclick="showPanel('compliance')" id="nav-compliance">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
         Compliance
       </button>
-      <button class="nav-item" onclick="showPanel('reports')">
+      <button class="nav-item" onclick="showPanel('reports')" id="nav-reports">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
         Reports and Exports
       </button>
@@ -1878,19 +1878,12 @@ async function initDashboard(user) {
     ? `${_storeName} · ${_orgName}`
     : _orgName + ' · ' + (_orgRegion === 'us' ? 'United States' : 'Norway');
 
-  // Adjust sidebar for store managers
-  if (_userRole === 'store_manager') {
-    // Hide corp-only nav items
-    document.querySelectorAll('.nav-item').forEach(el => {
-      const onclick = el.getAttribute('onclick') || '';
-      if (onclick.includes("'stores'") || onclick.includes("'staff'") || onclick.includes("'reports'")) {
-        el.style.display = 'none';
-      }
-    });
-    // Update logo sub
-    const logoSub = document.querySelector('.logo-sub');
-    if (logoSub) logoSub.textContent = 'Store Manager';
-  }
+  // Adjust sidebar + branding for non-admin roles.
+  // Centralised in _applyRoleGates() (defined alongside showPanel) so the
+  // role list lives in one place. Replaces an earlier ad-hoc loop that
+  // matched onclick strings and incorrectly hid 'staff' for store
+  // managers (they need Staff Activity for their own store).
+  _applyRoleGates();
 
   // Load pending partner requests badge
   // Pending-invite badge fetcher retired — Manufacturers panel removed in
@@ -1973,7 +1966,21 @@ function fmtDash(d)   { return d ? new Date(d).toLocaleDateString(_dashLocale(),
 function fmtDashDT(d) { return d ? new Date(d).toLocaleString(_dashLocale(), _dashDTOpts) : '—'; }
 
 // ── Panel router ──────────────────────────────────────────────
+// Panels a store_manager is not allowed to reach. Programmatic navigation
+// (badges, KPI cards, deep-links, alert CTAs) that targets one of these
+// gets transparently redirected to 'overview' so a store manager can never
+// land on a corp-wide screen even if a button was missed in the sidebar
+// gating sweep. Kept in sync with _applyRoleGates() below.
+const STORE_MANAGER_FORBIDDEN_PANELS = ['investigations','consumer-notify','stores','compliance','reports','onboarding'];
+
 function showPanel(name) {
+  // Role guard — bounce store managers from corp-only panels. The sidebar
+  // hides the entry points (see _applyRoleGates), but this defence-in-depth
+  // check also catches deep-links, alert-banner clicks, and any internal
+  // showPanel(...) call that targets a forbidden panel.
+  if (_userRole === 'store_manager' && STORE_MANAGER_FORBIDDEN_PANELS.includes(name)) {
+    name = 'overview';
+  }
   _activePanel = name;
   // Close mobile sidebar on navigation
   if (window.innerWidth <= 768) {
@@ -1996,6 +2003,39 @@ function showPanel(name) {
   // Command Center right rail; no sidebar entry on purpose.
   const fns = { overview: renderCommandCenter, onboarding: renderOnboarding, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, triage: renderDashboardTriage, investigations: renderDashInvestigations, 'consumer-notify': renderConsumerNotification, terminology: renderTerminology, lotcheck: renderLotCheck, 'recall-detail': renderRecallDetail, 'recall-composer': renderRecallComposer };
   (fns[name] || renderComingSoon)(name);
+}
+
+// Apply role-based gating to the sidebar + sidebar branding. Called once
+// from the sign-in flow after _userRole is resolved. Keeps the per-role
+// hide/show rules in one place rather than scattering markup-side
+// conditionals through the nav. Corp_admin keeps every nav item visible
+// (the default markup); store_manager hides the corp-only items below.
+// New roles (e.g. an auditor read-only role) would extend this switch.
+function _applyRoleGates() {
+  if (_userRole === 'store_manager') {
+    // Sidebar items that are corp-wide and have no store-manager analogue.
+    // Investigations + Consumer Notify operate org-wide; Store Network is
+    // a multi-store comparison view; Compliance + Reports are corporate
+    // readiness/exports. Onboarding is for the org admin who set things up.
+    const hideIds = [
+      'nav-investigations',
+      'nav-consumer-notify',
+      'nav-stores',
+      'nav-section-compliance',
+      'nav-compliance',
+      'nav-reports',
+      'nav-onboarding',
+    ];
+    hideIds.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = 'none';
+    });
+    // Brand-mark subtitle: "Corporate" → "Store Manager" so the sidebar
+    // reflects what role is signed in. Matches the topbar-sub treatment
+    // earlier in this function (store_name · org_name).
+    const logoSub = document.querySelector('.sidebar-logo .logo-sub');
+    if (logoSub) logoSub.textContent = 'Store Manager';
+  }
 }
 
 // Invalidate overview cache — call this after any action that changes the data it shows
@@ -11158,8 +11198,13 @@ async function renderSettings() {
   el.innerHTML = `
     <div style="display:flex;flex-direction:column;gap:16px;max-width:860px;">
 
-      <!-- Row 1: Organisation + Account -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+      <!-- Row 1: Organisation + Account. The Organisation card is corp-wide
+           (name, region default, recall feeds, org ID) so store_managers
+           never see it — they get a single-column "Your account" card
+           instead. Gate is a CSS grid switch from 2-col → 1-col plus an
+           outer conditional on the Organisation panel. -->
+      <div style="display:grid;grid-template-columns:${_userRole === 'store_manager' ? '1fr' : '1fr 1fr'};gap:16px;">
+        ${_userRole === 'store_manager' ? '' : `
         <div class="panel" style="margin:0;">
           <div class="panel-header"><div class="panel-title">Organisation</div></div>
           <div class="panel-body">
@@ -11194,6 +11239,7 @@ async function renderSettings() {
             <button class="btn-primary" onclick="saveOrgSettings()" id="btn-save-org" ${isAdmin?'':'disabled style="opacity:0.5;cursor:not-allowed;"'}>${isAdmin?'Save changes':'View only · ask corp admin to change'}</button>
           </div>
         </div>
+        `}
         <div class="panel" style="margin:0;">
           <div class="panel-header"><div class="panel-title">Your account</div></div>
           <div class="panel-body">
@@ -11333,7 +11379,11 @@ async function renderSettings() {
         </div>
       </div>
 
-      <!-- Row 3: Recall management — coordinator + lookback combined -->
+      ${_userRole === 'store_manager' ? '' : `
+      <!-- Row 3: Recall management — coordinator + lookback combined.
+           Org-wide compliance setup (named coordinator, retention window) —
+           hidden for store_managers. The fields apply at the organisation
+           level; only corp_admin should edit them. -->
       <div class="panel" style="margin:0;">
         <div class="panel-header">
           <div>
@@ -11409,6 +11459,7 @@ async function renderSettings() {
           </div>
         </div>
       </div>
+      `}
 
     </div>`;
   } catch(e) {
