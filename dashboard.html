@@ -1204,15 +1204,43 @@ let _userDateFormat = null;
 // the topbar would still announce "United States" because it was set
 // once at sign-in. This helper closes that gap.
 //
-// Reads _userRole + _storeName + _orgName + _orgRegion from module scope.
+// Reads _userRole + _activeStoreName + _orgName + _orgRegion +
+// _managerStores from module scope. For store_managers with more than
+// one assigned store, renders an inline <select> picker so they can
+// switch which store's data they're viewing (Chunk B.1, 2026-05-26).
 // Safe to call before app-shell is visible (silent no-op if the element
 // isn't in the DOM yet).
 function _refreshTopbarSub() {
   const el = document.getElementById('topbar-sub');
   if (!el) return;
-  el.textContent = _userRole === 'store_manager'
-    ? `${_storeName} · ${_orgName}`
-    : `${_orgName} · ${_orgRegion === 'us' ? 'United States' : 'Norway'}`;
+  if (_userRole === 'store_manager') {
+    if (_managerStores.length > 1) {
+      const options = _managerStores.map(s =>
+        `<option value="${esc(s.id)}"${s.id === _activeStoreId ? ' selected' : ''}>${esc(s.name)}</option>`
+      ).join('');
+      el.innerHTML = `<select id="topbar-store-picker" onchange="_setActiveStore(this.value)"
+          style="font-family:inherit;font-size:11px;background:transparent;border:1px solid var(--border);color:var(--text);padding:2px 8px;border-radius:6px;cursor:pointer;margin-right:4px;">${options}</select><span style="color:var(--muted);">· ${esc(_orgName)}</span>`;
+    } else {
+      el.textContent = `${_activeStoreName || _storeName} · ${_orgName}`;
+    }
+  } else {
+    el.textContent = `${_orgName} · ${_orgRegion === 'us' ? 'United States' : 'Norway'}`;
+  }
+}
+
+// Store-manager picker change handler (Chunk B.1). Switches the active
+// store, refreshes the topbar so the picker reflects the new selection,
+// invalidates the overview cache (its data is scoped per-store), and
+// re-renders the active panel so the manager immediately sees the new
+// store's data. No-op if storeId isn't in the assigned list.
+function _setActiveStore(storeId) {
+  const store = _managerStores.find(s => s.id === storeId);
+  if (!store) return;
+  _activeStoreId   = store.id;
+  _activeStoreName = store.name;
+  _refreshTopbarSub();
+  if (typeof invalidateOverviewCache === 'function') invalidateOverviewCache();
+  if (typeof showPanel === 'function' && _activePanel) showPanel(_activePanel);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1497,6 +1525,18 @@ async function createInvestigationFromPattern(productName, lots, complaintCount,
 
 let _storeName = '';
 let _activePanel = 'overview';
+
+// Store-manager state (Chunk B.1, 2026-05-26).
+// A store_manager can be assigned to one or many stores via the
+// store_manager_stores many-to-many table. _managerStores is the
+// authoritative list resolved at sign-in. _activeStoreId/_activeStoreName
+// track the store the manager is currently viewing — driven by the
+// topbar store picker that _refreshTopbarSub renders for managers with
+// more than one store. Corp admins and floor staff never populate
+// these; they stay at their defaults below and are safe to read.
+let _managerStores    = [];   // [{ id, name }, ...]
+let _activeStoreId    = null; // currently-viewed store (one of _managerStores when manager)
+let _activeStoreName  = '';   // mirror of the active store's name for display
 
 // Live Recall Detail page — set before navigating to the 'recall-detail'
 // panel so renderRecallDetail() knows which recall_event_id to render.
@@ -1819,12 +1859,20 @@ async function initDashboard(user) {
     return;
   }
 
-  // Route by role — manufacturers, staff and store managers don't belong in the corp dashboard
+  // Route by role.
+  // - Manufacturers → retired stub on the manufacturer.html domain
+  // - Floor staff → scanner app (no dashboard access)
+  // - Store managers → ALLOWED into the dashboard (store-scoped view via
+  //   renderStoreManagerOverview + the per-panel scoping added in
+  //   store-manager Chunk B). Previously redirected to the scanner along
+  //   with floor staff; that left every store-manager feature in this
+  //   file unreachable for the actual role.
+  // - Corp admins → ALLOWED (full dashboard).
   if (member.role === 'mfr_admin' || member.role === 'mfr_qa') {
     window.location.replace('https://app.batchdapp.com/manufacturer.html');
     return;
   }
-  if (member.role === 'staff' || member.role === 'store_manager') {
+  if (member.role === 'staff') {
     window.location.replace('https://batchd-app.netlify.app');
     return;
   }
@@ -1882,6 +1930,44 @@ async function initDashboard(user) {
   _orgRegion        = userReg || _orgDefaultRegion;
   if (_storeId) {
     _storeName = storeRes.data?.name || 'My Store';
+  }
+
+  // Resolve the store_manager's assigned stores (Chunk B.1, 2026-05-26).
+  // For corp_admins and floor staff this stays empty. For managers, we
+  // pull every row from store_manager_stores (the authoritative many-to-
+  // many) and join the store name. If the manager somehow has zero rows
+  // (data integrity issue), we fall back to organisation_members.store_id
+  // so the dashboard still renders something coherent rather than going
+  // blank. _activeStoreId defaults to organisation_members.store_id when
+  // that value is in the assigned list; otherwise to the first assigned
+  // store. The topbar store picker rendered by _refreshTopbarSub uses
+  // this list directly.
+  if (_userRole === 'store_manager') {
+    try {
+      const { data: smsRows } = await sb.from('store_manager_stores')
+        .select('store_id, stores(id, name)')
+        .eq('user_id', user.id);
+      _managerStores = (smsRows || [])
+        .map(r => r.stores)
+        .filter(s => s && s.id)
+        .map(s => ({ id: s.id, name: s.name }));
+    } catch (_) {
+      _managerStores = [];
+    }
+    // Fallback: if the many-to-many is empty but organisation_members has
+    // a store_id, treat that as the single assigned store.
+    if (_managerStores.length === 0 && _storeId) {
+      _managerStores = [{ id: _storeId, name: _storeName || 'My Store' }];
+    }
+    // Pick the initial active store. Prefer the org_members.store_id when
+    // it's in the assigned list (matches the manager's "home"); otherwise
+    // first assigned store.
+    const homeHit = _managerStores.find(s => s.id === _storeId);
+    const initial = homeHit || _managerStores[0] || null;
+    if (initial) {
+      _activeStoreId   = initial.id;
+      _activeStoreName = initial.name;
+    }
   }
 
   // Show app
@@ -11884,16 +11970,23 @@ async function renderStoreManagerOverview() {
 
   const el = document.getElementById('main-content');
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading…</div>`;
-  document.getElementById('topbar-title').textContent = _storeName || 'My Store';
+  // Use the active store (from the topbar picker) rather than _storeId,
+  // so a multi-store manager who switches stores via _setActiveStore()
+  // sees the new store's data on the next render. Falls back to _storeId/
+  // _storeName when _activeStoreId hasn't been set (e.g., single-store
+  // manager who came in before the picker logic ran).
+  const activeStoreId   = _activeStoreId   || _storeId   || null;
+  const activeStoreName = _activeStoreName || _storeName || 'My Store';
+  document.getElementById('topbar-title').textContent = activeStoreName;
 
   try {
     // Scope all queries to this store
-    const storeName = _storeName;
+    const storeName = activeStoreName;
     const today = new Date().toISOString().split('T')[0];
 
     const [scansRes, acksRes] = await Promise.all([
-      sb.from('scans').select('*').eq('organisation_id', _orgId).eq(_storeId ? 'store_id' : 'store_name', _storeId || storeName).order('created_at', { ascending: false }),
-      sb.from('recall_acknowledgements').select('*, recall_events(product_name, lot_number, severity, reason, is_drill)').eq('organisation_id', _orgId).eq('store_id', _storeId || '00000000-0000-0000-0000-000000000000'),
+      sb.from('scans').select('*').eq('organisation_id', _orgId).eq(activeStoreId ? 'store_id' : 'store_name', activeStoreId || storeName).order('created_at', { ascending: false }),
+      sb.from('recall_acknowledgements').select('*, recall_events(product_name, lot_number, severity, reason, is_drill)').eq('organisation_id', _orgId).eq('store_id', activeStoreId || '00000000-0000-0000-0000-000000000000'),
     ]);
 
     const scans      = scansRes.data || [];
