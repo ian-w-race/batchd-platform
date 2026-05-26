@@ -4127,33 +4127,19 @@
       </div>
     </div>
 
-    <div class="settings-section">
-      <div class="settings-section-header">
-        <div class="settings-section-title" data-i18n="settings.region">Region / Jurisdiction</div>
-        <div class="settings-section-sub" data-i18n="settings.regionSub">Changes which regulations, recall databases, and compliance features are active. Instant effect.</div>
-      </div>
-      <div class="settings-section-body">
-        <div style="display:flex;gap:10px;margin-bottom:10px;">
-          <button id="settings-region-no" onclick="saveRegion('no')" class="ob-choice-btn active" style="flex:1;padding:12px;gap:10px;">
-            <span style="font-size:20px;">🇳🇴</span>
-            <div style="text-align:left;">
-              <div style="font-weight:700;font-size:13px;">Norway</div>
-              <div style="font-size:11px;color:var(--muted);">Mattilsynet · Matloven</div>
-            </div>
-          </button>
-          <button id="settings-region-us" onclick="saveRegion('us')" class="ob-choice-btn" style="flex:1;padding:12px;gap:10px;">
-            <span style="font-size:20px;">🇺🇸</span>
-            <div style="text-align:left;">
-              <div style="font-weight:700;font-size:13px;">United States</div>
-              <div style="font-size:11px;color:var(--muted);">FDA · FSMA · FSMA 204 (USA)</div>
-            </div>
-          </button>
-        </div>
-        <div id="settings-retention-notice" style="font-size:11px;color:var(--muted);line-height:1.6;padding:8px 10px;background:var(--surface2);border-radius:6px;">
-          🇳🇴 <strong>Mattilsynet / Matloven:</strong> Shelf-life + 6 months for perishables; 5 years for general products.
-        </div>
-      </div>
-    </div>
+    <!-- Region / Jurisdiction settings section REMOVED 2026-05-26.
+         Region is admin-controlled now — corp_admin sets the org-wide
+         default in the dashboard, with a per-invitee override in the
+         Staff invite form. Once a user is invited, their region is
+         locked. Removed for consistency across all data — investigation
+         timelines need every seat in the org rendering the same
+         regulator citations and date formats.
+
+         _userRegion is still loaded from user_settings.region at sign-in
+         (admin-assigned at invite time) and drives everything from FSMA
+         tab visibility to date format helpers. applyRegion() still runs
+         on login; the settings-region-* button toggles inside it are now
+         no-ops (the `if (b)` guard protects against the missing nodes). -->
 
     <!-- Theme -->
     <div class="settings-section">
@@ -6786,15 +6772,13 @@ function refreshDatePickers() {
   if (staffToLabel   && !staffToLabel.hasAttribute('data-i18n'))   staffToLabel.textContent   = t('lbl.to');
 }
 
-async function saveRegion(region) {
-  _userRegion = region;
-  try {
-    await sb.from('user_settings').upsert({ user_id: currentUser.id, region }, { onConflict: 'user_id' });
-  } catch(e) { console.warn('Region save:', e); }
-  applyRegion();
-  renderSourcePills();
-  showToast(region === 'us' ? '🇺🇸 Region set to United States — FSMA 204 (USA) features enabled' : '🇳🇴 Region set to Norway — Mattilsynet features active', 'ok', 3500);
-}
+// saveRegion() removed 2026-05-26 along with the scanner's settings →
+// Region/Jurisdiction toggle. Region is admin-controlled now (corp admin
+// sets the org default; per-invitee override available in the Staff invite
+// form on the dashboard). The scanner no longer offers any way to change
+// it. _userRegion is still loaded at sign-in from user_settings.region —
+// applyRegion() is still called from the login flow to apply the locked
+// region to UI surfaces (FSMA tab visibility, region badge, date formats).
 
 function applyRegion() {
   const isUS = _userRegion === 'us';
