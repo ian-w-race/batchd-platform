@@ -132,32 +132,64 @@ Mock drills never count toward active recall numbers.
 Batch'd is a regulatory-assistance platform. The product **must never**
 display regulatory copy, regulator names, phone prefixes, currency,
 retention rules, or compliance frameworks from one jurisdiction while
-the user has selected another. A FDA/US user must never see Mattilsynet
+the user is assigned to another. A US user must never see Mattilsynet
 phrases, Norwegian phone prefixes, EU 178/2002 references, or kr
-currency — and vice versa.
+currency — and vice versa. Cross-user consistency matters for
+investigation timelines: every seat in an org must render the same
+audit timestamps, regulator citations, and date formats so a recall
+post-mortem isn't ambiguous about who saw what.
 
-### How the precedence works
+### Source of truth (admin-controlled, two writers only)
 
-Two layers of region exist per user/org:
+Updated 2026-05-26. Region is set ONLY by the corp admin — never by
+the user themselves. There are exactly two places region can be
+written:
+
+1. **Organisation default** — `organisations.region`. Editable in
+   Settings → Organisation → Region (corp_admin only). Applied to
+   every new invitee unless the admin overrides it at invite time.
+2. **Per-invitee override** — `invitations.region`. Picked in the
+   Staff invite form's "Default region" field. Written to
+   `user_settings.region` when the invitee accepts. Useful for a
+   multi-region operator inviting, e.g., a Norwegian staff member
+   into a US-default org.
+
+Once a user accepts an invite, their `user_settings.region` is locked.
+The per-user region pickers in **Settings → Your preferences** (dashboard)
+and in the **scanner's Settings overlay** were both removed 2026-05-26
+along with the `saveRegion()` / `_setPrefRegion()` handlers. The
+`user_settings.region` column is still read at sign-in but is no
+longer writable from any user-facing control.
+
+### How the variables resolve
 
 | Variable | Source | Meaning | Used by |
 |---|---|---|---|
-| `_orgDefaultRegion` | `organisations.region` | The org's stated home region | **Only** the Settings → Organisation card dropdown (so org admins can see/edit the org-level default) |
-| `_orgRegion` | `user_settings.region` ?? `organisations.region` | **Effective region** for the current user — personal override wins | **Everything else** — all regulatory copy, FSMA/EU references, regulator contacts, retention rules, recall coordinator notes, terminology entries, currency, date format, phone prefix examples |
+| `_orgDefaultRegion` | `organisations.region` | The org's stated default | **Only** the Settings → Organisation card dropdown (so the org admin can see/edit it) |
+| `_orgRegion` | `user_settings.region` ?? `organisations.region` | **Effective region** for the signed-in user. The `user_settings.region` value is admin-assigned (org default at signup, or `invitations.region` override at accept time) — not user-changeable | **Everything else** in the dashboard — all regulatory copy, FSMA/EU references, regulator contacts, retention rules, recall coordinator notes, terminology entries, currency, date format, phone prefix examples |
+| `_userRegion` (scanner) | mirrors `user_settings.region` | Same value as `_orgRegion` on the dashboard side, used by the scanner | All region-dependent surfaces in the scanner (FSMA tab visibility, region badge, dateSep / formatDate, etc.) |
 
 ### The rules
 
-1. **Every line of regulatory copy** must gate on `_orgRegion` (NOT
-   `organisations.region`, NOT `_orgDefaultRegion`, NOT a hardcoded
-   region literal). This includes inline ternaries like
-   `_orgRegion === 'us' ? 'FDA 21 CFR 7.49' : 'Mattilsynet §16'`.
-2. **The scanner** uses `_userRegion` (which mirrors `user_settings.region`
-   on its side) for the same purpose. Same rule.
-3. **Region changes apply live** — Settings → Your preferences →
-   Region/Jurisdiction triggers a re-render after save so the active
-   panel reflects the new jurisdiction without a reload.
-4. **The org-level dropdown** in Settings → Organisation is the ONLY
+1. **Every line of regulatory copy** gates on `_orgRegion` (dashboard)
+   or `_userRegion` (scanner) — never on `organisations.region`,
+   `_orgDefaultRegion`, or a hardcoded region literal. Inline ternaries
+   like `_orgRegion === 'us' ? 'FDA 21 CFR 7.49' : 'Mattilsynet §16'`
+   are the canonical pattern.
+2. **Date format is locked to region.** No separate user setting.
+   `_dashLocale()` (dashboard) and `dateSep` / `formatDate` (scanner)
+   derive the format from the region variable. The
+   `user_settings.date_format` column added by migration 012 is
+   preserved for backward compat but is never written from app code.
+3. **The org-level dropdown** in Settings → Organisation is the ONLY
    surface that reads `_orgDefaultRegion`. Everywhere else: `_orgRegion`.
+4. **When an admin changes the org region**, `saveOrgSettings()` also
+   syncs the admin's own `user_settings.region` to the new value (and
+   clears `user_settings.date_format`) so their own view follows the
+   change immediately, and re-renders the active panel so on-screen
+   regulator copy updates without navigation. Other users in the org
+   keep whatever region they were assigned at invite time — bulk
+   re-assignment would be a separate explicit action.
 5. **Never construct regulatory copy by string-mixing fields from
    different regions.** If you find a card pulling, e.g. coordinator
    contact from one region and the regulator name from another, that's
