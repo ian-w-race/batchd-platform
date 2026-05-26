@@ -11817,16 +11817,29 @@ async function saveOrgSettings() {
   }
 
   _orgName          = name;
+  const regionChanged = (region !== _orgDefaultRegion);
   _orgDefaultRegion = region;
-  // Effective region = user's personal override (if any) > org default.
-  // Re-fetch the user's personal pref so a corp admin updating org region
-  // doesn't accidentally override their own personal jurisdiction setting.
-  try {
-    const { data: us } = await sb.from('user_settings').select('region').eq('user_id', _userId).maybeSingle();
-    _orgRegion = (us?.region) || region;
-  } catch(_) {
-    _orgRegion = region;
+
+  // Sync the admin's own user_settings.region to the new org region so the
+  // change takes effect on their own seat immediately. With the per-user
+  // region picker removed (2026-05-26), an admin who had a stale region
+  // value in user_settings — either auto-assigned at signup or set via the
+  // now-removed picker — would otherwise keep that stale region after
+  // changing the org default, leaving the topbar + FSMA/Mattilsynet copy
+  // out of sync with the new org choice. Other users in the org keep
+  // whatever region they were assigned at invite time; only the current
+  // admin's row is touched. date_format is cleared at the same time so
+  // numeric date rendering follows the new region too.
+  // Best-effort: a failure here doesn't block the rest of the org save.
+  if (regionChanged) {
+    try {
+      await sb.from('user_settings')
+        .update({ region, date_format: null })
+        .eq('user_id', _userId);
+    } catch(_) { /* best-effort */ }
+    _userDateFormat = null;
   }
+  _orgRegion = region;
   _refreshTopbarSub();
 
   msgEl.textContent = recallSourcePending
@@ -11835,6 +11848,15 @@ async function saveOrgSettings() {
   msgEl.style.cssText = 'display:block;background:rgba(var(--accent-rgb),0.1);border:1px solid rgba(var(--accent-rgb),0.3);color:var(--accent);font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;';
   btn.disabled = false;
   btn.innerHTML = 'Save changes';
+
+  // Re-render the active panel so any region-dependent copy already on
+  // screen (regulator names, statute citations, currency, date formats,
+  // terminology) reflects the new jurisdiction without requiring a
+  // navigation. Mirrors the pattern saveUserPreferences used before the
+  // user-pref region picker was removed.
+  if (regionChanged) {
+    setTimeout(() => { if (typeof showPanel === 'function' && _activePanel) showPanel(_activePanel); }, 800);
+  }
 }
 
 // Read the currently-active org feeds choice from the DOM (no draft yet).
