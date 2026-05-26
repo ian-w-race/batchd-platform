@@ -11296,7 +11296,7 @@ async function renderSettings() {
                 <option value="no" ${_orgDefaultRegion!=='us'?'selected':''}>Norway</option>
                 <option value="us" ${_orgDefaultRegion==='us'?'selected':''}>United States</option>
               </select>
-              <div style="font-size:10.5px;color:var(--muted);margin-top:6px;line-height:1.55;">Org-level default inherited by new staff. Override your own view via <em>Your preferences → Region / Jurisdiction</em> below.</div></div>
+              <div style="font-size:10.5px;color:var(--muted);margin-top:6px;line-height:1.55;">Default region applied to every new user. To assign a different region to a specific person, set it on their invitation in <em>Staff → Invite team member → Default region</em>. Existing users keep the region they were assigned at signup.</div></div>
 
             <!-- Recall feeds — org-level (migration 012, 2026-05). Corp admin only. -->
             <div class="field"><label>Recall feeds <span style="color:var(--muted);font-size:10px;text-transform:none;letter-spacing:0;">— compliance decision, applies to whole org</span></label>
@@ -11390,43 +11390,25 @@ async function renderSettings() {
             <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.55;">The scanning app is fully translated to both languages. The corporate dashboard is English-only today; your selection persists and the dashboard will respect it once translations land.</div>
           </div>
 
-          <!-- Region / Jurisdiction (personal — overrides org region for this user) -->
-          <div style="margin-bottom:18px;">
-            <label style="display:block;font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">Region / Jurisdiction</label>
-            <div style="display:flex;gap:8px;">
-              <button type="button" id="pref-region-no" onclick="_setPrefRegion('no')" style="flex:1;font-family:'DM Mono',monospace;font-size:11px;padding:10px 14px;border-radius:8px;border:1.5px solid ${userPref.region==='no'?'var(--accent)':'var(--border)'};background:${userPref.region==='no'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.region==='no'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;text-align:left;display:flex;align-items:center;gap:10px;">
-                <span style="font-size:18px;">🇳🇴</span>
-                <span style="display:flex;flex-direction:column;align-items:flex-start;gap:2px;">
-                  <span style="font-size:12px;font-weight:700;">Norway</span>
-                  <span style="font-size:9px;text-transform:none;letter-spacing:0;opacity:0.75;">Mattilsynet · Matloven</span>
-                </span>
-              </button>
-              <button type="button" id="pref-region-us" onclick="_setPrefRegion('us')" style="flex:1;font-family:'DM Mono',monospace;font-size:11px;padding:10px 14px;border-radius:8px;border:1.5px solid ${userPref.region==='us'?'var(--accent)':'var(--border)'};background:${userPref.region==='us'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.region==='us'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;text-align:left;display:flex;align-items:center;gap:10px;">
-                <span style="font-size:18px;">🇺🇸</span>
-                <span style="display:flex;flex-direction:column;align-items:flex-start;gap:2px;">
-                  <span style="font-size:12px;font-weight:700;">United States</span>
-                  <span style="font-size:9px;text-transform:none;letter-spacing:0;opacity:0.75;">FDA · FSMA 204</span>
-                </span>
-              </button>
-            </div>
-            <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.55;">Changes which regulations, recall databases, and compliance copy you see. This is your <strong>personal</strong> jurisdiction — distinct from the <em>Organisation → Region</em> field at the top, which is the org-wide default. Useful when a multi-region operator wants a different view than the org default.</div>
-          </div>
+          <!-- Region / Jurisdiction picker REMOVED 2026-05-26.
+               Region is set once by the corp admin (either as the org-wide
+               default in Organisation → Region, or per-invitee in the
+               Staff invite form) and is locked thereafter. This avoids
+               cross-user inconsistency in audit-relevant data (dates,
+               timestamps, regulator citations) during investigations.
+               See user_settings.region — still read at sign-in but no
+               longer writable from a user-facing control. -->
 
-          <!-- Date / time format — explicit override (migration 012, 2026-05).
-               "Auto" derives from the user's effective region (US → MM/DD/YYYY,
-               NO → DD/MM/YYYY); the explicit choices ignore region entirely. -->
-          <div style="margin-bottom:18px;">
-            <label style="display:block;font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">Date / time format</label>
-            <div style="display:flex;gap:6px;flex-wrap:wrap;">
-              <button type="button" id="pref-date-auto" onclick="_setPrefDateFormat('auto')"
-                style="flex:1;min-width:140px;font-family:'DM Mono',monospace;font-size:11px;padding:10px 12px;border-radius:8px;border:1.5px solid ${userPref.dateFormat==='auto'?'var(--accent)':'var(--border)'};background:${userPref.dateFormat==='auto'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.dateFormat==='auto'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;">Auto · region</button>
-              <button type="button" id="pref-date-us" onclick="_setPrefDateFormat('us')"
-                style="flex:1;min-width:140px;font-family:'DM Mono',monospace;font-size:11px;padding:10px 12px;border-radius:8px;border:1.5px solid ${userPref.dateFormat==='us'?'var(--accent)':'var(--border)'};background:${userPref.dateFormat==='us'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.dateFormat==='us'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;">US · MM/DD/YYYY</button>
-              <button type="button" id="pref-date-eu" onclick="_setPrefDateFormat('eu')"
-                style="flex:1;min-width:140px;font-family:'DM Mono',monospace;font-size:11px;padding:10px 12px;border-radius:8px;border:1.5px solid ${userPref.dateFormat==='eu'?'var(--accent)':'var(--border)'};background:${userPref.dateFormat==='eu'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.dateFormat==='eu'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;">EU · DD/MM/YYYY</button>
-            </div>
-            <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.55;">Controls how dates render across the dashboard — recall timestamps, audit logs, exports. <strong>Auto</strong> matches your Region (US → MM/DD/YYYY, Norway → DD/MM/YYYY).</div>
-          </div>
+          <!-- Date / time format picker REMOVED 2026-05-26.
+               Date format is now locked to the user's region (US →
+               MM/DD/YYYY, NO → DD/MM/YYYY) so investigation timestamps
+               are consistent across every seat in the org. The
+               user_settings.date_format column added by migration 012
+               stays in the DB for backward compat but is no longer
+               written by any code path. _dashLocale() correctly falls
+               through to the region-derived case when _userDateFormat
+               is null. -->
+
 
           <!-- Email notification toggles (migration 013, 2026-05).
                Default-on; user can opt out per event. notify-event.js
@@ -11633,16 +11615,10 @@ function _setPrefLang(val) {
   _highlightPrefBtn('pref-lang-no', val === 'no');
 }
 
-function _setPrefRegion(val) {
-  window._prefDraft.region = val;
-  _highlightPrefBtn('pref-region-no', val === 'no');
-  _highlightPrefBtn('pref-region-us', val === 'us');
-}
-
-function _setPrefDateFormat(val) {
-  window._prefDraft.dateFormat = val;
-  ['auto','us','eu'].forEach(k => _highlightPrefBtn('pref-date-' + k, k === val));
-}
+// _setPrefRegion and _setPrefDateFormat removed 2026-05-26 along with
+// their picker UIs. Region is admin-controlled (org default + per-invite
+// override only); date format is locked to the user's region. No user-
+// facing handler is required for either anymore.
 
 // Notification toggle row — used by Settings → Your preferences →
 // Email notifications. Each row is a switch-style button with the
@@ -11725,10 +11701,12 @@ async function saveUserPreferences() {
 
   // Read draft state with sensible fallbacks (in case the user didn't
   // touch a particular control before clicking Save).
-  const theme      = window._prefDraft.theme      || localStorage.getItem('batchd-theme')    || 'dark';
-  const language   = window._prefDraft.language   || localStorage.getItem('batchd-language') || 'en';
-  const region     = window._prefDraft.region     || _orgRegion                              || 'no';
-  const dateFormat = window._prefDraft.dateFormat || 'auto';
+  // region + dateFormat are intentionally NOT read here. The picker UIs
+  // were removed 2026-05-26 — region is admin-controlled (org-wide
+  // default + per-invite override), date format is region-derived. We
+  // never write user_settings.region from user-facing code anymore.
+  const theme    = window._prefDraft.theme    || localStorage.getItem('batchd-theme')    || 'dark';
+  const language = window._prefDraft.language || localStorage.getItem('batchd-language') || 'en';
   // Notification prefs — JSONB column on user_settings (migration 013).
   // Read draft toggles; default-on if a draft value is missing (user
   // hasn't touched it since panel render).
@@ -11741,83 +11719,48 @@ async function saveUserPreferences() {
   // Theme is already applied on click; localStorage already set there.
   // Language: mirror to localStorage for instant client-side use.
   localStorage.setItem('batchd-language', language);
-  // Region: mirror to localStorage so the scanner app picks it up
-  // immediately if the user logs in there on the same browser.
-  localStorage.setItem('batched_region', region);
 
   try {
     const userId = (await sb.auth.getUser()).data?.user?.id;
     if (!userId) throw new Error('Not signed in');
 
-    // Try the full upsert first. If a forward-compat column doesn't
-    // exist yet (migrations 011/012/013), retry with a smaller payload
-    // so the rest still saves cleanly. recall_source is no longer
-    // written here — it's an org-level setting now (migration 012).
+    // Upsert only the columns this panel actually owns now: language +
+    // notification_prefs. Region and date_format are admin-controlled,
+    // so this user-facing save path no longer touches them — that keeps
+    // each user's region locked to what the admin set at invite time,
+    // which is what makes audit timestamps consistent for investigations.
     let { error } = await sb.from('user_settings').upsert({
       user_id:            userId,
       organisation_id:    _orgId,
       language,
-      region,
-      date_format:        dateFormat,
       notification_prefs: notificationPrefs,
     }, { onConflict: 'user_id' });
 
     let languagePending = false;
-    let dateFormatPending = false;
     let notifyPrefsPending = false;
     // Retry-on-missing-column: drop the failing column and try again.
-    while (error && /column .*(language|date_format|notification_prefs).* does not exist/i.test(error.message || '')) {
+    while (error && /column .*(language|notification_prefs).* does not exist/i.test(error.message || '')) {
       if (/language/i.test(error.message))           languagePending = true;
-      if (/date_format/i.test(error.message))        dateFormatPending = true;
       if (/notification_prefs/i.test(error.message)) notifyPrefsPending = true;
-      const payload = { user_id: userId, organisation_id: _orgId, region };
+      const payload = { user_id: userId, organisation_id: _orgId };
       if (!languagePending)    payload.language           = language;
-      if (!dateFormatPending)  payload.date_format        = dateFormat;
       if (!notifyPrefsPending) payload.notification_prefs = notificationPrefs;
       const retry = await sb.from('user_settings').upsert(payload, { onConflict: 'user_id' });
       error = retry.error;
       // Prevent infinite loop if all forward-compat columns also failed
-      if (error && Object.keys(payload).length <= 3) break;
+      if (error && Object.keys(payload).length <= 2) break;
     }
 
     if (error) {
       setMsg('Could not save: ' + error.message, false);
     } else {
-      // Apply the new effective region + date format in memory and re-render
-      // the active panel so every regulatory surface (FSMA/EU copy, recall
-      // coordinator note, compliance page, terminology entries, audit
-      // timestamps) reflects the new choice immediately — no reload
-      // required. Honours the jurisdiction-precedence rule documented in
-      // CLAUDE.md.
-      const regionChanged = (region && region !== _orgRegion);
-      const dateFormatChanged = (dateFormat && dateFormat !== _userDateFormat);
-      if (regionChanged) {
-        _orgRegion = region;
-        invalidateOverviewCache && invalidateOverviewCache();
-        // Refresh the topbar subtitle so the platform chrome reflects the
-        // new jurisdiction immediately. Without this the active panel
-        // re-renders (FSMA/EU copy switches correctly below) but the
-        // topbar continues to announce the old region, which makes the
-        // change look broken — see the "platform still acts like USA"
-        // report after a NO save with no topbar update.
-        _refreshTopbarSub();
-      }
-      if (dateFormatChanged) {
-        _userDateFormat = dateFormat;
-      }
       const warnings = [];
       if (languagePending)    warnings.push('Language needs migration 011');
-      if (dateFormatPending)  warnings.push('Date format needs migration 012');
       if (notifyPrefsPending) warnings.push('Notification prefs need migration 013');
       if (warnings.length) {
         setMsg('✓ Saved. (' + warnings.join('; ') + ' — the rest is live now.)', true);
       } else {
         setMsg('✓ Preferences saved.', true);
-      }
-      // Re-render whenever region OR date format changed — both affect
-      // multiple panels' rendered output.
-      if (regionChanged || dateFormatChanged) {
-        setTimeout(() => { if (typeof showPanel === 'function' && _activePanel) showPanel(_activePanel); }, 800);
       }
     }
   } catch (e) {
