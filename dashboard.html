@@ -8040,7 +8040,7 @@ async function renderStaff() {
             </div>
             <div class="field" style="margin:0;">
               <label>Phone number</label>
-              <input id="inv-phone" type="tel" placeholder="+47 ..." />
+              <input id="inv-phone" type="tel" placeholder="${_orgRegion === 'us' ? '+1 ...' : '+47 ...'}" />
             </div>
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
@@ -8074,7 +8074,7 @@ async function renderStaff() {
         </div>
 
         <div style="display:flex;gap:8px;margin-top:14px;">
-          <button class="btn-primary" onclick="sendInvitation()" id="btn-send-invite" style="flex:1;">
+          <button class="btn-primary" onclick="sendInvitation()" id="btn-send-invite">
             Send invitation email →
           </button>
           <button class="btn-ghost" onclick="closeInviteForm()">Cancel</button>
@@ -8215,6 +8215,14 @@ async function deactivateMember(userId, identifier) {
 
 function openInviteForm() {
   document.getElementById('invite-form').style.display = 'block';
+  // Sync the store-assignment widget to whatever role is currently selected.
+  // The role <select> defaults to "store_manager" (first <option>), and the
+  // markup statically renders the single-store dropdown — so without this
+  // call the user sees a dropdown, picks a store, and hits "tick at least
+  // one store" on submit (the validator reads from the hidden multi-select
+  // checkbox list). onInvRoleChange() is otherwise only wired to the
+  // role select's `change` event, which doesn't fire on initial render.
+  onInvRoleChange();
   document.getElementById('inv-email').focus();
 }
 
