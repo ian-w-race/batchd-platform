@@ -11992,8 +11992,18 @@ async function renderStoreManagerOverview() {
     const scans      = scansRes.data || [];
     const acks       = acksRes.data  || [];
     const scansToday = scans.filter(s => s.created_at?.startsWith(today)).length;
-    const escalated  = scans.filter(s => s.manager_escalated && !s.recall_resolved).length;
     const onShelf    = scans.filter(s => !s.removed_from_shelf_at).length;
+    // Items pulled (removed from shelf) within the last 7 days. Replaces
+    // the previous "Escalated items" KPI — the escalation concept is
+    // being retired across the platform (2026-05-27). Pulled-this-week
+    // is the natural complement to the other three KPIs: input (scans
+    // today) / state (on shelf) / output (pulled) / urgent (recall alerts).
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const pulledThisWeek = scans.filter(s => {
+      if (!s.removed_from_shelf_at) return false;
+      return new Date(s.removed_from_shelf_at) >= sevenDaysAgo;
+    }).length;
     // Audit fix: drill acks don't count as pending action — CLAUDE.md rule.
     const pendingAcks = acks.filter(a => a.status === 'notified' && !a.recall_events?.is_drill).length;
 
@@ -12027,10 +12037,10 @@ async function renderStoreManagerOverview() {
           <div class="kpi-value accent">${onShelf}</div>
           <div class="kpi-sub">Currently tracked</div>
         </div>
-        <div class="kpi-card ${escalated>0?'amber':'green'}">
-          <div class="kpi-label">Escalated items</div>
-          <div class="kpi-value ${escalated>0?'warn':''}">${escalated}</div>
-          <div class="kpi-sub">Awaiting resolution</div>
+        <div class="kpi-card blue">
+          <div class="kpi-label">Pulled this week</div>
+          <div class="kpi-value">${pulledThisWeek}</div>
+          <div class="kpi-sub">Items removed from shelf · last 7 days</div>
         </div>
         <div class="kpi-card ${pendingAcks>0?'red':'green'}">
           <div class="kpi-label">Recall alerts</div>
