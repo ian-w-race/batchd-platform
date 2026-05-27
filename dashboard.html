@@ -8044,8 +8044,9 @@ async function renderStaff() {
 
   // Build email lookup keyed by user_id (most reliable)
   // and by role-order as fallback for members who joined before user_id was tracked
-  const emailByUserId = {};
-  const emailsByRole  = {};
+  const emailByUserId    = {};
+  const fullNameByUserId = {};
+  const emailsByRole     = {};
   acceptedInv.forEach(inv => {
     if (inv.user_id) {
       emailByUserId[inv.user_id] = inv.email;
@@ -8054,6 +8055,20 @@ async function renderStaff() {
       emailsByRole[inv.role].push(inv.email);
     }
   });
+
+  // Authoritative email + full_name from auth.users via the
+  // get_org_member_emails RPC (migration 015, 2026-05-27). Required
+  // because the invitation-based fallback above misses any member
+  // whose invitation row lost its user_id stamp (silent join.html
+  // RLS failure, or pre-tracking-era invites). RPC is corp_admin
+  // only and falls back silently if migration 015 hasn't been run.
+  try {
+    const { data: rpcRows } = await sb.rpc('get_org_member_emails', { p_org_id: _orgId });
+    (rpcRows || []).forEach(r => {
+      if (r.user_id && r.email) emailByUserId[r.user_id] = r.email;
+      if (r.user_id && r.full_name) fullNameByUserId[r.user_id] = r.full_name;
+    });
+  } catch (_) { /* RPC not yet deployed — fall back to invitation-based lookup */ }
 
   // Fetch last_seen for all members
   const memberIds = allMembers.map(m => m.user_id).filter(Boolean);
@@ -8238,24 +8253,29 @@ async function renderStaff() {
           : members.map(m => {
               const email = getEmail(m.user_id, m.role)
                          || (m.user_id === _userId ? _userEmail : null)
-                         || lastSeenMap[m.user_id]?.last_seen_app && m.user_id.slice(0,8) + '…'
-                         || m.user_id.slice(0,8) + '…';
-              const lastSeen = lastSeenMap[m.user_id]?.last_seen_at;
-              const store = stores.find(s => s.id === m.store_id);
+                         || null;
+              const fullName  = fullNameByUserId[m.user_id] || null;
+              const lastSeen  = lastSeenMap[m.user_id]?.last_seen_at;
+              const store     = stores.find(s => s.id === m.store_id);
               const roleLabel = m.role.replace(/_/g,' ');
-              const initial = roleLabel[0].toUpperCase();
+              // Headline: full name when available, else email, else
+              // a user_id shortcut as last resort. Sub-line carries the
+              // email when the headline is the full name, so both stay
+              // visible — corp admin can identify the row at a glance.
+              const headline    = fullName || email || (m.user_id.slice(0,8) + '…');
+              const initial     = (fullName || email || roleLabel)[0].toUpperCase();
+              const showEmailSub = fullName && email && email !== fullName;
               return `
               <div class="activity-item">
-                <div class="user-avatar" style="width:32px;height:32px;font-size:12px;flex-shrink:0;background:var(--accent-dim);border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;">${initial}</div>
+                <div class="user-avatar" style="width:32px;height:32px;font-size:12px;flex-shrink:0;background:var(--accent-dim);border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;">${esc(initial)}</div>
                 <div class="activity-text" style="flex:1;min-width:0;">
-                  <div style="font-size:12px;font-weight:600;color:var(--text);">${email || '—'}</div>
+                  <div style="font-size:12px;font-weight:600;color:var(--text);">${esc(headline)}</div>
                   <div style="font-size:10px;color:var(--muted);margin-top:2px;">
-                    ${roleLabel}${store ? ` · ${store.name}` : ''}
-                    ${m.joined_at ? ` · Joined ${fmtDash(m.joined_at)}` : ''}
+                    ${showEmailSub ? `${esc(email)} · ` : ''}${esc(roleLabel)}${store ? ` · ${esc(store.name)}` : ''}${m.joined_at ? ` · Joined ${fmtDash(m.joined_at)}` : ''}
                   </div>
                 </div>
                 <span class="recall-status status-resolved" style="flex-shrink:0;">Active</span>
-                <button onclick="deactivateMember('${m.user_id}', '${getEmail(m.user_id, m.role) || m.user_id}')"
+                <button onclick="deactivateMember('${m.user_id}', '${esc(email || fullName || m.user_id)}')"
                   style="font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;margin-left:4px;flex-shrink:0;"
                   onmouseenter="this.style.borderColor='var(--danger)';this.style.color='var(--danger)'"
                   onmouseleave="this.style.borderColor='var(--border)';this.style.color='var(--muted)'"
@@ -8290,13 +8310,16 @@ async function renderStaff() {
       </div>
       <div class="panel-body">
         ${deactivated.map(m => {
-          const email = getEmail(m.user_id, m.role) || m.user_id.slice(0,8) + '…';
+          const email    = getEmail(m.user_id, m.role) || null;
+          const fullName = fullNameByUserId[m.user_id]  || null;
+          const headline = fullName || email || (m.user_id.slice(0,8) + '…');
+          const sub      = fullName && email && email !== fullName ? esc(email) : '';
           return `
           <div class="activity-item" style="opacity:0.65;">
             <div class="activity-dot" style="background:var(--border);"></div>
             <div class="activity-text">
-              <strong>${email}</strong>
-              <span class="role-badge">${m.role.replace(/_/g,' ')}</span>
+              <strong>${esc(headline)}</strong>${sub ? ` <span style="font-size:10px;color:var(--muted);margin-left:6px;">${sub}</span>` : ''}
+              <span class="role-badge">${esc(m.role.replace(/_/g,' '))}</span>
             </div>
             <span class="recall-status" style="background:rgba(var(--accent-muted-rgb),0.08);color:var(--muted);">Deactivated</span>
           </div>`;
@@ -9972,7 +9995,7 @@ async function renderReports() {
       {
         key: 'staff', cat: 'Operations',
         title: 'Staff activity', icon: '👤', color: 'var(--info)',
-        desc: 'Scan counts, recall responses, and escalations per team member',
+        desc: 'Scan counts and recall responses per team member',
         stats: [
           { val: staffSet.size, label: 'team members' },
           { val: scans.length, label: 'total actions' },
@@ -10249,7 +10272,7 @@ async function fetchReportData(key) {
       return [...pushed, ...internal];
     }
     case 'staff': {
-      let q = sb.from('scans').select('scanned_by, created_at, product_name, lot_number, store_name, recall_resolved, removed_from_shelf_at, manager_escalated').eq('organisation_id', _orgId).order('created_at', {ascending:false}).limit(1000);
+      let q = sb.from('scans').select('scanned_by, created_at, product_name, lot_number, store_name, recall_resolved, removed_from_shelf_at').eq('organisation_id', _orgId).order('created_at', {ascending:false}).limit(1000);
       if (since) q = q.gte('created_at', since);
       const { data } = await q;
       return data || [];
@@ -10257,7 +10280,7 @@ async function fetchReportData(key) {
     case 'stores': {
       const [storesRes, scansRes] = await Promise.all([
         sb.from('stores').select('id, name, store_code, active').eq('organisation_id', _orgId).order('name'),
-        sb.from('scans').select('store_name, store_id, lot_number, created_at, recall_resolved, removed_from_shelf_at, manager_escalated').eq('organisation_id', _orgId),
+        sb.from('scans').select('store_name, store_id, lot_number, created_at, recall_resolved, removed_from_shelf_at').eq('organisation_id', _orgId),
       ]);
       const stores = storesRes.data || [];
       const scans  = scansRes.data  || [];
@@ -10269,14 +10292,13 @@ async function fetchReportData(key) {
         const recent7    = ss.filter(s => new Date(s.created_at) > days7).length;
         const recent30   = ss.filter(s => new Date(s.created_at) > days30).length;
         const resolved   = ss.filter(s => s.recall_resolved).length;
-        const escalated  = ss.filter(s => s.manager_escalated).length;
         const lotCoverage = ss.length > 0 ? ss.filter(s => s.lot_number).length / ss.length : 0;
         const freqScore   = recent7 >= 3 ? 40 : recent7 >= 1 ? 20 : 0;
         const lotScore    = Math.round(lotCoverage * 40);
         const baseScore   = ss.length > 0 ? 20 : 0;
         const score       = freqScore + lotScore + baseScore;
         const status      = recent7 >= 3 ? 'active' : recent7 >= 1 ? 'slow' : recent30 >= 1 ? 'slow' : 'dark';
-        return { ...store, totalScans: ss.length, recent7, recent30, resolved, escalated, score, status };
+        return { ...store, totalScans: ss.length, recent7, recent30, resolved, score, status };
       });
     }
     case 'exposure': {
@@ -10406,32 +10428,34 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
     const byStaff = {};
     data.forEach(s => {
       const name = (s.scanned_by||'Unknown').split('@')[0];
-      if (!byStaff[name]) byStaff[name] = { name, scans:[], resolved:0, escalated:0, removed:0 };
+      if (!byStaff[name]) byStaff[name] = { name, scans:[], resolved:0, removed:0 };
       byStaff[name].scans.push(s);
       if (s.recall_resolved)       byStaff[name].resolved++;
-      if (s.manager_escalated)     byStaff[name].escalated++;
       if (s.removed_from_shelf_at) byStaff[name].removed++;
     });
     const staffRows = Object.values(byStaff).sort((a,b) => b.scans.length - a.scans.length);
     const lastScan  = s => s.scans.reduce((l,sc) => sc.created_at > l ? sc.created_at : l, '');
     const topScanner = staffRows[0]?.name || '—';
     const avgPerPerson = staffRows.length ? Math.round(data.length / staffRows.length) : 0;
+    // Items-removed stat tile takes the slot the "Escalations" tile used to
+    // occupy. Escalation concept retired 2026-05-27 — see also the table
+    // column drop below.
     el.innerHTML = reportHeader('Staff activity', `${staffRows.length} team members · ${data.length} total scans`, 'staff') +
       `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:18px;">
         ${statTile(staffRows.length, 'Team members')}
         ${statTile(data.length, 'Total scans')}
         ${statTile(avgPerPerson, 'Avg scans / person')}
         ${statTile(data.filter(s=>s.recall_resolved).length, 'Recalls resolved', data.filter(s=>s.recall_resolved).length>0?'var(--accent)':'var(--muted)')}
-        ${statTile(data.filter(s=>s.manager_escalated).length, 'Escalations', data.filter(s=>s.manager_escalated).length>0?'var(--danger)':'var(--muted)')}
+        ${statTile(data.filter(s=>s.removed_from_shelf_at).length, 'Items removed', data.filter(s=>s.removed_from_shelf_at).length>0?'var(--warn)':'var(--muted)')}
       </div>
       <div class="panel"><div class="panel-body" style="padding:0;">
         <table class="store-table" style="width:100%;">
           <thead><tr>
             <th>Staff member</th><th>Scans</th><th>Lot coverage</th>
-            <th>Recalls resolved</th><th>Items removed</th><th>Escalations</th><th>Last active</th>
+            <th>Recalls resolved</th><th>Items removed</th><th>Last active</th>
           </tr></thead>
           <tbody>
-            ${staffRows.length === 0 ? `<tr><td colspan="7"><div class="empty">No staff activity in this date range.</div></td></tr>` :
+            ${staffRows.length === 0 ? `<tr><td colspan="6"><div class="empty">No staff activity in this date range.</div></td></tr>` :
             staffRows.map((s,i) => {
               const lotPct = s.scans.length ? Math.round(s.scans.filter(sc=>sc.lot_number).length/s.scans.length*100) : 0;
               const pctOfTotal = data.length ? Math.round(s.scans.length/data.length*100) : 0;
@@ -10452,7 +10476,6 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
                 </td>
                 <td style="color:${s.resolved>0?'var(--accent)':'var(--muted)'};">${s.resolved}</td>
                 <td style="color:${s.removed>0?'var(--warn)':'var(--muted)'};">${s.removed}</td>
-                <td style="color:${s.escalated>0?'var(--danger)':'var(--muted)'};">${s.escalated}</td>
                 <td style="font-size:11px;color:var(--muted);">${fmtDate(lastScan(s))}</td>
               </tr>`;}).join('')}
           </tbody>
@@ -10752,28 +10775,27 @@ async function downloadReport(key) {
       );
     } else if (key === 'staff') {
       downloadCSV(`batchd-staff-activity-${date}.csv`,
-        ['Staff Member','Total Scans','Recalls Resolved','Items Removed','Escalations','Last Active'],
+        ['Staff Member','Total Scans','Recalls Resolved','Items Removed','Last Active'],
         (() => {
           const byStaff = {};
           data.forEach(s => {
             const name = s.scanned_by || 'Unknown';
-            if (!byStaff[name]) byStaff[name] = { name, count:0, resolved:0, removed:0, escalated:0, last:'' };
+            if (!byStaff[name]) byStaff[name] = { name, count:0, resolved:0, removed:0, last:'' };
             byStaff[name].count++;
             if (s.recall_resolved) byStaff[name].resolved++;
             if (s.removed_from_shelf_at) byStaff[name].removed++;
-            if (s.manager_escalated) byStaff[name].escalated++;
             if (s.created_at > byStaff[name].last) byStaff[name].last = s.created_at;
           });
           return Object.values(byStaff).sort((a,b) => b.count - a.count).map(s => [
-            s.name, s.count, s.resolved, s.removed, s.escalated,
+            s.name, s.count, s.resolved, s.removed,
             s.last ? fmtDash(s.last) : '',
           ]);
         })()
       );
     } else if (key === 'stores') {
       downloadCSV(`batchd-store-compliance-${date}.csv`,
-        ['Store','Store Code','Status','Compliance Score','7-Day Scans','30-Day Scans','Total Scans','Recalls Resolved','Escalations'],
-        data.map(s => [s.name, s.store_code||'', s.active?'Active':'Inactive', s.score+'%', s.recent7, s.recent30, s.totalScans, s.resolved, s.escalated])
+        ['Store','Store Code','Status','Compliance Score','7-Day Scans','30-Day Scans','Total Scans','Recalls Resolved'],
+        data.map(s => [s.name, s.store_code||'', s.active?'Active':'Inactive', s.score+'%', s.recent7, s.recent30, s.totalScans, s.resolved])
       );
     } else if (key === 'exposure') {
       downloadCSV(`batchd-exposure-notice-${date}.csv`,
