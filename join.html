@@ -479,10 +479,27 @@ async function acceptInvitation() {
 
     // Redirect after brief success pause — pass session tokens in hash
     // so the destination app can pick up the session without re-login.
-    // Supabase reads #access_token=...&refresh_token=...&type=signup from the URL hash.
+    // Supabase reads #access_token=...&refresh_token=...&type=signup from
+    // the URL hash and replaces any localStorage session at the destination.
+    //
+    // CRITICAL — applies to EVERY destination, not just the scanner:
+    // join.html runs on batchdapp.com, but the dashboard and scanner are
+    // on different origins (app.batchdapp.com and batchd-app.netlify.app).
+    // localStorage is per-origin, so the session set by signInWithPassword
+    // here is invisible to the destination. Without the hash, the
+    // destination falls back to whatever stale session was in its own
+    // localStorage — e.g., a corp admin who invited themselves as a store
+    // manager would see the corp-admin dashboard load, not the manager
+    // view, because the dashboard's localStorage still held the older
+    // corp_admin session. Updated 2026-05-27 — previously only the
+    // scanner destination received the hash because non-scanner invites
+    // (corp_admin sign-up flow) historically went through /signup on the
+    // same origin as the dashboard, so cross-origin wasn't a concern.
+    // Store-manager invites now land on the dashboard too (Chunk B.1),
+    // so the dashboard path needs the hash too.
     setTimeout(() => {
       const session = signInData.session;
-      if (isScanning && session) {
+      if (session) {
         const hash = 'access_token=' + session.access_token + '&refresh_token=' + session.refresh_token + '&type=signup';
         window.location.href = dest + '#' + hash;
       } else {
