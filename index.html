@@ -3925,7 +3925,9 @@
           <select id="filter-status" onchange="applyFilters()">
             <option value="" data-i18n="opt.allRecords">All records</option>
             <option value="recalled" data-i18n="opt.recalled">⚠ Recalled</option>
-            <option value="escalated" data-i18n="opt.escalated">⚑ Escalated</option>
+            <!-- "Escalated" filter option removed 2026-05-27 along with the
+                 rest of the escalation workflow (Chunk D). -->
+
             <option value="resolved" data-i18n="opt.resolved">✓ Resolved</option>
             <option value="on_shelf" data-i18n="opt.onShelf">On shelf</option>
             <option value="removed" data-i18n="opt.pulledShelf">Pulled from shelf</option>
@@ -4204,10 +4206,11 @@
     <button class="mgr-tab" id="mgr-tab-staff" data-i18n="tab.staffActivity" onclick="switchMgrTab('staff')">Staff Activity</button>
     <button class="mgr-tab" id="mgr-tab-recalls" data-i18n="tab.recallMgmt" onclick="switchMgrTab('recalls')">Recall Management</button>
     <button class="mgr-tab" id="mgr-tab-audit" data-i18n="tab.auditExport" onclick="switchMgrTab('audit')">Audit Export</button>
-    <button class="mgr-tab" id="mgr-tab-escalated" onclick="switchMgrTab('escalated')" style="position:relative;">
-      <span data-i18n="tab.escalated">Escalated</span>
-      <span id="mgr-escalated-badge" style="display:none;position:absolute;top:5px;right:5px;width:7px;height:7px;background:var(--danger);border-radius:50%;"></span>
-    </button>
+    <!-- Escalated manager tab removed 2026-05-27 (Chunk D). The
+         loadMgrEscalated / toggleEscalatedTab functions are now
+         unreferenced and will be pruned with the rest of the dead
+         escalation handlers in a follow-up. -->
+
     <button class="mgr-tab" id="mgr-tab-gs1" data-i18n="tab.gs1" onclick="switchMgrTab('gs1')">GS1 Tester</button>
     <button class="mgr-tab" id="mgr-tab-fsma" onclick="switchMgrTab('fsma')" style="position:relative;">
       FSMA 204 (USA)
@@ -4639,19 +4642,10 @@
     </div>
   </div><!-- end mgr-panel-audit -->
 
-  <!-- Escalated Panel -->
-  <div id="mgr-panel-escalated" style="display:none;">
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px;">
-      <div>
-        <div style="font-size:16px;font-weight:700;color:var(--text);font-family:'Figtree',sans-serif;" data-i18n="escalated.title">Escalated Recall Items</div>
-        <div style="font-size:12px;color:var(--muted);margin-top:2px;" data-i18n="escalated.sub">Items flagged by staff requiring manager review. Acknowledge to remove from this queue.</div>
-      </div>
-      <button onclick="switchMgrTab('stores')" data-i18n="escalated.back" class="btn btn-ghost" style="font-size:12px;padding:6px 14px;white-space:nowrap;flex-shrink:0;">← Back</button>
-    </div>
-    <div id="mgr-escalated-list" style="display:flex;flex-direction:column;gap:0;">
-      <div style="font-size:13px;color:var(--muted);padding:16px 0;text-align:center;" data-i18n="js.loading">Loading…</div>
-    </div>
-  </div><!-- end mgr-panel-escalated -->
+  <!-- Escalated manager panel removed 2026-05-27 (Chunk D). The
+       loadMgrEscalated() / mgrAcknowledgeEscalated() handlers it relied
+       on are now unreferenced and stay in the file as dead code until
+       a follow-up cleanup. -->
 
   <!-- GS1 Test Panel -->
   <div id="mgr-panel-gs1" style="display:none;">
@@ -10798,7 +10792,10 @@ function applyFilters() {
   // Status filter
   const statusF = (document.getElementById('filter-status')?.value || '');
   if (statusF === 'recalled')   records = records.filter(r => isRecallMatchAny(r));
-  if (statusF === 'escalated')  records = records.filter(r => r.manager_escalated === true);
+  // Escalated filter removed 2026-05-27 (Chunk D). The dropdown <option>
+  // for "Escalated" is gone, so statusF can no longer take this value
+  // from the UI — but if a stale URL/state somehow passes it through,
+  // the filter just becomes a no-op (no records filtered out).
   if (statusF === 'resolved')   records = records.filter(r => r.recall_resolved === true);
   if (statusF === 'on_shelf')   records = records.filter(r => !r.removed_from_shelf_at);
   if (statusF === 'removed')    records = records.filter(r => !!r.removed_from_shelf_at);
@@ -10930,7 +10927,8 @@ function renderRecords(records, recallQ) {
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <div class="record-product">${esc(r.product_name || 'Unknown Product')}</div>
           ${matchLevel === 'exact' ? `<span class="recall-tag">${t('card.lotMatch')}</span>` : matchLevel === 'possible' ? `<span class="recall-tag recall-tag-possible">${t('card.possibleMatch')}</span>` : matchLevel === 'raw' ? `<span class="recall-tag recall-tag-possible" style="background:rgba(var(--warn-rgb),0.1);border-color:rgba(var(--warn-rgb),0.35);color:var(--warn);font-size:10px;" title="Recall lot code found in packaging metadata — verify manually">⚠ Metadata match — verify</span>` : ''}
-          ${r.manager_escalated && !r.recall_resolved ? `<span class="recall-tag" style="background:rgba(var(--warn-rgb),0.15);color:var(--warn);border:1px solid rgba(var(--warn-rgb),0.4);">${t('card.escalatedTag')}</span>` : ''}
+          <!-- ⚑ ESCALATED card tag removed 2026-05-27 (Chunk D). -->
+
           ${r.recall_resolved ? `<span class="recall-tag" style="background:var(--accent);color:var(--accent-on-primary);">${t('card.resolvedTag')}</span>` : ''}
           ${r.removed_from_shelf_at ? `<span class="recall-tag" style="background:rgba(var(--warn-rgb),0.15);color:var(--warn);border:1px solid rgba(var(--warn-rgb),0.4);">${t('card.removedTag')}</span>` : ''}
         </div>
@@ -17329,10 +17327,8 @@ async function loadManagerDashboard() {
     await loadMgrData();
     renderMgrStatTiles();
     renderMgrStores();
-  // Show red dot on Escalated tab if there are unresolved escalations
-  const escalatedCount = _mgrAllScans.filter(r => r.manager_escalated === true && !r.recall_resolved).length;
-  const badge = document.getElementById('mgr-escalated-badge');
-  if (badge) badge.style.display = escalatedCount > 0 ? 'block' : 'none';
+  // Escalated-tab red-dot badge update removed 2026-05-27 (Chunk D).
+  // Tab + badge element no longer exist in the DOM.
   // Pre-fill audit date defaults (only on first load)
   const today = new Date();
   const month = new Date(today - 30 * 86400000);
@@ -17350,7 +17346,7 @@ async function loadManagerDashboard() {
   // Re-render whichever tab is currently active
   if (_mgrActiveTab === 'recalls') loadMgrRecalls();
   if (_mgrActiveTab === 'staff' && sfrom?.value) loadMgrStaff();
-  if (_mgrActiveTab === 'escalated') loadMgrEscalated();
+  // 'escalated' tab refresh removed 2026-05-27 (Chunk D).
   _mgrLoaded = true;
   } catch(e) {
     console.error('loadManagerDashboard error:', e);
@@ -17683,14 +17679,13 @@ function renderMgrStatTiles() {
 
   const today      = new Date().toISOString().slice(0,10);
   const todayScans = _mgrAllScans.filter(r => r.created_at?.slice(0,10) === today).length;
-  // Escalated: scans explicitly flagged by staff as manager_escalated, not yet resolved
-  const escalated  = _mgrAllScans.filter(r => r.manager_escalated === true && !r.recall_resolved).length;
+  // "Escalated" KPI tile removed 2026-05-27 (Chunk D) — escalation
+  // workflow retired. Six KPIs below now cover input / volume / state
+  // without it.
 
   el.innerHTML = [
     { label: t('mgr.activeRecalls'),  value: active,               sub: t('mgr.requireAction'),
       danger: active > 0 },
-    { label: t('mgr.escalated'),      value: escalated,            sub: escalated > 0 ? t('mgr.clickReview') : t('mgr.flaggedByStaff'),
-      danger: escalated > 0, click: escalated > 0 ? "toggleEscalatedTab()" : '' },
     { label: t('mgr.totalScans'),     value: _mgrAllScans.length,  sub: t('mgr.allTime')          },
     { label: t('mgr.scansToday'),     value: todayScans,           sub: t('mgr.acrossStores')     },
     { label: t('mgr.stores'),         value: stores.length,        sub: t('mgr.activeLocations')  },
@@ -17841,7 +17836,8 @@ function mgrViewStoreScans(storeName) {
 
 function switchMgrTab(tab) {
   _mgrActiveTab = tab;
-  ['stores','onshelf','storemgmt','staff','recalls','audit','escalated','gs1','fsma','patterns','intel'].forEach(t => {
+  // 'escalated' removed from tab list 2026-05-27 (Chunk D).
+  ['stores','onshelf','storemgmt','staff','recalls','audit','gs1','fsma','patterns','intel'].forEach(t => {
     document.getElementById('mgr-tab-' + t)?.classList.toggle('active', t === tab);
     const panel = document.getElementById('mgr-panel-' + t);
     if (panel) panel.style.display = t === tab ? 'block' : 'none';
@@ -17849,7 +17845,6 @@ function switchMgrTab(tab) {
   if (tab === 'recalls' && _mgrLoaded) { loadMgrRecalls(); loadMgrSchemas(); loadCoordinator(); }
   if (tab === 'audit') { populateFsmaExportStores(); populateMgrAuditStores(); }
   if (tab === 'fsma') { renderFsmaReadiness(); renderRegQuickRef(); }
-  if (tab === 'escalated') loadMgrEscalated();
   if (tab === 'storemgmt') loadStoreMgmt();
   if (tab === 'patterns') loadMgrPatterns();
   if (tab === 'intel') loadMgrIntel();
@@ -20432,10 +20427,13 @@ async function submitComplaintFromScan() {
       _complaintScanData.lotNumber   || '',
       _complaintScanData.barcodeNumber || ''
     );
-    if (_cRecallMatch && _complaintScanId) {
-      // Auto-escalate the linked scan — recall + complaint = immediate manager flag
-      autoEscalateForComplaintRecallMatch(_complaintScanId, _cRecallMatch);
-    }
+    // Auto-escalation hook removed 2026-05-27 (Chunk D). When a complaint
+    // is logged against a product that matches an active recall, the
+    // complaint is still triaged at CRITICAL (see _cRecallMatch in the
+    // triage_level branch below) and the recall card already shows the
+    // complaint linkage — there's no longer a separate "manager_escalated"
+    // flag set on the scan. The autoEscalateForComplaintRecallMatch
+    // function remains in the file as dead code until follow-up cleanup.
 
     // Show success
     btn.style.display = 'none';
