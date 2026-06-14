@@ -1429,7 +1429,7 @@ const sevColor = s => s?.toLowerCase().includes('i') ? 'var(--danger)' : 'var(--
         <div style="padding:12px 16px;background:var(--surface2);border-bottom:1px solid var(--glass-border);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
           <div style="display:flex;align-items:center;gap:8px;">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-            <span style="font-size:11px;font-weight:700;color:var(--text);letter-spacing:0.04em;">INTELLIGENCE — ${productName||lotCode||'Record'}</span>
+            <span style="font-size:11px;font-weight:700;color:var(--text);letter-spacing:0.04em;">INTELLIGENCE — ${esc(productName||lotCode||'Record')}</span>
           </div>
           <div style="font-size:10px;color:var(--muted);">Last 90 days · ${total} connected record${total!==1?'s':''}</div>
         </div>
@@ -1443,34 +1443,34 @@ const sevColor = s => s?.toLowerCase().includes('i') ? 'var(--danger)' : 'var(--
           ].map((m,i) => `
             <div ${m.action?`onclick="${m.action}" style="cursor:pointer;"`:''} style="padding:12px 14px;border-right:1px solid var(--glass-border);${m.action?'transition:background 0.15s;':''}${i===3?'border-right:none;':''}">
               <div style="font-size:18px;font-weight:700;color:${m.color};line-height:1;margin-bottom:3px;">${m.val}</div>
-              <div style="font-size:10px;color:var(--muted);">${m.label}</div>
+              <div style="font-size:10px;color:var(--muted);">${esc(m.label)}</div>
             </div>`).join('')}
         </div>
 
         ${isRecalled ? `
         <div style="padding:10px 14px;background:rgba(var(--danger-rgb),0.06);border-bottom:1px solid rgba(var(--danger-rgb),0.15);display:flex;align-items:center;gap:8px;">
           <div style="width:7px;height:7px;border-radius:50%;background:var(--danger);box-shadow:0 0 7px rgba(var(--danger-rgb),0.5);flex-shrink:0;"></div>
-          <div style="font-size:11px;color:var(--danger);font-weight:600;">ACTIVE RECALL — ${matchedRecalls[0].product_name}${matchedRecalls[0].lot_number?' · Lot '+matchedRecalls[0].lot_number:''} · ${matchedRecalls[0].reason||'See recall panel'}</div>
+          <div style="font-size:11px;color:var(--danger);font-weight:600;">ACTIVE RECALL — ${esc(matchedRecalls[0].product_name||'')}${matchedRecalls[0].lot_number?' · Lot '+esc(matchedRecalls[0].lot_number):''} · ${esc(matchedRecalls[0].reason||'See recall panel')}</div>
         </div>` : ''}
 
         <div style="padding:12px 16px;display:flex;flex-direction:column;gap:8px;">
 
           ${storesSeen.length > 0 ? `
           <div style="font-size:11px;color:var(--muted);">
-            <strong style="color:var(--text);">Scanned at:</strong> ${storesSeen.slice(0,5).join(', ')}${storesSeen.length>5?` +${storesSeen.length-5} more`:''}
+            <strong style="color:var(--text);">Scanned at:</strong> ${esc(storesSeen.slice(0,5).join(', '))}${storesSeen.length>5?` +${storesSeen.length-5} more`:''}
             <span style="color:var(--muted);"> · ${recent14.length} in last 14 days</span>
           </div>` : ''}
 
           ${matchedShipments.length > 0 ? `
           <div style="font-size:11px;color:var(--muted);">
             <strong style="color:var(--text);">Shipment trail:</strong>
-            ${matchedShipments.slice(0,3).map(s => `${s.organisations?.name||'?'} → ${s.stores?.name||'?'} (${s.quantity} ${s.unit||''} · ${fmtDate(s.shipped_at)})`).join(' · ')}
+            ${matchedShipments.slice(0,3).map(s => `${esc(s.organisations?.name||'?')} → ${esc(s.stores?.name||'?')} (${esc(String(s.quantity||''))} ${esc(s.unit||'')} · ${fmtDate(s.shipped_at)})`).join(' · ')}
           </div>` : ''}
 
           ${allComplaints.length > 0 ? `
           <div style="font-size:11px;color:var(--muted);">
             <strong style="color:var(--text);">Related complaints:</strong>
-            ${allComplaints.slice(0,3).map(c => `<span onclick="_dashTriageView='detail';_dashTriageComplaint='${c.id}';renderDashboardTriage()" style="color:var(--warn);cursor:pointer;text-decoration:underline;">${c.complaint_number||c.id.slice(0,8)}</span> (${c.triage_level})`).join(', ')}
+            ${allComplaints.slice(0,3).map(c => `<span onclick="_dashTriageView='detail';_dashTriageComplaint='${esc(c.id)}';renderDashboardTriage()" style="color:var(--warn);cursor:pointer;text-decoration:underline;">${esc(c.complaint_number||c.id.slice(0,8))}</span> (${esc(c.triage_level||'')})`).join(', ')}
           </div>` : ''}
 
           ${allInvs.length > 0 ? `
@@ -2326,15 +2326,18 @@ organisation_id for this user = "${_orgId}"`;
     catch(e) { parsed = { error: 'Could not parse AI response' }; }
 
     if (parsed.error) {
-      el.innerHTML = `<div style="background:var(--surface);border:1px solid var(--glass-border);border-radius:10px;padding:14px 16px;font-size:12px;color:var(--muted);">${parsed.error}</div>`;
+      el.innerHTML = `<div style="background:var(--surface);border:1px solid var(--glass-border);border-radius:10px;padding:14px 16px;font-size:12px;color:var(--muted);">${esc(parsed.error)}</div>`;
       return;
     }
 
-    // Execute the interpreted query
+    // XSS sweep 2026-05-27 — parsed.understood / parsed.summary are LLM
+    // output. The user's question reaches the LLM via this same flow, so
+    // a prompt-injection question can yield `understood`/`summary` strings
+    // containing markup. Wrap in esc().
     el.innerHTML = `<div style="background:var(--surface);border:1px solid var(--glass-border);border-radius:10px;padding:14px 16px;margin-bottom:12px;">
       <div style="font-size:11px;font-weight:600;color:var(--accent);margin-bottom:4px;">✦ Interpreted as:</div>
-      <div style="font-size:13px;color:var(--text);">${parsed.understood||''}</div>
-      ${parsed.summary ? '<div style="font-size:11px;color:var(--muted);margin-top:4px;">'+parsed.summary+'</div>' : ''}
+      <div style="font-size:13px;color:var(--text);">${esc(parsed.understood||'')}</div>
+      ${parsed.summary ? '<div style="font-size:11px;color:var(--muted);margin-top:4px;">'+esc(parsed.summary)+'</div>' : ''}
     </div>
     <div id="nl-query-results"><div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);"><div class="spinner"></div> Running query…</div></div>`;
 
@@ -2361,7 +2364,7 @@ organisation_id for this user = "${_orgId}"`;
       if (!resultsEl) return;
 
       if (error) {
-        resultsEl.innerHTML = `<div style="font-size:12px;color:var(--danger);">Query error: ${error.message}</div>`;
+        resultsEl.innerHTML = `<div style="font-size:12px;color:var(--danger);">Query error: ${esc(error.message||'')}</div>`;
         return;
       }
 
@@ -2371,23 +2374,28 @@ organisation_id for this user = "${_orgId}"`;
         return;
       }
 
+      // XSS sweep 2026-05-27 — Column names come from the live DB schema
+      // (Object.keys on a row), so they're trustworthy in practice — but
+      // we escape defensively since the NL query LLM picks which table to
+      // hit. Cell values are arbitrary DB content (product names, complaint
+      // text, manufacturer strings) and MUST be escaped.
       const cols = Object.keys(rows[0]).filter(k => !['id','organisation_id','retailer_id','retailer_org_id','manufacturer_id','store_id','recall_event_id','user_id'].includes(k));
       const fmtVal = v => v === null || v === undefined ? '—' : typeof v === 'boolean' ? (v?'Yes':'No') : typeof v === 'string' && v.match(/^\d{4}-\d{2}-\d{2}/) ? new Date(v).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',year:'numeric'}) : String(v).slice(0,60);
 
       resultsEl.innerHTML = `<div class="panel"><div class="panel-header"><div class="panel-title">${rows.length} result${rows.length!==1?'s':''}</div></div>
         <div class="panel-body" style="padding:0;">
           <table class="store-table" style="width:100%;">
-            <thead><tr>${cols.map(c=>'<th>'+c.replace(/_/g,' ')+'</th>').join('')}</tr></thead>
-            <tbody>${rows.slice(0,30).map(r=>'<tr>'+cols.map(c=>'<td>'+fmtVal(r[c])+'</td>').join('')+'</tr>').join('')}</tbody>
+            <thead><tr>${cols.map(c=>'<th>'+esc(c.replace(/_/g,' '))+'</th>').join('')}</tr></thead>
+            <tbody>${rows.slice(0,30).map(r=>'<tr>'+cols.map(c=>'<td>'+esc(fmtVal(r[c]))+'</td>').join('')+'</tr>').join('')}</tbody>
           </table>
         </div></div>`;
     } catch(qe) {
       const resultsEl = document.getElementById('nl-query-results');
-      if (resultsEl) resultsEl.innerHTML = `<div style="font-size:12px;color:var(--danger);">Query error: ${qe.message}</div>`;
+      if (resultsEl) resultsEl.innerHTML = `<div style="font-size:12px;color:var(--danger);">Query error: ${esc(qe.message||'')}</div>`;
     }
 
   } catch(e) {
-    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:12px;">Error: ${e.message}</div>`;
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:12px;">Error: ${esc(e.message||'')}</div>`;
   }
 }
 
@@ -8164,7 +8172,7 @@ async function renderStaff() {
           <div class="activity-item">
             <div class="activity-dot warn"></div>
             <div class="activity-text">
-              <strong>${inv.email}</strong> — ${inv.role.replace('_',' ')}
+              <strong>${esc(inv.email||'')}</strong> — ${esc((inv.role||'').replace('_',' '))}
               <span style="font-size:10px;color:var(--muted);margin-left:6px;">Invited ${fmtDash(inv.created_at)} · Expires ${fmtDash(inv.expires_at)}</span>
             </div>
             <span class="recall-status status-pending">Pending</span>
@@ -8225,7 +8233,7 @@ async function renderStaff() {
           <div class="activity-item">
             <div class="activity-dot" style="background:var(--danger);"></div>
             <div class="activity-text">
-              <strong>${inv.email}</strong> — ${inv.role.replace('_',' ')}
+              <strong>${esc(inv.email||'')}</strong> — ${esc((inv.role||'').replace('_',' '))}
               <span style="font-size:10px;color:var(--muted);margin-left:6px;">Expired ${fmtDash(inv.expires_at)}</span>
             </div>
             <span class="recall-status status-active">Expired</span>
