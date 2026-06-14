@@ -2391,106 +2391,11 @@ organisation_id for this user = "${_orgId}"`;
   }
 }
 
-// ── Weekly AI digest ─────────────────────────────────────────────
-async function loadWeeklyDigest(containerEl) {
-  if (!containerEl) return;
-  const cached = sessionStorage.getItem('batchd_weekly_digest');
-  if (cached) { containerEl.innerHTML = cached; return; }
-
-  containerEl.innerHTML = '<div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);"><div class="spinner"></div> Generating weekly digest…</div>';
-
-  try {
-    const days7   = new Date(Date.now() - 7  * 86400000).toISOString();
-    const days30  = new Date(Date.now() - 30 * 86400000).toISOString();
-    const days365 = new Date(Date.now() - 365 * 86400000).toISOString();
-
-    const [scansRes, acksRes, complaintsRes, drillsRes, storesRes] = await Promise.all([
-      sb.from('scans').select('id,store_name,lot_number,created_at').eq('organisation_id', _orgId).gte('created_at', days7).limit(500),
-      sb.from('recall_acknowledgements').select('id,status,created_at,recall_events!inner(is_drill)').eq('organisation_id', _orgId).limit(200),
-      sb.from('complaints').select('id,product_name').eq('receiving_org_id', _orgId).gte('created_at', days7).limit(100),
-      sb.from('mock_recall_drills').select('id').eq('initiated_by_org', _orgId).gte('started_at', days365).limit(1),
-      sb.from('stores').select('id,name,active').eq('organisation_id', _orgId).eq('active', true).limit(50),
-    ]);
-
-    const newScans     = (scansRes.data||[]).length;
-    // Per CLAUDE.md, drills don't count toward active recall numbers — exclude
-    // them so stuck drill acks don't tank the headline response rate.
-    const acks         = (acksRes.data || []).filter(a => !a.recall_events?.is_drill);
-    const actioned     = acks.filter(a => a.status !== 'notified').length;
-    const responseRate = acks.length > 0 ? Math.round((actioned/acks.length)*100) : 100;
-    const complaints   = complaintsRes.data || [];
-    const stores       = storesRes.data || [];
-    const recentScans7 = scansRes.data || [];
-    const activeStoreIds = new Set(recentScans7.map(s=>s.store_name).filter(Boolean));
-    const darkStores   = stores.filter(s => !activeStoreIds.has(s.name)).map(s=>s.name);
-    const lotCaptureRate = newScans > 0 ? Math.round((recentScans7.filter(s=>s.lot_number).length/newScans)*100) : 0;
-    const clusters     = Object.values(complaints.reduce((g,c)=>{ const k=(c.product_name||'').toLowerCase().split(' ')[0]; if(k) g[k]=(g[k]||0)+1; return g; },{})).filter(v=>v>=2).length;
-
-    // 9-second timeout — Netlify functions have a 10s limit; leave 1s buffer
-    const controller = new AbortController();
-    const timeoutId  = setTimeout(() => controller.abort(), 9000);
-
-    let digest = '';
-    try {
-      // Auth token required — function rejects unauth callers (audit
-      // closed an unauthenticated paid-LLM endpoint 2026-05-27).
-      const { data: { session: _digSession } } = await sb.auth.getSession();
-      const _digJwt = _digSession?.access_token;
-      if (!_digJwt) { throw new Error('No active session for digest call.'); }
-      const res = await fetch('/.netlify/functions/ai-analyze', {
-        method: 'POST',
-        signal: controller.signal,
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_digJwt}` },
-        body: JSON.stringify({
-          task: 'weekly_digest',
-          data: {
-            orgName: _orgName,
-            region:  _orgRegion,
-            weekData: {
-              newScans, activeRecalls: acks.length > 0 ? 1 : 0,
-              responseRate, darkStores,
-              newComplaints: complaints.length, clusters,
-              openInvestigations: 0,
-              drillCompliant: !!(drillsRes.data?.length),
-              lotCaptureRate,
-            },
-          },
-        }),
-      });
-      clearTimeout(timeoutId);
-      if (res.ok) {
-        const json = await res.json();
-        digest = (json.result || '').trim();
-      }
-    } catch(fetchErr) {
-      clearTimeout(timeoutId);
-      // Function unavailable or timed out — generate a local summary instead
-    }
-
-    // If the AI digest failed or was empty, produce a clean local summary
-    if (!digest) {
-      const parts = [];
-      parts.push(`${newScans} product${newScans !== 1 ? 's' : ''} scanned this week.`);
-      if (lotCaptureRate < 80) parts.push(`Lot code capture rate: ${lotCaptureRate}% — below target.`);
-      if (darkStores.length)   parts.push(`${darkStores.length} store${darkStores.length !== 1 ? 's' : ''} with no scans this week: ${darkStores.slice(0,3).join(', ')}${darkStores.length > 3 ? '…' : ''}.`);
-      if (responseRate < 100)  parts.push(`Recall response rate: ${responseRate}%.`);
-      if (complaints.length)   parts.push(`${complaints.length} complaint${complaints.length !== 1 ? 's' : ''} logged.`);
-      digest = parts.length ? parts.join(' ') : 'No activity this week.';
-    }
-
-    const today = new Date();
-    const html = `
-      <div style="padding:2px 0 8px;">
-        <div style="font-size:10px;color:var(--muted);margin-bottom:8px;font-family:'DM Mono',monospace;">${today.toLocaleDateString(_dashLocale(),{weekday:'long',day:'numeric',month:'long'})}</div>
-        <div style="font-size:12px;color:var(--text);line-height:1.7;">${digest}</div>
-        <button onclick="sessionStorage.removeItem('batchd_weekly_digest');loadWeeklyDigest(this.closest('[id]')||document.getElementById('weekly-digest-panel'))" style="font-size:10px;color:var(--muted);background:none;border:none;cursor:pointer;padding:8px 0 0;text-decoration:underline;">Regenerate</button>
-      </div>`;
-    sessionStorage.setItem('batchd_weekly_digest', html);
-    containerEl.innerHTML = html;
-  } catch(e) {
-    containerEl.innerHTML = `<div style="font-size:11px;color:var(--muted);">Weekly summary unavailable — check back later.</div>`;
-  }
-}
+// Weekly AI digest removed 2026-05-27. The "✦ Weekly digest" panel,
+// loadWeeklyDigest(), and the matching weekly_digest task in
+// ai-analyze.js were all retired together. SessionStorage key
+// 'batchd_weekly_digest' will eventually fall out of every browser on
+// its own.
 
 
 // ═══════════════════════════════════════════════════════════════
@@ -3306,15 +3211,8 @@ el.innerHTML = `
       <!-- RIGHT: Status sidebar -->
       <div style="display:flex;flex-direction:column;gap:14px;">
 
-        <!-- Weekly digest -->
-        <div class="panel" id="weekly-digest-panel">
-          <div class="panel-header">
-            <div><div class="panel-title">✦ Weekly digest</div><div class="panel-sub">AI-generated briefing</div></div>
-          </div>
-          <div class="panel-body" id="weekly-digest-content">
-            <div style="font-size:11px;color:var(--muted);">Loading…</div>
-          </div>
-        </div>
+        <!-- "Weekly digest" panel removed 2026-05-27 — see loadWeeklyDigest
+             removal-marker further up in this file. -->
 
         <!-- Readiness ring -->
         <div class="panel" onclick="showPanel('compliance')" style="cursor:pointer;">
@@ -3417,8 +3315,7 @@ el.innerHTML = `
       </div>
     </div>`;
 
-    // Load weekly digest (cached in sessionStorage for the session)
-    setTimeout(() => loadWeeklyDigest(document.getElementById('weekly-digest-content')), 300);
+    // (Weekly digest panel removed 2026-05-27; loadWeeklyDigest call gone.)
 
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading dashboard: ${e.message}</div>`;
