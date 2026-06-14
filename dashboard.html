@@ -3380,7 +3380,11 @@ async function renderRecalls() {
   // The remaining two (recall_events, organisations) are genuinely
   // data-dependent and stay sequential below.
   const [recallsRes, acksRes, coordRes, distRes, recallMatchRes, partnersRes] = await Promise.all([
-    sb.from('recalls').select('*').eq('organisation_id', _orgId).order('created_at', {ascending:false}).limit(300),
+    // CLAUDE.md schema gotcha: recalls has `description`, not `reason`.
+    // Aliased via PostgREST so downstream `r.reason` reads keep working
+    // without touching every call site (renderRecalls table cell, the
+    // consumer-notice text, CSV exports, Consumer Notify picker, etc.).
+    sb.from('recalls').select('*, reason:description').eq('organisation_id', _orgId).order('created_at', {ascending:false}).limit(300),
     sb.from('recall_acknowledgements').select('*, stores(name), recall_events(is_drill)').eq('organisation_id', _orgId).order('created_at', {ascending:false}).limit(300),
     sb.from('user_settings').select('recall_coordinator_name, recall_coordinator_contact, recall_coordinator_backup').eq('user_id', userId).single(),
     sb.from('recall_distributions').select('recall_event_id, est_affected_units, distributed_at').eq('retailer_org_id', _orgId),
@@ -10219,8 +10223,10 @@ async function fetchReportData(key) {
       // Note: .limit() goes on each query inside the array, NOT on Promise.all
       // (Promises don't have a .limit method — calling it throws TypeError and
       // makes the entire recalls report unable to load).
+      // CLAUDE.md schema gotcha: recalls.description aliased to reason
+      // for downstream CSV export readers.
       const [recallsRes, distRes] = await Promise.all([
-        sb.from('recalls').select('*').eq('organisation_id', _orgId).order('created_at', {ascending:false}).limit(500),
+        sb.from('recalls').select('*, reason:description').eq('organisation_id', _orgId).order('created_at', {ascending:false}).limit(500),
         sb.from('recall_distributions').select('recall_event_id, est_affected_units, distributed_at').eq('retailer_org_id', _orgId).limit(500),
       ]);
       let pushed = [];
@@ -10983,7 +10989,9 @@ async function runLotCheck(immediate = false) {
     }
     const [scansRes, recallsRes, distRes] = await Promise.all([
       scansQuery,
-      sb.from('recalls').select('*').eq('active', true).eq('organisation_id', _orgId).limit(200),
+      // CLAUDE.md schema gotcha: alias description as reason so Lot Lookup
+      // readers (runLotCheck rendering, intelligence panel) keep working.
+      sb.from('recalls').select('*, reason:description').eq('active', true).eq('organisation_id', _orgId).limit(200),
       sb.from('recall_distributions')
         .select('recall_event_id, recall_events!inner(id,product_name,lot_number,reason,severity,is_drill)')
         .eq('retailer_org_id', _orgId)
@@ -14568,7 +14576,10 @@ async function renderConsumerNotification() {
       // live recalls schema (same hotfix as the line ~2105 SELECT). Manual
       // recalls page deduplication still works via the product+lot key set
       // built below; the dropped fields weren't load-bearing.
-      .select('id, product_name, lot_number, active, created_at, source')
+      // CLAUDE.md schema gotcha: alias description as reason so the
+      // Consumer Notify picker (selectNotifRecall onclick + search filter
+      // at lines 14636/14668/14791/14818) gets the field it expects.
+      .select('id, product_name, lot_number, active, created_at, source, reason:description')
       .eq('organisation_id', _orgId)
       .eq('active', true)
       .not('source', 'in', '("fda","rasff","FDA","RASFF")')
