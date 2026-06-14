@@ -1,6 +1,42 @@
 // netlify/functions/ai-analyze.js
 // General-purpose Anthropic analysis proxy for Batch'd intelligence features
 // Tasks: synthesize_investigation | weekly_digest | nl_query
+//
+// Auth (added 2026-05-27 after audit flagged this as an unauthenticated
+// paid LLM endpoint — wallet-drain risk):
+//   Caller must include `Authorization: Bearer <supabase_jwt>`. The JWT
+//   is resolved to a Supabase user via /auth/v1/user, and the user must
+//   have at least one row in organisation_members. Public/unauth callers
+//   get 401; valid sessions that aren't org members get 403.
+//
+// Body size cap: 200KB. nl_query schema strings can be large but never
+// approach this; anything bigger is abuse.
+
+const SUPABASE_URL         = 'https://lurxucdmrugikdlvvebc.supabase.co';
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
+const MAX_BODY_BYTES       = 200 * 1024; // 200 KB
+
+async function verifyCallerIsOrgMember(jwt) {
+  if (!jwt || !SUPABASE_SERVICE_KEY) return null;
+  try {
+    const userRes = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      method: 'GET',
+      headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${jwt}` },
+    });
+    if (!userRes.ok) return null;
+    const userData = await userRes.json();
+    const userId = userData?.id;
+    if (!userId) return null;
+    const memRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/organisation_members?user_id=eq.${userId}&select=user_id&limit=1`,
+      { method: 'GET', headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` } },
+    );
+    if (!memRes.ok) return null;
+    const rows = await memRes.json();
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+    return userId;
+  } catch (_) { return null; }
+}
 
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
@@ -12,8 +48,27 @@ exports.handler = async (event) => {
     return { statusCode: 500, body: JSON.stringify({ error: 'API key not configured' }) };
   }
 
+  // Body size cap — reject oversized payloads BEFORE parsing/forwarding to
+  // the LLM. Stops a caller from burning Anthropic budget on huge prompts.
+  const rawBody = event.body || '';
+  if (rawBody.length > MAX_BODY_BYTES) {
+    return { statusCode: 413, body: JSON.stringify({ error: 'Payload too large' }) };
+  }
+
+  // Auth: caller must be an authenticated Supabase user AND a member of
+  // some organisation. The session-only check is intentionally org-agnostic
+  // since the prompts are not org-scoped (weekly_digest data is passed in
+  // the request) — RLS at the data layer is what enforces org boundaries
+  // for the data the caller assembles before sending.
+  const authHeader = event.headers?.authorization || event.headers?.Authorization || '';
+  const jwt = authHeader.replace(/^Bearer\s+/i, '');
+  const callerId = await verifyCallerIsOrgMember(jwt);
+  if (!callerId) {
+    return { statusCode: 401, body: JSON.stringify({ error: 'Sign-in required.' }) };
+  }
+
   let body;
-  try { body = JSON.parse(event.body); } catch(e) {
+  try { body = JSON.parse(rawBody); } catch(e) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON' }) };
   }
 

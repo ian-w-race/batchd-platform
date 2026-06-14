@@ -8,10 +8,47 @@
 //   - extract_raw_cluster -> sonnet (verbatim inkjet character cluster — accuracy drives recall substring matching)
 //   - identify_product    -> haiku (fast; staff can correct; lot code is what matters)
 //   - read_barcode        -> haiku
+//
+// Auth (added 2026-05-27 after audit flagged this as an unauthenticated
+// paid LLM endpoint — wallet-drain risk):
+//   Caller must include `Authorization: Bearer <supabase_jwt>`. The JWT
+//   is resolved to a Supabase user via /auth/v1/user, and the user must
+//   have at least one row in organisation_members. Public/unauth callers
+//   get 401; valid sessions that aren't org members get 403.
+//
+// Image size cap: 8 MB of base64 (~6 MB raw JPEG). Camera captures from
+// the scanner are well below this; anything larger is suspicious.
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const MODEL_HAIKU  = 'claude-haiku-4-5-20251001';
 const MODEL_SONNET = 'claude-sonnet-4-20250514';
+
+const SUPABASE_URL         = 'https://lurxucdmrugikdlvvebc.supabase.co';
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
+const MAX_BODY_BYTES       = 11 * 1024 * 1024;  // 11 MB JSON envelope ceiling
+const MAX_IMAGE_B64_BYTES  =  8 * 1024 * 1024;  //  8 MB base64 image
+
+async function verifyCallerIsOrgMember(jwt) {
+  if (!jwt || !SUPABASE_SERVICE_KEY) return null;
+  try {
+    const userRes = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      method: 'GET',
+      headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${jwt}` },
+    });
+    if (!userRes.ok) return null;
+    const userData = await userRes.json();
+    const userId = userData?.id;
+    if (!userId) return null;
+    const memRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/organisation_members?user_id=eq.${userId}&select=user_id&limit=1`,
+      { method: 'GET', headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` } },
+    );
+    if (!memRes.ok) return null;
+    const rows = await memRes.json();
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+    return userId;
+  } catch (_) { return null; }
+}
 
 async function callAnthropic(model, maxTokens, prompt, imageB64, temperature) {
   // 25-second timeout — Netlify background functions allow 26s; leave 1s buffer.
@@ -56,11 +93,34 @@ exports.handler = async (event) => {
     return { statusCode: 405, body: 'Method Not Allowed' };
   }
 
+  // Body size cap — base64 images push payloads big, but anything over
+  // ~11 MB JSON envelope is abuse. Stops a caller from forcing huge
+  // multipart fetches to the Anthropic endpoint.
+  const rawBody = event.body || '';
+  if (rawBody.length > MAX_BODY_BYTES) {
+    return { statusCode: 413, body: JSON.stringify({ error: 'Payload too large' }) };
+  }
+
+  // Auth: caller must be an authenticated Supabase user and a member of
+  // some organisation. Scanner calls supply the JWT via the Authorization
+  // header — see callOcrFunction() in index.html.
+  const authHeader = event.headers?.authorization || event.headers?.Authorization || '';
+  const jwt = authHeader.replace(/^Bearer\s+/i, '');
+  const callerId = await verifyCallerIsOrgMember(jwt);
+  if (!callerId) {
+    return { statusCode: 401, body: JSON.stringify({ error: 'Sign-in required.' }) };
+  }
+
   try {
-    const { task, image, extra = {} } = JSON.parse(event.body);
+    const { task, image, extra = {} } = JSON.parse(rawBody);
 
     if (!task || !image) {
       return { statusCode: 400, body: JSON.stringify({ error: 'task and image required' }) };
+    }
+    // Per-image cap inside the envelope — base64 image strings should fit
+    // easily under 8 MB (a typical phone photo is 1-3 MB JPEG ≈ 1.3-4 MB b64).
+    if (typeof image !== 'string' || image.length > MAX_IMAGE_B64_BYTES) {
+      return { statusCode: 413, body: JSON.stringify({ error: 'Image too large' }) };
     }
 
     let model, prompt, maxTokens;
