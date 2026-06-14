@@ -12138,8 +12138,14 @@ function detectDashComplaintPatterns(complaints, windowDays = 7) {
 }
 
 function dashPatternAlertHTML(pattern, idx) {
-  const lotStr = pattern.lots ? ` · Lot: <span style="font-family:'DM Mono',monospace;">${pattern.lots}</span>` : '';
-  const storeStr = pattern.storeList ? `<div style="font-size:11px;color:var(--muted);margin-top:3px;">Stores: ${pattern.storeList}${pattern.multiStore ? ' <span style="color:var(--danger);font-weight:600;">· multiple stores</span>' : ''}</div>` : '';
+  // XSS sweep 2026-05-27 — pattern is derived from `complaints` rows which
+  // include publicly-submitted product_name / lot_number / store_name
+  // fields, so every interpolation here gets esc(). pattern.title is
+  // programmatically chosen ("Multi-store pattern" / "Volume alert" /
+  // "Emerging pattern" / "Potential systemic issue") so it's safe in
+  // principle, but we escape defensively anyway.
+  const lotStr = pattern.lots ? ` · Lot: <span style="font-family:'DM Mono',monospace;">${esc(pattern.lots)}</span>` : '';
+  const storeStr = pattern.storeList ? `<div style="font-size:11px;color:var(--muted);margin-top:3px;">Stores: ${esc(pattern.storeList)}${pattern.multiStore ? ' <span style="color:var(--danger);font-weight:600;">· multiple stores</span>' : ''}</div>` : '';
   const breakdown = [
     pattern.criticalCount ? `<span style="color:var(--danger);font-weight:700;">${pattern.criticalCount} critical</span>` : '',
     pattern.seriousCount  ? `<span style="color:var(--warn);">${pattern.seriousCount} serious</span>` : '',
@@ -12152,10 +12158,10 @@ function dashPatternAlertHTML(pattern, idx) {
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
         <div style="flex:1;">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap;">
-            <span style="font-size:10px;font-weight:700;font-family:'DM Mono',monospace;letter-spacing:0.07em;color:${pattern.colour};text-transform:uppercase;">${pattern.title}</span>
+            <span style="font-size:10px;font-weight:700;font-family:'DM Mono',monospace;letter-spacing:0.07em;color:${pattern.colour};text-transform:uppercase;">${esc(pattern.title)}</span>
             <span style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">${pattern.total} complaints · ${pattern.windowDays}d window</span>
           </div>
-          <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:3px;">${pattern.productName || 'Unknown product'}${lotStr}</div>
+          <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:3px;">${esc(pattern.productName || 'Unknown product')}${lotStr}</div>
           <div style="font-size:12px;color:var(--muted);">${breakdown}</div>
           ${storeStr}
         </div>
@@ -12173,9 +12179,9 @@ function dashPatternAlertHTML(pattern, idx) {
       </div>
       <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;">
         ${pattern.complaints.slice(0,4).map(c => `
-          <span onclick="_dashTriageView='detail';_dashTriageComplaint='${c.id}';renderDashboardTriage()"
+          <span onclick="_dashTriageView='detail';_dashTriageComplaint='${esc(c.id)}';renderDashboardTriage()"
             style="font-size:11px;font-family:'DM Mono',monospace;background:var(--surface2);color:var(--muted);padding:2px 8px;border-radius:4px;cursor:pointer;border:1px solid var(--border);">
-            ${c.complaint_number || c.id.slice(0,8)}
+            ${esc(c.complaint_number || c.id.slice(0,8))}
           </span>`).join('')}
         ${pattern.complaints.length > 4 ? `<span style="font-size:11px;color:var(--muted);padding:2px 4px;">+${pattern.complaints.length-4} more</span>` : ''}
       </div>
@@ -12299,23 +12305,26 @@ async function renderDashTriageList(el) {
       ` : `<div style="display:flex;flex-direction:column;gap:8px;">${filtered.map(c => {
         const s = dashTriageLevelStyle(c.triage_level);
         const date = new Date(c.created_at).toLocaleDateString(_dashLocale(), { day:'2-digit', month:'short', year:'numeric' });
-        return `<div onclick="_dashTriageView='detail';_dashTriageComplaint='${c.id}';renderDashboardTriage()" style="background:var(--surface);border:1px solid ${c.triage_level==='critical'?'rgba(var(--danger-rgb),0.3)':'var(--border)'};border-radius:12px;padding:16px;cursor:pointer;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='${c.triage_level==='critical'?'rgba(var(--danger-rgb),0.3)':'var(--border)'}'">
+        // XSS sweep 2026-05-27 — every DB-sourced string wrapped in esc().
+        // complaint_text is the highest-risk field: it comes verbatim from
+        // the public complaint.html form, no server-side sanitisation.
+        return `<div onclick="_dashTriageView='detail';_dashTriageComplaint='${esc(c.id)}';renderDashboardTriage()" style="background:var(--surface);border:1px solid ${c.triage_level==='critical'?'rgba(var(--danger-rgb),0.3)':'var(--border)'};border-radius:12px;padding:16px;cursor:pointer;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='${c.triage_level==='critical'?'rgba(var(--danger-rgb),0.3)':'var(--border)'}'">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-              <span style="background:${s.bg};color:${s.color};font-size:10px;font-weight:700;font-family:'DM Mono',monospace;padding:3px 8px;border-radius:4px;letter-spacing:0.05em;">${s.label}</span>
-              <span style="font-size:12px;font-family:'DM Mono',monospace;color:var(--muted);">${c.complaint_number || c.id.slice(0,8)}</span>
-              ${c.triage_category ? `<span style="font-size:11px;color:var(--muted);background:var(--surface2);padding:2px 8px;border-radius:4px;">${c.triage_category}</span>` : ''}
+              <span style="background:${s.bg};color:${s.color};font-size:10px;font-weight:700;font-family:'DM Mono',monospace;padding:3px 8px;border-radius:4px;letter-spacing:0.05em;">${esc(s.label)}</span>
+              <span style="font-size:12px;font-family:'DM Mono',monospace;color:var(--muted);">${esc(c.complaint_number || c.id.slice(0,8))}</span>
+              ${c.triage_category ? `<span style="font-size:11px;color:var(--muted);background:var(--surface2);padding:2px 8px;border-radius:4px;">${esc(c.triage_category)}</span>` : ''}
             </div>
             <div style="display:flex;align-items:center;gap:8px;">
-              <span style="font-size:11px;color:var(--muted);">${dashTriageStatusLabel(c.status)}</span>
+              <span style="font-size:11px;color:var(--muted);">${esc(dashTriageStatusLabel(c.status))}</span>
               <span style="font-size:11px;color:var(--muted);">${date}</span>
             </div>
           </div>
           <div style="margin-top:10px;">
-            <div style="font-size:13px;font-weight:500;color:var(--text);margin-bottom:4px;">${c.product_name || 'Product not specified'}</div>
-            <div style="font-size:12px;color:var(--muted);line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${c.triage_summary || c.complaint_text}</div>
+            <div style="font-size:13px;font-weight:500;color:var(--text);margin-bottom:4px;">${esc(c.product_name || 'Product not specified')}</div>
+            <div style="font-size:12px;color:var(--muted);line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${esc(c.triage_summary || c.complaint_text || '')}</div>
           </div>
-          ${c.keywords_detected?.length ? `<div style="margin-top:8px;display:flex;gap:4px;flex-wrap:wrap;">${c.keywords_detected.slice(0,5).map(k=>`<span style="font-size:10px;font-family:'DM Mono',monospace;background:var(--surface2);color:var(--muted);padding:2px 6px;border-radius:3px;">${k}</span>`).join('')}</div>` : ''}
+          ${c.keywords_detected?.length ? `<div style="margin-top:8px;display:flex;gap:4px;flex-wrap:wrap;">${c.keywords_detected.slice(0,5).map(k=>`<span style="font-size:10px;font-family:'DM Mono',monospace;background:var(--surface2);color:var(--muted);padding:2px 6px;border-radius:3px;">${esc(k)}</span>`).join('')}</div>` : ''}
         </div>`;
       }).join('')}</div>`}
     `;
@@ -12554,19 +12563,27 @@ async function renderDashTriageDetail(el) {
     };
     const nextAction = NEXT_ACTIONS[currentStep];
 
+    // XSS sweep 2026-05-27 — every DB-sourced string interpolated below
+    // is wrapped in esc(). Triage detail is the highest-risk surface in
+    // the dashboard because complaint_text, product_name, purchase_store,
+    // people_affected, medical_attention and lot_number all flow verbatim
+    // from the public complaint.html form. triage_summary, triage_category
+    // and keywords_detected are LLM output that can be prompt-injected via
+    // the same public fields. Message content (m.content) and audit-log
+    // actor_label can be set by staff and should also be escaped.
     el.innerHTML = `
       <div style="max-width:720px;">
 
         <!-- Header -->
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px;flex-wrap:wrap;">
           <button onclick="_dashTriageView='list';renderDashboardTriage()" style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:7px;padding:6px 12px;font-size:12px;cursor:pointer;">← All complaints</button>
-          <span style="background:${s.bg};color:${s.color};font-size:10px;font-weight:700;font-family:'DM Mono',monospace;padding:3px 10px;border-radius:4px;letter-spacing:0.05em;">${s.label}</span>
-          <span style="font-size:11px;font-family:'DM Mono',monospace;color:var(--muted);">${c.complaint_number||c.id.slice(0,8)}</span>
+          <span style="background:${s.bg};color:${s.color};font-size:10px;font-weight:700;font-family:'DM Mono',monospace;padding:3px 10px;border-radius:4px;letter-spacing:0.05em;">${esc(s.label)}</span>
+          <span style="font-size:11px;font-family:'DM Mono',monospace;color:var(--muted);">${esc(c.complaint_number||c.id.slice(0,8))}</span>
         </div>
 
         <!-- Lifecycle progress -->
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:14px;">
-          <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:14px;">${c.product_name||'Product complaint'}</div>
+          <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:14px;">${esc(c.product_name||'Product complaint')}</div>
           <div style="display:flex;align-items:flex-start;gap:0;margin-bottom:${nextAction?'14px':'0'};">
             ${LIFECYCLE.map((step, i) => {
               const done    = i+1 < currentStep;
@@ -12604,21 +12621,21 @@ async function renderDashTriageDetail(el) {
           <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;">
             <div style="font-size:10px;font-weight:700;color:var(--muted);letter-spacing:0.08em;margin-bottom:12px;">COMPLAINT DETAILS</div>
             <div style="display:flex;flex-direction:column;gap:8px;font-size:12px;">
-              ${c.product_name ? `<div style="display:flex;justify-content:space-between;gap:8px;"><span style="color:var(--muted);flex-shrink:0;">Product</span><span style="color:var(--text);font-weight:500;text-align:right;">${c.product_name}</span></div>` : ''}
-              ${c.lot_number ? `<div style="display:flex;justify-content:space-between;gap:8px;"><span style="color:var(--muted);flex-shrink:0;">Lot</span><span style="color:var(--text);font-family:'DM Mono',monospace;text-align:right;">${c.lot_number}</span></div>` : ''}
-              ${c.purchase_store||c.store_name ? `<div style="display:flex;justify-content:space-between;gap:8px;"><span style="color:var(--muted);flex-shrink:0;">Store</span><span style="color:var(--text);text-align:right;">${c.purchase_store||c.store_name}</span></div>` : ''}
-              ${c.people_affected ? `<div style="display:flex;justify-content:space-between;gap:8px;"><span style="color:var(--muted);flex-shrink:0;">Affected</span><span style="color:var(--text);">${c.people_affected}</span></div>` : ''}
-              ${c.medical_attention ? `<div style="display:flex;justify-content:space-between;gap:8px;"><span style="color:var(--muted);flex-shrink:0;">Medical</span><span style="color:${c.medical_attention.includes('emergency')||c.medical_attention.includes('hospital')?'var(--danger)':'var(--text)'};">${c.medical_attention}</span></div>` : ''}
+              ${c.product_name ? `<div style="display:flex;justify-content:space-between;gap:8px;"><span style="color:var(--muted);flex-shrink:0;">Product</span><span style="color:var(--text);font-weight:500;text-align:right;">${esc(c.product_name)}</span></div>` : ''}
+              ${c.lot_number ? `<div style="display:flex;justify-content:space-between;gap:8px;"><span style="color:var(--muted);flex-shrink:0;">Lot</span><span style="color:var(--text);font-family:'DM Mono',monospace;text-align:right;">${esc(c.lot_number)}</span></div>` : ''}
+              ${c.purchase_store||c.store_name ? `<div style="display:flex;justify-content:space-between;gap:8px;"><span style="color:var(--muted);flex-shrink:0;">Store</span><span style="color:var(--text);text-align:right;">${esc(c.purchase_store||c.store_name)}</span></div>` : ''}
+              ${c.people_affected ? `<div style="display:flex;justify-content:space-between;gap:8px;"><span style="color:var(--muted);flex-shrink:0;">Affected</span><span style="color:var(--text);">${esc(c.people_affected)}</span></div>` : ''}
+              ${c.medical_attention ? `<div style="display:flex;justify-content:space-between;gap:8px;"><span style="color:var(--muted);flex-shrink:0;">Medical</span><span style="color:${c.medical_attention.includes('emergency')||c.medical_attention.includes('hospital')?'var(--danger)':'var(--text)'};">${esc(c.medical_attention)}</span></div>` : ''}
               <div style="display:flex;justify-content:space-between;gap:8px;"><span style="color:var(--muted);flex-shrink:0;">Received</span><span style="color:var(--text);text-align:right;">${new Date(c.created_at).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',year:'numeric'})}</span></div>
             </div>
           </div>
           <div style="background:var(--surface);border:1px solid ${c.triage_level==='critical'?'rgba(var(--danger-rgb),0.3)':'var(--border)'};border-radius:12px;padding:16px;">
             <div style="font-size:10px;font-weight:700;color:var(--muted);letter-spacing:0.08em;margin-bottom:12px;">TRIAGE ASSESSMENT</div>
             <div style="display:flex;flex-direction:column;gap:8px;font-size:12px;">
-              <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Severity</span><span style="background:${s.bg};color:${s.color};padding:2px 8px;border-radius:4px;font-weight:700;font-size:10px;">${s.label}</span></div>
-              <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Category</span><span style="color:var(--text);">${c.triage_category||'Pending'}</span></div>
+              <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Severity</span><span style="background:${s.bg};color:${s.color};padding:2px 8px;border-radius:4px;font-weight:700;font-size:10px;">${esc(s.label)}</span></div>
+              <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Category</span><span style="color:var(--text);">${esc(c.triage_category||'Pending')}</span></div>
             </div>
-            ${c.triage_summary ? `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-size:11px;color:var(--muted);line-height:1.6;font-style:italic;">"${c.triage_summary}"</div>` : ''}
+            ${c.triage_summary ? `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-size:11px;color:var(--muted);line-height:1.6;font-style:italic;">"${esc(c.triage_summary)}"</div>` : ''}
           </div>
         </div>
 
@@ -12631,8 +12648,8 @@ async function renderDashTriageDetail(el) {
             <div style="display:flex;gap:10px;align-items:flex-start;">
               <div style="width:8px;height:8px;border-radius:50%;background:${m.direction==='inbound'?'var(--warn)':'var(--accent)'};margin-top:5px;flex-shrink:0;"></div>
               <div style="flex:1;">
-                <div style="font-size:10px;color:var(--muted);margin-bottom:3px;">${m.direction==='inbound'?'Inbound':'Outbound'} · ${m.channel} · ${new Date(m.created_at).toLocaleString(_dashLocale())}</div>
-                <div style="font-size:12px;color:var(--text);line-height:1.5;background:var(--surface2);padding:10px 12px;border-radius:8px;">${m.content}</div>
+                <div style="font-size:10px;color:var(--muted);margin-bottom:3px;">${m.direction==='inbound'?'Inbound':'Outbound'} · ${esc(m.channel||'')} · ${new Date(m.created_at).toLocaleString(_dashLocale())}</div>
+                <div style="font-size:12px;color:var(--text);line-height:1.5;background:var(--surface2);padding:10px 12px;border-radius:8px;">${esc(m.content||'')}</div>
               </div>
             </div>`).join('')}
           </div>
@@ -12647,8 +12664,8 @@ async function renderDashTriageDetail(el) {
             ${log.map((entry, i) => `
             <div style="position:relative;padding-bottom:${i<log.length-1?'16px':'0'};">
               <div style="position:absolute;left:-14px;top:3px;width:9px;height:9px;border-radius:50%;background:var(--accent);border:2px solid var(--bg);"></div>
-              <div style="font-size:12px;font-weight:600;color:var(--text);">${entry.action.replace(/_/g,' ')}</div>
-              <div style="font-size:10px;color:var(--muted);margin-top:2px;">${entry.actor_label||'System'} · ${new Date(entry.created_at).toLocaleString(_dashLocale(),{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
+              <div style="font-size:12px;font-weight:600;color:var(--text);">${esc((entry.action||'').replace(/_/g,' '))}</div>
+              <div style="font-size:10px;color:var(--muted);margin-top:2px;">${esc(entry.actor_label||'System')} · ${new Date(entry.created_at).toLocaleString(_dashLocale(),{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
             </div>`).join('')}
           </div>`}
         </div>
