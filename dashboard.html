@@ -2075,7 +2075,14 @@ function fmtDashDT(d) { return d ? new Date(d).toLocaleString(_dashLocale(), _da
 // gets transparently redirected to 'overview' so a store manager can never
 // land on a corp-wide screen even if a button was missed in the sidebar
 // gating sweep. Kept in sync with _applyRoleGates() below.
-const STORE_MANAGER_FORBIDDEN_PANELS = ['investigations','consumer-notify','stores','compliance','reports','onboarding'];
+// recall-composer + recall-detail added 2026-05-27 after audit flagged
+// them as deep-link role-gating gaps. recall-composer pushes a recall
+// org-wide (not a store-manager action). recall-detail shows every store's
+// ack data for a recall — not just the manager's stores — so even though
+// the recalls list will be store-scoped, the detail view would leak
+// cross-store data. Manager Overview KPI + Recalls list cover their own
+// store's recall status; full detail stays corp_admin-only.
+const STORE_MANAGER_FORBIDDEN_PANELS = ['investigations','consumer-notify','stores','compliance','reports','onboarding','recall-composer','recall-detail'];
 
 function showPanel(name) {
   // Role guard — bounce store managers from corp-only panels. The sidebar
@@ -3727,8 +3734,10 @@ async function renderRecalls() {
            so it auto-inverts per theme — near-black on bright orange in dark
            mode (#080F12 on #F5A623 ≈ 12:1), off-white on burnt orange in
            light mode (#F5F7F6 on #BE5A0E ≈ 6.3:1). The original color:#1c0f00
-           failed WCAG AA in light mode (~3.3:1 on the darker orange). -->
-      <button onclick="showDrillLauncher()" style="font-family:'DM Mono',monospace;font-size:11px;padding:7px 14px;border-radius:8px;border:none;background:var(--warn);color:var(--background-base);cursor:pointer;margin-bottom:8px;font-weight:700;box-shadow:0 1px 3px rgba(0,0,0,0.2);">Run drill</button>
+           failed WCAG AA in light mode (~3.3:1 on the darker orange).
+           Hidden for store_managers 2026-05-27 — mock drills are an org-
+           wide compliance exercise; only corp_admins should launch them. -->
+      ${_userRole === 'store_manager' ? '' : `<button onclick="showDrillLauncher()" style="font-family:'DM Mono',monospace;font-size:11px;padding:7px 14px;border-radius:8px;border:none;background:var(--warn);color:var(--background-base);cursor:pointer;margin-bottom:8px;font-weight:700;box-shadow:0 1px 3px rgba(0,0,0,0.2);">Run drill</button>`}
     </div>`;
 
   // ── Recall coordinator strip ───────────────────────────────
@@ -6131,12 +6140,12 @@ async function renderCommandCenter() {
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap;">
-          <button onclick="showDrillLauncher()"
+          ${_userRole === 'store_manager' ? '' : `<button onclick="showDrillLauncher()"
                   style="font-family:'DM Mono',monospace;font-size:11px;padding:10px 16px;border-radius:9px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;letter-spacing:0.02em;transition:border-color 0.15s,color 0.15s;"
                   onmouseenter="this.style.borderColor='var(--warn)';this.style.color='var(--warn)'"
                   onmouseleave="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">
             Or run a drill
-          </button>
+          </button>`}
           <button onclick="openRecallComposer()"
                   style="display:inline-flex;align-items:center;gap:8px;font-family:'Figtree',sans-serif;font-weight:700;font-size:14px;padding:11px 22px;border-radius:10px;border:none;background:var(--accent);color:var(--accent-on-primary);cursor:pointer;box-shadow:0 4px 14px rgba(var(--accent-alt-rgb),0.22);transition:transform 0.15s,box-shadow 0.15s;"
                   onmouseenter="this.style.transform='translateY(-1px)';this.style.boxShadow='0 6px 18px rgba(var(--accent-alt-rgb),0.32)'"
@@ -6456,6 +6465,14 @@ async function produceFsma204Records(recallEventId) {
 // stores "when the last reminder went out." We're not renaming it
 // because nothing else cares about the column name.
 async function sendRecallReminders(recallEventId) {
+  // Defense-in-depth role guard (added 2026-05-27 per audit). RLS on
+  // recall_acknowledgements blocks the underlying writes for non-admins,
+  // but the dashboard-side check stops a manager from triggering the
+  // org-wide reminder flow before it ever reaches the DB.
+  if (_userRole !== 'corp_admin') {
+    showToast('Only corp admins can send recall reminders.', 'error', 4000);
+    return;
+  }
   try {
     const { data: acks, error } = await sb.from('recall_acknowledgements')
       .select('id, status')
@@ -6490,6 +6507,12 @@ async function sendRecallReminders(recallEventId) {
 // (closed_at, closed_by, closed_note on recall_events). Shows a clear
 // message if the migration hasn't been run.
 async function markRecallComplete(recallEventId) {
+  // Defense-in-depth role guard (added 2026-05-27 per audit). Closing a
+  // recall is an org-wide compliance action; corp_admin only.
+  if (_userRole !== 'corp_admin') {
+    showToast('Only corp admins can close a recall.', 'error', 4000);
+    return;
+  }
   const note = prompt(
     'Mark this recall as administratively complete?\n\n' +
     'Optional: record a reason (e.g., "store deactivated", "product line discontinued"). Leave blank to skip.\n\n' +
@@ -8276,6 +8299,14 @@ async function renderStaff() {
 }
 
 async function deactivateMember(userId, identifier) {
+  // Defense-in-depth role guard (added 2026-05-27 per audit). Managers
+  // see the Staff Activity panel (Chunk A scoping) and the Deactivate
+  // button renders for everyone — gate here so a manager can't deactivate
+  // staff via the UI. RLS on organisation_members also blocks the write.
+  if (_userRole !== 'corp_admin') {
+    showToast('Only corp admins can deactivate team members.', 'error', 4000);
+    return;
+  }
   const confirmed = confirm(
     `Deactivate ${identifier}?\n\nThis removes their access to Batch'd immediately. Their scan history is preserved. You can reactivate them later by contacting support.`
   );
@@ -11607,6 +11638,13 @@ async function renderSettings() {
 }
 
 async function saveRecallSettings() {
+  // Defense-in-depth role guard (added 2026-05-27 per audit). The Recall
+  // management card is hidden for store_managers via renderSettings, but
+  // this gate stops a direct DevTools console call too.
+  if (_userRole !== 'corp_admin') {
+    showToast('Only corp admins can edit recall settings.', 'error', 4000);
+    return;
+  }
   const days  = parseInt(document.getElementById('lookback-days-input')?.value || '365', 10);
   const btn   = document.getElementById('btn-save-recall-sett');
   const msgEl = document.getElementById('recall-sett-msg');
@@ -11638,6 +11676,13 @@ async function saveRecallSettings() {
 
 
 async function saveCoordinatorSettings() {
+  // Defense-in-depth role guard (added 2026-05-27 per audit). The Recall
+  // coordinator card is hidden for store_managers via renderSettings, but
+  // this gate stops a direct DevTools console call too.
+  if (_userRole !== 'corp_admin') {
+    showToast('Only corp admins can edit the recall coordinator.', 'error', 4000);
+    return;
+  }
   const name    = document.getElementById('coord-name')?.value?.trim();
   const contact = document.getElementById('coord-contact')?.value?.trim();
   const backup  = document.getElementById('coord-backup')?.value?.trim();
@@ -12747,9 +12792,25 @@ async function updateDashTriageStatus(id, newStatus) {
 
 async function loadDashboardTriageBadge() {
   try {
-    const { data } = await sb.from('complaints').select('id').eq('receiving_org_id', _orgId).eq('triage_level', 'critical').not('status', 'in', '("closed","resolved")');
+    // Store-manager scoping (Chunk B.2.b, 2026-05-27 — audit
+    // flagged that the badge count was leaking other stores' criticals
+    // through to the manager's sidebar). Mirrors the renderDashTriageList
+    // client-side filter: case-insensitive exact match on the active
+    // store's name. Corp_admins see the full org count.
+    const { data } = await sb.from('complaints')
+      .select('id, purchase_store, store_name')
+      .eq('receiving_org_id', _orgId)
+      .eq('triage_level', 'critical')
+      .not('status', 'in', '("closed","resolved")');
+    const activeStoreName = (_activeStoreName || _storeName || '').trim().toLowerCase();
+    const scoped = (_userRole === 'store_manager' && activeStoreName)
+      ? (data || []).filter(c => {
+          const cs = (c.purchase_store || c.store_name || '').trim().toLowerCase();
+          return cs && cs === activeStoreName;
+        })
+      : (data || []);
     const badge = document.getElementById('triage-badge');
-    if (badge && data?.length) { badge.textContent = data.length; badge.style.display = 'inline'; }
+    if (badge && scoped.length) { badge.textContent = scoped.length; badge.style.display = 'inline'; }
   } catch(e) {}
 }
 
