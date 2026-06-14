@@ -1,6 +1,7 @@
 // netlify/functions/ai-analyze.js
 // General-purpose Anthropic analysis proxy for Batch'd intelligence features
-// Tasks: synthesize_investigation | weekly_digest | nl_query
+// Tasks: synthesize_investigation | nl_query
+//        (weekly_digest task retired 2026-05-27.)
 //
 // Auth (added 2026-05-27 after audit flagged this as an unauthenticated
 // paid LLM endpoint — wallet-drain risk):
@@ -56,10 +57,10 @@ exports.handler = async (event) => {
   }
 
   // Auth: caller must be an authenticated Supabase user AND a member of
-  // some organisation. The session-only check is intentionally org-agnostic
-  // since the prompts are not org-scoped (weekly_digest data is passed in
-  // the request) — RLS at the data layer is what enforces org boundaries
-  // for the data the caller assembles before sending.
+  // some organisation. The session-only check is intentionally org-
+  // agnostic since the prompts are not org-scoped on the server side —
+  // RLS at the data layer is what enforces org boundaries for the data
+  // the caller assembles before sending.
   const authHeader = event.headers?.authorization || event.headers?.Authorization || '';
   const jwt = authHeader.replace(/^Bearer\s+/i, '');
   const callerId = await verifyCallerIsOrgMember(jwt);
@@ -117,26 +118,8 @@ Write a concise findings summary (3-4 sentences maximum) that:
 Do not use any markdown, headers, or bullet points. Write as a single paragraph.`;
     maxTokens = 300;
 
-  } else if (task === 'weekly_digest') {
-    const { orgName, region, weekData } = data;
-    const isUS = region === 'us';
-    prompt = `You are writing a weekly intelligence digest for ${orgName}, a grocery retailer using Batch'd for food traceability.
-
-WEEK IN REVIEW (last 7 days):
-- New scans: ${weekData.newScans}
-- Active recalls: ${weekData.activeRecalls}
-- Recall response rate: ${weekData.responseRate}%
-- Dark stores (no scanning): ${weekData.darkStores?.join(', ') || 'None'}
-- New complaints: ${weekData.newComplaints}
-- Complaint clusters detected: ${weekData.clusters || 0}
-- Investigations open: ${weekData.openInvestigations}
-- Drill compliance: ${weekData.drillCompliant ? 'Current' : 'Overdue'}
-- Lot capture rate: ${weekData.lotCaptureRate}%
-- Regulatory framework: ${isUS ? 'FDA / FSMA 204' : 'EU 178/2002 / Mattilsynet'}
-
-Write a 2-3 sentence weekly digest that reads like a briefing from a food safety officer. Lead with the most important item. Be direct — if something needs attention, say so plainly. End with one forward-looking sentence about what to watch next week. No markdown, no headers, no bullet points. Plain paragraph only.`;
-    maxTokens = 200;
-
+  // 'weekly_digest' task removed 2026-05-27 along with the
+  // dashboard's Weekly Digest panel and loadWeeklyDigest() function.
   } else if (task === 'nl_query') {
     const { question, schema } = data;
     prompt = `You are a Supabase SQL query assistant for Batch'd, a food traceability platform. The user wants to query their data in plain English.
