@@ -2308,9 +2308,14 @@ recall_acknowledgements(id, status, recall_event_id, store_id, created_at, ackno
 stores(id, name, active, organisation_id)
 organisation_id for this user = "${_orgId}"`;
 
+    // Auth token required — the function rejects unauth callers (audit
+    // closed an unauthenticated paid-LLM endpoint 2026-05-27).
+    const { data: { session: _aiSession } } = await sb.auth.getSession();
+    const _aiJwt = _aiSession?.access_token;
+    if (!_aiJwt) { throw new Error('Sign in to use NL Query.'); }
     const res = await fetch('/.netlify/functions/ai-analyze', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_aiJwt}` },
       body: JSON.stringify({ task: 'nl_query', data: { question, schema } }),
     });
     const json = await res.json();
@@ -2427,10 +2432,15 @@ async function loadWeeklyDigest(containerEl) {
 
     let digest = '';
     try {
+      // Auth token required — function rejects unauth callers (audit
+      // closed an unauthenticated paid-LLM endpoint 2026-05-27).
+      const { data: { session: _digSession } } = await sb.auth.getSession();
+      const _digJwt = _digSession?.access_token;
+      if (!_digJwt) { throw new Error('No active session for digest call.'); }
       const res = await fetch('/.netlify/functions/ai-analyze', {
         method: 'POST',
         signal: controller.signal,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_digJwt}` },
         body: JSON.stringify({
           task: 'weekly_digest',
           data: {
@@ -7734,10 +7744,17 @@ async function renderTraceability(tab) {
 
   if (activeTab === 'scans') {
     let query = sb.from('scans').select('id,product_name,lot_number,barcode_number,store_name,store_id,scanned_by,created_at,recall_resolved,removed_from_shelf_at').eq('organisation_id', _orgId).order('created_at', {ascending:false}).limit(500);
-    if (_userRole === 'store_manager' && _storeId) {
-      query = query.eq('store_id', _storeId);
-    } else if (_userRole === 'store_manager' && _storeName) {
-      query = query.eq('store_name', _storeName);
+    // Store-manager scoping (Chunk B.2.a, 2026-05-27). Use the active
+    // store from the topbar picker rather than the legacy _storeId, so
+    // a multi-store manager who switches stores via _setActiveStore()
+    // sees the new store's scans on next render. Falls back to _storeId/
+    // _storeName when the picker state isn't populated.
+    const activeStoreId   = _activeStoreId   || _storeId   || null;
+    const activeStoreName = _activeStoreName || _storeName || null;
+    if (_userRole === 'store_manager' && activeStoreId) {
+      query = query.eq('store_id', activeStoreId);
+    } else if (_userRole === 'store_manager' && activeStoreName) {
+      query = query.eq('store_name', activeStoreName);
     }
     const { data: scans, error: scanErr } = await query;
     if (scanErr) throw new Error(scanErr.message);
@@ -10831,7 +10848,11 @@ function renderLotCheck() {
   el.innerHTML = `
     <div style="max-width:760px;">
       <div style="margin-bottom:20px;">
-        <div style="font-size:12px;color:var(--muted);">Search any lot code, barcode, or product name — or scroll down to see everything currently on shelf across all stores.</div>
+        <div style="font-size:12px;color:var(--muted);">${
+          _userRole === 'store_manager' && (_activeStoreName || _storeName)
+            ? `Search any lot code, barcode, or product name — or scroll down to see everything currently on shelf at ${esc(_activeStoreName || _storeName)}.`
+            : 'Search any lot code, barcode, or product name — or scroll down to see everything currently on shelf across all stores.'
+        }</div>
       </div>
 
       <div style="display:flex;gap:10px;margin-bottom:24px;">
@@ -10851,7 +10872,11 @@ function renderLotCheck() {
       <!-- Default on-shelf view -->
       <div id="lc-onshelf">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-          <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;">Currently on shelf — all stores</div>
+          <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;">${
+            _userRole === 'store_manager' && (_activeStoreName || _storeName)
+              ? `Currently on shelf — ${esc(_activeStoreName || _storeName)}`
+              : 'Currently on shelf — all stores'
+          }</div>
           <button onclick="renderLotCheck()" style="font-size:11px;font-family:'DM Mono',monospace;padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;">↻ Refresh</button>
         </div>
         <div id="lc-onshelf-content"><div style="color:var(--muted);font-size:12px;display:flex;align-items:center;gap:8px;"><div class="spinner"></div> Loading shelf status…</div></div>
@@ -10867,15 +10892,24 @@ async function _loadCorpOnShelf() {
   if (!el) return;
   try {
     const cutoff = new Date(Date.now() - 180 * 86400000).toISOString();
+    // Store-manager scoping (Chunk B.2.a, 2026-05-27). Build the scans
+    // query first so we can conditionally add a store_id filter when the
+    // viewer is a store_manager. Corp admins get the unscoped org-wide
+    // shelf as before.
+    const activeStoreId = _activeStoreId || _storeId || null;
+    let scansQuery = sb.from('scans')
+      .select('id,product_name,lot_number,barcode_number,store_name,store_id,quantity,created_at,scanned_by,removed_from_shelf_at,recall_resolved')
+      .eq('organisation_id', _orgId)
+      .is('removed_from_shelf_at', null)
+      .eq('recall_resolved', false)
+      .gte('created_at', cutoff)
+      .order('created_at', { ascending: false })
+      .limit(2000);
+    if (_userRole === 'store_manager' && activeStoreId) {
+      scansQuery = scansQuery.eq('store_id', activeStoreId);
+    }
     const [scansRes, storesRes] = await Promise.all([
-      sb.from('scans')
-        .select('id,product_name,lot_number,barcode_number,store_name,store_id,quantity,created_at,scanned_by,removed_from_shelf_at,recall_resolved')
-        .eq('organisation_id', _orgId)
-        .is('removed_from_shelf_at', null)
-        .eq('recall_resolved', false)
-        .gte('created_at', cutoff)
-        .order('created_at', { ascending: false })
-        .limit(2000),
+      scansQuery,
       sb.from('stores').select('id,name').eq('organisation_id', _orgId).eq('active', true),
     ]);
 
@@ -10979,13 +11013,23 @@ async function runLotCheck(immediate = false) {
 
   try {
     const cutoff = new Date(Date.now() - 180 * 86400000).toISOString();
+    // Store-manager scoping (Chunk B.2.a, 2026-05-27). Scan search is
+    // scoped to the active store so a manager only sees their store's
+    // inventory of the searched lot. Recall + distribution queries stay
+    // org-wide because a manager needs to know about any active recall
+    // affecting that lot even if it hasn't reached their store yet.
+    const activeStoreId = _activeStoreId || _storeId || null;
+    let scansQuery = sb.from('scans')
+      .select('id,product_name,lot_number,barcode_number,store_name,store_id,quantity,created_at,removed_from_shelf_at,recall_resolved,scanned_by,label_text')
+      .eq('organisation_id', _orgId)
+      .gte('created_at', cutoff)
+      .order('created_at', { ascending: false })
+      .limit(1000);
+    if (_userRole === 'store_manager' && activeStoreId) {
+      scansQuery = scansQuery.eq('store_id', activeStoreId);
+    }
     const [scansRes, recallsRes, distRes] = await Promise.all([
-      sb.from('scans')
-        .select('id,product_name,lot_number,barcode_number,store_name,store_id,quantity,created_at,removed_from_shelf_at,recall_resolved,scanned_by,label_text')
-        .eq('organisation_id', _orgId)
-        .gte('created_at', cutoff)
-        .order('created_at', { ascending: false })
-        .limit(1000),
+      scansQuery,
       sb.from('recalls').select('*').eq('active', true).eq('organisation_id', _orgId).limit(200),
       sb.from('recall_distributions')
         .select('recall_event_id, recall_events!inner(id,product_name,lot_number,reason,severity,is_drill)')
@@ -12277,19 +12321,31 @@ async function renderDashTriageList(el) {
 
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading complaints...</div>`;
   try {
-    const { data: complaints, error } = await sb.from('complaints')
+    const { data: complaintsRaw, error } = await sb.from('complaints')
       .select('*')
       .eq('receiving_org_id', _orgId)
       .order('created_at', { ascending: false })
       .limit(100);
     if (error) throw error;
 
-    const critical = (complaints||[]).filter(c => c.triage_level === 'critical' && !['closed','resolved'].includes(c.status));
+    // Store-manager scoping (Chunk B.2.a, 2026-05-27). complaints.store
+    // is a soft string (purchase_store OR store_name — customer-reported,
+    // not a canonical FK), so we filter client-side with a case-insensitive
+    // match against the active store name. Corp_admins see everything.
+    const activeStoreName = (_activeStoreName || _storeName || '').trim().toLowerCase();
+    const complaints = (_userRole === 'store_manager' && activeStoreName)
+      ? (complaintsRaw || []).filter(c => {
+          const cs = (c.purchase_store || c.store_name || '').trim().toLowerCase();
+          return cs && cs === activeStoreName;
+        })
+      : (complaintsRaw || []);
+
+    const critical = complaints.filter(c => c.triage_level === 'critical' && !['closed','resolved'].includes(c.status));
     const badge = document.getElementById('triage-badge');
     if (badge) { badge.textContent = critical.length; badge.style.display = critical.length ? 'inline' : 'none'; }
 
     // Detect patterns
-    const dashPatterns = detectDashComplaintPatterns(complaints || []);
+    const dashPatterns = detectDashComplaintPatterns(complaints);
 
     const counts = {
       all: (complaints||[]).length,
@@ -12300,9 +12356,15 @@ async function renderDashTriageList(el) {
     };
     const filtered = _dashTriageFilter === 'all' ? (complaints||[]) : (complaints||[]).filter(c => c.triage_level === _dashTriageFilter);
 
+    // Header subline scopes its copy to the manager's active store for
+    // store_managers — "your stores" reads wrong when only one store's
+    // complaints are visible (Chunk B.2.a, 2026-05-27).
+    const _triageSubline = (_userRole === 'store_manager' && (_activeStoreName || _storeName))
+      ? `Complaints about products at ${esc(_activeStoreName || _storeName)}, triaged automatically by Batch'd AI.`
+      : `Complaints about products in your stores, triaged automatically by Batch'd AI.`;
     el.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:20px;flex-wrap:wrap;">
-        <div style="font-size:12px;color:var(--muted);">Complaints about products in your stores, triaged automatically by Batch'd AI.</div>
+        <div style="font-size:12px;color:var(--muted);">${_triageSubline}</div>
         <button onclick="_dashTriageView='new';renderDashboardTriage()" style="background:var(--accent);color:var(--accent-on-primary);border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;">+ Log Phone Complaint</button>
       </div>
 

@@ -5459,10 +5459,18 @@ const _DEBUG_LOG = (() => {
 const dlog = _DEBUG_LOG ? console.log.bind(console) : () => {};
 // Anthropic API calls are proxied through a Netlify serverless function.
 // The API key is stored as a Netlify environment variable — never in client code.
+//
+// Auth token required — the OCR function rejects unauth callers (audit
+// closed an unauthenticated paid-LLM endpoint 2026-05-27). All scanner
+// call sites already happen post-sign-in, so the session should always
+// be present; we still guard with a clear error if it isn't.
 async function callOcrFunction(task, imageB64, extra) {
+  const { data: { session } } = await sb.auth.getSession();
+  const jwt = session?.access_token;
+  if (!jwt) throw new Error('Sign in to use AI capture.');
   const resp = await fetch('/.netlify/functions/ocr', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${jwt}` },
     body: JSON.stringify({ task, image: imageB64, extra: extra || {} }),
   });
   if (!resp.ok) throw new Error(`OCR function error: ${resp.status}`);
