@@ -13,7 +13,13 @@
 //   reason           — recall reason summary
 // ================================================================
 
-const RESEND_API_KEY = process.env.RESEND_API_KEY || 're_hfJMphfo_4jQcxm42VWsQ83X9JbyaRpRB';
+// Read the Resend key from env only. The previous fallback embedded a
+// live key as a literal string, which leaks the credential to anyone
+// with read access to this file (or to the repo if it becomes public).
+// Rotate the leaked key on Resend; set the new key in Netlify's
+// environment variables under RESEND_API_KEY. Function fails closed
+// (503) if the env var is unset.
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const FROM_EMAIL     = 'no-reply@batchdapp.com';
 const FROM_NAME      = "Important product notice";
 
@@ -23,6 +29,10 @@ const BATCH_SIZE = 50;
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
+  }
+  if (!RESEND_API_KEY) {
+    console.error('[notify-consumers] RESEND_API_KEY env var not set');
+    return { statusCode: 503, body: JSON.stringify({ error: 'Mail service is not configured.' }) };
   }
 
   let body;
