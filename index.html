@@ -5641,7 +5641,10 @@ async function showApp(user) {
   document.body.classList.add('scan-active');  // scan is the default view after login
   document.getElementById('user-email').textContent = currentUser._displayName || user.email;
   if (typeof updateDrawerAccount === 'function') {
-    updateDrawerAccount(currentUser._displayName || user.email, user.user_metadata?.region || localStorage.getItem('batched_region') || 'no');
+    // Use canonical _userRegion (per CLAUDE.md jurisdiction rule).
+    // Falling back to metadata/localStorage let stale device state
+    // override an admin-assigned region.
+    updateDrawerAccount(currentUser._displayName || user.email, _userRegion || 'no');
   }
 
   // Reset sign-in button in case it's stuck in loading state
@@ -7323,6 +7326,22 @@ async function maybeShowOnboarding() {
       }
       // Returning user — make sure they pick a store for this shift
       // (or confirm the 12-hour-fresh existing selection silently).
+      enforceSessionStoreSelection();
+      return;
+    }
+    // Admin-assigned region present but onboarding not yet marked done.
+    // Per CLAUDE.md, user_settings.region is admin-only — never overwrite
+    // it via the picker. Apply the admin's value silently, mark
+    // onboarding_done, and skip the modal entirely.
+    if (data?.region) {
+      localStorage.setItem('batched_region', data.region);
+      _userRegion = data.region;
+      applyRegion(data.region);
+      (async () => { try {
+        await sb.from('user_settings')
+          .update({ onboarding_done: true })
+          .eq('user_id', currentUser.id);
+      } catch(e) {} })();
       enforceSessionStoreSelection();
       return;
     }
@@ -15955,9 +15974,10 @@ function formatGS1Expiry(yymmdd) {
   const mm = yymmdd.slice(2, 4);
   const dd = yymmdd.slice(4, 6);
   const year = parseInt(yy) > 50 ? '19' + yy : '20' + yy;
-  // Use region date format
-  const isUS = (typeof currentRegion !== 'undefined' && currentRegion === 'us') ||
-               (typeof userSettings !== 'undefined' && userSettings?.region === 'us');
+  // Use the canonical _userRegion (per CLAUDE.md jurisdiction rule).
+  // The former fallback to `currentRegion` / `userSettings?.region`
+  // could yield a different value than the rest of the scanner.
+  const isUS = _userRegion === 'us';
   if (isUS) return `${mm}/${dd}/${year}`;
   return `${dd}.${mm}.${year}`;
 }
@@ -17287,15 +17307,15 @@ function applyManagerUI(isManager) {
 }
 
 // Secret dev toggle: tap the version number 5× to become manager for testing.
-// Gated to dev contexts only — running on localhost OR with ?dev=1 in the URL.
-// Without this gate, an end-user idly tapping the version number could surface
-// manager UI buttons that don't actually work (RLS still blocks the queries).
+// Gated to localhost only. The ?dev=1 URL bypass was removed 2026-06-14
+// after audit flagged it as a privilege-elevation vector — a shareable
+// link with ?dev=1 let staff promote themselves to manager UI in
+// production. RLS would still block the underlying queries, but the
+// UI elevation alone is a defence-in-depth violation.
 (function() {
   const _isDevContext = (() => {
     const h = window.location.hostname;
-    if (h === 'localhost' || h === '127.0.0.1') return true;
-    try { return new URLSearchParams(window.location.search).has('dev'); }
-    catch (e) { return false; }
+    return h === 'localhost' || h === '127.0.0.1';
   })();
   if (!_isDevContext) return;
 

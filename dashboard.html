@@ -2474,7 +2474,10 @@ async function renderOnboarding() {
     const hasScans       = !!(scansRes.data?.length);
     const hasDrill       = !!(drillsRes.data?.length);
     const hasCoordinator = !!(settingsRes.data?.recall_coordinator_name);
-    const isUS           = orgRes.data?.region === 'us';
+    // Use the effective region for the signed-in user (per CLAUDE.md
+    // jurisdiction rule) — not the raw organisations.region. A user's
+    // user_settings.region may override the org default at invite time.
+    const isUS           = _orgRegion === 'us';
 
     const steps = [
       {
@@ -3791,7 +3794,7 @@ async function renderRecalls() {
               <div style="font-size:11px;color:var(--muted);margin-top:2px;">${regionTerm('lot_short')}: ${esc(r.lot_number||'—')} · ${esc(r.source||'Manual')} · ${r.created_at?fmtDash(r.created_at):''}</div>
             </div>
             <span style="font-size:10px;padding:2px 8px;border-radius:10px;background:${r.active?'rgba(var(--danger-rgb),0.12)':'rgba(var(--accent-rgb),0.12)'};color:${r.active?'var(--danger)':'var(--accent)'};white-space:nowrap;">${r.active?'Active':'Resolved'}</span>
-            <button onclick="openFdaNotificationFromManualRecall('${r.id}')" title="Generate FDA 21 CFR 7.46 recall notification draft" style="font-size:11px;padding:5px 10px;border-radius:6px;border:1px solid rgba(var(--info-soft-rgb),0.4);background:none;color:#7ba9ff;cursor:pointer;white-space:nowrap;">📋 FDA doc</button>
+            ${_orgRegion === 'us' ? `<button onclick="openFdaNotificationFromManualRecall('${r.id}')" title="Generate FDA 21 CFR 7.46 recall notification draft" style="font-size:11px;padding:5px 10px;border-radius:6px;border:1px solid rgba(var(--info-soft-rgb),0.4);background:none;color:#7ba9ff;cursor:pointer;white-space:nowrap;">📋 FDA doc</button>` : ''}
             ${r.active ? `<button onclick="resolveManualRecall('${r.id}', this)" title="Mark this recall as resolved — it will move to the History tab" style="font-size:11px;padding:5px 10px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;white-space:nowrap;">Resolve</button>` : ''}
           </div>`).join('')}
       </div>` : ''}`;
@@ -3820,7 +3823,7 @@ async function renderRecalls() {
               <div style="font-size:11px;color:var(--muted);margin-top:2px;">${regionTerm('lot_short')}: ${esc(r.lot_number||'—')} · ${esc(r.source||'Manual')} · ${r.resolved_at ? `Resolved ${fmtDash(r.resolved_at)}` : `Filed ${r.created_at?fmtDash(r.created_at):'—'}`}</div>
             </div>
             <span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(var(--accent-rgb),0.12);color:var(--accent);">Resolved</span>
-            <button onclick="openFdaNotificationFromManualRecall('${esc(r.id)}')" title="Generate FDA 21 CFR 7.46 recall notification draft" style="font-size:11px;padding:5px 10px;border-radius:6px;border:1px solid rgba(var(--info-soft-rgb),0.4);background:none;color:#7ba9ff;cursor:pointer;white-space:nowrap;">📋 FDA doc</button>
+            ${_orgRegion === 'us' ? `<button onclick="openFdaNotificationFromManualRecall('${esc(r.id)}')" title="Generate FDA 21 CFR 7.46 recall notification draft" style="font-size:11px;padding:5px 10px;border-radius:6px;border:1px solid rgba(var(--info-soft-rgb),0.4);background:none;color:#7ba9ff;cursor:pointer;white-space:nowrap;">📋 FDA doc</button>` : ''}
           </div>`).join('')}
       </div>` : ''}`;
 
