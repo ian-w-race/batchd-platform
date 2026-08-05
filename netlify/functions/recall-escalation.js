@@ -1,5 +1,11 @@
 // netlify/functions/recall-escalation.js
 // Uses fetch() for Resend API — no SDK needed. Matches push-recall-email.js pattern.
+//
+// SCHEDULE-ONLY (2026-08-05): this function is registered with a cron
+// schedule in netlify.toml, and Netlify scheduled functions cannot be
+// invoked via URL. The dashboard's manual "Send reminders" buttons call
+// the separate plain-HTTP function recall-reminder.js instead. Do NOT
+// add manual-invocation logic here — it would be unreachable.
 
 const { createClient } = require('@supabase/supabase-js');
 
@@ -26,14 +32,6 @@ async function sendEmail(to, subject, html) {
 
 exports.handler = async (event) => {
   try {
-    // Netlify scheduled functions send an empty body — handle both cases cleanly
-    const isScheduled = event.httpMethod === undefined || event.httpMethod === null;
-    const body = event.body ? JSON.parse(event.body) : {};
-    const { recallEventId, orgId } = body;
-
-    if (isScheduled) {
-      console.log('[recall-escalation] Scheduled run — checking all overdue acknowledgements');
-    }
     const sb  = createClient(SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
     const now = new Date();
 
@@ -44,9 +42,6 @@ exports.handler = async (event) => {
         organisations!recall_acknowledgements_organisation_id_fkey(name,contact_email,recall_coordinator_name,recall_coordinator_contact)`)
       .eq('status','notified')
       .eq('recall_events.is_drill', false);
-
-    if (recallEventId) q = q.eq('recall_event_id', recallEventId);
-    if (orgId)         q = q.eq('organisation_id', orgId);
 
     const { data: acks, error } = await q;
     if (error) throw error;
@@ -109,7 +104,7 @@ exports.handler = async (event) => {
 
       if (elapsed >= TWO_H && !ack.escalation_2h_sent_at) {
         try {
-          await sendEmail(toEmail, `[2h Escalation] Recall not acknowledged — ${esc(product)} · ${esc(store)}`, buildHtml('2h'));
+          await sendEmail(toEmail, `[2h Escalation] Recall not acknowledged — ${product} · ${store}`, buildHtml('2h'));
           updates.escalation_2h_sent_at = now.toISOString();
           sent2h++;
         } catch(e) { console.error('2h email error:', e.message); }
@@ -117,14 +112,17 @@ exports.handler = async (event) => {
 
       if (elapsed >= H24 && !ack.escalation_24h_sent_at) {
         try {
-          await sendEmail(toEmail, `[URGENT 24h] Recall still unacknowledged — ${esc(product)} · ${esc(store)}`, buildHtml('24h'));
+          await sendEmail(toEmail, `[URGENT 24h] Recall still unacknowledged — ${product} · ${store}`, buildHtml('24h'));
           updates.escalation_24h_sent_at = now.toISOString();
           sent24h++;
         } catch(e) { console.error('24h email error:', e.message); }
       }
 
       if (Object.keys(updates).length) {
-        await sb.from('recall_acknowledgements').update(updates).eq('id', ack.id);
+        // supabase-js resolves errors instead of throwing — log failed
+        // stamps so a duplicate-email cause is at least visible in logs.
+        const { error: stampErr } = await sb.from('recall_acknowledgements').update(updates).eq('id', ack.id);
+        if (stampErr) console.error('[recall-escalation] stamp update failed:', stampErr.message);
       }
     }
 
