@@ -5546,7 +5546,7 @@ let _rawCapture = null;
 let _ocrOriginal       = '';     // What the AI returned (Sonnet or Tesseract).
 let _ocrOriginalSource = 'none'; // 'sonnet' | 'tesseract_fallback' | 'none'
 let allRecords = [];
-let _cachedActiveRecalls = []; // loaded with history, refreshed on loadHistory
+let _cachedActiveRecalls = []; // populated at login (checkRecallsOnLogin) and refreshed by loadHistory
 let recallLookbackDays = 180; // default 6 months; managers can set 30–365 days
 // In-memory recall match log for debugging — NOT persisted. Each entry:
 //   { scan_id, recall_id, match_type: 'red'|'orange'|'none', matched_on: 'substring'|'barcode'|'product_name_only'|null, ts }
@@ -9096,6 +9096,13 @@ async function matchScanAgainstRecalls(scanId, scanData) {
       // recall_id column. See sweep_recall_matches RPC (DB-side) for the
       // server-side equivalent of this insert path.
       recall_id:        r.id,
+      // Path B (manufacturer-pushed): recall_id AND recall_event_id both
+      // hold recall_events.id per the audit-fix-#6 convention — dashboard
+      // queries by recall_event_id and the FK CASCADE cleanup only work
+      // when the column is populated. Without this, a scan-time match on
+      // a pushed recall wrote a recall_id-only row that permanently
+      // blocked the correct Path B row (unique index + ignoreDuplicates).
+      recall_event_id:  r.source === 'manufacturer_push' ? r.id : null,
       recall_source:    r.source || 'manual',
       recall_product:   r.product_name || null,
       recall_lot:       r.lot_number   || null,
@@ -9987,6 +9994,20 @@ async function checkRecallsOnLogin(silent = false) {
     }));
 
     const recalls = [...(recallsRes.data || []), ...pushedRecalls];
+    // Core-loop fix (2026-08-05): populate the scan-time recall cache at
+    // login. Previously _cachedActiveRecalls was only filled by
+    // loadHistory(), so the pre-placement recall check and the submit-path
+    // match ran against an empty list until someone opened the History
+    // tab — a freshly-logged-in staffer could scan a recalled item with
+    // no warning. This login check already fetches the exact same
+    // normalized shape loadHistory caches (recalls rows + pushed
+    // recall_events mapped to id/product_name/lot_number/barcode_number).
+    // Guarded on query success (verify-fix 2026-08-05): supabase-js
+    // resolves failed queries as {data:null, error} without throwing, so
+    // an unguarded assignment on the 6-hour silent re-check would wipe a
+    // previously good cache to [] on one transient failure — disabling
+    // every scan-time recall safeguard until the next successful load.
+    if (!recallsRes.error && !eventsRes.error) _cachedActiveRecalls = recalls;
     if (!recalls.length) return;
 
     // Deduplicate by product_name + lot_number — duplicate DB rows from repeated
@@ -10242,13 +10263,35 @@ async function saveCoordinator() {
   if (msgEl) { msgEl.style.color = 'var(--muted)'; msgEl.textContent = t('js.saving'); }
   _recallCoordinator = { name, contact, backup };
   try {
+    // Split-brain fix (2026-08-05): the org row is the canonical
+    // coordinator home — compliance scoring, drill certificates and
+    // escalation emails all read organisations.recall_coordinator_*.
+    // RLS only lets corp_admins update organisations; .select('id')
+    // detects the silent zero-row no-op for store managers so the
+    // saved-message stays honest. user_settings keeps a mirror for the
+    // backup field and legacy compat.
+    const { data: _orgUpd, error: _orgErr } = await sb.from('organisations')
+      .update({ recall_coordinator_name: name || null, recall_coordinator_contact: contact || null })
+      .eq('id', _currentOrgId)
+      .select('id');
+    const _orgSaved = !_orgErr && (_orgUpd?.length > 0);
     await sb.from('user_settings').upsert({
       user_id: currentUser.id,
       recall_coordinator_name:    name    || null,
       recall_coordinator_contact: contact || null,
       recall_coordinator_backup:  backup  || null,
     }, { onConflict: 'user_id' });
-    if (msgEl) { msgEl.style.color = 'var(--accent)'; msgEl.textContent = '✓ Saved'; setTimeout(() => { if (msgEl) msgEl.textContent = ''; }, 2500); }
+    if (msgEl) {
+      if (_orgSaved) {
+        msgEl.style.color = 'var(--accent)'; msgEl.textContent = '✓ Saved';
+      } else {
+        msgEl.style.color = 'var(--muted)';
+        msgEl.textContent = currentLang === 'no'
+          ? 'Lagret for deg — organisasjonens koordinator settes av administrator i dashbordet'
+          : 'Saved for you — the org-wide coordinator is set by your corp admin in the dashboard';
+      }
+      setTimeout(() => { if (msgEl) msgEl.textContent = ''; }, 3500);
+    }
   } catch(e) {
     if (msgEl) { msgEl.style.color = 'var(--muted)'; msgEl.textContent = currentLang==='no'?'Lagret lokalt':t('js.saveRecord'); setTimeout(() => { if (msgEl) msgEl.textContent = ''; }, 2000); }
   }
@@ -10256,14 +10299,24 @@ async function saveCoordinator() {
 
 async function loadCoordinator() {
   try {
-    const { data } = await sb.from('user_settings')
-      .select('recall_coordinator_name, recall_coordinator_contact, recall_coordinator_backup')
-      .eq('user_id', currentUser.id).maybeSingle();
-    if (data) {
+    // Split-brain fix (2026-08-05): org row first (canonical), the
+    // user's own user_settings row as fallback for legacy self-saves.
+    // Backup contact lives only in user_settings.
+    const [orgRes, usRes] = await Promise.all([
+      sb.from('organisations')
+        .select('recall_coordinator_name, recall_coordinator_contact')
+        .eq('id', _currentOrgId).maybeSingle(),
+      sb.from('user_settings')
+        .select('recall_coordinator_name, recall_coordinator_contact, recall_coordinator_backup')
+        .eq('user_id', currentUser.id).maybeSingle(),
+    ]);
+    const org  = orgRes.data;
+    const data = usRes.data;
+    if (org || data) {
       _recallCoordinator = {
-        name:    data.recall_coordinator_name    || '',
-        contact: data.recall_coordinator_contact || '',
-        backup:  data.recall_coordinator_backup  || '',
+        name:    org?.recall_coordinator_name    || data?.recall_coordinator_name    || '',
+        contact: org?.recall_coordinator_contact || data?.recall_coordinator_contact || '',
+        backup:  data?.recall_coordinator_backup || '',
       };
       const n = document.getElementById('mgr-coordinator-name');
       const c = document.getElementById('mgr-coordinator-contact');
@@ -10555,14 +10608,27 @@ async function fetchFDARecalls() {
   if (!resp.ok) throw new Error('FDA API error ' + resp.status);
   const data = await resp.json();
   const results = data.results || [];
+  // Dedupe rewrite (2026-08-05): the old per-row check compared the FULL
+  // stored description against the bare recall_number — never equal, so
+  // once any other importer (the daily fetch-recall-feeds function, or a
+  // second device) had seeded rows, every 6-hourly auto-fetch re-inserted
+  // all 20 recalls again, unbounded. Mirror the server importer: one
+  // existence query, in-memory match on the [recall_number] tag that both
+  // importers embed in description.
+  const { data: _existRows, error: _exErr } = await sb.from('recalls')
+    .select('description, product_name')
+    .eq('organisation_id', _currentOrgId)
+    .eq('source', 'fda')
+    .order('created_at', { ascending: false })
+    .limit(400);
+  if (_exErr) throw new Error('FDA dedupe check failed: ' + _exErr.message);
+  let _existingText = (_existRows || [])
+    .map(e => (e.description || '') + ' ' + (e.product_name || ''))
+    .join('\n');
   let added = 0;
   for (const r of results) {
-    const { data: existing } = await sb.from('recalls')
-      .select('id')
-      .eq('description', r.recall_number || r.product_description?.slice(0,80))
-      .eq('organisation_id', _currentOrgId)
-      .maybeSingle();
-    if (existing) continue;
+    const _key = r.recall_number ? `[${r.recall_number}]` : (r.product_description || '').slice(0, 40);
+    if (!_key || _existingText.includes(_key)) continue;
     const { error } = await sb.from('recalls').insert({
       product_name:    r.product_description?.slice(0, 120) || 'FDA Recall',
       lot_number:      r.code_info || null,
@@ -10571,7 +10637,7 @@ async function fetchFDARecalls() {
       active:          true,
       organisation_id: _currentOrgId,
     });
-    if (!error) added++;
+    if (!error) { added++; _existingText += '\n' + _key; }
   }
   return added;
 }
@@ -10611,6 +10677,24 @@ async function fetchRASFFRecalls() {
 
 async function fetchMattilsynetRecalls() {
   let added = 0;
+  // Dedupe rewrite (2026-08-05): one existence query, in-memory prefix
+  // matching, shared by the RSS branch and the page-scrape fallback.
+  // The old per-row ilike had no % wildcard (never matched once titles
+  // longer than the stored 120-char product_name were truncated) and
+  // maybeSingle() errors once 2+ duplicate rows exist — treated as "no
+  // dupe", making it insert MORE duplicates forever. Prefix-match only
+  // when the title was actually truncated; short titles require full
+  // equality so a new short title can't false-match an older longer one.
+  const { data: _existRows, error: _exErr } = await sb.from('recalls')
+    .select('product_name')
+    .eq('organisation_id', _currentOrgId)
+    .eq('source', 'mattilsynet')
+    .order('created_at', { ascending: false })
+    .limit(400);
+  if (_exErr) throw new Error('Mattilsynet dedupe check failed: ' + _exErr.message);
+  const _existingNames = (_existRows || []).map(e => e.product_name || '');
+  const _isDupe = (title) => _existingNames.some(n =>
+    title.length > 60 ? n.startsWith(title.slice(0, 60)) : n === title.slice(0, 120));
   try {
     const resp = await fetch('/.netlify/functions/recall-feeds?source=mattilsynet_rss');
     if (!resp.ok) throw new Error('Mattilsynet RSS proxy error ' + resp.status);
@@ -10629,9 +10713,7 @@ async function fetchMattilsynetRecalls() {
       if (!isRecall) continue;
       const desc = item.querySelector('description')?.textContent?.trim() || '';
       const link = item.querySelector('link')?.textContent?.trim() || '';
-      const { data: existing } = await sb.from('recalls')
-        .select('id').ilike('product_name', title.slice(0, 80)).eq('organisation_id', _currentOrgId).maybeSingle();
-      if (existing) continue;
+      if (_isDupe(title)) continue;
       const { error } = await sb.from('recalls').insert({
         product_name:    title.slice(0, 120),
         description:     (desc.replace(/<[^>]+>/g, '')).slice(0, 200) + (link ? ' [mattilsynet.no]' : ''),
@@ -10639,7 +10721,7 @@ async function fetchMattilsynetRecalls() {
         active:          true,
         organisation_id: _currentOrgId,
       });
-      if (!error) added++;
+      if (!error) { added++; _existingNames.push(title.slice(0, 120)); }
     }
   } catch(e) {
     console.warn('Mattilsynet RSS failed, trying tilbakekallinger page:', e);
@@ -10652,9 +10734,7 @@ async function fetchMattilsynetRecalls() {
         const slug  = m[1];
         const title = m[2].trim();
         if (!title || title.length < 10) continue;
-        const { data: existing } = await sb.from('recalls')
-          .select('id').ilike('product_name', title.slice(0, 80)).eq('organisation_id', _currentOrgId).maybeSingle();
-        if (existing) continue;
+        if (_isDupe(title)) continue;
         const { error } = await sb.from('recalls').insert({
           product_name:    title.slice(0, 120),
           description:     `Mattilsynet tilbakekalling. mattilsynet.no/tilbakekallinger/${slug}`,
@@ -10662,7 +10742,7 @@ async function fetchMattilsynetRecalls() {
           active:          true,
           organisation_id: _currentOrgId,
         });
-        if (!error) added++;
+        if (!error) { added++; _existingNames.push(title.slice(0, 120)); }
       }
     } catch(e2) {
       throw new Error('Mattilsynet fallback also failed: ' + e2.message);
@@ -10713,11 +10793,19 @@ async function loadHistory() {
       source:         'manufacturer_push',
     }));
   }
-  _cachedActiveRecalls = [...(recallsRes.data || []), ...pushedRecalls];
+  // Guarded on query success (verify-fix 2026-08-05, mirrors the
+  // checkRecallsOnLogin guard): a transient failure of the recalls or
+  // distributions query must not wipe a previously good cache — that
+  // would silently disable the pre-placement recall check and the
+  // post-save match until the next successful load.
+  if (!recallsRes.error && !distRes.error) {
+    _cachedActiveRecalls = [...(recallsRes.data || []), ...pushedRecalls];
+  }
   buildStoreDropdown();
   applyFilters();
   // Pass already-fetched recalls so checkActiveRecalls doesn't re-query for the same data.
-  // Saves ~200-500ms on every history-page open.
+  // Saves ~200-500ms on every history-page open. On a failed fetch this
+  // passes the retained previous cache.
   checkActiveRecalls(_cachedActiveRecalls);
 }
 
@@ -19902,12 +19990,28 @@ function openRecallActionSheet(scanId) {
   const coordContact = document.getElementById('recall-sheet-coord-contact');
   const coordTel     = document.getElementById('recall-sheet-coord-tel');
   if (coordCard) {
-    // Load coordinator from user_settings (cached after first load)
-    sb.from('user_settings')
-      .select('recall_coordinator_name, recall_coordinator_contact')
-      .eq('user_id', currentUser.id)
-      .maybeSingle()
-      .then(({ data }) => {
+    // Split-brain fix (2026-08-05): the coordinator is org-level
+    // (organisations.recall_coordinator_*). The old query read the
+    // signed-in STAFF user's own user_settings row — which never has a
+    // coordinator — so this card never showed for floor staff during a
+    // live recall. Fallback to the user's own row covers legacy
+    // self-saved values.
+    (async () => {
+      let data = null;
+      try {
+        const orgRes = await sb.from('organisations')
+          .select('recall_coordinator_name, recall_coordinator_contact')
+          .eq('id', _currentOrgId)
+          .maybeSingle();
+        data = orgRes.data;
+        if (!data?.recall_coordinator_name) {
+          const usRes = await sb.from('user_settings')
+            .select('recall_coordinator_name, recall_coordinator_contact')
+            .eq('user_id', currentUser.id)
+            .maybeSingle();
+          data = usRes.data;
+        }
+      } catch (_) { /* card stays hidden below */ }
         if (data?.recall_coordinator_name) {
           if (coordName) coordName.textContent = data.recall_coordinator_name;
           if (coordContact) coordContact.textContent = data.recall_coordinator_contact || '';
@@ -19924,7 +20028,7 @@ function openRecallActionSheet(scanId) {
         } else {
           coordCard.style.display = 'none';
         }
-      });
+    })();
   }
 
   // Reset steps

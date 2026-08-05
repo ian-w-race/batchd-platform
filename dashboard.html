@@ -2420,19 +2420,22 @@ organisation_id for this user = "${_orgId}"`;
 async function checkOnboardingStatus() {
   // Run lightweight checks and show/hide the nav item
   try {
-    const [storesRes, partnersRes, scansRes, drillsRes, settingsRes] = await Promise.all([
+    const [storesRes, partnersRes, scansRes, drillsRes, settingsRes, orgCoordRes] = await Promise.all([
       sb.from('stores').select('id').eq('organisation_id', _orgId).limit(1),
       sb.from('trading_partners').select('id').eq('retailer_id', _orgId).eq('status', 'active').limit(1),
       sb.from('scans').select('id').eq('organisation_id', _orgId).limit(1),
       sb.from('mock_recall_drills').select('id').eq('initiated_by_org', _orgId).limit(1),
       sb.from('user_settings').select('recall_coordinator_name').eq('user_id', (await sb.auth.getUser()).data?.user?.id).single(),
+      // Split-brain fix (2026-08-05): org row is the canonical coordinator
+      // home; user_settings kept as fallback for pre-fix saves.
+      sb.from('organisations').select('recall_coordinator_name').eq('id', _orgId).single(),
     ]);
     const steps = [
       !!(storesRes.data?.length),
       !!(partnersRes.data?.length),
       !!(scansRes.data?.length),
       !!(drillsRes.data?.length),
-      !!(settingsRes.data?.recall_coordinator_name),
+      !!(orgCoordRes.data?.recall_coordinator_name || settingsRes.data?.recall_coordinator_name),
     ];
     const done = steps.filter(Boolean).length;
     const total = steps.length;
@@ -2466,14 +2469,16 @@ async function renderOnboarding() {
       sb.from('scans').select('id').eq('organisation_id', _orgId).limit(1),
       sb.from('mock_recall_drills').select('id, started_at').eq('initiated_by_org', _orgId).order('started_at', {ascending:false}).limit(1),
       sb.from('user_settings').select('recall_coordinator_name, recall_coordinator_contact').eq('user_id', (await sb.auth.getUser()).data?.user?.id).single(),
-      sb.from('organisations').select('name, contact_email, region').eq('id', _orgId).single(),
+      sb.from('organisations').select('name, contact_email, region, recall_coordinator_name').eq('id', _orgId).single(),
     ]);
 
     const hasStores      = !!(storesRes.data?.length);
     const hasPartners    = !!(partnersRes.data?.length);
     const hasScans       = !!(scansRes.data?.length);
     const hasDrill       = !!(drillsRes.data?.length);
-    const hasCoordinator = !!(settingsRes.data?.recall_coordinator_name);
+    // Split-brain fix (2026-08-05): org row first, user_settings fallback.
+    const coordName      = orgRes.data?.recall_coordinator_name || settingsRes.data?.recall_coordinator_name || null;
+    const hasCoordinator = !!coordName;
     // Use the effective region for the signed-in user (per CLAUDE.md
     // jurisdiction rule) — not the raw organisations.region. A user's
     // user_settings.region may override the org default at invite time.
@@ -2516,7 +2521,7 @@ async function renderOnboarding() {
         title: 'Designate a recall coordinator',
         desc: 'Assign a named person with 24/7 contact details as your recall coordinator. Required by FDA and Mattilsynet as a named responsible party.',
         detail: hasCoordinator
-          ? `Coordinator: ${settingsRes.data.recall_coordinator_name}`
+          ? `Coordinator: ${coordName}`
           : 'No recall coordinator assigned.',
         cta: 'Set coordinator →', action: `showPanel('settings')`,
         reg: isUS ? 'FDA 21 CFR 7.49 — named coordinator required' : 'Mattilsynet §16 — named responsible party',
@@ -3389,7 +3394,10 @@ async function renderRecalls() {
     // consumer-notice text, CSV exports, Consumer Notify picker, etc.).
     sb.from('recalls').select('*, reason:description').eq('organisation_id', _orgId).order('created_at', {ascending:false}).limit(300),
     sb.from('recall_acknowledgements').select('*, stores(name), recall_events(is_drill)').eq('organisation_id', _orgId).order('created_at', {ascending:false}).limit(300),
-    sb.from('user_settings').select('recall_coordinator_name, recall_coordinator_contact, recall_coordinator_backup').eq('user_id', userId).single(),
+    // Split-brain fix (2026-08-05): coordStrip reads the canonical org-row
+    // coordinator (same source as compliance scoring, drill certificates
+    // and escalation emails), not the per-user user_settings mirror.
+    sb.from('organisations').select('recall_coordinator_name, recall_coordinator_contact').eq('id', _orgId).single(),
     sb.from('recall_distributions').select('recall_event_id, est_affected_units, distributed_at').eq('retailer_org_id', _orgId),
     sb.from('scan_recall_matches').select('recall_id, scans!inner(removed_from_shelf_at)').eq('organisation_id', _orgId).is('scans.removed_from_shelf_at', null),
     sb.from('trading_partners').select('organisations!trading_partners_manufacturer_id_fkey(id, name)').eq('retailer_id', _orgId).eq('status', 'active'),
@@ -5380,15 +5388,41 @@ async function resolveManualRecall(recallId, btn) {
 }
 
 async function sendRecallReminder(recallEventId, productName) {
+  // 2026-08-05 core-loop fix: this button POSTed to recall-reminder,
+  // which did not exist in the repo — every click 404'd. The function
+  // now exists (auth'd corp_admin-only wrapper around the reminder
+  // email send; recall-escalation itself is schedule-only and can't be
+  // invoked via URL).
+  if (_userRole !== 'corp_admin') {
+    showToast('Only corp admins can send recall reminders.', 'error', 4000);
+    return;
+  }
   const btn = event?.target;
   if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
   try {
+    // Drills never send reminder emails (mirrors sendRecallReminders'
+    // pre-check; the server filters is_drill too — this just keeps the
+    // toast honest instead of a misleading "No stores pending").
+    const { data: evRow } = await sb.from('recall_events').select('is_drill').eq('id', recallEventId).maybeSingle();
+    if (evRow?.is_drill) {
+      showToast('This is a mock drill — reminder emails are not sent for drills.', 'info', 4000);
+      return;
+    }
+    const { data: { session } } = await sb.auth.getSession();
+    const jwt = session?.access_token;
+    if (!jwt) throw new Error('Session expired — sign in again.');
     const res = await fetch('/.netlify/functions/recall-reminder', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ recallEventId, productName, orgId: _orgId }),
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${jwt}` },
+      body: JSON.stringify({ recallEventId, orgId: _orgId }),
     });
-    const data = await res.json();
-    showToast(data.sent > 0 ? `Reminder sent — ${data.pendingStores} store${data.pendingStores!==1?'s':''} notified` : 'No stores pending', 'ok', 3500);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Send failed (${res.status})`);
+    const n = data.sentManual ?? 0;
+    const failedN = data.failed ?? 0;
+    showToast(n > 0 ? `Reminder sent — ${n} store${n !== 1 ? 's' : ''} notified`
+      : failedN > 0 ? 'Email service error — no reminders sent.'
+      : 'No stores pending', n > 0 ? 'ok' : failedN > 0 ? 'error' : 'info', 3500);
   } catch(e) {
     showToast('Could not send reminder: ' + e.message, 'error', 4000);
   } finally {
@@ -6482,12 +6516,21 @@ async function sendRecallReminders(recallEventId) {
   }
   try {
     const { data: acks, error } = await sb.from('recall_acknowledgements')
-      .select('id, status')
+      .select('id, status, recall_events(is_drill)')
       .eq('recall_event_id', recallEventId)
       .eq('organisation_id', _orgId);
     if (error) throw error;
 
-    const targets = (acks || []).filter(a => a.status !== 'confirmed');
+    // Mock drills never send reminder emails (CLAUDE.md: drills are
+    // training, not real recalls). Bail with a clear message instead of
+    // a misleading server-side zero-send.
+    const real = (acks || []).filter(a => !a.recall_events?.is_drill);
+    if ((acks || []).length > 0 && real.length === 0) {
+      showToast('This is a mock drill — reminder emails are not sent for drills.', 'info', 4000);
+      return;
+    }
+
+    const targets = real.filter(a => a.status !== 'confirmed');
     if (targets.length === 0) {
       showToast('All stores have already reached Resolved — no reminders needed.', 'info', 3500);
       return;
@@ -6495,14 +6538,30 @@ async function sendRecallReminders(recallEventId) {
 
     if (!confirm(`Send reminders to ${targets.length} store${targets.length === 1 ? '' : 's'} that haven\'t reached Resolved?`)) return;
 
-    const now = new Date().toISOString();
-    const { error: upErr } = await sb.from('recall_acknowledgements')
-      .update({ escalation_2h_sent_at: now })
-      .in('id', targets.map(a => a.id))
-      .eq('organisation_id', _orgId);
-    if (upErr) throw upErr;
+    // Real send (2026-08-05 core-loop fix): POST recall-reminder so
+    // actual emails go out. Previously this only stamped
+    // escalation_2h_sent_at — no email was ever sent, and the stamp
+    // suppressed the automated 2h escalation those stores would
+    // otherwise have received. NOTE: recall-escalation itself is a
+    // SCHEDULED function and cannot be invoked via URL — the manual
+    // path must stay on recall-reminder. The function stamps the
+    // timestamps itself, after a confirmed send.
+    const { data: { session } } = await sb.auth.getSession();
+    const jwt = session?.access_token;
+    if (!jwt) throw new Error('Session expired — sign in again.');
+    const res = await fetch('/.netlify/functions/recall-reminder', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${jwt}` },
+      body: JSON.stringify({ recallEventId, orgId: _orgId }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Send failed (${res.status})`);
 
-    showToast(`Reminder sent to ${targets.length} store${targets.length === 1 ? '' : 's'}.`, 'ok', 3000);
+    const n = data.sentManual ?? 0;
+    const failedN = data.failed ?? 0;
+    if (n > 0) showToast(`Reminder email${n === 1 ? '' : 's'} sent for ${n} store${n === 1 ? '' : 's'}.`, 'ok', 3500);
+    else if (failedN > 0) showToast('Email service error — no reminders were sent. Try again shortly.', 'error', 4500);
+    else showToast('No eligible stores to remind.', 'info', 3500);
     setTimeout(() => renderRecallDetail(), 500);
   } catch (e) {
     showToast('Could not send reminders: ' + (e.message || 'unknown error'), 'error', 4500);
@@ -11364,7 +11423,14 @@ async function renderSettings() {
     }
     userSett = res.data;
   }
-  const coord        = userSett || {};
+  // Split-brain fix (2026-08-05): coordinator name/contact are canonical
+  // on the org row; backup contact still lives in user_settings only.
+  // Fallback to user_settings covers orgs that saved before the fix.
+  const coord = {
+    recall_coordinator_name:    org?.recall_coordinator_name    ?? userSett?.recall_coordinator_name    ?? '',
+    recall_coordinator_contact: org?.recall_coordinator_contact ?? userSett?.recall_coordinator_contact ?? '',
+    recall_coordinator_backup:  userSett?.recall_coordinator_backup ?? '',
+  };
   const lookbackDays = userSett?.recall_lookback_days || 180;
   // Org-level recall_source is canonical (migration 012). Fall back to legacy
   // user_settings.recall_source if the org column hasn't been populated yet,
@@ -11703,13 +11769,23 @@ async function saveCoordinatorSettings() {
   if (!name) { setMsg('Coordinator name is required.', false); return; }
   if (btn) { btn.disabled=true; btn.textContent='Saving…'; }
   const userId = (await sb.auth.getUser()).data?.user?.id;
+  // Split-brain fix (2026-08-05): the canonical home for the coordinator
+  // is organisations.recall_coordinator_* — compliance scoring, drill
+  // certificates, joint reports and the escalation emails all read the
+  // org row. Previously this only wrote user_settings, so an assigned
+  // coordinator still showed "Not assigned" everywhere that mattered.
+  // user_settings keeps a mirror for the backup-contact field and
+  // legacy compat.
+  const { error: orgErr } = await sb.from('organisations')
+    .update({ recall_coordinator_name: name, recall_coordinator_contact: contact||null })
+    .eq('id', _orgId);
   const { error } = await sb.from('user_settings').upsert({
     user_id: userId, organisation_id: _orgId,
     recall_coordinator_name: name,
     recall_coordinator_contact: contact||null,
     recall_coordinator_backup:  backup||null,
   }, { onConflict: 'user_id' });
-  if (error) { setMsg(error.message, false); }
+  if (orgErr || error) { setMsg((orgErr || error).message, false); }
   else { setMsg('✓ Coordinator saved — named on all audit reports.', true); checkOnboardingStatus(); }
   if (btn) { btn.disabled=false; btn.textContent='Save coordinator'; }
 }
