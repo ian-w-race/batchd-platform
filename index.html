@@ -3617,7 +3617,7 @@
         <div class="flow-phase-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;">
           <div>
             <div class="flow-phase-title" data-i18n="p2.title">Register Lot Code</div>
-            <div class="flow-phase-sub" id="step2-sub" data-i18n="p2.captureGuide">Type the lot code as printed on the pack</div>
+            <div class="flow-phase-sub" id="step2-sub" data-i18n="p2.captureGuide">Align the lot code inside the box</div>
           </div>
           <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
             <!-- Lot Code Helper — re-opens the first-use illustrated guide on demand.
@@ -3645,20 +3645,20 @@
           <!-- Header bar: entry instructions on the left, Step 2/3 badge auto-injected on the right via #p2-mode-toggle::after CSS -->
           <div class="mode-toggle" id="p2-mode-toggle">
             <div style="min-width:0;">
-              <div data-i18n="p2.captureGuide" style="font-size:13px;font-weight:700;color:var(--text);line-height:1.3;">Type the lot code as printed on the pack</div>
+              <div data-i18n="p2.captureGuide" style="font-size:13px;font-weight:700;color:var(--text);line-height:1.3;">Align the lot code inside the box</div>
               <div data-i18n="p2.captureSubGuide" style="margin-top:2px;font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;line-height:1.4;">Usually near the bottom or back of the pack</div>
             </div>
           </div>
 
-          <!-- MANUAL ENTRY STATE — bare-bones lot registration (2026-08-05 pivot).
-               The camera→AI raw-capture flow below is retired until GS1 2D
-               barcodes are universal enough to scan reliably. Staff read the
-               printed code off the pack and type it in. The typed string is
-               written verbatim to #field-raw-capture and flows through the
-               exact same confirmRawCapture() → _rawCapture → substring
-               recall-matching path the OCR flow used — Phase 3, submitScan
-               and recall matching are untouched. -->
-          <div id="p2-manual-state" style="display:flex;flex-direction:column;width:100%;gap:12px;padding:14px 4px 0;box-sizing:border-box;">
+          <!-- TYPE-IN STATE — hybrid flow (2026-08-05). Shown the instant
+               snapLotPhoto() grabs a frame: cropped reference photo on top
+               (tap to zoom), typed input below with the keyboard already up.
+               The typed string is written verbatim to #field-raw-capture and
+               flows through the exact same confirmRawCapture() → _rawCapture
+               → substring recall-matching path the retired OCR flow used —
+               Phase 3, submitScan and recall matching are untouched. -->
+          <div id="p2-manual-state" style="display:none;flex-direction:column;width:100%;gap:12px;padding:14px 4px 0;box-sizing:border-box;">
+            <img id="p2-manual-thumb" src="" alt="" style="display:none;width:100%;max-height:110px;object-fit:contain;background:var(--surface2);border:1px solid var(--border);border-radius:10px;cursor:pointer;" onclick="if(this.src)openLightbox(this.src)" />
             <div>
               <label for="p2-manual-input" style="display:block;font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;letter-spacing:0.07em;text-transform:uppercase;margin-bottom:8px;">
                 <span data-i18n="p2.manualLabel">Lot / batch code</span>
@@ -3680,25 +3680,18 @@
               </button>
             </div>
 
-            <button onclick="skipLotCapture()" id="btn-skip-lot" style="background:none;border:none;color:var(--muted);font-size:12px;text-decoration:underline;cursor:pointer;padding:10px;text-align:center;align-self:center;font-family:'Figtree',sans-serif;">
-              <span data-i18n="p2.noLotCode">No lot code on this product</span>
-            </button>
-            <!-- Back to Step 1 — for when the user realises they identified
-                 the wrong product and needs to redo the label scan. Returning
-                 to Phase 1 re-shows the confirmation overlay so they can
-                 re-confirm or retake the product photo. -->
-            <button onclick="goToPhase(1)" id="btn-back-to-step1" style="background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;padding:6px 10px 12px;text-align:center;align-self:center;font-family:'Figtree',sans-serif;">
-              <span data-i18n="p2.backToStep1">← Back to product</span>
+            <button onclick="retakeLotPhoto()" id="btn-retake-lot-photo" style="background:none;border:none;color:var(--muted);font-size:12px;text-decoration:underline;cursor:pointer;padding:10px;text-align:center;align-self:center;font-family:'Figtree',sans-serif;">
+              <span data-i18n="action.retake">↩ Retake</span>
             </button>
           </div>
 
-          <!-- CAPTURE STATE — RETIRED 2026-08-05 (manual-entry pivot). Camera +
-               AI raw-capture markup kept intact but permanently hidden so DOM
-               ids stay alive for legacy read paths and an easy revert: flip
-               this display to flex, restore the camera branch of
-               _showP2CaptureState(), re-add the startOcrCamera() call in
-               goToPhase(2), and restore the tesseract.js script tag. -->
-          <div id="p2-capture-state" style="display:none;flex-direction:column;width:100%;">
+          <!-- PHOTO STATE — hybrid flow (2026-08-05). One fast frame-grab of
+               the lot code, no AI, no OCR, no waiting: snapLotPhoto() swaps
+               straight to the type-in state with the keyboard already up.
+               The photo is stored as evidence ({ts}_lotcode.jpg via the
+               existing submitScan upload pipeline) and doubles as a zoomable
+               reference while typing. -->
+          <div id="p2-capture-state" style="display:flex;flex-direction:column;width:100%;">
             <div class="camera-wrap" id="barcode-cam-wrap">
               <div class="camera-placeholder" id="barcode-placeholder">
                 <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -3728,14 +3721,20 @@
             </div>
 
             <div class="btn-row">
-              <button class="btn btn-primary" id="btn-snap-raw" onclick="snapRawCluster()">
+              <button class="btn btn-primary" id="btn-snap-raw" onclick="snapLotPhoto()">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
                 <span data-i18n="action.capture"> Capture</span>
               </button>
             </div>
 
-            <!-- skip + back links moved up into #p2-manual-state (2026-08-05)
-                 so their ids stay unique in the DOM. -->
+            <button onclick="skipLotCapture()" id="btn-skip-lot" style="background:none;border:none;color:var(--muted);font-size:12px;text-decoration:underline;cursor:pointer;padding:10px;text-align:center;align-self:center;font-family:'Figtree',sans-serif;">
+              <span data-i18n="p2.noLotCode">No lot code on this product</span>
+            </button>
+            <!-- Back to Step 1 — for when the user realises they identified
+                 the wrong product and needs to redo the label scan. -->
+            <button onclick="goToPhase(1)" id="btn-back-to-step1" style="background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;padding:6px 10px 12px;text-align:center;align-self:center;font-family:'Figtree',sans-serif;">
+              <span data-i18n="p2.backToStep1">← Back to product</span>
+            </button>
           </div>
 
           <!-- CONFIRM STATE — captured thumbnail + verbatim string (editable) + buttons.
@@ -7867,11 +7866,10 @@ function goToPhase(n) {
     }
     setTimeout(() => setPhase1Mode(phase1Mode), 100);
   } else if (n === 2) {
-    // Manual-entry pivot (2026-08-05): Phase 2 is a typed lot-code input —
-    // no camera, no OCR. Reset the entry state; the typed string flows
-    // through the same confirmRawCapture() path the camera flow used.
-    // (Camera-flow revert: re-add `setTimeout(() => { startOcrCamera()
-    // .catch(() => {}); }, 100);` here.)
+    // Hybrid flow (2026-08-05): fast lot photo → instant type-in.
+    // Reset Phase 2 state and bring up the live camera. snapLotPhoto()
+    // grabs one frame with no AI/OCR wait and swaps straight to the
+    // typed input with the keyboard already up.
     _rawCapture = null;
     barcodeBlob = null;
     const _input = document.getElementById('field-raw-capture');
@@ -7880,26 +7878,21 @@ function goToPhase(n) {
     if (_manual) _manual.value = '';
     const _thumb = document.getElementById('p2-captured-thumb');
     if (_thumb) _thumb.removeAttribute('src');
+    const _mThumb = document.getElementById('p2-manual-thumb');
+    if (_mThumb) { _mThumb.removeAttribute('src'); _mThumb.style.display = 'none'; }
     _showP2CaptureState();
+    setTimeout(() => { startOcrCamera().catch(() => {}); }, 100);
 
     // First-use Lot Code Helper overlay — show once per device, dismissable.
     // The persistent '?' button in the header re-opens it on demand. Wrapped
     // in try/catch because some private-browsing modes throw on localStorage.
-    // When the overlay is about to show, skip the auto-focus so the keyboard
-    // doesn't pop up underneath it.
-    let _lotHelpSeen = true;
-    try { _lotHelpSeen = !!localStorage.getItem('batchd_lot_help_seen'); } catch (_) {}
-    if (_lotHelpSeen) {
-      // Focus after the phase transition settles — brings up the keyboard
-      // on most mobile browsers when the transition came from a tap.
-      setTimeout(() => {
-        if (currentPhase === 2) document.getElementById('p2-manual-input')?.focus();
-      }, 250);
-    } else {
-      setTimeout(() => {
-        if (currentPhase === 2) openLotHelpOverlay();
-      }, 600);
-    }
+    try {
+      if (!localStorage.getItem('batchd_lot_help_seen')) {
+        setTimeout(() => {
+          if (currentPhase === 2) openLotHelpOverlay();
+        }, 600);
+      }
+    } catch (_) {}
   }
 }
 
@@ -8185,12 +8178,14 @@ function showView(view) {
     if (currentPhase === 1) {
       // Always use the Phase 1 mode system — never call startProductCamera directly
       setPhase1Mode(phase1Mode);
-    } else if (currentPhase === 2) {
-      // Manual-entry pivot (2026-08-05): Phase 2 has no camera — nothing
-      // to resume when returning to the scan view. Restarting one here
-      // would light the camera indicator behind the typed-input UI.
-      // (Camera-flow revert: restore the srcObject-check /
-      // startBarcodeScanner / startOcrCamera branch.)
+    } else if (currentPhase === 2 && !barcodeBlob) {
+      // Hybrid flow (2026-08-05): re-warm the lot-photo camera when
+      // returning to the scan view, but only while still in the photo
+      // step — once a photo is captured (barcodeBlob set) the user is
+      // typing and no camera should restart behind the keyboard.
+      const bvid = document.getElementById('barcode-video');
+      if (bvid && bvid.srcObject) bvid.play().catch(() => {});
+      else startOcrCamera();
     }
   }
 }
@@ -9184,7 +9179,10 @@ async function saveRecord() {
 
   if (!productBlob && phase1Mode === 'label' && !_lotUnavailable) return setMsg('⚠ ' + (currentLang==='no' ? 'Ta et produktbilde først.' : 'Please capture a product photo first.'), 'warn');
   if (!productBlob && phase1Mode === 'barcode') return setMsg('⚠ ' + (currentLang==='no' ? 'Produktbilde mangler. Ta strekkodebilde på nytt.' : 'Product photo could not be captured. Please retake the barcode scan.'), 'warn');
-  if (!barcodeBlob && !_lotUnavailable) return setMsg('⚠ ' + (currentLang==='no' ? 'Ta et bilde av parti-/batchkoden.' : 'Please scan and capture the lot/batch photo.'), 'warn');
+  // Hybrid flow (2026-08-05): a scan is saveable when ANY capture exists —
+  // a lot photo, a typed code, or the explicit "no lot code" skip. Only
+  // block when all three are absent.
+  if (!barcodeBlob && !_lotUnavailable && !_rawCapture) return setMsg('⚠ ' + (currentLang==='no' ? 'Ta et bilde av parti-/batchkoden.' : 'Please scan and capture the lot/batch photo.'), 'warn');
   if (!productName) return setMsg('⚠ ' + (currentLang==='no' ? 'Produktnavn er påkrevd.' : 'Product name is required.'), 'warn');
   const lotUnavailChk = document.getElementById('lot-unavailable-toggle')?.checked;
   if (!lotNum && !lotUnavailChk) return setMsg('⚠ ' + (currentLang==='no' ? 'Partinummer er påkrevd. Skriv det inn manuelt, eller merk «Partinummer utilgjengelig».' : 'Lot number is required. Enter it manually, or mark "Lot Number Unavailable".'), 'warn');
@@ -13053,16 +13051,101 @@ function stopP2BackgroundSanityCheck() {
 // the existing expiry_date column purely for human-readable display.
 
 function _showP2CaptureState() {
-  // Manual-entry pivot (2026-08-05): "capture state" now means the typed-
-  // input state. The retired camera state stays hidden; the confirm state
-  // is unreachable. All legacy callers (resetForm, retakeRawCapture) land
-  // here and correctly get the manual input back.
+  // Hybrid flow (2026-08-05): the photo step. Legacy callers (resetForm,
+  // retakeRawCapture) land here and correctly get the camera back.
+  const manual = document.getElementById('p2-manual-state');
+  const cap  = document.getElementById('p2-capture-state');
+  const conf = document.getElementById('p2-confirm-state');
+  if (cap)  cap.style.display = 'flex';
+  if (manual) manual.style.display = 'none';
+  if (conf) conf.style.display = 'none';
+}
+
+function _showP2TypeState() {
+  // Hybrid flow: the type-in step shown right after snapLotPhoto().
   const manual = document.getElementById('p2-manual-state');
   const cap  = document.getElementById('p2-capture-state');
   const conf = document.getElementById('p2-confirm-state');
   if (manual) manual.style.display = 'flex';
   if (cap)  cap.style.display = 'none';
   if (conf) conf.style.display = 'none';
+}
+
+// ── FAST LOT PHOTO (2026-08-05 hybrid flow) ──────────────────
+// One tap: grab the frame, swap to the type-in state, and focus the
+// input — all synchronously inside the tap gesture so the keyboard
+// opens immediately (iOS only raises the keyboard for focus() calls
+// made during a user gesture). No AI, no OCR, no waiting: the photo
+// is evidence + a zoomable reference while typing. Blob encoding for
+// the storage upload happens async after the keyboard is already up.
+function snapLotPhoto() {
+  const vid = document.getElementById('barcode-video');
+  if (!vid || !vid.videoWidth) {
+    showToast(currentLang === 'no' ? 'Kameraet starter fortsatt — prøv igjen.' : 'Camera still starting — try again.', 'warn', 2500);
+    return;
+  }
+
+  // 1. Grab frames synchronously (two cheap drawImage calls). Full frame
+  //    → storage evidence; guide-region crop → legible typing reference.
+  //    cropFrac stays in sync with the #p2-frame-guide inset percentages.
+  const fullCanvas = document.createElement('canvas');
+  fullCanvas.width  = vid.videoWidth;
+  fullCanvas.height = vid.videoHeight;
+  fullCanvas.getContext('2d').drawImage(vid, 0, 0);
+
+  const cropFrac = { x: 0.10, y: 0.30, w: 0.80, h: 0.40 };
+  const srcX = Math.floor(vid.videoWidth  * cropFrac.x);
+  const srcY = Math.floor(vid.videoHeight * cropFrac.y);
+  const srcW = Math.floor(vid.videoWidth  * cropFrac.w);
+  const srcH = Math.floor(vid.videoHeight * cropFrac.h);
+  const cropCanvas = document.createElement('canvas');
+  cropCanvas.width  = srcW;
+  cropCanvas.height = srcH;
+  cropCanvas.getContext('2d').drawImage(vid, srcX, srcY, srcW, srcH, 0, 0, srcW, srcH);
+
+  // 2. Swap to the type state + focus — still inside the tap gesture.
+  //    Stop the background wrong-package poll so it can't toast while
+  //    the phone is pointed at the floor mid-typing.
+  if (typeof stopP2BackgroundSanityCheck === 'function') stopP2BackgroundSanityCheck();
+  _showP2TypeState();
+  const inp = document.getElementById('p2-manual-input');
+  if (inp) inp.focus();
+
+  // 3. Thumbnail from the cropped region (sync toDataURL is ~10-25ms at
+  //    this size — cheap, and avoids object-URL bookkeeping).
+  const thumb = document.getElementById('p2-manual-thumb');
+  if (thumb) {
+    try { thumb.src = cropCanvas.toDataURL('image/jpeg', 0.85); thumb.style.display = 'block'; }
+    catch (e) { thumb.style.display = 'none'; }
+  }
+
+  // 4. Async: encode the full frame for the existing evidence pipeline.
+  //    barcodeBlob → submitScan uploads it to scan-photos as
+  //    {ts}_lotcode.jpg; #barcode-captured src → Phase 3 review thumb
+  //    via populateReview.
+  fullCanvas.toBlob((blob) => {
+    if (!blob) return;
+    barcodeBlob = blob;
+    const legacyImg = document.getElementById('barcode-captured');
+    if (legacyImg) {
+      const url = URL.createObjectURL(blob);
+      legacyImg.addEventListener('load', () => URL.revokeObjectURL(url), { once: true });
+      legacyImg.src = url;
+      // Belt-and-suspenders revoke in case the load event never fires.
+      setTimeout(() => URL.revokeObjectURL(url), 3000);
+    }
+  }, 'image/jpeg', 0.92);
+}
+
+// Retake from the type state — back to the live camera. Typed text is
+// preserved (the user may have entered part of the code already); the
+// next snap simply replaces the reference photo.
+function retakeLotPhoto() {
+  barcodeBlob = null;
+  _showP2CaptureState();
+  // Shared stream usually still live — startOcrCamera is idempotent and
+  // re-wires the video element either way.
+  startOcrCamera().catch(() => {});
 }
 
 function _showP2ConfirmState() {
@@ -13391,6 +13474,13 @@ function retakeRawCapture() {
 function skipLotCapture() {
   _rawCapture = null;
   barcodeBlob = null;
+  // "No lot code on this product" is an explicit statement that the code
+  // is unavailable — mark it so submitScan's capture-required validation
+  // doesn't block the save (fixes the stale "Please scan and capture the
+  // lot/batch photo" warn on the skip path).
+  _lotUnavailable = true;
+  const _luT = document.getElementById('lot-unavailable-toggle');
+  if (_luT) _luT.checked = true;
   const lotEl = document.getElementById('field-lot');
   if (lotEl) lotEl.value = '';
   const expiryEl = document.getElementById('field-expiry');
@@ -16236,14 +16326,14 @@ const TRANSLATIONS = {
     'p1.productName': 'Product Name', 'p1.confirm': 'Confirm & Continue →',
     // Phase 2
     'p2.title': 'Register Lot Code',
-    'p2.sub': 'Find the lot code on the packaging and type it in exactly as printed. Look for: L, LOT, BATCH, MFG DATE, or just a string of numbers.',
+    'p2.sub': 'Snap a quick photo of the lot code, then type it in exactly as printed. Look for: L, LOT, BATCH, MFG DATE, or just a string of numbers.',
     // Raw-capture rebuild — Phase 2 keys for the new single-photo flow
-    'p2.captureGuide': 'Type the lot code as printed on the pack',
+    'p2.captureGuide': 'Align the lot code inside the box',
     'p2.captureSubGuide': 'Usually near the bottom or back of the pack',
     'p2.manualLabel': 'Lot / batch code',
     'p2.manualHint': 'Include everything printed — letters, numbers and dates.',
     'p2.continueBtn': ' Continue',
-    'p2.typeFirst': 'Type the lot code — or tap “No lot code on this product”.',
+    'p2.typeFirst': 'Type the code as printed — or tap ↩ Retake if it isn’t readable.',
     'p2.reading': 'Reading text…',
     'p2.captured': 'Captured',
     'p2.verifyHint': 'Compare with the package — edit anything missing or wrong before continuing.',
@@ -16668,14 +16758,14 @@ const TRANSLATIONS = {
     'p1.productName': 'Produktnavn', 'p1.confirm': 'Bekreft & fortsett →',
     // Phase 2
     'p2.title': 'Registrer partikode',
-    'p2.sub': 'Finn partikoden på emballasjen og skriv den inn nøyaktig slik den står. Se etter: L, Parti, BATCH, eller bare en serie tall.',
+    'p2.sub': 'Ta et raskt bilde av partikoden, og skriv den deretter inn nøyaktig slik den står. Se etter: L, Parti, BATCH, eller bare en serie tall.',
     // Råfangst-omarbeidelse — Fase 2 nøkler for den nye enkeltfoto-flyten
-    'p2.captureGuide': 'Skriv partikoden slik den står på pakken',
+    'p2.captureGuide': 'Plasser partikoden inne i boksen',
     'p2.captureSubGuide': 'Vanligvis nederst eller på baksiden av pakken',
     'p2.manualLabel': 'Parti-/batchkode',
     'p2.manualHint': 'Ta med alt som står — bokstaver, tall og datoer.',
     'p2.continueBtn': ' Fortsett',
-    'p2.typeFirst': 'Skriv inn partikoden — eller trykk «Ingen partikode på dette produktet».',
+    'p2.typeFirst': 'Skriv koden slik den står — eller trykk ↩ Ta på nytt hvis den ikke er lesbar.',
     'p2.reading': 'Leser tekst…',
     'p2.captured': 'Fanget',
     'p2.verifyHint': 'Sammenlign med pakken — rediger alt som mangler eller er feil før du fortsetter.',
