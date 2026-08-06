@@ -13,6 +13,55 @@
   to = "/signup.html"
   status = 200
 
+# Legal pages (2026-08-06): signup previously linked batchd.no/terms and
+# /privacy, both of which 404'd. The documents now live in this repo and
+# resolve on every domain this site serves.
+[[redirects]]
+  from = "/terms"
+  to = "/terms.html"
+  status = 200
+
+[[redirects]]
+  from = "/privacy"
+  to = "/privacy.html"
+  status = 200
+
+# ── Domain hygiene (2026-08-06) ─────────────────────────────
+# One Netlify site serves every domain, so by default every file is
+# reachable on every domain. These HOST-SCOPED rules give each domain
+# one job: corporate.batchdapp.com is the dashboard (clean root URL),
+# app.batchdapp.com / batchd-app.netlify.app are the scanner. Rules are
+# host-exact, so staging-- and deploy-preview-- subdomains are
+# unaffected. The JS domain-detection at the top of index.html still
+# handles the retired manufacturer/admin/supplier stubs.
+
+# corporate root serves the dashboard without /dashboard.html in the URL
+[[redirects]]
+  from = "https://corporate.batchdapp.com/"
+  to = "/dashboard.html"
+  status = 200
+  force = true
+
+# canonicalise the file path on corporate to the clean root
+[[redirects]]
+  from = "https://corporate.batchdapp.com/dashboard.html"
+  to = "https://corporate.batchdapp.com/"
+  status = 301
+  force = true
+
+# the dashboard is only presented on corporate.*
+[[redirects]]
+  from = "https://app.batchdapp.com/dashboard.html"
+  to = "https://corporate.batchdapp.com/"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "https://batchd-app.netlify.app/dashboard.html"
+  to = "https://corporate.batchdapp.com/"
+  status = 301
+  force = true
+
 # ── Scheduled functions ─────────────────────────────────────
 # recall-escalation runs every 30 minutes and sends 2h/24h escalation
 # emails to stores that haven't acknowledged recalls.
