@@ -10,8 +10,13 @@ to manually insert.
 - Work surgically — do not break what works
 - Never expose API keys in client-side code
 - batchd.no is the brand website — never touch it
-- All routing is done via JavaScript domain detection 
-  inside each HTML file — no _redirects files
+- Routing (updated 2026-08-06): host-scoped rules in netlify.toml
+  are the authority for the domain split — corporate.batchdapp.com
+  serves the dashboard at its clean root; /dashboard.html on the
+  scanner domains 301s to corporate. The JS domain-detection snippet
+  at the top of index.html only handles the retired
+  manufacturer/admin/supplier subdomain stubs. No _redirects files —
+  all server-side rules live in netlify.toml.
 
 ## Retailer-only platform (post-chunk-6 pivot)
 Batch'd has been streamlined to a retailer-only platform.
