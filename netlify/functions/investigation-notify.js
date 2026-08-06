@@ -55,7 +55,7 @@ async function notifyRetailers(body) {
   const deadlineStr = deadline_at ? new Date(deadline_at).toLocaleString('en-GB', { day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit', timeZoneName:'short' }) : 'As soon as possible';
   const urgencyLabel = urgencyLabels[urgency_class] || urgencyLabels[2];
   const issueLabel = issueLabels[issue_type] || 'Product Issue';
-  const responseUrl = `https://app.batchdapp.com/dashboard.html#investigations`;
+  const responseUrl = `https://corporate.batchdapp.com/#investigations`;
 
   const subject = `[${urgency_class === 1 ? 'URGENT' : 'ACTION REQUIRED'}] Product Investigation — ${product_name}`;
 

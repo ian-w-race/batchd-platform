@@ -29,7 +29,11 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const RESEND_API_KEY       = process.env.RESEND_API_KEY;
 const FROM_EMAIL           = 'alerts@batchdapp.com';
 const FROM_NAME            = "Batch'd Alerts";
-const APP_BASE_URL         = process.env.APP_BASE_URL || 'https://app.batchdapp.com';
+// Domain hygiene (2026-08-06): dashboard links point at the corporate
+// domain. If the APP_BASE_URL env var is still set to app.batchdapp.com,
+// links keep working via the 301 in netlify.toml — but update the env
+// var to https://corporate.batchdapp.com to skip the extra hop.
+const APP_BASE_URL         = process.env.APP_BASE_URL || 'https://corporate.batchdapp.com';
 
 // ── Supabase REST helpers ──────────────────────────────────────
 
@@ -134,7 +138,10 @@ async function listRecipients(orgId, prefKey, storeIdScope) {
   return recipients;
 }
 
-// ── Verify caller is a member of the claimed org ──────────────
+// ── Verify caller is a privileged member of the claimed org ───
+// Membership alone isn't enough — floor staff are deliberately blocked
+// from triggering email blasts (audit fix 2026-06-14, anti-spam).
+// Only corp_admin / store_manager roles can fire this function.
 async function verifyCallerOrgMembership(jwt, orgId) {
   if (!jwt) return false;
   try {
@@ -147,13 +154,15 @@ async function verifyCallerOrgMembership(jwt, orgId) {
     const userData = await userRes.json();
     const userId = userData?.id;
     if (!userId) return false;
-    // Verify membership
+    // Verify membership + role
     const members = await sbQuery('organisation_members', {
-      select: 'user_id',
+      select: 'user_id,role',
       user_id: `eq.${userId}`,
       organisation_id: `eq.${orgId}`,
     });
-    return Array.isArray(members) && members.length > 0;
+    if (!Array.isArray(members) || members.length === 0) return false;
+    const role = members[0]?.role;
+    return role === 'corp_admin' || role === 'store_manager';
   } catch (_) { return false; }
 }
 
