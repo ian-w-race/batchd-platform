@@ -3895,16 +3895,24 @@
             <input type="text" id="field-shelf-location" placeholder="e.g. Aisle 4, Dairy shelf 2" autocorrect="off" />
           </div>
 
-          <!-- Units placed — mandatory -->
+          <!-- Units placed — mandatory. Speed polish (2026-08-08): defaults
+               to the last-used quantity with ± steppers so the common case
+               (same case size all shift) never opens the numeric keyboard. -->
           <div class="field" id="field-quantity-wrap">
             <label style="display:flex;align-items:center;justify-content:space-between;">
-              <span>Units on shelf <span id="qty-required-badge" style="color:var(--danger);font-size:10px;margin-left:4px;">*required</span></span>
+              <span>Units on shelf <span id="qty-required-badge" style="color:var(--danger);font-size:10px;margin-left:4px;display:none;">*required</span></span>
             </label>
-            <input type="number" id="field-quantity" value="" min="1" max="999"
-              placeholder="How many units?"
-              inputmode="numeric" pattern="[0-9]*"
-              oninput="onQtyInput()"
-              style="border-color:rgba(var(--danger-rgb),0.5);background:rgba(var(--danger-rgb),0.03);" />
+            <div style="display:flex;gap:8px;align-items:stretch;">
+              <button type="button" onclick="stepQty(-1)" aria-label="One fewer unit"
+                style="width:52px;min-height:44px;flex-shrink:0;border-radius:10px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:22px;font-weight:700;line-height:1;cursor:pointer;touch-action:manipulation;">−</button>
+              <input type="number" id="field-quantity" value="1" min="1" max="999"
+                placeholder="How many units?"
+                inputmode="numeric" pattern="[0-9]*"
+                oninput="onQtyInput()"
+                style="flex:1;min-width:0;text-align:center;border-color:rgba(var(--accent-rgb),0.4);" />
+              <button type="button" onclick="stepQty(1)" aria-label="One more unit"
+                style="width:52px;min-height:44px;flex-shrink:0;border-radius:10px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:22px;font-weight:700;line-height:1;cursor:pointer;touch-action:manipulation;">+</button>
+            </div>
           </div>
 
           <div class="field">
@@ -7873,6 +7881,19 @@ function goToPhase(n) {
     }
     setTimeout(() => setPhase1Mode(phase1Mode), 100);
   } else if (n === 2) {
+    // Speed polish (2026-08-08): coming BACK from the review step to fix
+    // a typo must not wipe the captured work. Preserve the photo + typed
+    // code, reopen the type-in state prefilled, and skip the camera
+    // restart. A fresh forward entry (from Phase 1) still resets fully.
+    const _returningFromReview = currentPhase === 3 && (!!_rawCapture || !!barcodeBlob);
+    if (_returningFromReview) {
+      const _mi = document.getElementById('p2-manual-input');
+      if (_mi) _mi.value = _rawCapture || '';
+      _showP2TypeState();
+      setTimeout(() => {
+        if (currentPhase === 2) document.getElementById('p2-manual-input')?.focus();
+      }, 250);
+    } else {
     // Hybrid flow (2026-08-05): fast lot photo → instant type-in.
     // Reset Phase 2 state and bring up the live camera. snapLotPhoto()
     // grabs one frame with no AI/OCR wait and swaps straight to the
@@ -7889,6 +7910,7 @@ function goToPhase(n) {
     if (_mThumb) { _mThumb.removeAttribute('src'); _mThumb.style.display = 'none'; }
     _showP2CaptureState();
     setTimeout(() => { startOcrCamera().catch(() => {}); }, 100);
+    }
 
     // First-use Lot Code Helper overlay — show once per device, dismissable.
     // The persistent '?' button in the header re-opens it on demand. Wrapped
@@ -9218,6 +9240,10 @@ async function saveRecord() {
   const btn = document.getElementById('btn-save');
   btn.disabled = true;
 
+  // Speed polish (2026-08-08): remember the quantity as the next scan's
+  // default (see resetForm).
+  try { localStorage.setItem('batchd_last_qty', String(quantity)); } catch (_) {}
+
   // Perf fix #11: kick off the duplicate check IN PARALLEL with photo uploads.
   // Previously this was awaited serially before uploads, adding ~100-200ms of
   // round-trip latency to every save. The check still gates the final insert
@@ -9291,8 +9317,12 @@ async function saveRecord() {
   // ── Offline support ──
   if (!navigator.onLine) {
     try {
-      const productB64 = await blobToBase64(productBlob);
-      const barcodeB64 = await blobToBase64(barcodeBlob);
+      // Null-guards (2026-08-08): the "No lot code" skip path has no lot
+      // photo, and the lot-unavailable path can lack a product photo —
+      // blobToBase64(null) threw here and stranded the offline save with
+      // a generic error. The replay path already tolerates null b64.
+      const productB64 = productBlob ? await blobToBase64(productBlob) : null;
+      const barcodeB64 = barcodeBlob ? await blobToBase64(barcodeBlob) : null;
       offlineQueue.push({ payload, productB64, barcodeB64, ts: Date.now() });
       localStorage.setItem('batched_offline_queue', JSON.stringify(offlineQueue));
       updateQueueBadge();
@@ -9771,15 +9801,19 @@ function resetForm() {
   // Restore persistent shelf location (survives across scans in a shift)
   const _persistShelf = sessionStorage.getItem('batched_shelf') || '';
   document.getElementById('field-shelf-location').value = _persistShelf;
-  // Qty is mandatory per scan — reset to empty so user must enter it each time
+  // Speed polish (2026-08-08): qty defaults to the last-used value so
+  // the common case — same case size all shift — never opens the
+  // numeric keyboard. Staff adjust with the ± steppers when a case
+  // differs. (Was: wiped to empty every scan, forcing 200 keyboard
+  // trips per shift.) onQtyInput() applies the valid styling + hides
+  // the required badge.
   const qtyEl = document.getElementById('field-quantity');
   if (qtyEl) {
-    qtyEl.value = '';
-    qtyEl.style.borderColor = 'rgba(var(--danger-rgb),0.5)';
-    qtyEl.style.background  = 'rgba(var(--danger-rgb),0.03)';
+    let _lastQty = 1;
+    try { _lastQty = parseInt(localStorage.getItem('batchd_last_qty') || sessionStorage.getItem('batched_qty') || '1', 10) || 1; } catch (_) {}
+    qtyEl.value = String(Math.min(999, Math.max(1, _lastQty)));
   }
-  const qtyBadge = document.getElementById('qty-required-badge');
-  if (qtyBadge) qtyBadge.style.display = 'inline';
+  if (typeof onQtyInput === 'function') onQtyInput();
   _manualEditPending = false;
   document.getElementById('barcode-captured').style.display = 'none';
   document.getElementById('barcode-captured').src = '';
@@ -14349,6 +14383,17 @@ function extractExpiryFromText(text) {
 // ── MANUAL CORRECTION TRACKING ───────────────────────────────
 // Detect when employee manually edits lot/batch — flag for feedback loop
 let _manualEditPending = false;
+
+// Speed polish (2026-08-08): ± stepper handler. Clamps to the same
+// 1–999 range saveRecord validates.
+function stepQty(delta) {
+  const input = document.getElementById('field-quantity');
+  if (!input) return;
+  const cur  = parseInt(input.value, 10);
+  const next = Math.min(999, Math.max(1, (Number.isInteger(cur) ? cur : 1) + delta));
+  input.value = String(next);
+  onQtyInput();
+}
 
 function onQtyInput() {
   const input = document.getElementById('field-quantity');
