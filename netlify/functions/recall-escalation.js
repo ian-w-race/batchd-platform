@@ -31,6 +31,15 @@ async function sendEmail(to, subject, html) {
 }
 
 exports.handler = async (event) => {
+  // Cron-singleton guard (2026-08-08): two Netlify sites deploy this
+  // repo, so netlify.toml's schedule arms on BOTH — two crons racing
+  // every 30 minutes can double-send escalation emails. The site with
+  // SCHEDULED_FUNCTIONS_DISABLED=true skips its scheduled runs; exactly
+  // one site must be left without the variable.
+  if (process.env.SCHEDULED_FUNCTIONS_DISABLED === 'true') {
+    console.log('[recall-escalation] skipped — scheduled functions disabled on this site');
+    return { statusCode: 200, body: JSON.stringify({ skipped: 'scheduled functions disabled on this site' }) };
+  }
   try {
     const sb  = createClient(SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
     const now = new Date();
