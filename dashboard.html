@@ -6267,7 +6267,25 @@ async function renderCommandCenter() {
 
       `;
 
-    const ctrl = renderStoreMap(document.getElementById('map-test-container'), stores, { height: '620px' });
+    // Fit-to-viewport map (2026-08-09): the fixed 620px height pushed the
+    // Command Center below the fold. Measure the space between the map's
+    // top edge and the viewport bottom at render time and size the map to
+    // end ~24px above the fold — self-adjusting on any screen height.
+    // Clamped 340–720px so tiny laptops keep a usable map and huge
+    // displays don't get an ocean. The Active Recalls rail is capped to
+    // the same height and scrolls internally, so it can't re-break the
+    // no-scroll promise when drill cards stack up.
+    const _mapEl  = document.getElementById('map-test-container');
+    const _availH = Math.round(window.innerHeight - _mapEl.getBoundingClientRect().top - 24);
+    const _mapH   = Math.max(340, Math.min(720, _availH));
+    const ctrl = renderStoreMap(_mapEl, stores, { height: _mapH + 'px' });
+    const _railList = document.getElementById('active-recalls-list');
+    if (_railList) {
+      // Rail header (~40px) + footer note (~30px) share the column.
+      _railList.style.maxHeight = Math.max(220, _mapH - 74) + 'px';
+      _railList.style.overflowY = 'auto';
+      _railList.style.overscrollBehavior = 'contain';
+    }
 
     // Helper to switch a filter pill's visual active state.
     const _activatePill = (filterKey) => {
