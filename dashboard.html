@@ -5767,7 +5767,17 @@ function renderStoreMap(container, stores, options) {
   container.style.borderRadius = '12px';
   container.style.overflow = 'hidden';
   container.style.border = '1px solid var(--border)';
-  container.style.background = '#0a1814';
+
+  // Theme-aware map (2026-08-09): CARTO Dark Matter tiles on the dark
+  // theme, CARTO Positron on light — a dark map pane on the light theme
+  // read as a hole in the page. Theme lives on <html data-theme> (an
+  // explicit operator toggle, per design rules) and can flip while the
+  // map is mounted, so a MutationObserver below swaps tiles + pane +
+  // legend live without re-rendering the panel.
+  const _mapTheme = () => document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+  const _tileUrl  = (th) => `https://{s}.basemaps.cartocdn.com/${th === 'light' ? 'light_all' : 'dark_all'}/{z}/{x}/{y}{r}.png`;
+  const _paneBg   = (th) => th === 'light' ? '#e9eeec' : '#0a1814';
+  container.style.background = _paneBg(_mapTheme());
 
   const map = L.map(container, {
     zoomControl: true,
@@ -5775,9 +5785,9 @@ function renderStoreMap(container, stores, options) {
     scrollWheelZoom: true
   });
 
-  // CARTO Dark Matter — same tiles as the Claude Design mockup.
+  // CARTO tiles — same family as the Claude Design mockup.
   // Free for our scale; attribution required (Leaflet shows it bottom-right by default).
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  const tiles = L.tileLayer(_tileUrl(_mapTheme()), {
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
     subdomains: 'abcd',
     maxZoom: 19
@@ -5854,19 +5864,45 @@ function renderStoreMap(container, stores, options) {
   // Legend (bottom-left). Includes the "mock drills not shown" footnote
   // per Ian's confirmation that mock drills track separately.
   const legend = L.control({ position: 'bottomleft' });
+  // Legend styling is theme-computed so the observer below can restyle
+  // it live when the operator flips dark/light.
+  let _legendDiv = null;
+  const _legendBase  = 'border-radius:10px;padding:10px 14px;font-family:Figtree,sans-serif;font-size:11px;min-width:170px;line-height:1.5;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);';
+  const _legendSkin  = (th) => th === 'light'
+    ? 'background:rgba(255,255,255,0.94);border:1px solid rgba(7,122,85,0.25);color:#0e1f1a;'
+    : 'background:rgba(17,25,24,0.92);border:1px solid rgba(var(--accent-rgb),0.18);color:#f0f3f1;';
+  const _legendNoteCol = (th) => th === 'light' ? '#5a6661' : '#9aa6a1';
   legend.onAdd = function () {
     const div = L.DomUtil.create('div', 'batchd-map-legend');
-    div.style.cssText = 'background:rgba(17,25,24,0.92);border:1px solid rgba(var(--accent-rgb),0.18);border-radius:10px;padding:10px 14px;font-family:Figtree,sans-serif;font-size:11px;color:#f0f3f1;min-width:170px;line-height:1.5;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);';
+    _legendDiv = div;
+    div.style.cssText = _legendSkin(_mapTheme()) + _legendBase;
     const legendItems = Object.keys(labels).map(k => `
       <div style="display:flex;align-items:center;gap:8px;"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${colors[k] || fallbackColor};flex-shrink:0;"></span>${labels[k]}</div>
     `).join('');
     const noteHtml = legendNote
-      ? `<div style="font-size:9.5px;color:#9aa6a1;margin-top:6px;border-top:1px solid rgba(var(--accent-rgb),0.14);padding-top:6px;letter-spacing:0.02em;">${legendNote}</div>`
+      ? `<div class="batchd-map-legend-note" style="font-size:9.5px;color:${_legendNoteCol(_mapTheme())};margin-top:6px;border-top:1px solid rgba(var(--accent-rgb),0.14);padding-top:6px;letter-spacing:0.02em;">${legendNote}</div>`
       : '';
     div.innerHTML = `<div style="display:flex;flex-direction:column;gap:6px;">${legendItems}${noteHtml}</div>`;
     return div;
   };
   legend.addTo(map);
+
+  // Live theme swap — retile + restyle without re-rendering the panel.
+  // One observer per mounted map; the previous one is disconnected when
+  // the container re-renders (Leaflet re-init clears the DOM anyway).
+  if (container._themeObs) container._themeObs.disconnect();
+  const _themeObs = new MutationObserver(() => {
+    const th = _mapTheme();
+    tiles.setUrl(_tileUrl(th));
+    container.style.background = _paneBg(th);
+    if (_legendDiv) {
+      _legendDiv.style.cssText = _legendSkin(th) + _legendBase;
+      const _noteEl = _legendDiv.querySelector('.batchd-map-legend-note');
+      if (_noteEl) _noteEl.style.color = _legendNoteCol(th);
+    }
+  });
+  _themeObs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  container._themeObs = _themeObs;
 
   // setFilter — fade non-matching markers without removing them, so the
   // map keeps its full geographic context. Pass 'all' to clear the filter.
