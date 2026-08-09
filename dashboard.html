@@ -7473,7 +7473,16 @@ async function renderStores() {
         </div>
       </div>` : ''}
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
-      <div style="font-size:11px;color:var(--muted);">${list.filter(s=>s.active).length} active · ${list.length} total locations</div>
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+        <!-- List | Map segmented toggle (2026-08-09) -->
+        <div style="display:inline-flex;background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:3px;gap:2px;" role="tablist" aria-label="Store view">
+          <button onclick="setStoresView('list')" role="tab" aria-selected="${_storesView === 'list'}"
+            style="font-family:'DM Mono',monospace;font-size:11px;padding:5px 12px;border-radius:6px;border:none;cursor:pointer;letter-spacing:0.03em;${_storesView === 'list' ? 'background:var(--surface2);color:var(--text);font-weight:700;' : 'background:none;color:var(--muted);'}">List</button>
+          <button onclick="setStoresView('map')" role="tab" aria-selected="${_storesView === 'map'}"
+            style="font-family:'DM Mono',monospace;font-size:11px;padding:5px 12px;border-radius:6px;border:none;cursor:pointer;letter-spacing:0.03em;${_storesView === 'map' ? 'background:var(--surface2);color:var(--text);font-weight:700;' : 'background:none;color:var(--muted);'}">Map · ${list.filter(_hasCoords).length}</button>
+        </div>
+        <div style="font-size:11px;color:var(--muted);">${list.filter(s=>s.active).length} active · ${list.length} total locations</div>
+      </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn-ghost" onclick="importStores()" style="display:flex;align-items:center;gap:6px;font-size:12px;padding:7px 13px;">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -7543,6 +7552,8 @@ async function renderStores() {
       </div>
     </div>
 
+    ${_storesView === 'map' ? `
+      <div id="stores-map"></div>` : `
     <div class="panel">
       <div class="panel-body" style="padding:${list.length===0?'18px':'0'};">
         ${list.length === 0
@@ -7570,7 +7581,12 @@ async function renderStores() {
                     <span title="${_mapDot.t}" aria-label="${_mapDot.t}" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${_mapDot.c};margin-right:8px;vertical-align:middle;flex-shrink:0;"></span>${s.address||'—'}
                   </td>
                   <td style="text-align:right;white-space:nowrap;">
-                    <button onclick="editStore('${s.id}')"
+                    ${_hasCoords(s) ? `<button onclick="viewStoreOnMap('${s.id}')" title="View on map" aria-label="View ${s.name} on the map"
+                      style="font-family:'DM Mono',monospace;font-size:10px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;margin-right:6px;display:inline-flex;align-items:center;vertical-align:middle;"
+                      onmouseenter="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'"
+                      onmouseleave="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                    </button>` : ''}<button onclick="editStore('${s.id}')"
                       style="font-family:'DM Mono',monospace;font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);cursor:pointer;">
                       Edit
                     </button>
@@ -7586,7 +7602,38 @@ async function renderStores() {
               </tbody>
             </table>`}
       </div>
-    </div>`;
+    </div>`}`;
+
+  // Map view mount (2026-08-09) — shared renderer, viewport-fit height
+  // (same measure-to-fold approach as the Command Center map).
+  if (_storesView === 'map') {
+    const _mEl = document.getElementById('stores-map');
+    if (_mEl) {
+      const _mapped = list.filter(_hasCoords).map(s => ({ ...s, _status: s.active ? 'active' : 'inactive' }));
+      const _missing = incompleteAddress.length + failedGeocode.length;
+      const _availH = Math.round(window.innerHeight - _mEl.getBoundingClientRect().top - 24);
+      const _ctrl = renderStoreMap(_mEl, _mapped, {
+        height: Math.max(340, Math.min(720, _availH)) + 'px',
+        colors: { active: '#34d399', inactive: '#7a8985' },
+        labels: { active: 'Active store', inactive: 'Inactive' },
+        legendNote: _missing > 0
+          ? `${_missing} store${_missing === 1 ? ' is' : 's are'} not on the map yet —<br>the banner above explains why.`
+          : null,
+      });
+      // Deep-link from a row's "view on map" pin: zoom + open its popup.
+      if (_ctrl && _storesFocusId) {
+        const _fs = window._storesById[_storesFocusId];
+        if (_fs && _hasCoords(_fs)) {
+          _ctrl.map.setView([_fs.latitude, _fs.longitude], 14);
+          const _mk = Object.values(_ctrl.markersByStatus).flat().find(m =>
+            Math.abs(m.getLatLng().lat - _fs.latitude) < 1e-9 &&
+            Math.abs(m.getLatLng().lng - _fs.longitude) < 1e-9);
+          if (_mk) setTimeout(() => _mk.openPopup(), 250);
+        }
+        _storesFocusId = null;
+      }
+    }
+  }
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading stores: ${e.message}</div>`;
   }
@@ -7595,6 +7642,24 @@ async function renderStores() {
     console.error('[renderStores]', _renderErr);
     if (_errEl) _errEl.innerHTML += `<div style="margin:20px 0;padding:16px;background:rgba(var(--danger-rgb),0.08);border:1px solid rgba(var(--danger-rgb),0.2);border-radius:10px;font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;"><strong style="color:var(--danger);">Error loading Stores</strong><br>${_renderErr.message}</div>`;
   }
+}
+
+// ── Store Network view state (List | Map, 2026-08-09) ─────────
+// Same shared map renderer as the Command Center, scoped to this
+// panel: active stores mint, inactive gray. View choice sticks for
+// the session; a row's "view on map" pin deep-links to its marker.
+let _storesView = (() => { try { return sessionStorage.getItem('batchd_stores_view') || 'list'; } catch (_) { return 'list'; } })();
+let _storesFocusId = null;
+
+function setStoresView(v) {
+  _storesView = v === 'map' ? 'map' : 'list';
+  try { sessionStorage.setItem('batchd_stores_view', _storesView); } catch (_) {}
+  renderStores();
+}
+
+function viewStoreOnMap(storeId) {
+  _storesFocusId = storeId;
+  setStoresView('map');
 }
 
 let _editingStoreId = null;
