@@ -5787,7 +5787,15 @@ function renderStoreMap(container, stores, options) {
   // map is mounted, so a MutationObserver below swaps tiles + pane +
   // legend live without re-rendering the panel.
   const _mapTheme = () => document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
-  const _tileUrl  = (th) => `https://{s}.basemaps.cartocdn.com/${th === 'light' ? 'light_all' : 'dark_all'}/{z}/{x}/{y}{r}.png`;
+  // MapTiler tiles (2026-09-05): CARTO's free basemaps began serving
+  // "API KEY REQUIRED" watermark tiles. The dataviz-dark/-light pair
+  // keeps the theme swap working. NOTE: this is a PUBLISHABLE map-tile
+  // key, locked to our domains via MapTiler's allowed-origins list —
+  // same category as the Supabase anon key, NOT a secret (see
+  // SECRETS.md). 512px tiles per MapTiler's Leaflet integration
+  // (tileSize 512 / zoomOffset -1 on the layer).
+  const _MAPTILER_KEY = 'dsiR1bxIjn6BofI8HTEZ';
+  const _tileUrl  = (th) => `https://api.maptiler.com/maps/${th === 'light' ? 'dataviz-light' : 'dataviz-dark'}/{z}/{x}/{y}.png?key=${_MAPTILER_KEY}`;
   const _paneBg   = (th) => th === 'light' ? '#e9eeec' : '#0a1814';
   container.style.background = _paneBg(_mapTheme());
 
@@ -5797,12 +5805,13 @@ function renderStoreMap(container, stores, options) {
     scrollWheelZoom: true
   });
 
-  // CARTO tiles — same family as the Claude Design mockup.
-  // Free for our scale; attribution required (Leaflet shows it bottom-right by default).
+  // Attribution required by MapTiler's free tier (shown bottom-right).
   const tiles = L.tileLayer(_tileUrl(_mapTheme()), {
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
-    subdomains: 'abcd',
-    maxZoom: 19
+    attribution: '&copy; <a href="https://www.maptiler.com/copyright/">MapTiler</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>',
+    tileSize: 512,
+    zoomOffset: -1,
+    maxZoom: 19,
+    crossOrigin: true
   }).addTo(map);
 
   // Markers — also indexed by status so setFilter() can fade them in groups.
