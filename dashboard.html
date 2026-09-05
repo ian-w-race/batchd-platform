@@ -2440,9 +2440,12 @@ organisation_id for this user = "${_orgId}"`;
 async function checkOnboardingStatus() {
   // Run lightweight checks and show/hide the nav item
   try {
-    const [storesRes, partnersRes, scansRes, drillsRes, settingsRes, orgCoordRes] = await Promise.all([
+    // Getting-started fix (2026-09-05). The retired manufacturer-partner
+    // step was still counted here, so the badge could never pass 4/5 and
+    // nagged every org forever. Four real steps now: stores, first scan,
+    // first drill, coordinator.
+    const [storesRes, scansRes, drillsRes, settingsRes, orgCoordRes] = await Promise.all([
       sb.from('stores').select('id').eq('organisation_id', _orgId).limit(1),
-      sb.from('trading_partners').select('id').eq('retailer_id', _orgId).eq('status', 'active').limit(1),
       sb.from('scans').select('id').eq('organisation_id', _orgId).limit(1),
       sb.from('mock_recall_drills').select('id').eq('initiated_by_org', _orgId).limit(1),
       sb.from('user_settings').select('recall_coordinator_name').eq('user_id', (await sb.auth.getUser()).data?.user?.id).single(),
@@ -2452,7 +2455,6 @@ async function checkOnboardingStatus() {
     ]);
     const steps = [
       !!(storesRes.data?.length),
-      !!(partnersRes.data?.length),
       !!(scansRes.data?.length),
       !!(drillsRes.data?.length),
       !!(orgCoordRes.data?.recall_coordinator_name || settingsRes.data?.recall_coordinator_name),
@@ -6049,7 +6051,7 @@ async function renderCommandCenter() {
       sb.from('stores').select('*').eq('organisation_id', _orgId),
       sb.from('scan_recall_matches').select('store_id, scan_id, recall_id, recall_event_id').eq('organisation_id', _orgId),
       sb.from('recall_acknowledgements')
-        .select('id, store_id, recall_event_id, status, acknowledged_at, pulled_at, disposed_at, confirmed_at, created_at, recall_events(id, product_name, lot_number, severity, reason, is_drill, published_at)')
+        .select('id, store_id, recall_event_id, status, acknowledged_at, pulled_at, disposed_at, confirmed_at, created_at, recall_events(id, product_name, lot_number, severity, reason, is_drill, published_at, closed_at)')
         .eq('organisation_id', _orgId)
         .order('created_at', { ascending: false })
         .limit(500),
@@ -6154,8 +6156,11 @@ async function renderCommandCenter() {
         isDrill: !!ev.is_drill
       };
     })
-    // In flight only — drop fully-resolved events
-    .filter(r => !r.allConfirmed && r.total > 0)
+    // In flight only. Drops fully-resolved events AND administratively
+    // closed ones (closed_at from markRecallComplete). Before this
+    // check, a closed drill with unfinished stores sat in the rail
+    // forever. That is how two 130-day-old drills haunted the page.
+    .filter(r => !r.allConfirmed && r.total > 0 && !r.ev?.closed_at)
     // Newest first
     .sort((a, b) => new Date(b.startedAt || 0) - new Date(a.startedAt || 0));
 
@@ -6218,6 +6223,14 @@ async function renderCommandCenter() {
       {
         label: 'Network coverage',
         value: coveragePct != null ? `${coveragePct}%` : '—',
+        // Coverage is the one tile that demands action when it is bad.
+        // Threshold color makes 0% look like the alarm it is, and the
+        // click-through answers "who isn't scanning" in one tap.
+        valueColor: coveragePct == null ? 'var(--muted)'
+          : coveragePct < 30 ? 'var(--danger)'
+          : coveragePct < 70 ? 'var(--warn)'
+          : 'var(--accent)',
+        panel: 'staff',
         detail: activeStoresAll.length > 0
           ? `${scanningStoreCount} of ${activeStoresAll.length} stores scanning · last 72h`
           : 'No active stores yet'
@@ -6286,6 +6299,16 @@ async function renderCommandCenter() {
           <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;">
             ${stagesHtml}
           </div>
+          ${r.isDrill ? `
+          <div style="margin-top:10px;display:flex;justify-content:flex-end;">
+            <button onclick="event.stopPropagation();markRecallComplete('${esc(r.id)}')"
+              title="Close this drill and lock its audit trail"
+              style="font-family:'DM Mono',monospace;font-size:10px;padding:4px 10px;border-radius:var(--r-xs);border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;"
+              onmouseenter="this.style.borderColor='var(--warn)';this.style.color='var(--warn)'"
+              onmouseleave="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">
+              End drill
+            </button>
+          </div>` : ''}
         </div>`;
     };
 
@@ -6332,9 +6355,10 @@ async function renderCommandCenter() {
       <!-- Quick stats — 4 tiles. auto-fit collapses to 2 cols at narrow widths. -->
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:14px;">
         ${quickStats.map(t => `
-          <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;">
+          <div ${t.panel ? `onclick="showPanel('${t.panel}')" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showPanel('${t.panel}');}" title="Open ${esc(t.label)} details"` : ''}
+               style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;${t.panel ? 'cursor:pointer;' : ''}">
             <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;">${esc(t.label)}</div>
-            <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:22px;color:var(--text);line-height:1.1;">${esc(t.value)}</div>
+            <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:22px;color:${t.valueColor || 'var(--text)'};line-height:1.1;">${esc(t.value)}</div>
             <div style="font-size:10.5px;color:var(--muted);margin-top:5px;line-height:1.4;">${esc(t.detail)}</div>
           </div>`).join('')}
       </div>
@@ -6759,7 +6783,13 @@ async function markRecallComplete(recallEventId) {
     }
 
     showToast('Recall closed. Audit trail locked.', 'ok', 3000);
-    setTimeout(() => renderRecallDetail(), 500);
+    // Re-render whichever panel the caller is on. The detail page keeps
+    // its locked view; the Command Center's End-drill button refreshes
+    // the rail so the closed drill disappears.
+    setTimeout(() => {
+      if (_activePanel === 'overview') renderCommandCenter();
+      else renderRecallDetail();
+    }, 500);
   } catch (e) {
     showToast('Could not mark complete: ' + (e.message || 'unknown error'), 'error', 4500);
   }
