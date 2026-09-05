@@ -17838,6 +17838,10 @@ function renderFsmaReadiness() {
     : 0;
 
   const scoreColor = weightedScore >= 80 ? 'var(--accent)' : weightedScore >= 50 ? 'var(--warn)' : 'var(--danger)';
+  // Bug fix 2026-09-05. The old badge glued a hex-alpha suffix onto the
+  // var() above, producing invalid CSS. The browser silently dropped the
+  // background and border. Translucent tints need the rgb triples.
+  const scoreRgb = weightedScore >= 80 ? 'var(--accent-rgb)' : weightedScore >= 50 ? 'var(--warn-rgb)' : 'var(--danger-rgb)';
   const scoreLabel = weightedScore >= 80 ? 'On Track' : weightedScore >= 50 ? 'Needs Work' : 'At Risk';
 
   // Update badge
@@ -17886,7 +17890,7 @@ function renderFsmaReadiness() {
           <span style="font-size:48px;font-weight:900;font-family:'Figtree',sans-serif;color:${scoreColor};line-height:1;">${weightedScore}</span>
           <span style="font-size:18px;font-weight:700;font-family:'Figtree',sans-serif;color:var(--muted);line-height:1;">/100</span>
         </div>
-        <div style="display:inline-block;margin-top:6px;padding:2px 10px;border-radius:20px;font-size:10px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.06em;background:${scoreColor}22;color:${scoreColor};border:1px solid ${scoreColor}55;">${scoreLabel}</div>
+        <div style="display:inline-block;margin-top:6px;padding:2px 10px;border-radius:20px;font-size:10px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.06em;background:rgba(${scoreRgb},0.13);color:${scoreColor};border:1px solid rgba(${scoreRgb},0.33);">${scoreLabel}</div>
       </div>
       <div style="flex:1;min-width:200px;">
         <div style="font-size:17px;font-weight:700;font-family:'Figtree',sans-serif;color:var(--text);margin-bottom:4px;">FSMA 204 (USA) Readiness</div>
@@ -18267,7 +18271,7 @@ async function loadMgrOnShelf() {
             <div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;">
               <div style="flex:1;min-width:0;">
                 <div style="font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${s.product_name||'—'}</div>
-                <div style="font-size:10px;color:var(--muted);margin-top:2px;font-family:'DM Mono',monospace;">${s.lot_number||isNO?'Parti utilgjengelig':'Lot N/A'} · ${fmtDate(s.created_at)}</div>
+                <div style="font-size:10px;color:var(--muted);margin-top:2px;font-family:'DM Mono',monospace;">${s.lot_number || (isNO?'Parti utilgjengelig':'Lot N/A')} · ${fmtDate(s.created_at)}</div>
               </div>
               <div style="font-size:11px;color:var(--muted);text-align:right;flex-shrink:0;">
                 <div style="font-weight:600;color:var(--text);">${s.quantity||1} ${isNO?'stk':'units'}</div>
@@ -20106,14 +20110,18 @@ function openRecallActionSheet(scanId) {
   document.getElementById('recall-sheet-ack-strip').style.display = 'none';
   (async () => {
     try {
-      // Find if this scan has a match against a manufacturer-pushed recall
+      // Find if this scan has a match against a manufacturer-pushed recall.
+      // Audit fix 2026-09-05. Pushed recalls should be read via
+      // recall_event_id, the unambiguous Path B column. Legacy rows from
+      // before the backfill may still have it NULL, so recall_id stays as
+      // the fallback. Both hold recall_events.id on these rows.
       const { data: matchRows } = await sb.from('scan_recall_matches')
-        .select('recall_id, recall_source')
+        .select('recall_id, recall_event_id, recall_source')
         .eq('scan_id', _recallActionId)
         .eq('recall_source', 'manufacturer_push')
         .limit(1);
       if (!matchRows?.length) return;
-      const recallEventId = matchRows[0].recall_id;
+      const recallEventId = matchRows[0].recall_event_id || matchRows[0].recall_id;
 
       // Find the ack row for this org + this recall event
       const { data: acks } = await sb.from('recall_acknowledgements')

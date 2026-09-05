@@ -13536,6 +13536,10 @@ async function renderDashInvestigations() {
     const closed        = invs.filter(i => i.status==='closed'||i.status==='resolved');
 
     const urgColors = { 1:'var(--danger)', 2:'var(--warn)', 3:'var(--muted)' };
+    // Bug fix 2026-09-05. The urgency chip glued a hex-alpha suffix onto
+    // the var() values, producing invalid CSS. The chip background was
+    // silently dropped. Tints need the rgb triples.
+    const urgRgb = { 1:'var(--danger-rgb)', 2:'var(--warn-rgb)', 3:'var(--accent-muted-rgb)' };
     const urgLabels = { 1:'Class I · 24h', 2:'Class II · 72h', 3:'Routine · 7d' };
     const issueLabels = { foreign_object:'Adulteration (foreign object in product)', mold:'Mold / spoilage', mislabeling:'Mislabeling', allergen:'Allergen concern', contamination:'Contamination', discoloration:'Discoloration', pest:'Pest', packaging:'Packaging defect', other:'Other' };
     const fmtDate = fmtDash;
@@ -13579,7 +13583,7 @@ const fmtElapsed = d => { if (!d) return '—'; const ms = Date.now()-new Date(d
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap;">
               <div style="width:7px;height:7px;border-radius:50%;background:${urgColors[inv.urgency_class||2]};flex-shrink:0;"></div>
               <div style="font-size:13px;font-weight:700;color:var(--text);">${inv.product_name||'Product investigation'}</div>
-              <span style="font-size:10px;padding:2px 8px;border-radius:10px;background:${urgColors[inv.urgency_class||2]}18;color:${urgColors[inv.urgency_class||2]};">${urgLabels[inv.urgency_class||2]}</span>
+              <span style="font-size:10px;padding:2px 8px;border-radius:var(--r-pill);background:rgba(${urgRgb[inv.urgency_class||2]},0.09);color:${urgColors[inv.urgency_class||2]};">${urgLabels[inv.urgency_class||2]}</span>
             </div>
             <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">
               ${inv.issue_type?issueLabels[inv.issue_type]||inv.issue_type:'Issue investigation'} · ${inv.lot_number?`Lot <span style="font-family:'DM Mono',monospace;color:var(--text);">${inv.lot_number}</span> · `:''}From ${mfrName} · ${fmtElapsed(inv.created_at)} ago
