@@ -17,6 +17,7 @@ Set/inspect at: Netlify → Site settings → Environment variables.
 | `BOOTSTRAP_ADMIN_TOKEN` | `bootstrap-off-seed` | Token guarding the one-off seeding endpoint. | If the seeding function is no longer needed, prefer deleting the function over keeping the token. |
 | `APP_BASE_URL` | Email templates (links back to the dashboard) | Public dashboard URL; defaults to `https://corporate.batchdapp.com`. Not secret. | — |
 | `SCHEDULED_FUNCTIONS_DISABLED` | `recall-escalation`, `fetch-recall-feeds` | Cron-singleton switch: two Netlify sites deploy this repo, and both arm the netlify.toml schedules. Set to `true` on every site EXCEPT the one designated to run crons (the www.batchdapp.com site). If this is set to `true` on ALL sites, no escalation emails and no feed imports run at all. | — |
+| MapTiler key (in `dashboard.html`, not an env var) | The shared store-map renderer (Command Center / Store Network / recall detail) | **Publishable** map-tile key, embedded client-side BY DESIGN and locked to our domains via MapTiler's allowed-HTTP-origins list (cloud.maptiler.com → API Keys). Same category as the Supabase anon key — an audit finding it in the HTML is a false alarm. | Rotate in MapTiler's dashboard + update `_MAPTILER_KEY` in dashboard.html if abused; free tier = 100k tiles/month, usage visible in MapTiler Analytics. |
 | `URL` | `fetch-recall-feeds` (self-calls the recall-feeds proxy) | **Set automatically by Netlify** to the site's primary URL. Do not create manually. | — |
 
 ## Rotation cadence
