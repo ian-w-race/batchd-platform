@@ -4871,6 +4871,12 @@ ${_batchdDocRuntime()}
 
 // ── Push recall — write to DB, redirect to Recalls panel ──────
 async function _composerPushRecall() {
+  // Defense-in-depth role guard, same pattern as the other org-wide
+  // write functions. The composer panel is already corp_admin-only.
+  if (_userRole !== 'corp_admin') {
+    showToast('Only corp admins can push a recall.', 'error', 4000);
+    return;
+  }
   const s = _composerState;
   if (!s) return;
   const btn = document.getElementById('composer-push-btn');
@@ -4896,9 +4902,53 @@ async function _composerPushRecall() {
     organisation_id: _orgId,
   };
 
+  // Core-loop wiring (2026-09-05). The composer used to write ONE
+  // recalls row and stop. No recall_event, no distribution, no
+  // per-store acknowledgements. The Live Recall detail page, the
+  // 5-step chain, the map staging, reminders and the 2h/24h
+  // escalations therefore only worked for drills. It now builds the
+  // same chain launchDrill builds, with is_drill=false, and keeps a
+  // LINKED recalls row for instant scan matching. The link
+  // (recall_event_id + is_pushed) makes every manual-only iteration
+  // skip that row, so nothing double-displays.
+  // Insert order per audit fix #17: event, distribution, acks, then
+  // the recalls row. On failure the event is deleted best-effort.
+  let createdRecallEventId = null;
   try {
+    const { data: ev, error: evErr } = await sb.from('recall_events').insert({
+      product_name: s.product,
+      lot_number:   s.lot || null,
+      barcode:      s.barcode || null,
+      severity:     s.severity || null,
+      reason:       s.reason || null,
+      description:  descParts.join(' · '),
+      is_drill:     false,
+      source_org_id: _orgId,
+      published_at: new Date().toISOString(),
+    }).select().single();
+    if (evErr) throw evErr;
+    createdRecallEventId = ev.id;
+
+    const { error: distErr } = await sb.from('recall_distributions').insert({
+      recall_event_id: ev.id, retailer_org_id: _orgId,
+    });
+    if (distErr) throw distErr;
+
+    // Per-store acknowledgement rows. These power the 5-step chain,
+    // the detail page and the escalation emails. Failing here is
+    // critical, so it throws to the cleanup path.
+    const { data: stores } = await sb.from('stores').select('id').eq('organisation_id', _orgId).eq('active', true);
+    if (stores?.length) {
+      const acks = stores.map(st => ({
+        recall_event_id: ev.id, organisation_id: _orgId,
+        store_id: st.id, status: 'notified', created_at: new Date().toISOString(),
+      }));
+      const { error: acksErr } = await sb.from('recall_acknowledgements').insert(acks);
+      if (acksErr) throw acksErr;
+    }
+
     const { data: inserted, error } = await sb.from('recalls')
-      .insert(insertPayload)
+      .insert({ ...insertPayload, recall_event_id: ev.id, is_pushed: true })
       .select('id').single();
     if (error) throw error;
 
@@ -4915,7 +4965,7 @@ async function _composerPushRecall() {
       }
     }
 
-    showToast('Recall pushed', 'ok', 3000);
+    showToast(`Recall pushed — ${stores?.length || 0} store${(stores?.length || 0) !== 1 ? 's' : ''} notified`, 'ok', 3500);
     invalidateOverviewCache();
 
     // Fire-and-forget notification email to opted-in users in the org
@@ -4928,10 +4978,21 @@ async function _composerPushRecall() {
     });
 
     _composerState = null;
-    _recallsTab = 'active';
-    showPanel('recalls');
+    // Land the coordinator on the live detail page for the chain they
+    // just started, not the generic recalls list.
+    _currentRecallDetailId = ev.id;
+    showPanel('recall-detail');
   } catch (e) {
     showToast('Could not push recall: ' + (e.message || 'unknown error'), 'error', 5000);
+    // Best-effort rollback, same pattern as launchDrill. Distributions
+    // and acks cascade from the event delete where FKs allow it.
+    if (createdRecallEventId) {
+      try {
+        await sb.from('recall_events').delete().eq('id', createdRecallEventId);
+      } catch (cleanupErr) {
+        console.warn('[composer push] cleanup failed after error:', cleanupErr?.message);
+      }
+    }
     if (btn) { btn.disabled = false; btn.style.opacity = '1'; btn.style.cursor = 'pointer'; btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg> Push recall'; }
   }
 }
