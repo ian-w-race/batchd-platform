@@ -33,6 +33,8 @@ const isValidInviteUrl = (u) => {
 };
 
 const ALLOWED_ORIGINS = [
+  'https://batchd.no',
+  'https://www.batchd.no',
   'https://batchdapp.com',
   'https://www.batchdapp.com',
   'https://app.batchdapp.com',
@@ -166,7 +168,7 @@ async function handleDemoRequest({ firstName, lastName, email, organisation, org
       },
       body: JSON.stringify({
         from: "Batch'd <invite@batchdapp.com>",
-        to: ['ian.w.race@gmail.com'],
+        to: ['hello@batchd.no', 'ian.w.race@gmail.com'],
         subject: `New demo request — ${esc(firstName)} ${esc(lastName)} from ${esc(organisation)}`,
         html: `
           <div style="font-family:monospace;background:#080f12;color:#edfdf8;padding:40px;max-width:560px;margin:0 auto;border-radius:12px;">
