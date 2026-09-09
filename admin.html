@@ -7,7 +7,8 @@
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700;800;900&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- Pinned + SRI (2026-08-06): the unpinned @2 tag let any upstream release change the app overnight. To upgrade: bump the version AND recompute the sha384 hash. -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.1/dist/umd/supabase.js" integrity="sha384-0x8XPoHt08aHZj+RHs8ojmhZ5IDsTLjPgblgWdriayWriqv9dic3Vkv1K2+UqgZV" crossorigin="anonymous"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -555,9 +556,11 @@ async function createOrg() {
     if (invErr) throw invErr;
 
     const inviteUrl = `https://batchdapp.com/join?token=${inv.token}`;
-    await fetch('/.netlify/functions/send-invite', {
+    // send-invite requires a corp_admin JWT as of the 2026-09-09 audit.
+    const { data: { session: _adminSess } } = await sb.auth.getSession();
+    const _inviteRes = await fetch('/.netlify/functions/send-invite', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_adminSess?.access_token || ''}` },
       body: JSON.stringify({
         to: adminEmail,
         orgName: name,
@@ -567,6 +570,12 @@ async function createOrg() {
       }),
     });
 
+    if (!_inviteRes.ok) {
+      const _e = await _inviteRes.json().catch(() => ({}));
+      showCreateMsg(`Organisation created, but the invitation email failed: ${_e.error || _inviteRes.status}. Re-send it from the customer row.`, 'error');
+      btn.disabled = false; btn.innerHTML = 'Create organisation →';
+      return;
+    }
     showCreateMsg(`✓ Organisation created and invitation sent to ${adminEmail}`, 'success');
     btn.disabled = false; btn.innerHTML = 'Create organisation →';
     setTimeout(() => { closeCreateModal(); showPanel('customers'); }, 2000);
@@ -689,11 +698,18 @@ async function sendAdminInvite(orgId, orgName) {
     });
     if (error) throw error;
     const inviteUrl = `https://batchdapp.com/join?token=${inv.token}`;
-    await fetch('/.netlify/functions/send-invite', {
+    // send-invite requires a corp_admin JWT as of the 2026-09-09 audit.
+    const { data: { session: _invSess2 } } = await sb.auth.getSession();
+    const _inviteRes2 = await fetch('/.netlify/functions/send-invite', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_invSess2?.access_token || ''}` },
       body: JSON.stringify({ to: email, orgName, inviterEmail: 'ian.w.race@gmail.com', role: role.replace('_',' '), inviteUrl }),
     });
+    if (!_inviteRes2.ok) {
+      const _e2 = await _inviteRes2.json().catch(() => ({}));
+      alert(`Invitation NOT sent: ${_e2.error || _inviteRes2.status}`);
+      return;
+    }
     alert(`✓ Invitation sent to ${email}`);
   } catch(e) {
     alert('Error: ' + e.message);

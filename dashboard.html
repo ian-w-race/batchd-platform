@@ -2551,7 +2551,9 @@ async function renderOnboarding() {
       {
         n: 4, done: hasCoordinator,
         title: 'Designate a recall coordinator',
-        desc: 'Assign a named person with 24/7 contact details as your recall coordinator. Required by FDA and Mattilsynet as a named responsible party.',
+        // Jurisdiction rule: name one regulator, the caller's own. The
+        // sibling `reg` field below already gates; this line did not.
+        desc: `Assign a named person with 24/7 contact details as your recall coordinator. Required by ${isUS ? 'the FDA' : 'Mattilsynet'} as a named responsible party.`,
         detail: hasCoordinator
           ? `Coordinator: ${coordName}`
           : 'No recall coordinator assigned.',
@@ -3242,7 +3244,7 @@ el.innerHTML = `
                     <div>
                       <div style="display:flex;align-items:center;gap:7px;">
                         <div style="width:7px;height:7px;border-radius:50%;flex-shrink:0;background:${statusColor};${s.status==='active'?'box-shadow:0 0 6px rgba(var(--accent-rgb),0.4);':''}"></div>
-                        <div style="font-size:13px;font-weight:500;color:var(--text);">${s.name}</div>
+                        <div style="font-size:13px;font-weight:500;color:var(--text);">${esc(s.name)}</div>
                       </div>
                       <div style="font-size:10px;color:var(--muted);margin-top:3px;padding-left:14px;">${s.scans7d} scan${s.scans7d!==1?'s':''} this week · last active ${s.lastScan ? fmtTime(s.lastScan) : 'never'}</div>
                     </div>
@@ -6097,7 +6099,8 @@ async function renderCommandCenter() {
     // because all we need is "did this store scan at all in the last 72h"
     // for the coverage tile. We query within the time window so we don't
     // pull every scan in history.
-    const [storesRes, srmRes, liveRecallsRes, openEventsRes, ackRes, recentScansRes] = await Promise.all([
+    // ackRes is `let` because the migration-008 fallback below may re-issue it.
+    let [storesRes, srmRes, liveRecallsRes, openEventsRes, ackRes, recentScansRes] = await Promise.all([
       sb.from('stores').select('*').eq('organisation_id', _orgId),
       sb.from('scan_recall_matches').select('store_id, scan_id, recall_id, recall_event_id').eq('organisation_id', _orgId),
       // Live-recall id sets (2026-09-09 audit fix): a match row alone must
@@ -6108,9 +6111,41 @@ async function renderCommandCenter() {
         .select('id, store_id, recall_event_id, status, acknowledged_at, pulled_at, disposed_at, confirmed_at, created_at, recall_events(id, product_name, lot_number, severity, reason, is_drill, published_at, closed_at)')
         .eq('organisation_id', _orgId)
         .order('created_at', { ascending: false })
-        .limit(500),
+        // 2026-09-09 audit fix: raised from 500. Acks are one row per store
+        // per recall, so a 40-store org crosses 500 after ~12 recalls. Once
+        // truncated, a live recall sees only some of its stores, every
+        // fetched ack can read 'confirmed', allConfirmed goes true and the
+        // recall silently disappears from the Active Recalls rail while
+        // stores still have stock on shelf. The truncation warning below
+        // makes the ceiling visible instead of silent.
+        .limit(4000),
       sb.from('scans').select('store_id').eq('organisation_id', _orgId).gte('created_at', sinceCoverage).limit(5000)
     ]);
+
+    // Migration-008 fallback (2026-09-09 audit fix). The ack query above
+    // selects recall_events.closed_at inside its nested selector. Where
+    // migration 008 has not been applied that column does not exist, so
+    // PostgREST 42703s the WHOLE request — ackRes.data is null, every
+    // downstream read degrades to [], and the Command Center silently
+    // reports zero active recalls during a live recall. renderRecallDetail
+    // already retries without the closure columns; mirror that here.
+    if (ackRes.error) {
+      const _m = (ackRes.error.message || '').toLowerCase();
+      if (ackRes.error.code === '42703' || _m.includes('closed_at')) {
+        console.warn('[command-center] recall_events.closed_at missing (migration 008 not applied) — retrying without closure columns');
+        ackRes = await sb.from('recall_acknowledgements')
+          .select('id, store_id, recall_event_id, status, acknowledged_at, pulled_at, disposed_at, confirmed_at, created_at, recall_events(id, product_name, lot_number, severity, reason, is_drill, published_at)')
+          .eq('organisation_id', _orgId)
+          .order('created_at', { ascending: false })
+          .limit(500);
+      }
+      if (ackRes.error) console.error('[command-center] ack query failed:', ackRes.error.message);
+    }
+    // No silent cap: if we hit the ceiling the rail's allConfirmed maths is
+    // computed on partial data and a live recall can vanish from it.
+    if ((ackRes.data || []).length >= 4000) {
+      console.warn('[command-center] acknowledgement page limit reached — Active Recalls rail may be incomplete. Move this query to server-side aggregation.');
+    }
 
     const stores      = (storesRes.data || []).filter(s => s.active && s.latitude != null && s.longitude != null);
     const allStores   = (storesRes.data || []).filter(s => s.active);
@@ -6134,6 +6169,14 @@ async function renderCommandCenter() {
     // store_id → active recall count. Requires the matched scan to be on
     // shelf AND the underlying recall to still be live — a resolved recall
     // must release the store marker (2026-09-09 audit fix).
+    //
+    // Fail OPEN, never closed: if either liveness query errors (e.g.
+    // migration 008 not applied, so recall_events.closed_at doesn't exist
+    // and the select 400s), we must keep showing the match rather than
+    // silently clearing every store's active-recall marker. Under-reporting
+    // an active recall is the dangerous direction in this product.
+    const _livenessKnown = !liveRecallsRes.error && !openEventsRes.error;
+    if (!_livenessKnown) console.warn('[command-center] recall liveness unavailable — showing all matches:', liveRecallsRes.error?.message || openEventsRes.error?.message);
     const liveRecallIds = new Set([
       ...(liveRecallsRes.data || []).map(r => r.id),
       ...(openEventsRes.data || []).map(e => e.id),
@@ -6141,7 +6184,7 @@ async function renderCommandCenter() {
     const activeRecallByStore = {};
     (srmRes.data || []).forEach(m => {
       if (!m.store_id || !onShelfScanIds.has(m.scan_id)) return;
-      if (!liveRecallIds.has(m.recall_event_id) && !liveRecallIds.has(m.recall_id)) return;
+      if (_livenessKnown && !liveRecallIds.has(m.recall_event_id) && !liveRecallIds.has(m.recall_id)) return;
       activeRecallByStore[m.store_id] = (activeRecallByStore[m.store_id] || 0) + 1;
     });
 
@@ -7772,14 +7815,14 @@ async function renderStores() {
                     : { c: 'rgba(245,247,246,0.2)', t: 'No structured address yet. Edit the store to fill in.' };
                 return `
                 <tr>
-                  <td><div class="store-name">${s.name}</div></td>
+                  <td><div class="store-name">${esc(s.name)}</div></td>
                   <td><span class="recall-status ${s.active?'status-resolved':'status-pending'}">${s.active?'Active':'Inactive'}</span></td>
                   <td style="color:var(--muted);font-size:11px;">${s.store_code||'—'}</td>
                   <td style="color:var(--muted);font-size:11px;">
                     <span title="${_mapDot.t}" aria-label="${_mapDot.t}" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${_mapDot.c};margin-right:8px;vertical-align:middle;flex-shrink:0;"></span>${s.address||'—'}
                   </td>
                   <td style="text-align:right;white-space:nowrap;">
-                    ${_hasCoords(s) ? `<button onclick="viewStoreOnMap('${s.id}')" title="View on map" aria-label="View ${s.name} on the map"
+                    ${_hasCoords(s) ? `<button onclick="viewStoreOnMap('${s.id}')" title="View on map" aria-label="View ${esc(s.name)} on the map"
                       style="font-family:'DM Mono',monospace;font-size:10px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;margin-right:6px;display:inline-flex;align-items:center;vertical-align:middle;"
                       onmouseenter="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'"
                       onmouseleave="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">
@@ -8038,11 +8081,21 @@ async function saveStore() {
     phone:            phone || null,
     active,
     organisation_id:  _orgId,
-    latitude:         geoResult ? geoResult.lat : null,
-    longitude:        geoResult ? geoResult.lng : null,
-    geocoded_at:      geoResult ? new Date().toISOString() : null,
-    geocoding_source: geoResult ? geoResult.source : null
   };
+
+  // 2026-09-09 audit fix: only write coordinate fields when geocoding
+  // actually succeeded. Writing nulls on failure meant that editing an
+  // unrelated field (renaming a store, changing its phone) while the
+  // Nominatim lookup was rate-limited or offline silently wiped the
+  // coordinates of an already-located store, dropping it off the Command
+  // Center map with no message. On failure we simply leave whatever is
+  // already stored intact.
+  if (geoResult) {
+    payload.latitude         = geoResult.lat;
+    payload.longitude        = geoResult.lng;
+    payload.geocoded_at      = new Date().toISOString();
+    payload.geocoding_source = geoResult.source;
+  }
 
   // UPDATE branch scopes by org_id so a forged _editingStoreId can't rewrite
   // another org's store row (which would also overwrite that store's
@@ -8494,7 +8547,7 @@ async function renderStaff() {
           <label id="inv-store-label">Assign to store <span style="color:var(--muted);font-size:10px;">required</span></label>
           <select id="inv-store">
             <option value="">— Select store —</option>
-            ${stores.map(s => `<option value="${s.id}">${s.name}</option>`).join('')}
+            ${stores.map(s => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('')}
           </select>
           <!-- Multi-select for store_manager invites. Markup sits inside a
                .field wrapper, so it has to defend against the global
@@ -8512,11 +8565,11 @@ async function renderStaff() {
               style="width:100%;box-sizing:border-box;padding:8px 10px;margin-bottom:8px;background:var(--surface);border:1px solid var(--border);border-radius:6px;font-family:'DM Mono',monospace;font-size:12px;color:var(--text);outline:none;text-transform:none;letter-spacing:0;" />
             <div id="inv-store-list" style="max-height:180px;overflow-y:auto;">
               ${stores.map(s => `
-                <label class="inv-store-row" data-store-name="${(s.name||'').toLowerCase()}"
+                <label class="inv-store-row" data-store-name="${esc((s.name||'').toLowerCase())}"
                   style="display:flex;align-items:center;gap:10px;padding:6px 4px;cursor:pointer;font-family:inherit;font-size:13px;text-transform:none;letter-spacing:0;color:var(--text);margin-bottom:0;border-radius:4px;">
                   <input type="checkbox" class="inv-store-cb" value="${s.id}"
                     style="width:16px;height:16px;padding:0;margin:0;flex:0 0 auto;accent-color:var(--accent);background:transparent;border:none;border-radius:0;">
-                  <span style="flex:1;font-size:13px;text-transform:none;letter-spacing:0;color:var(--text);">${s.name}</span>
+                  <span style="flex:1;font-size:13px;text-transform:none;letter-spacing:0;color:var(--text);">${esc(s.name)}</span>
                 </label>`).join('')}
             </div>
             <div id="inv-store-empty" style="display:none;padding:12px;text-align:center;font-size:11px;color:var(--muted);text-transform:none;letter-spacing:0;">No stores match.</div>
@@ -10833,7 +10886,7 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
               const pctOfTotal = data.length ? Math.round(s.scans.length/data.length*100) : 0;
               return `<tr>
                 <td>
-                  <div style="font-size:12px;font-weight:600;color:var(--text);">${s.name}</div>
+                  <div style="font-size:12px;font-weight:600;color:var(--text);">${esc(s.name)}</div>
                   ${i===0?`<div style="font-size:10px;color:var(--accent);">top performer</div>`:''}
                 </td>
                 <td>
@@ -10881,7 +10934,7 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
           <tbody>
             ${data.length === 0 ? `<tr><td colspan="8"><div class="empty">No stores configured.</div></td></tr>` :
             data.map(s => `<tr>
-              <td style="font-size:12px;font-weight:600;color:var(--text);">${s.name}</td>
+              <td style="font-size:12px;font-weight:600;color:var(--text);">${esc(s.name)}</td>
               <td style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${s.store_code||'—'}</td>
               <td><span style="font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600;background:${s.status==='active'?'rgba(var(--accent-rgb),0.12)':s.status==='slow'?'rgba(var(--warn-rgb),0.12)':'rgba(var(--danger-rgb),0.12)'};color:${s.status==='active'?'var(--accent)':s.status==='slow'?'var(--warn)':'var(--danger)'};">${s.status.charAt(0).toUpperCase()+s.status.slice(1)}</span></td>
               <td>
@@ -13925,7 +13978,7 @@ async function openDashInvestResponse(invId) {
           <div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:5px;">Store *</label>
           <select id="inv-r-store" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 11px;color:var(--text);font-size:13px;">
             <option value="">— Select store —</option>
-            ${(stores||[]).map(s=>`<option value="${s.id}" data-name="${s.name}">${s.name}</option>`).join('')}
+            ${(stores||[]).map(s=>`<option value="${esc(s.id)}" data-name="${esc(s.name)}">${esc(s.name)}</option>`).join('')}
           </select></div>
           <div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:5px;">Units inspected</label>
           <input id="inv-r-units" type="number" min="0" placeholder="e.g. 24" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 11px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
@@ -15401,8 +15454,26 @@ async function sendConsumerNotifications() {
       }),
     });
 
-    const data = await res.json();
-    showToast(`Sent to ${data.sent || 0} customer${(data.sent||0)!==1?'s':''}`, 'ok', 4000);
+    // 2026-09-09 audit fix: this used to ignore res.ok and the returned
+    // failure counts, so a 403 (auth), a 503 (mail service unconfigured) or
+    // a 200 where every Resend call failed all rendered as a green
+    // "Sent to 0 customers" — and then wiped the uploaded recipient list.
+    // During a live consumer recall that means zero notices went out while
+    // the operator believes they did. Only clear the queue on real sends.
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Send failed (${res.status})`);
+    const sentN   = data.sent   || 0;
+    const failedN = data.failed || 0;
+    if (sentN === 0) {
+      showToast(failedN > 0
+        ? `No notices sent — ${failedN} failed at the mail service. List kept, try again.`
+        : 'No notices sent. List kept, try again.', 'error', 6000);
+      if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
+      return;
+    }
+    showToast(failedN > 0
+      ? `Sent to ${sentN} customer${sentN!==1?'s':''} · ${failedN} failed`
+      : `Sent to ${sentN} customer${sentN!==1?'s':''}`, failedN > 0 ? 'warn' : 'ok', 4500);
     _consumerNotifCustomers = [];
     _consumerNotifRecallId  = null;
     renderConsumerNotification();

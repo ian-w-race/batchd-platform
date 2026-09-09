@@ -5572,6 +5572,28 @@ let _ocrOriginal       = '';     // What the AI returned (Sonnet or Tesseract).
 let _ocrOriginalSource = 'none'; // 'sonnet' | 'tesseract_fallback' | 'none'
 let allRecords = [];
 let _cachedActiveRecalls = []; // populated at login (checkRecallsOnLogin) and refreshed by loadHistory
+
+// ── Closed-recall filtering (2026-09-09 audit) ────────────────────
+// recall_events.closed_at comes from migration 008, which may NOT be
+// applied on a given deployment (SCHEMA.md's verified column list does
+// not include it, and the dashboard still carries "needs migration 008"
+// fallbacks). Selecting or filtering a missing column makes PostgREST
+// 400 the WHOLE query, which on the login path would leave the
+// scan-time recall cache empty — every scan-time safeguard silently off.
+// So closure is resolved in a separate best-effort probe that fails
+// OPEN: if the column isn't there we simply treat nothing as closed.
+let _closedEventIds = null; // Set once resolved; null = unknown/unsupported
+async function _loadClosedEventIds() {
+  try {
+    const res = await sb.from('recall_events').select('id').not('closed_at', 'is', null);
+    if (res.error) { _closedEventIds = null; return null; }
+    _closedEventIds = new Set((res.data || []).map(r => r.id));
+    return _closedEventIds;
+  } catch (e) { _closedEventIds = null; return null; }
+}
+function _isClosedEvent(id) {
+  return !!(_closedEventIds && _closedEventIds.has(id));
+}
 let recallLookbackDays = 180; // default 6 months; managers can set 30–365 days
 // In-memory recall match log for debugging — NOT persisted. Each entry:
 //   { scan_id, recall_id, match_type: 'red'|'orange'|'none', matched_on: 'substring'|'barcode'|'product_name_only'|null, ts }
@@ -6286,6 +6308,13 @@ async function signOut() {
   recallSchedulerInterval = null;
   if (_realtimeChannel) { sb.removeChannel(_realtimeChannel); _realtimeChannel = null; }
   destroyTesseract(); // clean up the OCR worker
+  // 2026-09-09 audit fix: release the camera. Without this the
+  // getUserMedia tracks and the auto-capture loop kept running behind the
+  // login screen after sign-out — the device camera light stays on, which
+  // reads as spyware on a shared shop-floor phone and keeps the sensor
+  // powered for the next user.
+  try { stopAutoCapture(); } catch (e) {}
+  try { stopSharedStream(); } catch (e) {}
   await sb.auth.signOut();
 }
 
@@ -6446,8 +6475,21 @@ document.addEventListener('click', function(e) {
 });
 
 function stbUpdateStore(storeName) {
-  // Update store ID for scan inserts
-  _currentStoreId = (window._storeIdMap && storeName) ? (window._storeIdMap[storeName] || null) : null;
+  // Update store ID for scan inserts.
+  // 2026-09-09 audit fix: this used to assign null whenever _storeIdMap
+  // hadn't loaded yet or didn't contain the name, silently clearing an
+  // already-correct id. On a slow connection the store pill renders from
+  // the persisted session before the map arrives, so a whole shift of
+  // scans could save with store_id NULL — unattributable to any store and
+  // invisible to per-store recall chains. Only overwrite on a real hit,
+  // and only clear when the store is genuinely being deselected.
+  if (!storeName) {
+    _currentStoreId = null;
+  } else if (window._storeIdMap && window._storeIdMap[storeName]) {
+    _currentStoreId = window._storeIdMap[storeName];
+  } else {
+    console.warn('[store] id map not ready for', storeName, '— keeping existing store id');
+  }
   const sq  = document.getElementById('stb-store-pill');
   const dot = document.getElementById('stb-store-dot');
   if (storeName) {
@@ -8053,10 +8095,9 @@ async function checkPrePlacementRecall() {
       sb.from('recalls').select('id, product_name, lot_number, batch_number, barcode_number, description, source, is_pushed, recall_event_id').eq('active', true).eq('organisation_id', _currentOrgId),
       _currentOrgId
         ? sb.from('recall_distributions')
-            .select('recall_event_id, recall_events!inner(id, product_name, lot_number, barcode, reason, is_drill, closed_at)')
+            .select('recall_event_id, recall_events!inner(id, product_name, lot_number, barcode, reason, is_drill)')
             .eq('retailer_org_id', _currentOrgId)
             .eq('recall_events.is_drill', false)
-            .is('recall_events.closed_at', null)
         : Promise.resolve({ data: [] }),
     ]);
 
@@ -9246,9 +9287,17 @@ async function saveRecord() {
   if (!productName) return setMsg((currentLang==='no' ? 'Produktnavn er påkrevd.' : 'Product name is required.'), 'warn');
   const lotUnavailChk = document.getElementById('lot-unavailable-toggle')?.checked;
   if (!lotNum && !lotUnavailChk) return setMsg((currentLang==='no' ? 'Partinummer er påkrevd. Skriv det inn manuelt, eller merk «Partinummer utilgjengelig».' : 'Lot number is required. Enter it manually, or mark "Lot Number Unavailable".'), 'warn');
-  const expiryValCheck = document.getElementById('field-expiry')?.value.trim();
-  if (lotUnavailChk && !expiryValCheck) {
-    const ef = document.getElementById('field-expiry');
+  const _expiryEl = document.getElementById('field-expiry');
+  const expiryValCheck = _expiryEl?.value.trim();
+  // 2026-09-09 audit fix: only enforce this when the expiry field is
+  // actually on screen. #field-expiry and #lot-unavailable-toggle now live
+  // inside a display:none container, so the "No lot code on this product"
+  // button produced a scan that could never be saved — the check fired,
+  // ef.focus() was a no-op, and staff had no visible control to satisfy it.
+  // offsetParent is null for any element inside a display:none ancestor.
+  const _expiryReachable = !!(_expiryEl && _expiryEl.offsetParent !== null);
+  if (lotUnavailChk && _expiryReachable && !expiryValCheck) {
+    const ef = _expiryEl;
     if (ef) { ef.style.borderColor = 'rgba(var(--danger-rgb),0.6)'; ef.focus(); setTimeout(() => { ef.style.borderColor = ''; }, 3000); }
     return setMsg((currentLang==='no' ? 'Utløpsdato er påkrevd når partinummer er utilgjengelig.' : 'Expiry date is required when lot number is unavailable.'), 'warn');
   }
@@ -10035,20 +10084,21 @@ async function checkRecallsOnLogin(silent = false) {
       sb.from('recalls').select('*').eq('active', true).eq('organisation_id', _currentOrgId),
       _currentOrgId
         ? sb.from('recall_distributions')
-            .select('recall_event_id, recall_events!inner(id, product_name, lot_number, barcode, severity, reason, is_drill, published_at, closed_at)')
+            .select('recall_event_id, recall_events!inner(id, product_name, lot_number, barcode, severity, reason, is_drill, published_at)')
             .eq('retailer_org_id', _currentOrgId)
             .eq('recall_events.is_drill', false)
-            .is('recall_events.closed_at', null)
         : Promise.resolve({ data: [] }),
     ]);
 
     // Deduplicate by recall_event_id — recall_distributions has one row per store,
     // so a single recall event pushed to 5 stores produces 5 rows. Collapse to unique events.
+    // Best-effort closure probe — fails open (see _loadClosedEventIds).
+    await _loadClosedEventIds();
     const seenEventIds = new Set();
     const uniqueDistRows = (eventsRes.data || []).filter(d => {
       if (seenEventIds.has(d.recall_event_id)) return false;
       seenEventIds.add(d.recall_event_id);
-      return true;
+      return !_isClosedEvent(d.recall_event_id);
     });
 
     // Normalise recall_events into the same shape as recalls
@@ -10863,11 +10913,13 @@ async function loadHistory() {
   if (distRows.length) {
     const eventIds = [...new Set(distRows.map(d => d.recall_event_id).filter(Boolean))];
     const { data: events } = await sb.from('recall_events')
-      .select('id, product_name, lot_number, barcode, reason, is_drill, closed_at')
+      .select('id, product_name, lot_number, barcode, reason, is_drill')
       .in('id', eventIds);
     // Drills are training, not real recalls — exclude per CLAUDE.md.
-    // Closed events are over — exclude too (2026-09-09 audit fix).
-    pushedRecalls = (events || []).filter(ev => !ev.is_drill && !ev.closed_at).map(ev => ({
+    // Closed events are over — exclude too, via the fail-open probe
+    // (2026-09-09 audit fix).
+    await _loadClosedEventIds();
+    pushedRecalls = (events || []).filter(ev => !ev.is_drill && !_isClosedEvent(ev.id)).map(ev => ({
       id:             ev.id,
       product_name:   ev.product_name,
       lot_number:     ev.lot_number,
@@ -11504,10 +11556,16 @@ function lotMatchLevel(scanLot, recallLot) {
 // raw_capture will fall to 'possible' on product match alone, which is
 // acceptable: pilot data, no compliance regression.
 function recallMatchLevel(scanRecord, recall) {
-  if (!fuzzyProductMatch(recall.product_name, scanRecord.product_name)) {
-    _logRecallMatch(scanRecord, recall, 'none', null);
-    return { level: null };
-  }
+  // 2026-09-09 audit fix. The exact-identifier checks below used to sit
+  // behind an early `if (!fuzzyProductMatch(...)) return {level:null}`.
+  // That contradicted both fuzzyProductMatch's own comment ("the caller can
+  // still match if the recall lot is found in raw_capture") and the
+  // CLAUDE.md counting rule, which keys on exact lot OR barcode with no
+  // product-name condition. Because fuzzyProductMatch deliberately returns
+  // false for product names over 80 chars, and the FDA importer writes
+  // product_name = product_description.slice(0,120), an exact lot hit on an
+  // FDA/Mattilsynet feed recall could never fire anywhere in the scanner.
+  const productMatches = fuzzyProductMatch(recall.product_name, scanRecord.product_name);
 
   // Red — exact barcode match (legacy compat). Kept because pre-rebuild
   // scans have barcode_number populated; new scans always have it null.
@@ -11524,13 +11582,24 @@ function recallMatchLevel(scanRecord, recall) {
   // partial-credit lifeline for legacy scans where raw_capture is null.
   if (recall.lot_number) {
     const recallLotLow = recall.lot_number.toLowerCase().trim();
-    if (recallLotLow) {
+    // When the product name does NOT corroborate, require a lot code of
+    // real length: a 2-3 character code would substring-match half the
+    // shelf and bury staff in false alarms.
+    const MIN_UNCORROBORATED_LOT = 4;
+    if (recallLotLow && (productMatches || recallLotLow.length >= MIN_UNCORROBORATED_LOT)) {
       const rawLow = (scanRecord.raw_capture || scanRecord.lot_number || '').toLowerCase();
       if (rawLow && rawLow.includes(recallLotLow)) {
         _logRecallMatch(scanRecord, recall, 'red', 'substring');
         return { level: 'exact', recall, matched_on: 'substring' };
       }
     }
+  }
+
+  // No exact identifier hit and the product name doesn't corroborate — not
+  // a match at any level.
+  if (!productMatches) {
+    _logRecallMatch(scanRecord, recall, 'none', null);
+    return { level: null };
   }
 
   // Orange — product fuzzy-matches but no lot substring confirmed. Includes:
@@ -13619,6 +13688,16 @@ function confirmRawCapture() {
   const input = document.getElementById('field-raw-capture');
   const val = input ? input.value.trim() : '';
   _rawCapture = val || null;
+
+  // A real capture supersedes an earlier "No lot code on this product"
+  // press — otherwise the stale flag rides along into submitScan and the
+  // scan is filed as lot-unavailable despite having a lot (2026-09-09
+  // audit fix).
+  if (_rawCapture) {
+    _lotUnavailable = false;
+    const _luT = document.getElementById('lot-unavailable-toggle');
+    if (_luT) _luT.checked = false;
+  }
 
   // Bridge to the existing field-lot / field-expiry plumbing so populateReview
   // and submitScan keep working without per-call modifications. Chunk 3 will
@@ -19109,11 +19188,11 @@ async function loadMgrRecalls() {
 }
 
 async function mgrAddRecall() {
-  // Double-submit guard (2026-09-09 audit fix): a double-tap created two
-  // identical live recalls.
+  // Double-submit guard (2026-09-09): a double-tap created two identical
+  // live recalls. It is armed AFTER validation — arming it first meant a
+  // rejected submit left the flag set, silently swallowing the corrected
+  // re-submit for 4 seconds.
   if (mgrAddRecall._busy) return;
-  mgrAddRecall._busy = true;
-  setTimeout(() => { mgrAddRecall._busy = false; }, 4000);
   const product      = document.getElementById('mgr-recall-product')?.value.trim();
   const lot          = document.getElementById('mgr-recall-lot')?.value.trim();
   const barcode      = document.getElementById('mgr-recall-barcode')?.value.trim();
@@ -19129,6 +19208,9 @@ async function mgrAddRecall() {
   if (!hazard)  { msgEl.style.color='var(--danger)'; msgEl.textContent='Please select a hazard type.'; document.getElementById('mgr-recall-hazard')?.focus(); return; }
   if (!desc)    { msgEl.style.color='var(--danger)'; msgEl.textContent='A recall reason is required.'; document.getElementById('mgr-recall-desc')?.focus(); return; }
 
+  mgrAddRecall._busy = true;
+  const _clearBusy = () => { mgrAddRecall._busy = false; };
+  setTimeout(_clearBusy, 4000); // safety net if an await never settles
   msgEl.style.color='var(--muted)'; msgEl.textContent=t('js.saving');
 
   const fullDesc = [hazard, desc, severity ? `Severity: ${severity}` : '', bestBefore ? `Best before: ${bestBefore}` : '', manufacturer ? `Manufacturer: ${manufacturer}` : '', notifiedBy ? `Notified by: ${notifiedBy}` : ''].filter(Boolean).join(' · ');
@@ -19150,8 +19232,10 @@ async function mgrAddRecall() {
     loadMgrRecalls();
     checkActiveRecalls();
     if (document.getElementById('settings-recall-list')) loadRecallsList();
+    _clearBusy();
   } catch(e) {
     msgEl.style.color='var(--danger)'; msgEl.textContent='✗ ' + e.message;
+    _clearBusy(); // a failed save must be immediately retryable
   }
 }
 
