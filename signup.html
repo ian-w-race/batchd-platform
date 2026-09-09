@@ -817,46 +817,71 @@ async function submitOrg() {
   }
   _userId = user.id;
 
-  // Create organisation
-  const { data: org, error: orgErr } = await sb.from('organisations').insert({
-    name:          orgName,
-    type:          _type === 'manufacturer' ? 'manufacturer' : 'retailer',
-    contact_email: orgEmail,
-    region:        _region,
-  }).select().single();
-
-  if (orgErr) {
-    setLoading('btn-org-next', false);
-    return setMsg('org', 'Could not create organisation: ' + orgErr.message);
-  }
-
-  _orgId = org.id;
-
-  // Create org membership
-  const role = _type === 'manufacturer' ? 'mfr_admin' : 'corp_admin';
-  const { error: memErr } = await sb.from('organisation_members').insert({
-    user_id:         _userId,
-    organisation_id: _orgId,
-    role,
-    active:          true,
+  // 2026-09-09 security fix. Org, founding admin membership and the
+  // initial stores are created in ONE SECURITY DEFINER call. Previously
+  // the browser inserted the organisation_members row itself, and the
+  // live INSERT policy only checked `user_id = auth.uid()` — so the same
+  // client call with a different organisation_id and role made anyone a
+  // corp_admin of any existing organisation.
+  const _storeNames = _type === 'retailer' ? getStoreNames() : null;
+  const _rpc = await sb.rpc('create_organisation_with_admin', {
+    p_name:          orgName,
+    p_type:          _type,
+    p_contact_email: orgEmail,
+    p_region:        _region,
+    p_store_names:   _storeNames,
   });
 
-  if (memErr) {
-    setLoading('btn-org-next', false);
-    return setMsg('org', 'Could not create membership: ' + memErr.message);
-  }
+  if (!_rpc.error) {
+    _orgId = _rpc.data;
+  } else {
+    // A real rejection from the server must surface.
+    const _m = (_rpc.error.message || '').toLowerCase();
+    if (_m.includes('already belongs')) {
+      setLoading('btn-org-next', false);
+      return setMsg('org', 'This account already belongs to an organisation.');
+    }
+    // Otherwise assume migration 018 is not applied yet and use the
+    // legacy client-side path. Remove once migration 019 has run.
+    console.warn('[signup] create_organisation_with_admin unavailable, using legacy path:', _rpc.error.message);
 
-  // Create stores (retailer only)
-  if (_type === 'retailer') {
-    const storeNames = getStoreNames();
-    const storeRows  = storeNames.map((name, i) => ({
-      name,
+    const { data: org, error: orgErr } = await sb.from('organisations').insert({
+      name:          orgName,
+      type:          _type === 'manufacturer' ? 'manufacturer' : 'retailer',
+      contact_email: orgEmail,
+      region:        _region,
+    }).select().single();
+
+    if (orgErr) {
+      setLoading('btn-org-next', false);
+      return setMsg('org', 'Could not create organisation: ' + orgErr.message);
+    }
+
+    _orgId = org.id;
+
+    const role = _type === 'manufacturer' ? 'mfr_admin' : 'corp_admin';
+    const { error: memErr } = await sb.from('organisation_members').insert({
+      user_id:         _userId,
       organisation_id: _orgId,
-      store_code:      `STORE-${String(i+1).padStart(3,'0')}`,
+      role,
       active:          true,
-    }));
-    const { error: storeErr } = await sb.from('stores').insert(storeRows);
-    if (storeErr) console.warn('Store creation warning:', storeErr.message);
+    });
+
+    if (memErr) {
+      setLoading('btn-org-next', false);
+      return setMsg('org', 'Could not create membership: ' + memErr.message);
+    }
+
+    if (_type === 'retailer') {
+      const storeRows = (_storeNames || []).map((name, i) => ({
+        name,
+        organisation_id: _orgId,
+        store_code:      `STORE-${String(i+1).padStart(3,'0')}`,
+        active:          true,
+      }));
+      const { error: storeErr } = await sb.from('stores').insert(storeRows);
+      if (storeErr) console.warn('Store creation warning:', storeErr.message);
+    }
   }
 
   // Create user_settings — write everything the scanning app needs so it

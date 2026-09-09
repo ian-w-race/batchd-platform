@@ -187,10 +187,37 @@ async function init() {
     return;
   }
 
-  const { data: inv, error } = await sb.from('invitations')
-    .select('*, stores(name)')
-    .eq('token', token)
-    .maybeSingle();
+  // 2026-09-09 security fix. This used to SELECT from `invitations`
+  // directly with the public anon key. The live policy on that table was
+  // USING (true) for anon, so the .eq('token', …) was only a client-side
+  // filter — the entire pending-invite table, tokens included, was
+  // dumpable by anyone. get_invitation_by_token() is SECURITY DEFINER and
+  // returns one row of display fields for the supplied token only.
+  // The direct-read fallback keeps this page working on a deployment
+  // where migration 018 has not been applied yet; it disappears in
+  // practice once 019 revokes the anon policy.
+  let inv = null, error = null;
+  const rpcRes = await sb.rpc('get_invitation_by_token', { p_token: token });
+  if (!rpcRes.error && Array.isArray(rpcRes.data) && rpcRes.data.length) {
+    const r = rpcRes.data[0];
+    inv = {
+      email: r.email,
+      role: r.role,
+      organisation_id: r.organisation_id,
+      manager_store_ids: r.manager_store_ids,
+      accepted: r.accepted,
+      expires_at: r.expired ? new Date(Date.now() - 1000).toISOString() : null,
+      stores: r.store_name ? { name: r.store_name } : null,
+      _orgName: r.organisation_name || 'your organisation',
+      _viaRpc: true,
+    };
+  } else {
+    const legacy = await sb.from('invitations')
+      .select('*, stores(name)')
+      .eq('token', token)
+      .maybeSingle();
+    inv = legacy.data; error = legacy.error;
+  }
 
   if (error || !inv) {
     showError('Invitation not found', 'This link may have expired or already been used. Please ask your administrator to send a new invitation.');
@@ -206,10 +233,12 @@ async function init() {
   }
 
   // Fetch org name separately — avoids RLS join issue with anon key
-  let orgName = 'your organisation';
-  const { data: orgData } = await sb.from('organisations')
-    .select('name').eq('id', inv.organisation_id).maybeSingle();
-  if (orgData?.name) orgName = orgData.name;
+  let orgName = inv._orgName || 'your organisation';
+  if (!inv._viaRpc) {
+    const { data: orgData } = await sb.from('organisations')
+      .select('name').eq('id', inv.organisation_id).maybeSingle();
+    if (orgData?.name) orgName = orgData.name;
+  }
   inv._orgName = orgName;
 
   // Resolve manager_store_ids → store names for the multi-store chip display.
@@ -222,6 +251,7 @@ async function init() {
     inv._managerStoreNames = (storeRows || []).map(s => s.name);
   }
 
+  inv._token = token; // needed by accept_invitation RPC
   _invitation = inv;
   showForm(inv);
 }
@@ -394,6 +424,42 @@ async function acceptInvitation() {
 
     const userId = signInData.user.id;
 
+    // 2026-09-09 security fix: the whole acceptance is now one
+    // SECURITY DEFINER call. role and organisation_id are read from the
+    // invitation row server-side instead of being posted by the browser.
+    // The live INSERT policy on organisation_members only checked
+    // `user_id = auth.uid()`, so the old client-side insert below let any
+    // signed-in user name any organisation_id and any role — i.e. make
+    // themselves corp_admin of any org on the platform.
+    const _acc = await sb.rpc('accept_invitation', {
+      p_token:       _invitation._token,
+      p_full_name:   name,
+      p_phone:       phone,
+      p_hire_date:   hireDate,
+      p_store_role:  storeRole,
+      p_employee_id: employeeId,
+    });
+
+    // Server handled membership, manager stores, profile and settings.
+    let _serverHandled = !_acc.error;
+
+    if (_acc.error) {
+    // A genuine server-side rejection (already used, expired, wrong
+    // email) must surface, not fall through to the legacy path.
+    const _accMsg = (_acc.error.message || '').toLowerCase();
+    if (_accMsg.includes('already been used') || _accMsg.includes('expired')
+        || _accMsg.includes('different email') || _accMsg.includes('not found')) {
+      throw new Error(_acc.error.message);
+    }
+    // Otherwise the RPC is probably missing (migration 018 not applied) —
+    // fall back to the legacy client-side writes below.
+    console.warn('[join] accept_invitation RPC unavailable, using legacy path:', _acc.error.message);
+    }
+
+    if (!_serverHandled) {
+    // ── LEGACY CLIENT-SIDE PATH ──────────────────────────────────────
+    // Only reached where migration 018 has not been applied. Remove this
+    // whole block once 019 has run everywhere.
     // Mark invitation accepted — do this regardless of whether account was new or existing
     await sb.from('invitations').update({ accepted: true, user_id: userId }).eq('id', _invitation.id);
 
@@ -461,6 +527,7 @@ async function acceptInvitation() {
       recall_lookback_days: 180,
       onboarding_done:      true,
     }, { onConflict: 'user_id' });
+    } // end legacy client-side path
 
     // Show success then auto-redirect with session tokens
     const orgName   = _invitation._orgName || 'your organisation';
