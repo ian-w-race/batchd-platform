@@ -186,8 +186,8 @@ exports.handler = async (event) => {
       const isNO     = (org.region || 'no') === 'no';
 
       const subject = isDrill
-        ? `[DRILL] Batch'd Recall Drill: ${esc(recallData.product_name}`
-        : `⚠ Recall Alert: ${esc(recallData.product_name}${recallData.lot_number ? ` — Lot ${recallData.lot_number}` : ''}`;
+        ? `[DRILL] Batch'd Recall Drill: ${esc(recallData.product_name)}`
+        : `Recall Alert: ${esc(recallData.product_name)}${recallData.lot_number ? ` — Lot ${esc(recallData.lot_number)}` : ''}`;
 
       const html = buildRecallEmailHtml({
         org, recallData, exposure, isDrill, isNO,

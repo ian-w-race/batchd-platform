@@ -77,10 +77,43 @@ exports.handler = async (event) => {
   }
 
   if (body.type === 'demo_request') {
+    // Demo requests come from the public brand site — no session exists, so
+    // the Origin allowlist above is the only (accepted, spoofable) gate.
     return handleDemoRequest(body);
+  }
+
+  // Staff invites are only ever sent from the signed-in dashboard, so a
+  // real session is available. Require a corp_admin JWT (2026-09-09 audit
+  // fix) — the Origin check alone is forgeable with one curl header.
+  const authHeader = event.headers?.authorization || event.headers?.Authorization || '';
+  const jwt = authHeader.replace(/^Bearer\s+/i, '');
+  if (!(await verifyCorpAdmin(jwt))) {
+    return { statusCode: 403, body: JSON.stringify({ error: 'Not authorised. Sign in as a corporate admin.' }) };
   }
   return handleStaffInvite(body);
 };
+
+const SUPABASE_URL         = process.env.SUPABASE_URL || 'https://lurxucdmrugikdlvvebc.supabase.co';
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
+
+async function verifyCorpAdmin(jwt) {
+  if (!jwt || !SUPABASE_SERVICE_KEY) return false;
+  try {
+    const userRes = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${jwt}` },
+    });
+    if (!userRes.ok) return false;
+    const userId = (await userRes.json())?.id;
+    if (!userId) return false;
+    const memRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/organisation_members?user_id=eq.${userId}&role=eq.corp_admin&select=user_id&limit=1`,
+      { headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` } },
+    );
+    if (!memRes.ok) return false;
+    const rows = await memRes.json();
+    return Array.isArray(rows) && rows.length > 0;
+  } catch { return false; }
+}
 
 // ── Staff invitation email ─────────────────────────────────
 async function handleStaffInvite({ to, orgName, inviterEmail, role, inviteUrl }) {

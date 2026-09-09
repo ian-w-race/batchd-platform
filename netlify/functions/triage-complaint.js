@@ -217,20 +217,20 @@ async function runSmartMatching(complaint, orgId) {
   try {
     // 1. Product match by barcode (most reliable)
     if (complaint.barcode) {
-      const products = await sbQuery('products', { 'barcode=eq': complaint.barcode, 'select': 'id,name,barcode,manufacturer_id', 'limit': '3' });
+      const products = await sbQuery('products', { barcode: `eq.${complaint.barcode}`, 'select': 'id,name,barcode,manufacturer_id', 'limit': '3' });
       if (products.length) matches.products = products.map(p => ({ id: p.id, name: p.name, barcode: p.barcode, confidence: 'high', reason: 'Barcode match' }));
     }
 
     // 2. Product match by name (fuzzy - partial match using ilike)
     if (!matches.products.length && complaint.product_name) {
       const namePart = complaint.product_name.toLowerCase().split(' ')[0]; // first word
-      const products = await sbQuery('products', { 'name=ilike': `*${namePart}*`, 'select': 'id,name,barcode,manufacturer_id', 'limit': '5' });
+      const products = await sbQuery('products', { name: `ilike.*${namePart}*`, 'select': 'id,name,barcode,manufacturer_id', 'limit': '5' });
       if (products.length) matches.products = products.map(p => ({ id: p.id, name: p.name, barcode: p.barcode, confidence: 'medium', reason: 'Product name partial match' }));
     }
 
     // 3. Store match by name + city
     if (complaint.store_name && complaint.purchase_city) {
-      const stores = await sbQuery('stores', { 'name=ilike': `*${complaint.store_name.split(' ')[0]}*`, 'select': 'id,name,address,organisation_id', 'limit': '5' });
+      const stores = await sbQuery('stores', { name: `ilike.*${complaint.store_name.split(' ')[0]}*`, 'select': 'id,name,address,organisation_id', 'limit': '5' });
       if (stores.length) {
         matches.stores = stores
           .filter(s => !complaint.purchase_city || (s.address || '').toLowerCase().includes(complaint.purchase_city.toLowerCase()))
@@ -241,7 +241,7 @@ async function runSmartMatching(complaint, orgId) {
 
     // 4. Lot/shipment match
     if (complaint.lot_number) {
-      const shipments = await sbQuery('shipments', { 'lot_number=eq': complaint.lot_number, 'select': 'id,lot_number,product_id,manufacturer_id,retailer_id,store_id,quantity,unit,shipped_at', 'limit': '10' });
+      const shipments = await sbQuery('shipments', { lot_number: `eq.${complaint.lot_number}`, 'select': 'id,lot_number,product_id,manufacturer_id,retailer_id,store_id,quantity,unit,shipped_at', 'limit': '10' });
       if (shipments.length) matches.shipments = shipments.map(s => ({ id: s.id, lot_number: s.lot_number, manufacturer_id: s.manufacturer_id, retailer_id: s.retailer_id, store_id: s.store_id, quantity: s.quantity, unit: s.unit, shipped_at: s.shipped_at, confidence: 'high', reason: 'Exact lot number match in shipment records' }));
     }
   } catch (e) {
@@ -297,7 +297,7 @@ async function sendFollowUpEmail(complaint, triage, orgName) {
 }
 
 async function sendCriticalAlert(complaint, triage, matches, orgId, orgName) {
-  const orgs = await sbQuery('organisations', { 'id=eq': orgId, 'select': 'contact_email', 'limit': '1' });
+  const orgs = await sbQuery('organisations', { id: `eq.${orgId}`, 'select': 'contact_email', 'limit': '1' });
   const alertEmail = orgs?.[0]?.contact_email;
   if (!alertEmail) return;
 
@@ -407,7 +407,7 @@ exports.handler = async (event) => {
     // any non-null id must exist in organisations.
     const _claimedOrgId = manufacturer_id || receiving_org_id;
     if (_claimedOrgId) {
-      const _orgs = await sbQuery('organisations', { 'id=eq': _claimedOrgId, 'select': 'id', 'limit': '1' });
+      const _orgs = await sbQuery('organisations', { id: `eq.${_claimedOrgId}`, 'select': 'id', 'limit': '1' });
       if (!_orgs.length) {
         console.warn('[triage-complaint] rejected forged org_id:', _claimedOrgId, '| ip:', _clientIp, '| origin:', _origin);
         return { statusCode: 400, headers, body: JSON.stringify({ error: 'Invalid organisation reference.' }) };
@@ -423,8 +423,8 @@ exports.handler = async (event) => {
     if (customer_email) {
       const _oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
       const _recent = await sbQuery('complaints', {
-        'customer_email=eq': customer_email,
-        'created_at=gte': _oneHourAgo,
+        customer_email: `eq.${customer_email}`,
+        created_at: `gte.${_oneHourAgo}`,
         'select': 'id',
         'limit': '10'
       });

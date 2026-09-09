@@ -23,6 +23,40 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const FROM_EMAIL     = 'no-reply@batchdapp.com';
 const FROM_NAME      = "Important product notice";
 
+const SUPABASE_URL         = process.env.SUPABASE_URL || 'https://lurxucdmrugikdlvvebc.supabase.co';
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
+
+// Minimal HTML escape for values interpolated into the email body.
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Auth (2026-09-09 audit fix): this endpoint mails recall notices to
+// arbitrary consumer addresses from our domain. Only a signed-in
+// corp_admin of the org named in the payload may call it — without this
+// gate anyone on the internet could send official-looking fake recall
+// notices to any inbox.
+async function verifyCorpAdminOfOrg(jwt, orgId) {
+  if (!jwt || !orgId || !SUPABASE_SERVICE_KEY) return false;
+  try {
+    const userRes = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${jwt}` },
+    });
+    if (!userRes.ok) return false;
+    const userId = (await userRes.json())?.id;
+    if (!userId) return false;
+    const memRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/organisation_members?user_id=eq.${userId}&organisation_id=eq.${encodeURIComponent(orgId)}&role=eq.corp_admin&select=user_id&limit=1`,
+      { headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` } },
+    );
+    if (!memRes.ok) return false;
+    const rows = await memRes.json();
+    return Array.isArray(rows) && rows.length > 0;
+  } catch { return false; }
+}
+
 // Max batch size per Resend call — stay under their 100/call limit
 const BATCH_SIZE = 50;
 
@@ -43,6 +77,12 @@ exports.handler = async (event) => {
   }
 
   const { recall_event_id, org_id, org_name, customers, product_name, lot_number, reason } = body;
+
+  const authHeader = event.headers?.authorization || event.headers?.Authorization || '';
+  const jwt = authHeader.replace(/^Bearer\s+/i, '');
+  if (!(await verifyCorpAdminOfOrg(jwt, org_id))) {
+    return { statusCode: 403, body: JSON.stringify({ error: 'Not authorised. Sign in as a corporate admin of this organisation.' }) };
+  }
 
   if (!customers || !Array.isArray(customers) || customers.length === 0) {
     return { statusCode: 400, body: JSON.stringify({ error: 'customers array required' }) };
@@ -144,7 +184,7 @@ exports.handler = async (event) => {
 
 // ── Email HTML builder ────────────────────────────────────────────
 function buildNoticeHtml({ customerName, orgName, productName, lotNumber, reason, today }) {
-  const greeting = customerName ? `Dear ${customerName},` : 'Dear Customer,';
+  const greeting = customerName ? `Dear ${esc(customerName)},` : 'Dear Customer,';
 
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -175,15 +215,15 @@ function buildNoticeHtml({ customerName, orgName, productName, lotNumber, reason
           <table cellpadding="0" cellspacing="0" width="100%">
             <tr>
               <td style="font-size:11px;color:#666;padding:3px 0;width:120px;">Product name</td>
-              <td style="font-size:13px;font-weight:700;color:#111;padding:3px 0;">${productName}</td>
+              <td style="font-size:13px;font-weight:700;color:#111;padding:3px 0;">${esc(productName)}</td>
             </tr>
             ${lotNumber ? `<tr>
               <td style="font-size:11px;color:#666;padding:3px 0;">Lot number</td>
-              <td style="font-size:13px;font-family:monospace;color:#111;padding:3px 0;">${lotNumber}</td>
+              <td style="font-size:13px;font-family:monospace;color:#111;padding:3px 0;">${esc(lotNumber)}</td>
             </tr>` : ''}
             ${reason ? `<tr>
               <td style="font-size:11px;color:#666;padding:3px 0;vertical-align:top;">Reason</td>
-              <td style="font-size:12px;color:#333;padding:3px 0;line-height:1.5;">${reason}</td>
+              <td style="font-size:12px;color:#333;padding:3px 0;line-height:1.5;">${esc(reason)}</td>
             </tr>` : ''}
           </table>
         </div>
@@ -204,7 +244,7 @@ function buildNoticeHtml({ customerName, orgName, productName, lotNumber, reason
         </p>
 
         <p style="margin:8px 0 24px;font-size:13px;color:#333;line-height:1.6;">
-          If you have any questions, please contact us at ${orgName}.
+          If you have any questions, please contact us at ${esc(orgName)}.
         </p>
 
       </td></tr>
@@ -212,7 +252,7 @@ function buildNoticeHtml({ customerName, orgName, productName, lotNumber, reason
       <!-- Footer -->
       <tr><td style="background:#f8f8f8;padding:20px 32px;border-top:1px solid #eee;">
         <div style="font-size:11px;color:#888;text-align:center;line-height:1.6;">
-          This notice was issued by <strong>${orgName}</strong> on ${today}.<br>
+          This notice was issued by <strong>${esc(orgName)}</strong> on ${today}.<br>
           Recall management powered by <a href="https://batchd.no" style="color:#34d399;text-decoration:none;">Batch'd</a>.
         </div>
       </td></tr>

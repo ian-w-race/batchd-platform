@@ -75,7 +75,10 @@ async function listRecipients(orgId, prefKey, storeIdScope) {
     select: 'user_id,role,full_name,active',
     organisation_id: `eq.${orgId}`,
     role: 'in.(corp_admin,store_manager)',
-    active: 'is.true',  // null also accepted — handle below
+    // NULL means active by platform convention (only an explicit false is a
+    // deactivation). active=is.true excluded NULL rows server-side, silently
+    // dropping legacy members from every notification email.
+    or: '(active.is.true,active.is.null)',
   });
 
   if (!members || members.length === 0) return [];

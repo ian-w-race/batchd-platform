@@ -76,11 +76,20 @@ exports.handler = async (event) => {
     const recallEventId = eventRes.id;
 
     // ── 2. Determine which retailers to notify ─────────────────────────────
+    // Always filter through trading_partners. Without this, a manufacturer
+    // with a valid API key could spam fake recalls at arbitrary retailer
+    // orgs by sending unknown UUIDs in retailer_org_ids. Added 2026-06-14
+    // after audit flagged this as a cross-org abuse path.
+    const partners = await sbFetch(`/trading_partners?manufacturer_id=eq.${org.id}&status=eq.active&select=retailer_id`);
+    const allowedRetailerIds = new Set((partners || []).map(p => p.retailer_id));
+
     let targetRetailerIds = retailer_org_ids || [];
-    if (!targetRetailerIds.length) {
-      // Notify all active trading partners
-      const partners = await sbFetch(`/trading_partners?manufacturer_id=eq.${org.id}&status=eq.active&select=retailer_id`);
-      targetRetailerIds = (partners || []).map(p => p.retailer_id);
+    if (targetRetailerIds.length > 0) {
+      // Explicit subset — keep only valid trading partners.
+      targetRetailerIds = targetRetailerIds.filter(id => allowedRetailerIds.has(id));
+    } else {
+      // No subset → fan out to all active partners.
+      targetRetailerIds = Array.from(allowedRetailerIds);
     }
 
     // ── 3. Create distributions ────────────────────────────────────────────
@@ -112,21 +121,18 @@ exports.handler = async (event) => {
     // Call the push-recall-email function internally
     try {
       const emailUrl = `https://${event.headers.host}/.netlify/functions/push-recall-email`;
-      await fetch(emailUrl, {
+      // push-recall-email reads snake_case recall_event_id and fetches the
+      // event, distributions and org contacts itself — send only the id.
+      const emailRes = await fetch(emailUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          recallEventId,
-          productName:      product_name,
-          lotNumber:        lot_number,
-          barcode,
-          severity,
-          reason,
-          manufacturerName: org.name,
-          affectedStores:   distributionsCreated,
-          isDrill:          !!is_drill,
-        }),
+        body: JSON.stringify({ recall_event_id: recallEventId }),
       });
+      // fetch() resolves on HTTP errors — surface them so a dead email leg
+      // shows up in the function logs instead of failing silently.
+      if (!emailRes.ok) {
+        console.error('Email notification failed: HTTP', emailRes.status, (await emailRes.text()).slice(0, 300));
+      }
     } catch(e) {
       // Email failure shouldn't block the webhook response
       console.error('Email notification failed:', e.message);

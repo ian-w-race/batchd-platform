@@ -13,11 +13,40 @@ const CORS = {
   'Content-Type': 'application/json',
 };
 
+// Auth (2026-09-09 audit fix): every branch of this function is abusable
+// anonymously — notify_retailers mails arbitrary addresses with
+// caller-controlled content, and analyze_photo / summarize_findings proxy
+// the Anthropic API on our bill. Require a signed-in corp_admin.
+async function verifyCorpAdmin(jwt) {
+  if (!jwt || !SUPABASE_SERVICE_KEY) return false;
+  try {
+    const userRes = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${jwt}` },
+    });
+    if (!userRes.ok) return false;
+    const userId = (await userRes.json())?.id;
+    if (!userId) return false;
+    const memRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/organisation_members?user_id=eq.${userId}&role=eq.corp_admin&select=user_id&limit=1`,
+      { headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` } },
+    );
+    if (!memRes.ok) return false;
+    const rows = await memRes.json();
+    return Array.isArray(rows) && rows.length > 0;
+  } catch { return false; }
+}
+
 exports.handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') return { statusCode: 200, headers: CORS, body: '' };
 
   let body;
   try { body = JSON.parse(event.body || '{}'); } catch { return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: 'Invalid JSON' }) }; }
+
+  const authHeader = event.headers?.authorization || event.headers?.Authorization || '';
+  const jwt = authHeader.replace(/^Bearer\s+/i, '');
+  if (!(await verifyCorpAdmin(jwt))) {
+    return { statusCode: 403, headers: CORS, body: JSON.stringify({ error: 'Not authorised. Sign in as a corporate admin.' }) };
+  }
 
   const { type } = body;
 
