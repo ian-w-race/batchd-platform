@@ -2199,7 +2199,7 @@ async function traceLot() {
     // not worth it for the tracer where correctness > speed. Left as
     // client-side filter pending a more sophisticated server filter
     // (e.g. trigram similarity index in Postgres).
-    const [shipmentsRes, scansRes, recallsRes, acksRes] = await Promise.all([
+    const [shipmentsRes, scansRes, recallsRes, acksRes, recallsTblRes] = await Promise.all([
       sb.from('shipments').select('id,lot_number,quantity,unit,shipped_at,reference_document,stores(name,address),organisations!shipments_manufacturer_id_fkey(name),products(name)').eq('retailer_id', _orgId).limit(200),
       sb.from('scans').select('id,product_name,lot_number,store_name,scanned_by,created_at,tlc_source').eq('organisation_id', _orgId).order('created_at',{ascending:false}).limit(500),
       // recall_events is global by design (FDA + Mattilsynet feeds + pushed
@@ -2211,11 +2211,21 @@ async function traceLot() {
       // there actually is one.
       sb.from('recall_events').select('id,product_name,lot_number,severity,reason,is_drill,published_at').eq('is_drill', false).order('published_at',{ascending:false}).limit(500),
       sb.from('recall_acknowledgements').select('id,status,recall_event_id,created_at,acknowledged_at,units_pulled,stores(name)').eq('organisation_id', _orgId),
+      // recall_events alone MISSES manual and FDA/Mattilsynet feed recalls —
+      // those live in the recalls TABLE, not recall_events. Without this
+      // second query the tracer said "no active recall" for a lot under an
+      // active manual recall (2026-09-09 audit fix).
+      sb.from('recalls').select('id,product_name,lot_number,description,source,created_at').eq('organisation_id', _orgId).eq('active', true).limit(500),
     ]);
 
     const shipments = (shipmentsRes.data||[]).filter(s => lotsMatch(s.lot_number, lotCode));
     const scans     = (scansRes.data||[]).filter(s => lotsMatch(s.lot_number, lotCode));
-    const recalls   = (recallsRes.data||[]).filter(r => lotsMatch(r.lot_number, lotCode) && !r.is_drill);
+    const recallsTbl = (recallsTblRes.data||[])
+      .filter(r => lotsMatch(r.lot_number, lotCode))
+      .map(r => ({ id: r.id, product_name: r.product_name, lot_number: r.lot_number,
+                   severity: null, reason: r.description, is_drill: false,
+                   published_at: r.created_at, _fromRecallsTable: true }));
+    const recalls   = [...(recallsRes.data||[]).filter(r => lotsMatch(r.lot_number, lotCode) && !r.is_drill), ...recallsTbl];
     const matchedRecallIds = recalls.map(r => r.id);
     const acks      = (acksRes.data||[]).filter(a => matchedRecallIds.includes(a.recall_event_id));
 
@@ -4468,13 +4478,15 @@ function _composerRefreshScope() {
 // ── Step 2: Classify ──────────────────────────────────────────
 function _composerStep2Classify(s) {
   const canContinue = !!(s.severity && s.severity !== 'unknown' && s.hazardType && s.reason && s.reason.length >= 12);
-  // FDA severity classes — same labels regardless of org region in v1.
-  // v2 will swap in Mattilsynet equivalents under _orgRegion === 'no'.
+  // Severity classes gate on _orgRegion (2026-09-09 audit fix): the class
+  // system is shared, but labels say Klasse for NO and the FDA mention is
+  // US-only per the jurisdiction rule.
+  const _sevUS = _orgRegion === 'us';
   const sevOpts = [
-    { v:'class_i',          title:'Class I',           sub:'Reasonable probability of serious adverse health consequences or death.', tone:'danger' },
-    { v:'class_ii',         title:'Class II',          sub:'Temporary or medically reversible health consequence; remote probability of serious harm.', tone:'warn' },
-    { v:'class_iii',        title:'Class III',         sub:'Not likely to cause adverse health consequences (e.g., labeling defect, weight short).', tone:'muted' },
-    { v:'market_withdrawal',title:'Market withdrawal', sub:'Minor violation that would not be subject to FDA legal action, or no violation at all.', tone:'muted' },
+    { v:'class_i',          title:_sevUS?'Class I':'Klasse I',     sub:'Reasonable probability of serious adverse health consequences or death.', tone:'danger' },
+    { v:'class_ii',         title:_sevUS?'Class II':'Klasse II',   sub:'Temporary or medically reversible health consequence; remote probability of serious harm.', tone:'warn' },
+    { v:'class_iii',        title:_sevUS?'Class III':'Klasse III', sub:'Not likely to cause adverse health consequences (e.g., labeling defect, weight short).', tone:'muted' },
+    { v:'market_withdrawal',title:'Market withdrawal', sub:_sevUS?'Minor violation that would not be subject to FDA legal action, or no violation at all.':'Minor violation not subject to regulatory action, or no violation at all.', tone:'muted' },
   ];
   const hazardOpts = [
     { v:'allergen',       label:'Undeclared allergen' },
@@ -4668,10 +4680,11 @@ function _composerStep4Review(s) {
                 style="font-family:'DM Mono',monospace;font-size:11px;padding:10px 16px;border-radius:8px;border:1px solid var(--accent);background:none;color:var(--accent);cursor:pointer;letter-spacing:0.02em;">
           📄 Coordination sheet
         </button>
+        ${_orgRegion === 'us' ? `
         <button onclick="openFdaNotificationFromComposer()"
                 style="font-family:'DM Mono',monospace;font-size:11px;padding:10px 16px;border-radius:var(--r-md);border:1px solid var(--info);background:none;color:var(--info);cursor:pointer;letter-spacing:0.02em;">
-          📋 FDA notification
-        </button>
+          FDA notification
+        </button>` : ''}
         <button id="composer-push-btn" onclick="_composerPushRecall()"
                 style="display:inline-flex;align-items:center;gap:8px;font-family:'Figtree',sans-serif;font-weight:700;font-size:14px;padding:10px 22px;border-radius:10px;border:none;background:var(--accent);color:var(--accent-on-primary);cursor:pointer;box-shadow:0 4px 14px rgba(var(--accent-alt-rgb),0.22);">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
@@ -4733,13 +4746,15 @@ function _composerOpenCoordinationSheet() {
   const hazardLabel = ({allergen:'Undeclared allergen',contamination:'Microbial / pathogen contamination',foreign_object:'Adulteration (foreign object in product)',mislabeling:'Mislabeling / wrong product',chemical:'Chemical / heavy metal contamination',spoilage:'Spoilage / off-spec',packaging:'Packaging defect',other:'Other'})[s.hazardType] || s.hazardType;
   const orgName = _orgName || 'Your organisation';
   const today   = new Date();
-  const dateStr = today.toLocaleDateString(undefined, { year:'numeric', month:'long', day:'numeric' });
+  // Date format is locked to region (_dashLocale), never browser locale
+  // (2026-09-09 audit fix).
+  const dateStr = today.toLocaleDateString(_dashLocale(), { year:'numeric', month:'long', day:'numeric' });
 
   const storeRows = (s.scope?.stores || []).map(st => `
     <tr>
       <td>${esc(st.name)}</td>
       <td style="font-family:monospace;">${st.units}</td>
-      <td>${st.latest ? new Date(st.latest).toLocaleDateString() : '—'}</td>
+      <td>${st.latest ? new Date(st.latest).toLocaleDateString(_dashLocale()) : '—'}</td>
     </tr>`).join('') || `<tr><td colspan="3" style="color:#888;font-style:italic;">No on-shelf matches in scan history at time of coordination sheet generation.</td></tr>`;
 
   const w = window.open('', '_blank');
@@ -4838,12 +4853,12 @@ ${s.scope && s.scope.totalStores > 0 ? `
     <span class="ph" contenteditable="true" data-placeholder="Company &amp; contact name / date" style="min-width:360px;">Company &amp; contact name / date</span>
   </div>
   <div>
-    <span style="font-size:10.5px;color:#666;text-transform:uppercase;letter-spacing:0.06em;">Regulator notified (FDA / Mattilsynet):</span>
+    <span style="font-size:10.5px;color:#666;text-transform:uppercase;letter-spacing:0.06em;">Regulator notified (${_orgRegion === 'us' ? 'FDA' : 'Mattilsynet'}):</span>
     <span class="ph" contenteditable="true" data-placeholder="Agency, contact, date" style="min-width:340px;">Agency, contact, date</span>
   </div>
   <div>
     <span style="font-size:10.5px;color:#666;text-transform:uppercase;letter-spacing:0.06em;">Reference number(s):</span>
-    <span class="ph" contenteditable="true" data-placeholder="FDA recall number / internal case ID" style="min-width:340px;">FDA recall number / internal case ID</span>
+    <span class="ph" contenteditable="true" data-placeholder="${_orgRegion === 'us' ? 'FDA recall number' : 'Mattilsynet case number'} / internal case ID" style="min-width:340px;">${_orgRegion === 'us' ? 'FDA recall number' : 'Mattilsynet case number'} / internal case ID</span>
   </div>
 </div>
 
@@ -4859,7 +4874,7 @@ ${s.scope && s.scope.totalStores > 0 ? `
 </div>
 
 <div class="footnote">
-  This is an internal coordination record. The FDA-facing recall notification (21 CFR 7.46) is a separate document — generate it from your Batch'd Recalls panel or from this recall's detail page.
+  This is an internal coordination record. ${_orgRegion === 'us' ? 'The FDA-facing recall notification (21 CFR 7.46) is a separate document — generate it from your Batch\'d Recalls panel or from this recall\'s detail page.' : 'The Mattilsynet notification (Matloven §16) is filed separately at mattilsynet.no — see the recall detail page for the direct link.'}
 </div>
 
 ${_batchdDocFooter()}
@@ -4939,7 +4954,11 @@ async function _composerPushRecall() {
     // Per-store acknowledgement rows. These power the 5-step chain,
     // the detail page and the escalation emails. Failing here is
     // critical, so it throws to the cleanup path.
-    const { data: stores } = await sb.from('stores').select('id').eq('organisation_id', _orgId).eq('active', true);
+    const { data: stores, error: storesErr } = await sb.from('stores').select('id').eq('organisation_id', _orgId).eq('active', true);
+    // A transient failure here must NOT silently produce a recall with zero
+    // store chains — the ack rows power the 5-step chain and escalation
+    // emails (2026-09-09 audit fix).
+    if (storesErr) throw storesErr;
     if (stores?.length) {
       const acks = stores.map(st => ({
         recall_event_id: ev.id, organisation_id: _orgId,
@@ -4962,6 +4981,19 @@ async function _composerPushRecall() {
           p_organisation_id: _orgId,
           p_lookback_days:   180,
         });
+        // 2026-09-09 audit fix: the RPC writes Path A rows keyed to the
+        // LINKED recalls row (recall_id = inserted.id, recall_event_id
+        // NULL) — but every pushed-recall consumer (recall detail, FSMA
+        // export, scanner ack strip) queries by the EVENT id. Convert the
+        // fresh rows to canonical Path B (both columns = ev.id) so they are
+        // visible immediately and so the scanner's login-time Path B sweep
+        // dedupes against them via the (scan_id, recall_id) unique index
+        // instead of double-inserting.
+        const { error: convErr } = await sb.from('scan_recall_matches')
+          .update({ recall_id: ev.id, recall_event_id: ev.id, recall_source: 'manufacturer_push' })
+          .eq('recall_id', inserted.id)
+          .eq('organisation_id', _orgId);
+        if (convErr) console.warn('[composer push] match-row conversion failed (rows stay Path A):', convErr.message);
       } catch (sweepErr) {
         console.warn('[composer push] sweep failed:', sweepErr?.message);
       }
@@ -5519,6 +5551,20 @@ async function advanceAckStatus(ackId, status, recallEventId) {
   const origText = btn?.textContent;
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
 
+  // Forward-only guard (2026-09-09 audit fix): a stale tab clicking an old
+  // button must not regress the chain and re-stamp earlier step timestamps.
+  const ACK_ORDER = { notified: 0, acknowledged: 1, pulled: 2, disposed: 3, confirmed: 4 };
+  const { data: curRows } = await sb.from('recall_acknowledgements')
+    .select('status').eq('id', ackId).eq('organisation_id', _orgId).limit(1);
+  const curStatus = curRows?.[0]?.status;
+  if (curStatus && ACK_ORDER[status] !== undefined && ACK_ORDER[curStatus] !== undefined
+      && ACK_ORDER[status] <= ACK_ORDER[curStatus]) {
+    if (btn) { btn.disabled = false; btn.textContent = origText; }
+    showToast('This step was already completed elsewhere — refreshing.', 'warn', 3500);
+    renderRecalls();
+    return;
+  }
+
   const userId = (await sb.auth.getUser()).data.user?.id;
   const now = new Date().toISOString();
 
@@ -5979,7 +6025,11 @@ function renderStoreMap(container, stores, options) {
   // Live theme swap — retile + restyle without re-rendering the panel.
   // One observer per mounted map; the previous one is disconnected when
   // the container re-renders (Leaflet re-init clears the DOM anyway).
-  if (container._themeObs) container._themeObs.disconnect();
+  // Single-slot observer registry (2026-09-09 audit fix): panels rebuild
+  // their container div on every render, so a per-container disconnect
+  // never fired and observers accumulated for the whole session. Only one
+  // map is on screen at a time, so one live observer is enough.
+  if (window._batchdMapThemeObs) window._batchdMapThemeObs.disconnect();
   const _themeObs = new MutationObserver(() => {
     const th = _mapTheme();
     tiles.setUrl(_tileUrl(th));
@@ -5991,7 +6041,7 @@ function renderStoreMap(container, stores, options) {
     }
   });
   _themeObs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-  container._themeObs = _themeObs;
+  window._batchdMapThemeObs = _themeObs;
 
   // setFilter — fade non-matching markers without removing them, so the
   // map keeps its full geographic context. Pass 'all' to clear the filter.
@@ -6047,9 +6097,13 @@ async function renderCommandCenter() {
     // because all we need is "did this store scan at all in the last 72h"
     // for the coverage tile. We query within the time window so we don't
     // pull every scan in history.
-    const [storesRes, srmRes, ackRes, recentScansRes] = await Promise.all([
+    const [storesRes, srmRes, liveRecallsRes, openEventsRes, ackRes, recentScansRes] = await Promise.all([
       sb.from('stores').select('*').eq('organisation_id', _orgId),
       sb.from('scan_recall_matches').select('store_id, scan_id, recall_id, recall_event_id').eq('organisation_id', _orgId),
+      // Live-recall id sets (2026-09-09 audit fix): a match row alone must
+      // not keep a store red after the recall itself was resolved/closed.
+      sb.from('recalls').select('id').eq('organisation_id', _orgId).eq('active', true),
+      sb.from('recall_events').select('id').eq('is_drill', false).is('closed_at', null),
       sb.from('recall_acknowledgements')
         .select('id, store_id, recall_event_id, status, acknowledged_at, pulled_at, disposed_at, confirmed_at, created_at, recall_events(id, product_name, lot_number, severity, reason, is_drill, published_at, closed_at)')
         .eq('organisation_id', _orgId)
@@ -6077,10 +6131,17 @@ async function renderCommandCenter() {
       }
     }
 
-    // store_id → active recall count
+    // store_id → active recall count. Requires the matched scan to be on
+    // shelf AND the underlying recall to still be live — a resolved recall
+    // must release the store marker (2026-09-09 audit fix).
+    const liveRecallIds = new Set([
+      ...(liveRecallsRes.data || []).map(r => r.id),
+      ...(openEventsRes.data || []).map(e => e.id),
+    ]);
     const activeRecallByStore = {};
     (srmRes.data || []).forEach(m => {
       if (!m.store_id || !onShelfScanIds.has(m.scan_id)) return;
+      if (!liveRecallIds.has(m.recall_event_id) && !liveRecallIds.has(m.recall_id)) return;
       activeRecallByStore[m.store_id] = (activeRecallByStore[m.store_id] || 0) + 1;
     });
 
@@ -6782,6 +6843,17 @@ async function markRecallComplete(recallEventId) {
       throw error;
     }
 
+    // 2026-09-09 audit fix: composer-pushed recalls also have a linked row
+    // in the recalls table (is_pushed=true, recall_event_id=this event).
+    // Deactivate it too, or the scanner's recall cache keeps matching and
+    // alerting on a recall that was closed here. Best-effort — the event
+    // closure above is the authoritative record.
+    const { error: linkErr } = await sb.from('recalls')
+      .update({ active: false, resolved_at: new Date().toISOString() })
+      .eq('recall_event_id', recallEventId)
+      .eq('organisation_id', _orgId);
+    if (linkErr) console.warn('[markRecallComplete] linked recalls row not deactivated:', linkErr.message);
+
     showToast('Recall closed. Audit trail locked.', 'ok', 3000);
     // Re-render whichever panel the caller is on. The detail page keeps
     // its locked view; the Command Center's End-drill button refreshes
@@ -6849,7 +6921,11 @@ async function renderRecallDetail() {
         .eq('organisation_id', _orgId)
         .order('created_at', { ascending: true }),
       sb.from('scan_recall_matches')
-        .select('id, scan_id, recall_id, recall_event_id, store_id, lot_number, product_name, quantity, removed_at')
+        // Column names are recall_lot / recall_product (snapshots) — the
+        // table has NO lot_number/product_name columns; selecting them
+        // 42703'd the whole query and silently nulled the match data
+        // (2026-09-09 audit fix).
+        .select('id, scan_id, recall_id, recall_event_id, store_id, recall_lot, recall_product, quantity, removed_at')
         .or(`recall_event_id.eq.${recallEventId},recall_id.eq.${recallEventId}`)
         .eq('organisation_id', _orgId)
     ]);
@@ -7395,6 +7471,10 @@ async function renderRecallDetail() {
         }).join('')}
       </div>
 
+      <!-- FSMA 204 records hero + FDA 21 CFR 7.46 draft card are US-only
+           (jurisdiction rule: FDA/FSMA copy must never render for NO orgs).
+           Gate added 2026-09-09 audit fix — pattern matches lines ~3827. -->
+      ${_orgRegion === 'us' ? `
       <!-- FSMA 204 records production hero -->
       <div style="background:var(--surface);border:1px solid rgba(var(--info-rgb),0.35);border-radius:var(--r-lg);padding:18px 22px;margin-bottom:10px;">
         <div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap;">
@@ -7435,6 +7515,7 @@ async function renderRecallDetail() {
           </button>
         </div>
       </div>
+      ` : ''}
 
       <!-- Affected stores map (Step 4). Reuses renderStoreMap with the
            stage palette and a recall-aware popup. Empty state when no
@@ -8181,10 +8262,10 @@ function renderTraceRows(list) {
   if (list.length === 0) return `<tr><td colspan="6"><div class="empty">No scans found.</div></td></tr>`;
   return list.map(s => `
     <tr>
-      <td style="padding:10px 18px;"><div class="store-name">${s.product_name||'—'}</div></td>
-      <td style="padding:10px 18px;color:var(--muted);font-size:10px;">${s.lot_number||'—'}${s.barcode_number?'<br>'+s.barcode_number:''}</td>
-      <td style="padding:10px 18px;color:var(--muted)">${s.store_name||'—'}</td>
-      <td style="padding:10px 18px;color:var(--muted)">${(s.scanned_by||'—').split('@')[0]}</td>
+      <td style="padding:10px 18px;"><div class="store-name">${esc(s.product_name||'—')}</div></td>
+      <td style="padding:10px 18px;color:var(--muted);font-size:10px;">${esc(s.lot_number||'—')}${s.barcode_number?'<br>'+esc(s.barcode_number):''}</td>
+      <td style="padding:10px 18px;color:var(--muted)">${esc(s.store_name||'—')}</td>
+      <td style="padding:10px 18px;color:var(--muted)">${esc((s.scanned_by||'—').split('@')[0])}</td>
       <td style="padding:10px 18px;color:var(--muted)">${s.created_at ? fmtDash(s.created_at) : '—'}</td>
       <td style="padding:10px 18px;">
         ${s.recall_resolved ? '<span class="recall-status status-resolved">Resolved</span>'
@@ -8713,6 +8794,14 @@ function _filterInvStores(query) {
 }
 
 async function sendInvitation() {
+  // Defense-in-depth role guard, same pattern as the other write functions
+  // (2026-09-09 audit): inviting users — including new corp_admins — is a
+  // corp_admin-only action. The server-side send-invite function also
+  // verifies a corp_admin JWT now.
+  if (_userRole !== 'corp_admin') {
+    showToast('Only corp admins can send invitations.', 'error', 4000);
+    return;
+  }
   const email      = document.getElementById('inv-email').value.trim();
   const role       = document.getElementById('inv-role').value;
   const msgEl      = document.getElementById('invite-msg');
@@ -8792,9 +8881,10 @@ async function sendInvitation() {
     const inviteUrl = `https://batchdapp.com/join?token=${inv.token}`;
     const roleLabel = role.replace(/_/g, ' ');
 
+    const { data: { session: _invSession } } = await sb.auth.getSession();
     const emailRes = await fetch('/.netlify/functions/send-invite', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_invSession?.access_token || ''}` },
       body: JSON.stringify({
         to: email,
         orgName: inv.org_name,
@@ -9878,7 +9968,7 @@ async function generateJointRecallReport(recallEventId, productName) {
       if (a.confirmed_at)      timelineRows.push({ t: a.confirmed_at,      actor: a.stores?.name || org.name, event: 'Full recall response resolved', type: 'confirmed' });
     });
     scanDetails.forEach(s => {
-      if (s.removed_from_shelf_at) timelineRows.push({ t: s.removed_from_shelf_at, actor: (s.removed_from_shelf_by||'').split('@')[0]||'Staff', event: `Product physically removed — ${s.store_name||'store'} — via Batch\u2019d scanning app`, type: 'app' });
+      if (s.removed_from_shelf_at) timelineRows.push({ t: s.removed_from_shelf_at, actor: (s.removed_from_shelf_by||'').split('@')[0]||'Staff', event: `Product physically removed — ${esc(s.store_name||'store')} — via Batch\u2019d scanning app`, type: 'app' });
     });
     timelineRows.sort((a, b) => new Date(a.t) - new Date(b.t));
 
@@ -9936,13 +10026,13 @@ async function generateJointRecallReport(recallEventId, productName) {
 <div class="meta-grid">
   <div class="meta-box">
     <div class="meta-label">Product</div>
-    <div class="meta-val">${ev.product_name || '—'}</div>
-    ${ev.lot_number ? `<div class="meta-sub">Lot: <span style="font-family:monospace;">${ev.lot_number}</span></div>` : ''}
+    <div class="meta-val">${esc(ev.product_name || '—')}</div>
+    ${ev.lot_number ? `<div class="meta-sub">Lot: <span style="font-family:monospace;">${esc(ev.lot_number)}</span></div>` : ''}
   </div>
   <div class="meta-box">
     <div class="meta-label">Severity</div>
     <div class="meta-val">${ev.severity?formatSeverity(ev.severity).label:'—'}</div>
-    ${ev.reason ? `<div class="meta-sub">${ev.reason}</div>` : ''}
+    ${ev.reason ? `<div class="meta-sub">${esc(ev.reason)}</div>` : ''}
   </div>
   <div class="meta-box">
     <div class="meta-label">Recall published</div>
@@ -9953,21 +10043,21 @@ async function generateJointRecallReport(recallEventId, productName) {
     <div class="meta-val">${ev.authority_reference || docRef}</div>
   </div>
 </div>
-${ev.description ? `<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:10px 14px;font-size:12px;color:#374151;line-height:1.6;margin-bottom:16px;">${ev.description}</div>` : ''}
+${ev.description ? `<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:10px 14px;font-size:12px;color:#374151;line-height:1.6;margin-bottom:16px;">${esc(ev.description)}</div>` : ''}
 
 <h2>Parties</h2>
 <div class="meta-grid">
   <div class="meta-box">
     <div class="meta-label">Manufacturer (recall initiator)</div>
     <div class="meta-val">${mfrOrg.name || ev.source_org_id || '—'}</div>
-    ${mfrOrg.recall_coordinator_name ? `<div class="meta-sub">Coordinator: ${mfrOrg.recall_coordinator_name}</div>` : ''}
+    ${mfrOrg.recall_coordinator_name ? `<div class="meta-sub">Coordinator: ${esc(mfrOrg.recall_coordinator_name)}</div>` : ''}
     ${mfrOrg.recall_coordinator_contact || mfrOrg.contact_email ? `<div class="meta-sub">${mfrOrg.recall_coordinator_contact || mfrOrg.contact_email}</div>` : ''}
   </div>
   <div class="meta-box">
     <div class="meta-label">Retailer (this organisation)</div>
     <div class="meta-val">${org.name || '—'}</div>
-    ${org.recall_coordinator_name ? `<div class="meta-sub">Coordinator: ${org.recall_coordinator_name}</div>` : ''}
-    ${org.contact_email ? `<div class="meta-sub">${org.contact_email}</div>` : ''}
+    ${org.recall_coordinator_name ? `<div class="meta-sub">Coordinator: ${esc(org.recall_coordinator_name)}</div>` : ''}
+    ${org.contact_email ? `<div class="meta-sub">${esc(org.contact_email)}</div>` : ''}
   </div>
 </div>
 
@@ -9978,7 +10068,7 @@ ${ev.description ? `<div style="background:#f9fafb;border:1px solid #e5e7eb;bord
   </tr></thead>
   <tbody>
     ${acks.map(a => `<tr>
-      <td style="font-weight:600;">${a.stores?.name||'—'}</td>
+      <td style="font-weight:600;">${esc(a.stores?.name||'—')}</td>
       <td><span class="chip ${a.status==='confirmed'?'chip-green':a.status==='notified'?'chip-red':'chip-amber'}">${(a.status==='confirmed'?'RESOLVED':a.status.toUpperCase())}</span></td>
       <td style="font-family:monospace;font-size:11px;">${a.created_at?new Date(a.created_at).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'—'}</td>
       <td style="font-family:monospace;font-size:11px;">${a.acknowledged_at?fmtDashDT(a.acknowledged_at):'—'}</td>
@@ -10000,9 +10090,9 @@ ${scanDetails.length > 0 ? `
   <thead><tr><th>Product</th><th>Lot</th><th>Store</th><th>Placed on shelf</th><th>Pulled from shelf</th><th>Scanned by</th></tr></thead>
   <tbody>
     ${scanDetails.map(s => `<tr>
-      <td style="font-weight:600;">${s.product_name||'—'}</td>
-      <td style="font-family:monospace;font-size:11px;">${s.lot_number||'—'}</td>
-      <td>${s.store_name||'—'}</td>
+      <td style="font-weight:600;">${esc(s.product_name||'—')}</td>
+      <td style="font-family:monospace;font-size:11px;">${esc(s.lot_number||'—')}</td>
+      <td>${esc(s.store_name||'—')}</td>
       <td style="font-family:monospace;font-size:11px;">${s.created_at?new Date(s.created_at).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'—'}</td>
       <td style="font-family:monospace;font-size:11px;">${s.removed_from_shelf_at?new Date(s.removed_from_shelf_at).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'Not yet pulled'}</td>
       <td style="font-size:11px;">${(s.scanned_by||'—').split('@')[0]}</td>
@@ -10015,7 +10105,7 @@ ${timelineRows.map(row => `
 <div class="timeline-row">
   <div class="timeline-dot" style="background:${typeColor[row.type]||'#9ca3af'};"></div>
   <div class="timeline-time">${fmtDt(row.t)}</div>
-  <div><div class="timeline-actor">${row.actor}</div><div class="timeline-event">${row.event}</div></div>
+  <div><div class="timeline-actor">${esc(row.actor)}</div><div class="timeline-event">${esc(row.event)}</div></div>
 </div>`).join('')}
 
 <h2>Regulatory compliance</h2>
@@ -10035,12 +10125,12 @@ ${allDone ? `
   <div>
     <h3>Manufacturer — ${mfrOrg.name || '—'}</h3>
     <div class="sig-line">Recall coordinator signature &amp; date</div>
-    ${mfrOrg.recall_coordinator_name ? `<div style="font-size:11px;color:#6b7280;margin-top:6px;">${mfrOrg.recall_coordinator_name}${mfrOrg.recall_coordinator_contact?' · '+mfrOrg.recall_coordinator_contact:''}</div>` : ''}
+    ${mfrOrg.recall_coordinator_name ? `<div style="font-size:11px;color:#6b7280;margin-top:6px;">${esc(mfrOrg.recall_coordinator_name)}${mfrOrg.recall_coordinator_contact?' · '+mfrOrg.recall_coordinator_contact:''}</div>` : ''}
   </div>
   <div>
     <h3>Retailer — ${org.name || '—'}</h3>
     <div class="sig-line">Recall coordinator signature &amp; date</div>
-    ${org.recall_coordinator_name ? `<div style="font-size:11px;color:#6b7280;margin-top:6px;">${org.recall_coordinator_name}${org.contact_email?' · '+org.contact_email:''}</div>` : ''}
+    ${org.recall_coordinator_name ? `<div style="font-size:11px;color:#6b7280;margin-top:6px;">${esc(org.recall_coordinator_name)}${org.contact_email?' · '+org.contact_email:''}</div>` : ''}
   </div>
 </div>` : ''}
 
@@ -10087,7 +10177,7 @@ async function generateStoreAuditReport(ackId, storeName) {
     const org = a.organisations || {};
     const fmtDt = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
     const docRef = `STORE-${ackId.slice(0,8).toUpperCase()}`;
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Store Audit Record — ${storeName}</title>
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Store Audit Record — ${esc(storeName)}</title>
     <style>body{font-family:Arial,sans-serif;font-size:13px;color:#1a2e2a;padding:40px;max-width:600px;margin:0 auto;}
     h1{font-size:18px;font-weight:800;color:var(--accent-on-primary);margin-bottom:4px;}h2{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--accent-on-primary);margin:20px 0 8px;padding-bottom:4px;border-bottom:2px solid #d1fae5;}
     .row{display:flex;gap:12px;padding:7px 0;border-bottom:1px solid #f3f4f6;font-size:12px;}
@@ -10098,11 +10188,11 @@ async function generateStoreAuditReport(ackId, storeName) {
     <h1>Store Recall Audit Record</h1>
     <div style="font-size:11px;color:#6b7280;margin-bottom:16px;">Ref: ${docRef} · Generated ${fmtDt(new Date())}</div>
     <h2>Product</h2>
-    <div class="row"><span class="lbl">Product</span><span class="val">${ev.product_name||'—'}</span></div>
-    <div class="row"><span class="lbl">Lot number</span><span class="val" style="font-family:monospace;">${ev.lot_number||'—'}</span></div>
-    <div class="row"><span class="lbl">Reason</span><span class="val">${ev.reason||'—'}</span></div>
+    <div class="row"><span class="lbl">Product</span><span class="val">${esc(ev.product_name||'—')}</span></div>
+    <div class="row"><span class="lbl">Lot number</span><span class="val" style="font-family:monospace;">${esc(ev.lot_number||'—')}</span></div>
+    <div class="row"><span class="lbl">Reason</span><span class="val">${esc(ev.reason||'—')}</span></div>
     <div class="row"><span class="lbl">Severity</span><span class="val">${ev.severity?formatSeverity(ev.severity).label:'—'}</span></div>
-    <h2>Response — ${storeName}</h2>
+    <h2>Response — ${esc(storeName)}</h2>
     <div class="row"><span class="lbl">Notified</span><span class="val">${fmtDt(a.created_at)}</span></div>
     <div class="row"><span class="lbl">Acknowledged</span><span class="val">${fmtDt(a.acknowledged_at)}</span></div>
     <div class="row"><span class="lbl">Pulled from shelf</span><span class="val">${fmtDt(a.pulled_at)}</span></div>
@@ -10110,9 +10200,9 @@ async function generateStoreAuditReport(ackId, storeName) {
     <div class="row"><span class="lbl">Resolved</span><span class="val">${fmtDt(a.confirmed_at)}</span></div>
     <div class="row"><span class="lbl">Units removed</span><span class="val">${a.units_pulled ?? '—'}</span></div>
     <h2>Retailer</h2>
-    <div class="row"><span class="lbl">Organisation</span><span class="val">${org.name||'—'}</span></div>
-    <div class="row"><span class="lbl">Coordinator</span><span class="val">${org.recall_coordinator_name||'—'}</span></div>
-    <div class="row"><span class="lbl">Contact</span><span class="val">${org.contact_email||'—'}</span></div>
+    <div class="row"><span class="lbl">Organisation</span><span class="val">${esc(org.name||'—')}</span></div>
+    <div class="row"><span class="lbl">Coordinator</span><span class="val">${esc(org.recall_coordinator_name||'—')}</span></div>
+    <div class="row"><span class="lbl">Contact</span><span class="val">${esc(org.contact_email||'—')}</span></div>
     <div style="margin-top:32px;border-top:1px solid #d1fae5;padding-top:16px;">
       <div style="font-size:11px;color:#6b7280;margin-bottom:36px;">Recall coordinator signature &amp; date: __________________________________</div>
     </div>
@@ -11235,12 +11325,12 @@ async function _loadCorpOnShelf() {
             ${store.scans.slice(0,10).map(s => `
               <div style="padding:9px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;">
                 <div style="flex:1;min-width:0;">
-                  <div style="font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${s.product_name||'—'}</div>
-                  <div style="font-size:10px;color:var(--muted);margin-top:1px;font-family:'DM Mono',monospace;">${s.lot_number||'Lot N/A'} · ${fmtDashDT(s.created_at)}</div>
+                  <div style="font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(s.product_name||'—')}</div>
+                  <div style="font-size:10px;color:var(--muted);margin-top:1px;font-family:'DM Mono',monospace;">${esc(s.lot_number||'Lot N/A')} · ${fmtDashDT(s.created_at)}</div>
                 </div>
                 <div style="text-align:right;flex-shrink:0;">
                   <div style="font-size:12px;font-weight:700;color:var(--text);">${s.quantity||1}</div>
-                  <div style="font-size:10px;color:var(--muted);">${(s.scanned_by||'').split('@')[0]||'—'}</div>
+                  <div style="font-size:10px;color:var(--muted);">${esc((s.scanned_by||'').split('@')[0]||'—')}</div>
                 </div>
               </div>`).join('')}
             ${store.scans.length > 10 ? `<div style="padding:9px 16px;font-size:11px;color:var(--muted);text-align:center;">+${store.scans.length - 10} more · <button onclick="showPanel('traceability')" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:11px;font-family:inherit;padding:0;">View all in Traceability →</button></div>` : ''}
@@ -12538,7 +12628,20 @@ function detectDashComplaintPatterns(complaints, windowDays = 7) {
   return patterns;
 }
 
+// 2026-09-09 audit fix: the Create-investigation onclick used to inline
+// JSON.stringify(...) args — whose double quotes terminate the double-quoted
+// attribute, letting publicly-submitted product names break out (XSS). The
+// pattern object now travels via this render-time registry; the onclick
+// carries only the numeric index.
+function createInvestigationFromPatternIdx(idx) {
+  const p = (window._dashPatternReg || {})[idx];
+  if (!p) return;
+  return createInvestigationFromPattern(p.productName || '', p.lots || '', p.total, p.title, (p.complaints || []).map(c => c.id));
+}
+
 function dashPatternAlertHTML(pattern, idx) {
+  window._dashPatternReg = window._dashPatternReg || {};
+  window._dashPatternReg[idx] = pattern;
   // XSS sweep 2026-05-27 — pattern is derived from `complaints` rows which
   // include publicly-submitted product_name / lot_number / store_name
   // fields, so every interpolation here gets esc(). pattern.title is
@@ -12567,7 +12670,7 @@ function dashPatternAlertHTML(pattern, idx) {
           ${storeStr}
         </div>
         <div style="display:flex;gap:8px;align-items:flex-start;flex-shrink:0;flex-wrap:wrap;">
-          <button onclick="createInvestigationFromPattern(${JSON.stringify(pattern.productName||'')},${JSON.stringify(pattern.lots||'')},${pattern.total},${JSON.stringify(pattern.title)},${JSON.stringify((pattern.complaints||[]).map(c=>c.id))})"
+          <button onclick="createInvestigationFromPatternIdx(${idx})"
             style="background:${pattern.colour==='var(--danger)'?'rgba(var(--danger-rgb),0.1)':'rgba(var(--warn-rgb),0.1)'};border:1px solid ${borderColour};color:${pattern.colour};border-radius:7px;padding:6px 12px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap;">
             Create investigation →
           </button>
@@ -12773,7 +12876,7 @@ function renderDashTriageForm(el) {
           <input id="dtc-email" type="email" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
         </div>
         <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Phone number (include country code)</label>
-        <input id="dtc-phone" type="tel" placeholder="+47 123 45 678" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+        <input id="dtc-phone" type="tel" placeholder="${_orgRegion === 'us' ? '+1 555 123 4567' : '+47 123 45 678'}" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
 
         <div style="font-size:10px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--border);padding-bottom:6px;">Product</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
@@ -13572,9 +13675,10 @@ function importStaff() {
 
       // Send invite email
       try {
+        const { data: { session: _csvInvSession } } = await sb.auth.getSession();
         await fetch('/.netlify/functions/send-invite', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_csvInvSession?.access_token || ''}` },
           body: JSON.stringify({
             type: 'staff_invite',
             to: row.email,
@@ -14202,7 +14306,10 @@ async function generateDrillCertificate(recallEventId) {
       ? ((lastConfirm - startTime) / 3600000).toFixed(1)
       : null;
 
-    const isUS       = (org.region || _orgRegion) === 'us';
+    // Jurisdiction rule: the user's effective region (_orgRegion) is the
+    // authority — org.region is only the org DEFAULT and must not override
+    // it (2026-09-09 audit fix).
+    const isUS       = _orgRegion === 'us';
     const regRef     = isUS
       ? 'FDA FSMA Section 204 / 21 CFR 117.126'
       : 'EU Regulation 178/2002 Art. 19 / Matloven §16';
@@ -14978,13 +15085,13 @@ async function renderConsumerNotification() {
                   ${isSelected?`<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--accent-dim)" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>`:''}
                 </div>
                 <div style="flex:1;min-width:0;">
-                  <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${r.product_name||'—'}</div>
+                  <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(r.product_name||'—')}</div>
                   <div style="font-size:11px;color:var(--muted);margin-top:2px;">
-                    ${r.lot_number?`Lot: <span style="font-family:'DM Mono',monospace;">${r.lot_number}</span> · `:''}
+                    ${r.lot_number?`Lot: <span style="font-family:'DM Mono',monospace;">${esc(r.lot_number)}</span> · `:''}
                     ${r._type==='pushed'?'Manufacturer push':'Manual'} · ${new Date(r.published_at||r.created_at).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',year:'numeric'})}
                   </div>
                 </div>
-                ${r.severity?`<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(var(--danger-rgb),0.1);color:var(--danger);white-space:nowrap;flex-shrink:0;">${r.severity}</span>`:''}
+                ${r.severity?`<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(var(--danger-rgb),0.1);color:var(--danger);white-space:nowrap;flex-shrink:0;">${esc(r.severity)}</span>`:''}
               </div>`;
             }).join('')}
           </div>
@@ -15279,9 +15386,10 @@ async function sendConsumerNotifications() {
   if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
 
   try {
+    const { data: { session: _cnSession } } = await sb.auth.getSession();
     const res = await fetch('/.netlify/functions/notify-consumers', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_cnSession?.access_token || ''}` },
       body: JSON.stringify({
         recall_event_id: _consumerNotifRecallId,
         org_id:   _orgId,
