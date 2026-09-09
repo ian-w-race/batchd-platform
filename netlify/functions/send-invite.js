@@ -32,12 +32,17 @@ const isValidInviteUrl = (u) => {
   }
 };
 
+// Must track the host map in netlify.toml. corporate.batchdapp.com was
+// added 2026-09-09: the 2026-08-06 domain split made it the ONLY origin
+// that serves dashboard.html, so every staff invite the dashboard sent
+// was being 403'd here before it ever reached the auth check.
 const ALLOWED_ORIGINS = [
   'https://batchd.no',
   'https://www.batchd.no',
   'https://batchdapp.com',
   'https://www.batchdapp.com',
   'https://app.batchdapp.com',
+  'https://corporate.batchdapp.com',
   'https://batchd-app.netlify.app',
 ];
 
@@ -49,19 +54,12 @@ exports.handler = async (event) => {
     return { statusCode: 405, body: 'Method not allowed' };
   }
 
-  // Origin / Referer allowlist — basic abuse mitigation.
-  // Spoofable by determined attackers but blocks casual scripted abuse.
   const origin = event.headers?.origin || event.headers?.Origin || '';
   const referer = event.headers?.referer || event.headers?.Referer || '';
   const clientIp = ((event.headers?.['x-forwarded-for'] || event.headers?.['X-Forwarded-For'] || '').split(',')[0] || '').trim() || 'unknown';
 
   let refererOrigin = '';
   try { if (referer) refererOrigin = new URL(referer).origin; } catch {}
-
-  if (!isAllowedOrigin(origin) && !isAllowedOrigin(refererOrigin)) {
-    console.warn('[send-invite] rejected origin:', origin, '| referer:', referer, '| ip:', clientIp);
-    return { statusCode: 403, body: JSON.stringify({ error: 'Forbidden' }) };
-  }
 
   // Verify env var present — fail loud rather than silently using a fallback.
   if (!process.env.RESEND_API_KEY) {
@@ -78,9 +76,18 @@ exports.handler = async (event) => {
 
   if (body.type === 'demo_request') {
     // Demo requests come from the public brand site — no session exists, so
-    // the Origin allowlist above is the only (accepted, spoofable) gate.
+    // the spoofable Origin allowlist is the only gate available here.
+    if (!isAllowedOrigin(origin) && !isAllowedOrigin(refererOrigin)) {
+      console.warn('[send-invite] rejected demo origin:', origin, '| referer:', referer, '| ip:', clientIp);
+      return { statusCode: 403, body: JSON.stringify({ error: 'Forbidden' }) };
+    }
     return handleDemoRequest(body);
   }
+
+  // Staff invites are NOT origin-gated (2026-09-09): the corp_admin JWT
+  // below is a strictly stronger check, and keeping a second host list in
+  // sync with netlify.toml is what silently broke every dashboard invite
+  // when corporate.batchdapp.com became the dashboard's only origin.
 
   // Staff invites are only ever sent from the signed-in dashboard, so a
   // real session is available. Require a corp_admin JWT (2026-09-09 audit

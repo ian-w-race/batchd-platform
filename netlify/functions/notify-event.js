@@ -71,15 +71,18 @@ async function listRecipients(orgId, prefKey, storeIdScope) {
   // in a single query, so fetch + filter client-side. Volume is small
   // (one org's worth of users), so this is fine.
   // Pull active org members in roles that get emails.
-  const members = await sbQuery('organisation_members', {
+  // No server-side `active` filter: NULL means active by platform
+  // convention (only an explicit false is a deactivation), and the old
+  // active=is.true dropped NULL rows server-side, silently excluding
+  // legacy members from every notification email (2026-09-09 audit fix).
+  // Filtered in JS below — same place the JSONB prefs are filtered, and
+  // volume is one org's members.
+  const allMembers = await sbQuery('organisation_members', {
     select: 'user_id,role,full_name,active',
     organisation_id: `eq.${orgId}`,
     role: 'in.(corp_admin,store_manager)',
-    // NULL means active by platform convention (only an explicit false is a
-    // deactivation). active=is.true excluded NULL rows server-side, silently
-    // dropping legacy members from every notification email.
-    or: '(active.is.true,active.is.null)',
   });
+  const members = (allMembers || []).filter(m => m.active !== false);
 
   if (!members || members.length === 0) return [];
 

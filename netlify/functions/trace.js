@@ -74,11 +74,23 @@ exports.handler = async (event) => {
     if (resolvedLot) {
       // Check recall_events first (manufacturer push)
       // is_drill=false: mock drills must never surface as real recalls on a
-      // consumer-facing page. closed_at=is.null: a completed/closed recall
-      // event is no longer active.
-      const recallEvents = await sbGet(
-        `/rest/v1/recall_events?lot_number=ilike.%25${encodeURIComponent(resolvedLot.slice(0,20))}%25&is_drill=eq.false&closed_at=is.null&select=id,product_name,reason,severity,published_at&limit=3`
+      // consumer-facing page.
+      //
+      // closed_at comes from migration 008, which may not be applied on a
+      // given deployment — filtering on a missing column 400s the whole
+      // query and sbGet returns null, which would report "no recall" for a
+      // genuinely recalled lot. So try the closure-aware query first and
+      // fall back to the closure-agnostic one. Fail toward SHOWING the
+      // recall, never toward hiding it.
+      const lotFilter = `lot_number=ilike.%25${encodeURIComponent(resolvedLot.slice(0,20))}%25&is_drill=eq.false`;
+      let recallEvents = await sbGet(
+        `/rest/v1/recall_events?${lotFilter}&closed_at=is.null&select=id,product_name,reason,severity,published_at&limit=3`
       );
+      if (recallEvents === null) {
+        recallEvents = await sbGet(
+          `/rest/v1/recall_events?${lotFilter}&select=id,product_name,reason,severity,published_at&limit=3`
+        );
+      }
       if (recallEvents?.length) {
         const ev = recallEvents[0];
         activeRecall = {

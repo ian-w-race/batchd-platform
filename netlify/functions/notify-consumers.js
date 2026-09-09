@@ -48,7 +48,7 @@ async function verifyCorpAdminOfOrg(jwt, orgId) {
     const userId = (await userRes.json())?.id;
     if (!userId) return false;
     const memRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/organisation_members?user_id=eq.${userId}&organisation_id=eq.${encodeURIComponent(orgId)}&role=eq.corp_admin&select=user_id&limit=1`,
+      `${SUPABASE_URL}/rest/v1/organisation_members?user_id=eq.${userId}&organisation_id=eq.${encodeURIComponent(orgId)}&role=eq.corp_admin&active=not.is.false&select=user_id&limit=1`,
       { headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` } },
     );
     if (!memRes.ok) return false;

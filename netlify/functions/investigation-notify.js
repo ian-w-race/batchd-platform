@@ -17,23 +17,27 @@ const CORS = {
 // anonymously — notify_retailers mails arbitrary addresses with
 // caller-controlled content, and analyze_photo / summarize_findings proxy
 // the Anthropic API on our bill. Require a signed-in corp_admin.
-async function verifyCorpAdmin(jwt) {
-  if (!jwt || !SUPABASE_SERVICE_KEY) return false;
+// Returns the caller's organisation_id when they are an ACTIVE corp_admin,
+// else null. Org-scoped on purpose: signup.html mints a corp_admin for any
+// new account, so "corp_admin of some org" is close to "any registered
+// user" and would leave this an open mailer.
+async function resolveCorpAdminOrg(jwt) {
+  if (!jwt || !SUPABASE_SERVICE_KEY) return null;
   try {
     const userRes = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
       headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${jwt}` },
     });
-    if (!userRes.ok) return false;
+    if (!userRes.ok) return null;
     const userId = (await userRes.json())?.id;
-    if (!userId) return false;
+    if (!userId) return null;
     const memRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/organisation_members?user_id=eq.${userId}&role=eq.corp_admin&select=user_id&limit=1`,
+      `${SUPABASE_URL}/rest/v1/organisation_members?user_id=eq.${userId}&role=eq.corp_admin&active=not.is.false&select=organisation_id&limit=1`,
       { headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` } },
     );
-    if (!memRes.ok) return false;
+    if (!memRes.ok) return null;
     const rows = await memRes.json();
-    return Array.isArray(rows) && rows.length > 0;
-  } catch { return false; }
+    return (Array.isArray(rows) && rows.length) ? rows[0].organisation_id : null;
+  } catch { return null; }
 }
 
 exports.handler = async (event) => {
@@ -44,9 +48,13 @@ exports.handler = async (event) => {
 
   const authHeader = event.headers?.authorization || event.headers?.Authorization || '';
   const jwt = authHeader.replace(/^Bearer\s+/i, '');
-  if (!(await verifyCorpAdmin(jwt))) {
+  const callerOrgId = await resolveCorpAdminOrg(jwt);
+  if (!callerOrgId) {
     return { statusCode: 403, headers: CORS, body: JSON.stringify({ error: 'Not authorised. Sign in as a corporate admin.' }) };
   }
+  // Bind the request to the caller's own org so a corp_admin of org A
+  // cannot drive notifications for org B.
+  body._callerOrgId = callerOrgId;
 
   const { type } = body;
 
