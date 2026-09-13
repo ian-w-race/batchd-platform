@@ -5154,7 +5154,7 @@ async function _fdaDataFromManualRecall(recallId) {
 // since this is post-push and the ack chain is the source
 // of truth for distribution at this point).
 async function _fdaDataFromRecallEvent(recallEventId) {
-  const { data: ev, error } = await sb.from('recall_events')
+  let { data: ev, error } = await sb.from('recall_events')
     .select('id, product_name, lot_number, barcode, severity, reason, description, depth, public_warning, effectiveness, published_at, is_drill')
     .eq('id', recallEventId)
     .single();
@@ -5169,7 +5169,12 @@ async function _fdaDataFromRecallEvent(recallEventId) {
         .eq('id', recallEventId)
         .single();
       if (retry.error) throw retry.error;
-      Object.assign(ev || {}, retry.data || {});
+      // 2026-09-11 fix: the failed primary query leaves `ev` null, so
+      // Object.assign(ev || {}, …) merged the retry into a throwaway object
+      // and `ev` stayed null — the FDA notification draft then failed for
+      // every recall. depth/public_warning/effectiveness genuinely do not
+      // exist on recall_events, so this retry is the path that always runs.
+      ev = retry.data;
     } else {
       throw error;
     }
@@ -11469,10 +11474,22 @@ async function runLotCheck(immediate = false) {
              (q.length >= 4 && lbl.includes(qLow));
     });
 
-    // Match recalls
-    const synth = { lot_number: q, product_name: q, barcode_number: q, label_text: q };
-    const exactR    = recalls.filter(r => recallMatchLevel(synth, r).level === 'exact');
-    const possibleR = recalls.filter(r => recallMatchLevel(synth, r).level === 'possible');
+    // Match recalls.
+    // 2026-09-11 blocker fix: this used to call recallMatchLevel(), which is
+    // defined only in index.html (the scanner). dashboard.html loads no local
+    // JS, so every Lot Lookup search for an org that had ANY active recall
+    // threw "recallMatchLevel is not defined" and the panel rendered a red
+    // error string instead of results. Matching is done here with the
+    // dashboard's own lotsMatch / productNameMatch helpers, which encode the
+    // CLAUDE.md rule: exact lot or barcode is a real match, product name
+    // alone is only "possible".
+    const _qLot = q.trim();
+    const _isExactRecall = r =>
+      lotsMatch(r.lot_number, _qLot) ||
+      (r.barcode_number && r.barcode_number.trim().toLowerCase() === _qLot.toLowerCase());
+    const exactR    = recalls.filter(_isExactRecall);
+    const possibleR = recalls.filter(r =>
+      !_isExactRecall(r) && _qLot.length >= 4 && productNameMatch(r.product_name, _qLot));
 
     if (!matched.length && !exactR.length && !possibleR.length) {
       el.innerHTML = `
@@ -15029,6 +15046,14 @@ async function openInvestigationFromPattern(encodedProductName) {
 // ═══════════════════════════════════════════════════════════════
 
 let _consumerNotifRecallId = null;
+// 2026-09-11 fix: the selected recall's details used to be stamped onto each
+// row of _consumerNotifCustomers inside selectNotifRecall. But step 2 (the
+// customer upload) is disabled until a recall is chosen, so that array was
+// ALWAYS empty at stamp time — the context never reached a single customer.
+// Consequence: matched imports filtered against an empty product name and
+// returned zero recipients, and broadcast emails went out titled
+// "Recalled product" with no lot. Context now lives here instead.
+let _consumerNotifCtx = { product: '', lot: '', reason: '' };
 let _consumerNotifCustomers = []; // { email, product_name, lot_number } from CSV
 
 async function renderConsumerNotification() {
@@ -15218,7 +15243,7 @@ async function renderConsumerNotification() {
             ${_consumerNotifRecallId && _consumerNotifCustomers.length ? `
             <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:14px;font-size:12px;line-height:1.7;color:var(--muted);">
               <strong style="color:var(--text);">Email preview:</strong><br>
-              Subject: <em>Important: Product recall notice — ${_consumerNotifCustomers[0]?._product||'[Product Name]'}</em><br>
+              Subject: <em>Important: Product recall notice — ${esc(_consumerNotifCtx.product||'[Product Name]')}</em><br>
               <br>
               Dear Customer,<br>
               We are writing to inform you about a recall affecting a product you may have purchased from us. Please stop using this product immediately and return it to any of our stores for a full refund…
@@ -15334,11 +15359,17 @@ function cnFilterRecalls() {
 
 function selectNotifRecall(id, productEncoded, lotEncoded, reasonEncoded) {
   _consumerNotifRecallId = id;
-  // Store context on customers
+  _consumerNotifCtx = {
+    product: decodeURIComponent(productEncoded),
+    lot:     decodeURIComponent(lotEncoded),
+    reason:  decodeURIComponent(reasonEncoded),
+  };
+  // Also stamp any rows already loaded, so a recall switched AFTER an upload
+  // keeps the per-row copies consistent with the context above.
   _consumerNotifCustomers.forEach(c => {
-    c._product = decodeURIComponent(productEncoded);
-    c._lot     = decodeURIComponent(lotEncoded);
-    c._reason  = decodeURIComponent(reasonEncoded);
+    c._product = _consumerNotifCtx.product;
+    c._lot     = _consumerNotifCtx.lot;
+    c._reason  = _consumerNotifCtx.reason;
   });
   renderConsumerNotification();
 }
@@ -15396,8 +15427,8 @@ function openConsumerCSVImport(mode) {
       if (!email || !email.includes('@') || !email.includes('.')) return { error: null }; // skip invalid
 
       const name = (row.name || '').trim();
-      const recallProduct = _consumerNotifCustomers[0]?._product || '';
-      const recallLot     = _consumerNotifCustomers[0]?._lot || '';
+      const recallProduct = _consumerNotifCtx.product || '';
+      const recallLot     = _consumerNotifCtx.lot || '';
 
       if (isMatched) {
         // INTENTIONALLY LENIENT MATCHING — do not tighten to the strict
@@ -15448,9 +15479,9 @@ async function sendConsumerNotifications() {
         org_id:   _orgId,
         org_name: _orgName,
         customers: _consumerNotifCustomers,
-        product_name: _consumerNotifCustomers[0]?._product || 'Recalled product',
-        lot_number:   _consumerNotifCustomers[0]?._lot || null,
-        reason:       _consumerNotifCustomers[0]?._reason || null,
+        product_name: _consumerNotifCtx.product || 'Recalled product',
+        lot_number:   _consumerNotifCtx.lot || null,
+        reason:       _consumerNotifCtx.reason || null,
       }),
     });
 

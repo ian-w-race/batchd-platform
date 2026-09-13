@@ -65,15 +65,35 @@ the file's modification time, not a commit date. Files dated
 
 Live application surfaces:
 - index.html (21,976 lines, 2026-09-09): staff scanning app (PWA).
-  Served at the root of app.batchdapp.com and batchd-app.netlify.app.
+  Canonical URL is https://batchd-app.netlify.app/ (confirmed by Ian
+  2026-09-13): every scanner link in dashboard.html points there, the
+  installed PWAs were added from there, and the manifest start_url is
+  relative, so an installed scanner lives on the origin it was
+  installed from. app.batchdapp.com and www.batchdapp.com serve the
+  same file byte for byte but nothing links to them; treat them as
+  aliases. Moving stores to app.batchdapp.com later would orphan the
+  per-origin PWA install and offline queue, so settle the URL before
+  the first design partner installs. The scanner's own dashboard
+  buttons (4798, 4904, 5485) point at app.batchdapp.com/dashboard.html,
+  which 301s to corporate.
 - dashboard.html (15,698 lines, 2026-09-11): corporate retailer
   dashboard. Served at the root of corporate.batchdapp.com; requests
   for /dashboard.html on the scanner domains 301 to corporate.
-- join.html (617 lines, 2026-09-09): invitation acceptance. Reads the
+- join.html (626 lines, 2026-09-13): invitation acceptance. Reads the
   invite token via the get_invitation_by_token RPC, creates or signs in
   the user, calls accept_invitation (with a legacy client-side
   fallback), then routes staff to the scanner and admins and store
-  managers to the dashboard. Reachable at /join.
+  managers to the dashboard. Reachable at /join. Fixed 2026-09-13 (found
+  in Ian's live gate test): the RPC returned no HR prefill columns, so
+  the form rendered empty and accept_invitation, which wrote only the
+  browser's values, dropped the inviter's details. Migration 018 now
+  returns the five HR fields plus region and COALESCEs client values with
+  the invitation row; join.html maps them. Both must ship together: the
+  edited 018 needs a re-run (it DROPs the old function signature, which
+  triggers the editor's destructive-operations warning) and join.html
+  needs uploading. Known polish items on this page: the prefilled block
+  should render read-only when the inviter supplied the details, and the
+  phone placeholder is a hardcoded +47 (jurisdiction rule).
 - signup.html (1,018 lines, 2026-09-09): self-serve signup. See
   "Self-serve signup" below. Reachable at /signup.
 - admin.html (942 lines, 2026-09-09): internal Batch'd platform admin.
@@ -103,8 +123,10 @@ Public intake surfaces (no login):
 Marketing pages, not linked from any live surface:
 - landing.html (1,026 lines, 2026-04-30): old landing page with a demo
   request form that POSTs to send-invite.js. Not the site root and not
-  in netlify.toml. Whether anything external links to it needs
-  verification (check Netlify analytics or search console).
+  in netlify.toml. Still serves HTTP 200 on app.batchdapp.com as of
+  2026-09-13, as do recall-roi-calculator.html and trace.html.
+  Whether anything external links to any of them needs verification
+  (check Netlify analytics or search console) before deleting.
 - recall-roi-calculator.html (1,290 lines, 2026-04-30): standalone
   recall cost calculator. No Supabase calls. Not linked anywhere.
 
@@ -140,23 +162,43 @@ admin.batchdapp.com to /admin.html, supplier.batchdapp.com to
 enable the dev manager toggle. dashboard.html has no routing hostname
 check.
 
-Needs verification in the Netlify dashboard: which custom domains are
-attached to which site. SECRETS.md says two Netlify sites deploy this
-repo and that the www.batchdapp.com site is the one that runs the
-cron schedules (SCHEDULED_FUNCTIONS_DISABLED=true everywhere else).
+Verified 2026-09-13 from outside the dashboard (DNS, TLS certificate
+and HTTP probes, no Netlify login):
+- batchdapp.com, www., app., corporate., manufacturer., admin. and
+  supplier. all resolve to the same two Netlify edge IPs and all
+  present the same TLS certificate (SHA256 fingerprint match,
+  wildcard *.batchdapp.com plus apex). Netlify issues one certificate
+  per site, so every batchdapp.com hostname is attached to ONE site.
+- Made-up subdomains do not resolve, so the wildcard is only the
+  certificate, not a catch-all DNS record.
+- batchdapp.com 301s to www.batchdapp.com. www, app and
+  batchd-app.netlify.app serve byte-identical index.html.
+  corporate serves dashboard.html.
+- manufacturer., admin. and supplier. still resolve and serve
+  index.html at their root (HTTP 200); the JS hostname snippet in
+  index.html then redirects client-side to the stub pages. The three
+  stubs and admin.html all answer 200 on app.batchdapp.com.
+Still needs the Netlify dashboard: SECRETS.md says two Netlify sites
+deploy this repo and that the www.batchdapp.com site runs the cron
+schedules (SCHEDULED_FUNCTIONS_DISABLED=true everywhere else). Since
+all custom domains sit on one site, the second site must be the one
+with no custom domain. Confirm which netlify.app name belongs to
+which site, and that the env var is set the right way round.
 The code references www.batchdapp.com only in complaint-widget.js and
 in the origin allowlists of send-invite.js and supplier-invite.js.
-Whether manufacturer., admin. and supplier. subdomains still resolve
-also needs verification (a DNS lookup would settle it).
 
 ## Self-serve signup
 Self-serve signup is fully wired in signup.html, contrary to the
 earlier "enterprise only" decision:
 1. Step 0 picks retailer or manufacturer.
 2. Step 1 calls sb.auth.signUp with full_name, user_type and region in
-   user metadata. emailRedirectTo is null; whether Supabase still
-   requires email confirmation depends on the project's Auth settings
-   (needs verification in the Supabase dashboard).
+   user metadata. emailRedirectTo is null. Verified 2026-09-13 via
+   the public /auth/v1/settings endpoint: mailer_autoconfirm is true
+   and disable_signup is false, so email confirmation is OFF and new
+   users are usable immediately. join.html's immediate
+   signInWithPassword after signUp therefore works. If confirmation
+   is ever switched on in Supabase Auth settings, invite acceptance
+   in join.html fails with an explicit error message.
 3. Step 2 calls the create_organisation_with_admin RPC (migration 018,
    SECURITY DEFINER) to create the organisation, the founding
    corp_admin membership and the initial stores in one call. If the
@@ -201,7 +243,11 @@ sweep_recall_matches.
 
 Flags from the scan:
 - product_lots is referenced only by trace.js. It is not in SCHEMA.md
-  or any migration. Whether it exists needs verification.
+  or any migration, but it DOES exist: verified 2026-09-13 by a
+  PostgREST probe (a made-up table name returns 404 PGRST205;
+  product_lots returns 200 with an empty array under the anon role).
+  Same result for supplier_connections and scan_queue. Column lists
+  still unverified.
 - supplier_connections is referenced only by supplier-invite.js, which
   has no callers.
 - shipments and trading_partners are read-only legacy (see above).
@@ -282,6 +328,64 @@ Convention added 2026-05-07 (audit fix #6):
   no longer needed for disambiguation since recall_event_id is
   unambiguous.
 
+## RLS policy state (pg_policies dump run by Ian, 2026-09-13)
+Tenant isolation is weak everywhere except recalls, scan_recall_matches
+and mock_recall_drills, which are correctly scoped to the user's orgs.
+Live today, in severity order:
+- invitations: "Anyone can read invitation by token" is SELECT to anon
+  and authenticated with USING true. Confirmed live: a GET with the
+  public anon key returns rows. Whole table dumpable, tokens included.
+- organisation_members: "Insert own membership" WITH CHECK only
+  user_id = auth.uid(). organisation_id and role unconstrained, so any
+  signed-up user can insert themselves as corp_admin of any org. Org
+  ids are enumerable because organisations is readable by all.
+  "Admins can update org memberships" has no role check. "Delete own
+  memberships" exists. Migration 017's trigger guards UPDATE only.
+- scans: "Authenticated select scans" USING true, "Allow authenticated
+  users to update any scan" USING true, two open INSERT policies with
+  CHECK true. Org-scoped equivalents exist beside them (Members can
+  view their org scans, Staff can update their org scans, Staff update
+  org scans which is an INSERT requiring active membership). The
+  master-context claim that open UPDATE is needed for pull-from-shelf
+  is covered by the org-scoped update policy.
+- stores: open SELECT (two policies), open UPDATE, open INSERT, plus
+  "Managers can manage stores" (ALL for any user_profiles.is_manager,
+  cross-org). Org-scoped "Admins and managers can manage stores" and
+  "Members can view their org stores" exist beside them.
+- recall_distributions: SELECT and INSERT both open. Open INSERT lets
+  any user distribute any recall event to any org, which would make it
+  readable there and inject an alert.
+- recall_acknowledgements: "Service can insert" WITH CHECK true. The
+  org-scoped ALL policy already covers member inserts.
+- organisations: "read all" and "search" SELECT USING true (exposes
+  api_key and coordinator contacts of every org), INSERT CHECK true.
+- recall_events: open read policy dropped 2026-09-13 (see above). No
+  INSERT policy admits a corp_admin inserting is_drill = false, yet one
+  such composer row exists in Ian's org; whether the composer works
+  today needs a live test.
+Fix already staged in the repo for the first two items: migration 018
+(SECURITY DEFINER onboarding RPCs, additive) and 019 (drops the four
+membership and invitation policies; run only after 018 is applied and
+the deployed join.html and signup.html have been tested). As of
+2026-09-13, 019 has NOT run (its target policies are still present).
+018 IS applied: get_invitation_by_token answers 200 with the anon key
+(PostgREST returns PGRST202 for a wrong parameter list as well as for a
+missing function, so probe RPCs with their real parameter names).
+Whether the 2026-09-11 accept_invitation fix was re-run is unknown;
+re-running 018 is safe (CREATE OR REPLACE). CHECK_MIGRATIONS.sql
+reports APPLIED or MISSING for every migration.
+The remaining tables need a further migration (020, not yet written).
+Code preconditions verified for it: every scanner scan insert spreads a
+payload that sets organisation_id (index.html 9344); the dashboard store
+insert carries organisation_id; the scanner's manager store-admin tab
+does NOT (list at index.html 18980 is unscoped, insert at 19055 has no
+organisation_id) and must be fixed before stores are locked down;
+join.html gets the org name from the RPC; dashboard source-org name
+lookups (2792, 3451, 9978, 13800) read other orgs' rows and need a
+narrow policy or a fallback; admin.html relies on open reads for its
+platform-wide views and needs platform-admin policies keyed on
+organisation_members.is_batched_admin.
+
 ## Recall counting rules (platform-wide)
 A recall requires action only when ALL THREE are true:
 1. The recall is active (active = true)
@@ -317,8 +421,43 @@ Reads the recalls table only:
 Also note: renderCommandCenter's recall_events query (dashboard.html
 6114) filters on is_drill and closed_at but has no organisation
 filter. It relies on RLS or on the acknowledgements join to scope
-results. Whether RLS on recall_events restricts by org needs
-verification in the Supabase policies.
+results. Verified 2026-09-13 from pg_policies: RLS is enabled on
+recall_events, but a policy named "Authenticated users can read all
+recall events" (SELECT, USING true) lets any signed-in user of any
+org read every recall event on the platform. Permissive policies OR
+together, so the org-scoped SELECT policies (distributed to the org
+via recall_distributions.retailer_org_id, or source_org_id in the
+user's orgs) do nothing until that policy is dropped. Reads that
+currently return other orgs' events: renderIntelligencePanel (1374,
+product and lot rows rendered), traceLot (2212, rendered; its comment
+calls recall_events "global by design", a manufacturer-era
+assumption), renderCommandCenter (6114, ids only) and
+_loadClosedEventIds in index.html (5588, ids only). Feed recalls
+land in the recalls table per org, not in recall_events, so nothing
+in the retailer flow needs a cross-org read. FIXED 2026-09-13: Ian
+dropped that policy in the Supabase SQL editor (first attempt hit a
+40P01 deadlock against a concurrent dashboard read; the retry with
+set local lock_timeout succeeded). Five policies remain on
+recall_events: "Manufacturers can manage their recall events" (ALL),
+"Orgs can insert drill recall events" (INSERT, is_drill = true),
+"Retailers can view recall events distributed to them" and
+"Retailers can view recall events targeting them" (SELECT, identical
+USING clauses, one is a harmless duplicate), and "Source org can read
+their own recall events" (SELECT). These cover composer pushes and
+drills (both insert source_org_id = _orgId) and distributed events.
+Side effect: admin.html's "Total recall events" count is now the
+admin's visible events, not the platform total. The unscoped reads
+listed above still exist in code and now rely on RLS; explicit org
+scoping is optional hygiene.
+Open question from the same dump: the only INSERT paths on
+recall_events for non-manufacturer roles are "Orgs can insert drill
+recall events" (WITH CHECK is_drill = true) and the manufacturer ALL
+policy, yet _composerPushRecall inserts is_drill = false as a
+corp_admin. Whether that insert succeeds in production needs
+verification.
+Anon (signed-out) reads return an empty array from recall_events,
+recalls, recall_distributions, scans and organisations.
+products_public returns rows to anon, presumably intentional.
 
 ## Known bugs, status verified 2026-09-13
 - Duplicate recall alerts on login (five copies): fixed in code.
