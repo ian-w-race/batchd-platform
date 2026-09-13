@@ -50,8 +50,21 @@
 -- Returns ONLY what the join screen renders. No token echo, no
 -- invited_by, no sibling rows. Callable by anon because the join page
 -- runs before sign-in.
+--
+-- 2026-09-13: the first version returned eight columns and left out the
+-- five HR prefill fields the inviter types on the dashboard (migration
+-- 010: full_name, phone_number, store_role, employee_id, hire_date) and
+-- the per-invitee region. The join page therefore rendered empty boxes
+-- and, because accept_invitation wrote whatever the browser sent, the
+-- inviter's details were lost unless the invitee retyped them. Both are
+-- fixed here. Postgres cannot change a function's return type with
+-- CREATE OR REPLACE, so the old signature is dropped first. This makes
+-- the Supabase editor show its "destructive operations" warning; the
+-- function is recreated on the next line.
 
-CREATE OR REPLACE FUNCTION public.get_invitation_by_token(p_token text)
+DROP FUNCTION IF EXISTS public.get_invitation_by_token(text);
+
+CREATE FUNCTION public.get_invitation_by_token(p_token text)
 RETURNS TABLE (
   email             text,
   role              text,
@@ -60,7 +73,13 @@ RETURNS TABLE (
   store_name        text,
   manager_store_ids uuid[],
   accepted          boolean,
-  expired           boolean
+  expired           boolean,
+  full_name         text,
+  phone_number      text,
+  store_role        text,
+  employee_id       text,
+  hire_date         date,
+  region            text
 )
 LANGUAGE sql
 SECURITY DEFINER
@@ -74,7 +93,13 @@ AS $$
     s.name,
     i.manager_store_ids,
     COALESCE(i.accepted, false),
-    (i.expires_at IS NOT NULL AND i.expires_at < now())
+    (i.expires_at IS NOT NULL AND i.expires_at < now()),
+    i.full_name,
+    i.phone_number,
+    i.store_role,
+    i.employee_id,
+    i.hire_date,
+    i.region
   FROM public.invitations i
   LEFT JOIN public.organisations o ON o.id = i.organisation_id
   LEFT JOIN public.stores        s ON s.id = i.store_id
@@ -110,7 +135,6 @@ DECLARE
   v_inv     public.invitations%ROWTYPE;
   v_region  text;
   v_store   uuid;
-  v_sid     uuid;
 BEGIN
   IF v_uid IS NULL THEN
     RAISE EXCEPTION 'You must be signed in to accept an invitation.';
@@ -143,12 +167,20 @@ BEGIN
     v_store := v_inv.store_id;
   END IF;
 
+  -- HR fields: what the invitee typed wins, the inviter's values on the
+  -- invitation row are the fallback. Before 2026-09-13 only the browser
+  -- values were used, so an untouched form wiped the inviter's details.
   INSERT INTO public.organisation_members
     (organisation_id, user_id, role, store_id, full_name, phone_number,
      hire_date, store_role, employee_id, joined_at, active)
   VALUES
-    (v_inv.organisation_id, v_uid, v_inv.role, v_store, p_full_name, p_phone,
-     NULLIF(p_hire_date, '')::date, p_store_role, p_employee_id, now(), true)
+    (v_inv.organisation_id, v_uid, v_inv.role, v_store,
+     COALESCE(NULLIF(p_full_name, ''),   v_inv.full_name),
+     COALESCE(NULLIF(p_phone, ''),       v_inv.phone_number),
+     COALESCE(NULLIF(p_hire_date, '')::date, v_inv.hire_date),
+     COALESCE(NULLIF(p_store_role, ''),  v_inv.store_role),
+     COALESCE(NULLIF(p_employee_id, ''), v_inv.employee_id),
+     now(), true)
   ON CONFLICT DO NOTHING;
 
   -- Manager extras
@@ -157,13 +189,22 @@ BEGIN
     VALUES (v_uid, true)
     ON CONFLICT (id) DO UPDATE SET is_manager = true;
 
+    -- Store assignments are best-effort: an invite that names a store which
+    -- has since been deleted must NOT abort the whole acceptance (the old
+    -- FOREACH + bare INSERT would raise foreign_key_violation and roll the
+    -- entire transaction back, leaving the invitee with no membership at
+    -- all). Joining through stores skips ids that no longer resolve, and
+    -- also refuses a store belonging to a different organisation.
+    -- A corp_admin can fix assignments afterwards. (2026-09-11)
     IF v_inv.manager_store_ids IS NOT NULL THEN
-      FOREACH v_sid IN ARRAY v_inv.manager_store_ids LOOP
-        INSERT INTO public.store_manager_stores
-          (user_id, store_id, organisation_id, assigned_by)
-        VALUES (v_uid, v_sid, v_inv.organisation_id, v_inv.invited_by)
-        ON CONFLICT DO NOTHING;
-      END LOOP;
+      INSERT INTO public.store_manager_stores
+        (user_id, store_id, organisation_id, assigned_by)
+      SELECT v_uid, s.id, v_inv.organisation_id, v_inv.invited_by
+        FROM unnest(v_inv.manager_store_ids) AS x(store_id)
+        JOIN public.stores s
+          ON s.id = x.store_id
+         AND s.organisation_id = v_inv.organisation_id
+      ON CONFLICT DO NOTHING;
     END IF;
   END IF;
 
