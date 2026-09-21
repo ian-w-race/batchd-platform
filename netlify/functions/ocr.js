@@ -12,8 +12,9 @@
 // Auth (added 2026-05-27 after audit flagged this as an unauthenticated
 // paid LLM endpoint — wallet-drain risk):
 //   Caller must include `Authorization: Bearer <supabase_jwt>`. The JWT
-//   is resolved to a Supabase user via /auth/v1/user, and the user must
-//   have at least one row in organisation_members. Public/unauth callers
+//   is resolved to a Supabase user via /auth/v1/user, the user must be an
+//   active member of the org named in the body, and that org must be on a
+//   POV or Paying plan (organisations.plan). Public/unauth callers
 //   get 401; valid sessions that aren't org members get 403.
 //
 // Image size cap: 8 MB of base64 (~6 MB raw JPEG). Camera captures from
@@ -28,26 +29,80 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const MAX_BODY_BYTES       = 11 * 1024 * 1024;  // 11 MB JSON envelope ceiling
 const MAX_IMAGE_B64_BYTES  =  8 * 1024 * 1024;  //  8 MB base64 image
 
-async function verifyCallerIsOrgMember(jwt) {
-  if (!jwt || !SUPABASE_SERVICE_KEY) return null;
-  try {
-    const userRes = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-      method: 'GET',
-      headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${jwt}` },
-    });
-    if (!userRes.ok) return null;
-    const userData = await userRes.json();
-    const userId = userData?.id;
-    if (!userId) return null;
-    const memRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/organisation_members?user_id=eq.${userId}&select=user_id&limit=1`,
-      { method: 'GET', headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` } },
-    );
-    if (!memRes.ok) return null;
-    const rows = await memRes.json();
-    if (!Array.isArray(rows) || rows.length === 0) return null;
-    return userId;
-  } catch (_) { return null; }
+const { requireAi, json } = require('../lib/auth');
+
+// ── Prompt templates ────────────────────────────────────────────────
+// The instruction text lives here, never in the request. A caller names a
+// template and supplies only parameters, each type-checked and length-capped,
+// so no caller-controlled instruction text ever reaches Anthropic.
+//
+// The region wording is the leaf-level jurisdiction gate for this task
+// (CLAUDE.md, "Jurisdiction precedence"): the scanner sends the signed-in
+// user's _userRegion and the two bodies of copy never mix. Anything that is
+// not exactly 'us' resolves to the Norwegian/EU text, which is what
+// index.html's `isUSRegion ? … : …` did before the move.
+// contextHint's real ceiling is ~500 chars (label + product name + three
+// learned parts), so 800 bounds it without truncating a genuine hint.
+const PARAM_MAX = { productName: 200, contextHint: 800, ocrText: 350 };
+// Strip control characters. Newlines are structural in the multi-line
+// parameters, so they survive there; everything else collapses to a space.
+const ctl  = (v) => typeof v === 'string' ? v.replace(/[\u0000-\u0009\u000B-\u001F\u007F]+/g, ' ') : '';
+const pstr = (v, max) => ctl(v).replace(/\s+/g, ' ').trim().slice(0, max);  // single-line
+const pml  = (v, max) => ctl(v).slice(0, max);                              // multi-line
+
+const REGION_HINT = {
+  us: 'US grocery context. Lot code is the TLC (Traceability Lot Code) under FSMA 204 — look for LOT, L#, BATCH, PACK DATE, Julian date code. Ignore UPC/EAN barcodes, zip codes, plant numbers (EST. ####).',
+  no: [
+    'Norwegian/EU grocery context.',
+    'The lot code ("partinummer") is the production batch identifier — NOT a best-before date or timestamp.',
+    '',
+    'Return the code following these label keywords as the lot:',
+    '  ETTER [code] → lot code   |   PARTI [code] → lot code',
+    '  BATCH [code] → lot code   |   L.nr [code] or L [code] → lot code',
+    '  GOD [code] → lot code only if no ETTER/PARTI/BATCH/L.nr keyword exists',
+    '',
+    'IGNORE: dates (BEST FØR / Holdbar til / DD.MM.YY), times (OFTE / OFTEST HH:MM), EU plant codes (NO XXXX EF), EAN barcodes.',
+    'If none of the above keywords appear, return the most prominent alphanumeric production code visible.',
+  ].join('\n'),
+};
+
+const AUTOCAPTURE_PROMPT = {
+  product: 'Is there a food product label clearly visible, in focus, and filling most of the frame? Answer only YES or NO.',
+  lot:     'Is there a lot number, batch number, or production code clearly visible and readable in this image? Answer only YES or NO.',
+};
+
+// lot_extract_v1 — the scanner's main lot-code pass.
+function buildLotExtractPrompt(extra) {
+  const isUS        = extra.region === 'us';
+  const productName = pstr(extra.productName, PARAM_MAX.productName);
+  const contextHint = pml(extra.contextHint, PARAM_MAX.contextHint);
+  const ocrText     = pml(extra.ocrText, PARAM_MAX.ocrText);
+
+  const core =
+    `Find the lot/batch code (production traceability identifier) on this food packaging photo.\n` +
+    `${isUS ? REGION_HINT.us : REGION_HINT.no}\n` +
+    (productName ? `Product: "${productName}"\n` : '') +
+    (contextHint ? `${contextHint}\n` : '') +
+    `Return ONLY valid JSON, no markdown:\n` +
+    `{"lot":"code or null","expiry":"date as printed or null","lot_confidence":"high|medium|low","lot_is_date":false,"location_hint":"where on pack","anchor_before":"label text before code or null","anchor_after":"text after code or null","raw":"ALL visible text verbatim up to 500 chars — capture everything: lot, dates, plant codes, weights, brand, times, all codes. This full text is stored as a searchable fallback for recall matching."}`;
+
+  const cropNote = extra.cropped === true
+    ? (isUS ? 'This is a tight crop of US food packaging focused on the TLC region. '
+            : 'This is a tight crop of Norwegian/EU food packaging focused on the lot code region. ')
+    : '';
+  const withCrop = cropNote ? `${cropNote}${core}` : core;
+
+  return ocrText
+    ? `On-device OCR extracted this text from the image:\n"${ocrText}"\n\nUse this text to identify the lot code. ${withCrop}`
+    : withCrop;
+}
+
+function buildExtractCodesPrompt(extra) {
+  if (extra.promptId === 'autocapture_v1') {
+    return AUTOCAPTURE_PROMPT[extra.phase === 'product' ? 'product' : 'lot'];
+  }
+  if (extra.promptId === 'lot_extract_v1') return buildLotExtractPrompt(extra);
+  return 'Extract lot codes from this food packaging. Return JSON with lot, expiry, lot_confidence fields.';
 }
 
 async function callAnthropic(model, maxTokens, prompt, imageB64, temperature) {
@@ -101,18 +156,18 @@ exports.handler = async (event) => {
     return { statusCode: 413, body: JSON.stringify({ error: 'Payload too large' }) };
   }
 
-  // Auth: caller must be an authenticated Supabase user and a member of
-  // some organisation. Scanner calls supply the JWT via the Authorization
-  // header — see callOcrFunction() in index.html.
-  const authHeader = event.headers?.authorization || event.headers?.Authorization || '';
-  const jwt = authHeader.replace(/^Bearer\s+/i, '');
-  const callerId = await verifyCallerIsOrgMember(jwt);
-  if (!callerId) {
-    return { statusCode: 401, body: JSON.stringify({ error: 'Sign-in required.' }) };
-  }
+  let parsedBody;
+  try { parsedBody = JSON.parse(rawBody); }
+  catch { return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON' }) }; }
+
+  // Auth: an active member of the org named in the body, and that org must be
+  // on a POV or Paying plan. Anthropic spend is billed to Batch'd, so a JWT
+  // alone is not enough — see netlify/lib/auth.js.
+  const gate = await requireAi(event, parsedBody.org_id);
+  if (gate.error) return json(gate.status, gate);
 
   try {
-    const { task, image, extra = {} } = JSON.parse(rawBody);
+    const { task, image, extra = {} } = parsedBody;
 
     if (!task || !image) {
       return { statusCode: 400, body: JSON.stringify({ error: 'task and image required' }) };
@@ -163,7 +218,7 @@ exports.handler = async (event) => {
         const useHaiku = extra.useHaiku === true; // only use haiku if explicitly requested
         model = useHaiku ? MODEL_HAIKU : MODEL_SONNET;
         maxTokens = useHaiku ? 300 : 400;
-        prompt = extra.prompt || 'Extract lot codes from this food packaging. Return JSON with lot, expiry, lot_confidence fields.';
+        prompt = buildExtractCodesPrompt(extra);
         break;
       }
 

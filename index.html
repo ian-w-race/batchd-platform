@@ -5534,16 +5534,32 @@ const dlog = _DEBUG_LOG ? console.log.bind(console) : () => {};
 // call sites already happen post-sign-in, so the session should always
 // be present; we still guard with a clear error if it isn't.
 async function callOcrFunction(task, imageB64, extra) {
+  // AI is a POV/Paying feature. Skip the round trip when the org is not on one;
+  // every caller already treats a null result as "no AI suggestion".
+  if (window._orgAiEnabled === false) { _aiDisabledToastOnce(); return null; }
   const { data: { session } } = await sb.auth.getSession();
   const jwt = session?.access_token;
   if (!jwt) throw new Error('Sign in to use AI capture.');
   const resp = await fetch('/.netlify/functions/ocr', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${jwt}` },
-    body: JSON.stringify({ task, image: imageB64, extra: extra || {} }),
+    body: JSON.stringify({ task, image: imageB64, org_id: _currentOrgId, extra: extra || {} }),
   });
+  if (resp.status === 403) {
+    // Plan changed mid-session, or the org was never enabled.
+    const _b = await resp.json().catch(() => ({}));
+    if (_b?.code === 'ai_disabled') { window._orgAiEnabled = false; _aiDisabledToastOnce(); return null; }
+  }
   if (!resp.ok) throw new Error(`OCR function error: ${resp.status}`);
   return resp.json();
+}
+
+// One toast per session, not one per frame — autocapture calls this on a loop.
+let _aiDisabledToastShown = false;
+function _aiDisabledToastOnce() {
+  if (_aiDisabledToastShown) return;
+  _aiDisabledToastShown = true;
+  try { showToast('AI product recognition is not enabled for this organisation.'); } catch (_) {}
 }
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -5769,6 +5785,11 @@ async function showApp(user) {
 
       _currentOrgId    = member.organisation_id;
       _currentUserRole = member.role || null;
+      // Commercial flag: AI features require organisations.plan pov|active.
+      try {
+        const { data: _planRow } = await sb.from('organisations').select('plan').eq('id', _currentOrgId).maybeSingle();
+        window._orgAiEnabled = ['pov', 'active'].includes(_planRow?.plan);
+      } catch (_) { window._orgAiEnabled = false; }
       if (member.store_id) {
         window._managerStoreId   = member.store_id;
         window._managerStoreName = null;
@@ -14085,12 +14106,9 @@ function _acLoop() {
       if (!_acActive) { _acChecking = false; return; }
       try {
         const b64 = await blobToBase64(blob);
-        const prompt = _acPhase === 'product'
-          ? 'Is there a food product label clearly visible, in focus, and filling most of the frame? Answer only YES or NO.'
-          : 'Is there a lot number, batch number, or production code clearly visible and readable in this image? Answer only YES or NO.';
-
-        const result = await callOcrFunction('extract_codes', b64, { prompt, useHaiku: true });
-        const answer = (result.content?.[0]?.text || '').trim().toUpperCase();
+        // Prompt text lives in ocr.js; the client names the template and phase.
+        const result = await callOcrFunction('extract_codes', b64, { promptId: 'autocapture_v1', phase: _acPhase, useHaiku: true });
+        const answer = (result?.content?.[0]?.text || '').trim().toUpperCase();
         if (_acActive && answer.startsWith('YES')) {
           // Perf fix #17: reset backoff counter on success
           _acConsecutiveNo = 0;
@@ -16149,44 +16167,22 @@ async function extractCodesFromImage(blob, learnedContext, tesseractText = null)
     // Only add specifics that the model genuinely can't know without context:
     // the product name (for brand-specific patterns) and any learned format.
 
-    const regionHint = isUSRegion
-      ? 'US grocery context. Lot code is the TLC (Traceability Lot Code) under FSMA 204 — look for LOT, L#, BATCH, PACK DATE, Julian date code. Ignore UPC/EAN barcodes, zip codes, plant numbers (EST. ####).'
-      : [
-          'Norwegian/EU grocery context.',
-          'The lot code ("partinummer") is the production batch identifier — NOT a best-before date or timestamp.',
-          '',
-          'Return the code following these label keywords as the lot:',
-          '  ETTER [code] → lot code   |   PARTI [code] → lot code',
-          '  BATCH [code] → lot code   |   L.nr [code] or L [code] → lot code',
-          '  GOD [code] → lot code only if no ETTER/PARTI/BATCH/L.nr keyword exists',
-          '',
-          'IGNORE: dates (BEST FØR / Holdbar til / DD.MM.YY), times (OFTE / OFTEST HH:MM), EU plant codes (NO XXXX EF), EAN barcodes.',
-          'If none of the above keywords appear, return the most prominent alphanumeric production code visible.',
-        ].join('\n');
+    // ── EXTRACTION PROMPT ────────────────────────────────────
+    // The prompt text (including the US/EU regulatory wording) lives in
+    // netlify/functions/ocr.js as the lot_extract_v1 template, so no
+    // caller-controlled instruction text reaches Anthropic. The client
+    // sends only these parameters; ocr.js length-caps each one and picks
+    // the region copy, which keeps the jurisdiction gate at the leaf.
+    const extractParams = {
+      promptId:    'lot_extract_v1',
+      region:      isUSRegion ? 'us' : 'no',
+      productName,
+      contextHint,
+      cropped:     !!localisedCrop,
+      ocrText:     tesseractText || null,
+    };
 
-    const coreInstructions =
-      `Find the lot/batch code (production traceability identifier) on this food packaging photo.\n` +
-      `${regionHint}\n` +
-      (productName ? `Product: "${productName}"\n` : '') +
-      (contextHint ? `${contextHint}\n` : '') +
-      `Return ONLY valid JSON, no markdown:\n` +
-      `{"lot":"code or null","expiry":"date as printed or null","lot_confidence":"high|medium|low","lot_is_date":false,"location_hint":"where on pack","anchor_before":"label text before code or null","anchor_after":"text after code or null","raw":"ALL visible text verbatim up to 500 chars — capture everything: lot, dates, plant codes, weights, brand, times, all codes. This full text is stored as a searchable fallback for recall matching."}`;
-
-    // ── PASS 1: PRIMARY EXTRACTION (sonnet) ──────────────────
-    const cropNote = localisedCrop
-      ? (isUSRegion ? 'This is a tight crop of US food packaging focused on the TLC region. '
-                    : 'This is a tight crop of Norwegian/EU food packaging focused on the lot code region. ')
-      : '';
-    const pass1Prompt = cropNote ? `${cropNote}${coreInstructions}` : coreInstructions;
-
-    // If tesseract extracted text on-device, prepend it as high-quality context.
-    // This dramatically improves Sonnet's accuracy — it sees the text directly
-    // rather than having to read it from the image. Think of it as "reading ahead."
-    const enrichedPrompt = tesseractText
-      ? `On-device OCR extracted this text from the image:\n"${tesseractText.slice(0, 350)}"\n\nUse this text to identify the lot code. ${pass1Prompt}`
-      : pass1Prompt;
-
-    const pass1 = await callOcrApi(b64Primary, enrichedPrompt, false); // Sonnet — capable
+    const pass1 = await callOcrApi(b64Primary, extractParams, false); // Sonnet — capable
     dlog(`[Pass 1] ${localisedCrop ? 'localised crop' : 'full image'}:`, pass1);
 
     // ── PASS 2: REMOVED for speed ─────────────────────────
@@ -16323,10 +16319,10 @@ async function extractCodesFromImage(blob, learnedContext, tesseractText = null)
   }
 }
 
-async function callOcrApi(b64, promptText, useHaiku = false) {
+async function callOcrApi(b64, params, useHaiku = false) {
   try {
-    const data = await callOcrFunction('extract_codes', b64, { prompt: promptText, useHaiku });
-    const text = data.content?.[0]?.text?.trim() || '{}';
+    const data = await callOcrFunction('extract_codes', b64, { ...params, useHaiku });
+    const text = data?.content?.[0]?.text?.trim() || '{}';
     const clean = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
     try {
       return JSON.parse(clean);
