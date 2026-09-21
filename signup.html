@@ -397,18 +397,13 @@
       <div class="step active" id="step-type">
         <div class="step-label">Get started for free</div>
         <div class="step-title">What best describes you?</div>
-        <div class="step-sub">Batch'd works for both sides of the food supply chain. We'll tailor your setup accordingly.</div>
+        <div class="step-sub">Batch'd is built for food retail. Confirm your organisation type to continue.</div>
 
         <div class="type-grid">
           <div class="type-card" id="type-retailer" onclick="selectType('retailer')">
             <div class="type-icon">🏪</div>
             <div class="type-name">Retailer</div>
             <div class="type-desc">Grocery stores, supermarkets, food retail chains</div>
-          </div>
-          <div class="type-card" id="type-manufacturer" onclick="selectType('manufacturer')">
-            <div class="type-icon">🏭</div>
-            <div class="type-name">Manufacturer</div>
-            <div class="type-desc">Food producers, brands, processors, distributors</div>
           </div>
         </div>
 
@@ -606,7 +601,7 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // ── State ──────────────────────────────────────────────────────
-let _type    = null;  // 'retailer' | 'manufacturer'
+let _type    = null;  // always 'retailer' once step 0 is confirmed
 let _region  = 'no';
 let _userId  = null;
 let _orgId   = null;
@@ -626,37 +621,23 @@ function goToStep(name) {
 
 // ── Type selection ─────────────────────────────────────────────
 function selectType(type) {
-  _type = type;
-  document.getElementById('type-retailer').classList.toggle('selected', type === 'retailer');
-  document.getElementById('type-manufacturer').classList.toggle('selected', type === 'manufacturer');
+  // Retailer-only platform: manufacturer sign-up was removed 2026-09-20 and
+  // create_organisation_with_admin rejects p_type 'manufacturer'.
+  _type = 'retailer';
+  document.getElementById('type-retailer').classList.add('selected');
   document.getElementById('btn-type-next').disabled = false;
 
-  // Adapt org step for manufacturer
-  if (type === 'manufacturer') {
-    document.getElementById('org-step-label').textContent = 'Step 2 of 3 — Your company';
-    document.getElementById('org-step-title').textContent = 'Tell us about your company';
-    document.getElementById('org-step-sub').textContent = 'This is how retailers will see you on the Batch\'d network.';
-    document.getElementById('org-name-label').textContent = 'Company name';
-    document.getElementById('org-name').placeholder = 'e.g. Nortura AS';
-    document.getElementById('stores-section').style.display = 'none';
-    document.getElementById('final-title').textContent = 'One last thing';
-    document.getElementById('final-sub').textContent = 'Tell us what you produce so retailers can find you.';
-    document.getElementById('role-section').style.display = 'none';
-    document.getElementById('coordinator-section').style.display = 'none';
-    document.getElementById('mfr-type-section').style.display = 'block';
-  } else {
-    document.getElementById('org-step-label').textContent = 'Step 2 of 3 — Your organisation';
-    document.getElementById('org-step-title').textContent = 'Tell us about your organisation';
-    document.getElementById('org-step-sub').textContent = 'This is how you\'ll appear to trading partners on the Batch\'d network.';
-    document.getElementById('org-name-label').textContent = 'Organisation name';
-    document.getElementById('org-name').placeholder = 'e.g. Norges Gruppen AS';
-    document.getElementById('stores-section').style.display = 'block';
-    document.getElementById('final-title').textContent = 'You\'re almost ready';
-    document.getElementById('final-sub').textContent = 'Last couple of details.';
-    document.getElementById('role-section').style.display = 'block';
-    document.getElementById('coordinator-section').style.display = 'block';
-    document.getElementById('mfr-type-section').style.display = 'none';
-  }
+  document.getElementById('org-step-label').textContent = 'Step 2 of 3 — Your organisation';
+  document.getElementById('org-step-title').textContent = 'Tell us about your organisation';
+  document.getElementById('org-step-sub').textContent = 'This is how you\'ll appear to trading partners on the Batch\'d network.';
+  document.getElementById('org-name-label').textContent = 'Organisation name';
+  document.getElementById('org-name').placeholder = 'e.g. Norges Gruppen AS';
+  document.getElementById('stores-section').style.display = 'block';
+  document.getElementById('final-title').textContent = 'You\'re almost ready';
+  document.getElementById('final-sub').textContent = 'Last couple of details.';
+  document.getElementById('role-section').style.display = 'block';
+  document.getElementById('coordinator-section').style.display = 'block';
+  document.getElementById('mfr-type-section').style.display = 'none';
 }
 
 // ── Region selection ───────────────────────────────────────────
@@ -799,13 +780,11 @@ async function submitOrg() {
   const orgName  = document.getElementById('org-name').value.trim();
   const orgEmail = document.getElementById('org-email').value.trim();
 
-  if (!orgName) return setMsg('org', `Please enter your ${_type === 'manufacturer' ? 'company' : 'organisation'} name.`);
+  if (!orgName) return setMsg('org', 'Please enter your organisation name.');
   if (!orgEmail || !orgEmail.includes('@')) return setMsg('org', 'Please enter a valid contact email.');
 
-  if (_type === 'retailer') {
-    const stores = getStoreNames();
-    if (!stores.length) return setMsg('org', 'Please add at least one store.');
-  }
+  const stores = getStoreNames();
+  if (!stores.length) return setMsg('org', 'Please add at least one store.');
 
   setLoading('btn-org-next', true);
 
@@ -823,10 +802,10 @@ async function submitOrg() {
   // live INSERT policy only checked `user_id = auth.uid()` — so the same
   // client call with a different organisation_id and role made anyone a
   // corp_admin of any existing organisation.
-  const _storeNames = _type === 'retailer' ? getStoreNames() : null;
+  const _storeNames = getStoreNames();
   const _rpc = await sb.rpc('create_organisation_with_admin', {
     p_name:          orgName,
-    p_type:          _type,
+    p_type:          'retailer',
     p_contact_email: orgEmail,
     p_region:        _region,
     p_store_names:   _storeNames,
@@ -835,53 +814,10 @@ async function submitOrg() {
   if (!_rpc.error) {
     _orgId = _rpc.data;
   } else {
-    // A real rejection from the server must surface.
-    const _m = (_rpc.error.message || '').toLowerCase();
-    if (_m.includes('already belongs')) {
-      setLoading('btn-org-next', false);
-      return setMsg('org', 'This account already belongs to an organisation.');
-    }
-    // Otherwise assume migration 018 is not applied yet and use the
-    // legacy client-side path. Remove once migration 019 has run.
-    console.warn('[signup] create_organisation_with_admin unavailable, using legacy path:', _rpc.error.message);
-
-    const { data: org, error: orgErr } = await sb.from('organisations').insert({
-      name:          orgName,
-      type:          _type === 'manufacturer' ? 'manufacturer' : 'retailer',
-      contact_email: orgEmail,
-      region:        _region,
-    }).select().single();
-
-    if (orgErr) {
-      setLoading('btn-org-next', false);
-      return setMsg('org', 'Could not create organisation: ' + orgErr.message);
-    }
-
-    _orgId = org.id;
-
-    const role = _type === 'manufacturer' ? 'mfr_admin' : 'corp_admin';
-    const { error: memErr } = await sb.from('organisation_members').insert({
-      user_id:         _userId,
-      organisation_id: _orgId,
-      role,
-      active:          true,
-    });
-
-    if (memErr) {
-      setLoading('btn-org-next', false);
-      return setMsg('org', 'Could not create membership: ' + memErr.message);
-    }
-
-    if (_type === 'retailer') {
-      const storeRows = (_storeNames || []).map((name, i) => ({
-        name,
-        organisation_id: _orgId,
-        store_code:      `STORE-${String(i+1).padStart(3,'0')}`,
-        active:          true,
-      }));
-      const { error: storeErr } = await sb.from('stores').insert(storeRows);
-      if (storeErr) console.warn('Store creation warning:', storeErr.message);
-    }
+    // The RPC is the only path. Migration 019 removed the policies the old
+    // client-side inserts relied on, so any error here is final.
+    setLoading('btn-org-next', false);
+    return setMsg('org', _rpc.error.message || 'Could not create organisation. Please try again.');
   }
 
   // Create user_settings — write everything the scanning app needs so it
@@ -909,7 +845,7 @@ async function submitFinal() {
     return setMsg('final', 'Session expired — please refresh and try again.');
   }
 
-  if (_type === 'retailer') {
+  {
     const coordName    = document.getElementById('coordinator-name')?.value.trim() || null;
     const coordContact = document.getElementById('coordinator-contact')?.value.trim() || null;
     const role         = document.getElementById('user-role')?.value || 'corp_admin';
@@ -933,28 +869,19 @@ async function submitFinal() {
 
   // Show success
   const orgName  = document.getElementById('org-name').value.trim();
-  const stores   = _type === 'retailer' ? getStoreNames() : [];
+  const stores   = getStoreNames();
 
   document.getElementById('success-title').textContent = 'Welcome to Batch\'d.';
   document.getElementById('success-sub').textContent =
-    _type === 'retailer'
-      ? `${orgName} is set up and ready. Your stores are active and your scan history will build from your first placement.`
-      : `${orgName} is on the Batch\'d network. Connect to your retail partners to start pushing recall alerts.`;
+    `${orgName} is set up and ready. Your stores are active and your scan history will build from your first placement.`;
 
   // Checklist
-  const items = _type === 'retailer'
-    ? [
-        '✓  Organisation created',
-        `✓  ${stores.length} store${stores.length !== 1 ? 's' : ''} added`,
-        '✓  Scanning app ready — share with your team',
-        '→  Next: invite staff and run your first scan',
-      ]
-    : [
-        '✓  Company created',
-        '✓  Account active',
-        '→  Next: connect to retail trading partners',
-        '→  Then: register your products and lot codes',
-      ];
+  const items = [
+    '✓  Organisation created',
+    `✓  ${stores.length} store${stores.length !== 1 ? 's' : ''} added`,
+    '✓  Scanning app ready — share with your team',
+    '→  Next: invite staff and run your first scan',
+  ];
 
   document.getElementById('success-checklist').innerHTML = items.map(item =>
     `<div style="padding:10px 14px;background:var(--surface2);border-radius:8px;margin-bottom:8px;font-size:13px;color:${item.startsWith('✓')?'var(--accent)':'var(--muted)'};">${item}</div>`
@@ -966,13 +893,9 @@ async function submitFinal() {
 
 // ── Launch ─────────────────────────────────────────────────────
 function launchApp() {
-  if (_type === 'manufacturer') {
-    window.location.href = 'https://app.batchdapp.com/manufacturer.html';
-  } else {
-    // Retailers always land in the corporate dashboard — not the scanning app.
-    // The scanning app is for staff invited BY the corp admin, not the admin themselves.
-    window.location.href = 'https://app.batchdapp.com/dashboard.html';
-  }
+  // Retailers always land in the corporate dashboard — not the scanning app.
+  // The scanning app is for staff invited BY the corp admin, not the admin themselves.
+  window.location.href = 'https://app.batchdapp.com/dashboard.html';
 }
 
 // ── Handle existing session (already logged in) ───────────────
