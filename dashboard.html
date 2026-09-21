@@ -1198,6 +1198,9 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 // prefixes, currency, retention rules, regulator contacts, terminology
 // panel) MUST read _orgRegion. See CLAUDE.md "Jurisdiction precedence".
 let _session = null, _orgId = null, _orgName = '', _orgRegion = 'no', _orgDefaultRegion = 'no';
+// user_id -> display label, filled by renderStaff so deactivateMember can show
+// a name in its confirm dialog without carrying one through an onclick.
+let _staffLabelByUserId = {};
 let _userId = null, _userEmail = '', _userRole = null, _storeId = null;
 
 // Date-format override — hoisted up here (instead of next to _dashLocale)
@@ -1899,6 +1902,11 @@ async function initDashboard(user) {
 
   _orgId    = member.organisation_id;
   _userRole = member.role;
+  // Commercial flag: AI features require organisations.plan pov|active.
+  try {
+    const { data: _planRow } = await sb.from('organisations').select('plan').eq('id', _orgId).maybeSingle();
+    window._orgAiEnabled = ['pov', 'active'].includes(_planRow?.plan);
+  } catch (_) { window._orgAiEnabled = false; }
   _storeId  = member.store_id || null;
   _userId   = user.id;
   _userEmail = user.email;
@@ -2328,10 +2336,19 @@ const fmtDT        = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'num
   }
 }
 
+// AI features are POV/Paying only. One message, used by both the pre-check
+// and the mid-session downgrade path.
+function _showAiDisabled(el) {
+  el.innerHTML = '<div style="background:var(--surface);border:1px solid var(--glass-border);border-radius:10px;padding:14px 16px;font-size:12px;color:var(--muted);">'
+    + "AI queries are not enabled for this organisation. Contact Batch'd to enable them.</div>";
+}
+
 async function runNLQuery() {
   const question = document.getElementById('nl-query-input')?.value?.trim();
   const el       = document.getElementById('nl-result');
   if (!el || !question) return;
+
+  if (!window._orgAiEnabled) { _showAiDisabled(el); return; }
 
   el.innerHTML = '<div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);padding:12px 0;"><div class="spinner"></div> Interpreting your question…</div>';
 
@@ -2353,9 +2370,13 @@ organisation_id for this user = "${_orgId}"`;
     const res = await fetch('/.netlify/functions/ai-analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_aiJwt}` },
-      body: JSON.stringify({ task: 'nl_query', data: { question, schema } }),
+      body: JSON.stringify({ task: 'nl_query', org_id: _orgId, data: { question, schema } }),
     });
     const json = await res.json();
+    // Covers a plan downgrade mid-session.
+    if (res.status === 403 && json?.code === 'ai_disabled') {
+      window._orgAiEnabled = false; _showAiDisabled(el); return;
+    }
     const text = json.result || '';
 
     let parsed;
@@ -2649,7 +2670,13 @@ function handleDeepLink() {
   const panel  = params.get('panel');
   const highlight = params.get('highlight') || params.get('recall_event_id');
   const lot    = params.get('lot');
-  const detailId = params.get('id'); // generic id param — used by recall-detail
+  // Only a known panel and a well-formed uuid are honoured: both land in
+  // innerHTML downstream (renderComingSoon prints the panel name).
+  const KNOWN_PANELS = ['overview','onboarding','recalls','stores','traceability','staff','compliance','reports',
+                        'settings','triage','investigations','consumer-notify','terminology','lotcheck',
+                        'recall-detail','recall-composer'];
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const detailId = UUID_RE.test(params.get('id') || '') ? params.get('id') : null;
   if (highlight) _deepLinkHighlight = highlight;
   if (lot)       _deepLinkHighlight = lot;
   // recall-detail panel needs the recall_event id stashed BEFORE
@@ -2658,7 +2685,7 @@ function handleDeepLink() {
   if (panel === 'recall-detail' && detailId) {
     _currentRecallDetailId = detailId;
   }
-  const target = (panel && panel !== 'overview') ? panel : 'overview';
+  const target = (panel && KNOWN_PANELS.includes(panel)) ? panel : 'overview';
   if (params.toString()) {
     window.history.replaceState({}, '', window.location.pathname);
   }
@@ -3562,7 +3589,7 @@ async function renderRecalls() {
           </div>
           <div style="display:flex;gap:8px;">
             <button onclick="showStoreTimeline('${a.id}')" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;">Timeline</button>
-            <button onclick="generateStoreAuditReport('${a.id}','${storeName.replace(/'/g,"\\'")}' )" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid rgba(var(--accent-rgb),0.3);background:none;color:var(--accent);cursor:pointer;">Audit record</button>
+            <button onclick="generateStoreAuditReport('${a.id}')" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid rgba(var(--accent-rgb),0.3);background:none;color:var(--accent);cursor:pointer;">Audit record</button>
           </div>
         </div>
       </div>`;
@@ -3587,7 +3614,7 @@ async function renderRecalls() {
           ${elapsed !== null ? `<div style="font-size:10px;color:var(--muted);">${elapsed < 60 ? elapsed+'m' : Math.floor(elapsed/60)+'h '+elapsed%60+'m'} since last update</div>` : ''}
           ${nextStep ? `<button onclick="advanceAckStatus('${a.id}','${nextStep}','${recallEventId}')" style="background:var(--accent);color:var(--accent-on-primary);border:none;border-radius:8px;padding:9px 18px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;letter-spacing:0.01em;box-shadow:0 1px 3px rgba(0,0,0,0.25);">${STEP_LABELS[nextStep]} →</button>` : ''}
           <button onclick="showStoreTimeline('${a.id}')" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;">Timeline</button>
-          ${idx === 0 ? `<button onclick="sendRecallReminder('${recallEventId}','${(productName||'').replace(/'/g,"\\'")}')" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid rgba(var(--warn-rgb),0.3);background:none;color:var(--warn);cursor:pointer;">📧 Remind</button>` : ''}
+          ${idx === 0 ? `<button onclick="sendRecallReminder('${recallEventId}')" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid rgba(var(--warn-rgb),0.3);background:none;color:var(--warn);cursor:pointer;">📧 Remind</button>` : ''}
         </div>
       </div>
     </div>`;
@@ -3747,7 +3774,7 @@ async function renderRecalls() {
           <div style="flex:1;font-size:12px;font-weight:600;color:var(--accent);">All ${evAcks.length} store${evAcks.length!==1?'s':''} confirmed — audit trail locked</div>
           ${isDrill
             ? `<button onclick="event.stopPropagation();generateDrillCertificate('${p.recall_event_id}')" style="font-size:11px;padding:6px 12px;border-radius:7px;border:1px solid rgba(var(--accent-rgb),0.35);background:rgba(var(--accent-rgb),0.07);color:var(--accent);cursor:pointer;font-weight:600;">🏅 Certificate</button>`
-            : `<button onclick="event.stopPropagation();generateJointRecallReport('${p.recall_event_id}','${(ev.product_name||'').replace(/'/g,"\\'")}' )" style="font-size:11px;padding:6px 12px;border-radius:7px;border:1px solid rgba(var(--accent-rgb),0.35);background:rgba(var(--accent-rgb),0.08);color:var(--accent);cursor:pointer;font-weight:600;">📄 Joint report</button>`}
+            : `<button onclick="event.stopPropagation();generateJointRecallReport('${p.recall_event_id}')" style="font-size:11px;padding:6px 12px;border-radius:7px;border:1px solid rgba(var(--accent-rgb),0.35);background:rgba(var(--accent-rgb),0.08);color:var(--accent);cursor:pointer;font-weight:600;">📄 Joint report</button>`}
           ${ev.lot_number ? `<a href="https://batchd-app.netlify.app?view=history&lot=${encodeURIComponent(ev.lot_number||'')}" onclick="event.stopPropagation();" target="_blank" style="font-size:11px;padding:6px 12px;border-radius:7px;border:1px solid var(--glass-border);background:none;color:var(--muted);text-decoration:none;display:inline-flex;align-items:center;gap:5px;" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--muted)'">📱 App</a>` : ''}
         </div>` : ''}
 
@@ -4096,7 +4123,7 @@ async function launchDrill() {
     // failed — same outcome as before, just with one more attempt to recover.
     if (createdRecallEventId) {
       try {
-        await sb.from('recall_events').delete().eq('id', createdRecallEventId);
+        await sb.from('recall_events').delete().eq('id', createdRecallEventId).eq('source_org_id', _orgId);
       } catch(cleanupErr) {
         console.warn('[launchDrill] cleanup failed after error:', cleanupErr?.message);
       }
@@ -5024,7 +5051,7 @@ async function _composerPushRecall() {
     // and acks cascade from the event delete where FKs allow it.
     if (createdRecallEventId) {
       try {
-        await sb.from('recall_events').delete().eq('id', createdRecallEventId);
+        await sb.from('recall_events').delete().eq('id', createdRecallEventId).eq('source_org_id', _orgId);
       } catch (cleanupErr) {
         console.warn('[composer push] cleanup failed after error:', cleanupErr?.message);
       }
@@ -5509,7 +5536,7 @@ async function resolveManualRecall(recallId, btn) {
   }
 }
 
-async function sendRecallReminder(recallEventId, productName) {
+async function sendRecallReminder(recallEventId) {
   // 2026-08-05 core-loop fix: this button POSTed to recall-reminder,
   // which did not exist in the repo — every click 404'd. The function
   // now exists (auth'd corp_admin-only wrapper around the reminder
@@ -6875,7 +6902,8 @@ async function markRecallComplete(recallEventId) {
         closed_by:   _userId || null,
         closed_note: note || null
       })
-      .eq('id', recallEventId);
+      .eq('id', recallEventId)
+      .eq('source_org_id', _orgId);
 
     if (error) {
       // Migration 008 not yet applied — surface specific guidance
@@ -8457,6 +8485,7 @@ async function renderStaff() {
   // and by role-order as fallback for members who joined before user_id was tracked
   const emailByUserId    = {};
   const fullNameByUserId = {};
+  _staffLabelByUserId    = {};
   const emailsByRole     = {};
   acceptedInv.forEach(inv => {
     if (inv.user_id) {
@@ -8673,6 +8702,7 @@ async function renderStaff() {
               // a user_id shortcut as last resort. Sub-line carries the
               // email when the headline is the full name, so both stay
               // visible — corp admin can identify the row at a glance.
+              _staffLabelByUserId[m.user_id] = email || fullName || m.user_id;
               const headline    = fullName || email || (m.user_id.slice(0,8) + '…');
               const initial     = (fullName || email || roleLabel)[0].toUpperCase();
               const showEmailSub = fullName && email && email !== fullName;
@@ -8686,7 +8716,7 @@ async function renderStaff() {
                   </div>
                 </div>
                 <span class="recall-status status-resolved" style="flex-shrink:0;">Active</span>
-                <button onclick="deactivateMember('${m.user_id}', '${esc(email || fullName || m.user_id)}')"
+                <button onclick="deactivateMember('${m.user_id}')"
                   style="font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;margin-left:4px;flex-shrink:0;"
                   onmouseenter="this.style.borderColor='var(--danger)';this.style.color='var(--danger)'"
                   onmouseleave="this.style.borderColor='var(--border)';this.style.color='var(--muted)'"
@@ -8747,7 +8777,10 @@ async function renderStaff() {
   }
 }
 
-async function deactivateMember(userId, identifier) {
+async function deactivateMember(userId) {
+  // Label for the confirm dialog comes from the map renderStaff built, not
+  // from the markup that rendered the button.
+  const identifier = _staffLabelByUserId[userId] || userId;
   // Defense-in-depth role guard (added 2026-05-27 per audit). Managers
   // see the Staff Activity panel (Chunk A scoping) and the Deactivate
   // button renders for everyone — gate here so a manager can't deactivate
@@ -9949,7 +9982,7 @@ function injectPrintButton(html) {
     .replace('</body>', _batchdDocFooter() + printBtn + '</body>');
 }
 
-async function generateJointRecallReport(recallEventId, productName) {
+async function generateJointRecallReport(recallEventId) {
   const btn = event?.target;
   const origText = btn?.textContent;
   if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
@@ -10036,7 +10069,7 @@ async function generateJointRecallReport(recallEventId, productName) {
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Joint Recall Completion Report — ${ev.product_name || productName}</title>
+<title>Joint Recall Completion Report — ${esc(ev.product_name || 'Recall')}</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 13px; color: #1a2e2a; background: #fff; padding: 40px; max-width: 860px; margin: 0 auto; }
@@ -10217,7 +10250,7 @@ ${allDone ? `
   }
 }
 
-async function generateStoreAuditReport(ackId, storeName) {
+async function generateStoreAuditReport(ackId) {
   const btn = event?.target;
   if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
   try {
@@ -10231,6 +10264,9 @@ async function generateStoreAuditReport(ackId, storeName) {
       .eq('organisation_id', _orgId)
       .single();
     if (!a) throw new Error('Acknowledgement not found');
+    // The store name comes from the row this query already joins, not from
+    // the markup that opened the report.
+    const storeName = a.stores?.name || '—';
     const ev  = a.recall_events || {};
     const org = a.organisations || {};
     const fmtDt = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
@@ -10279,9 +10315,9 @@ async function generateStoreAuditReport(ackId, storeName) {
   }
 }
 
-async function generateRecallAuditReport(recallEventId, productName) {
+async function generateRecallAuditReport(recallEventId) {
   // Alias — full joint report covers everything the single-event audit did
-  return generateJointRecallReport(recallEventId, productName);
+  return generateJointRecallReport(recallEventId);
 }
 
 
@@ -13052,7 +13088,10 @@ async function submitDashPhoneComplaint() {
     submitted_by_label: 'Staff (phone intake)'
   };
   try {
-    const res = await fetch('/.netlify/functions/triage-complaint', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    // Staff intake must prove who it is: triage-complaint derives source and
+    // the audit actor from this JWT, never from the payload.
+    const { data: { session: _tcSession } } = await sb.auth.getSession();
+    const res = await fetch('/.netlify/functions/triage-complaint', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (_tcSession?.access_token || '') }, body: JSON.stringify(payload) });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Submission failed');
     const s = dashTriageLevelStyle(data.triage_level);
@@ -13279,7 +13318,9 @@ async function updateDashTriageStatus(id, newStatus) {
   try {
     // Both writes destructure { error } so RLS denials don't silently land
     // a fake "status changed" outcome with the audit log out of sync.
-    const { error: updErr } = await sb.from('complaints').update({ status: newStatus }).eq('id', id);
+    const { data: updRows, error: updErr } = await sb.from('complaints')
+      .update({ status: newStatus }).eq('id', id).eq('receiving_org_id', _orgId).select('id');
+    if (!updErr && (!updRows || updRows.length === 0)) throw new Error('Complaint not found in this organisation');
     if (updErr) throw updErr;
     const { error: logErr } = await sb.from('complaint_audit_log').insert({ complaint_id: id, action: 'status_changed_to_' + newStatus, actor_label: 'Staff' });
     if (logErr) throw logErr;
@@ -13323,7 +13364,7 @@ function renderComingSoon(name) {
   document.getElementById('main-content').innerHTML = `
     <div style="display:flex;align-items:center;justify-content:center;height:300px;flex-direction:column;gap:12px;color:var(--muted);">
       <div style="font-size:32px;opacity:0.3;">🔨</div>
-      <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;color:var(--text);">${name} — coming soon</div>
+      <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;color:var(--text);">${esc(name)} — coming soon</div>
       <div style="font-size:12px;">This module is in development.</div>
     </div>`;
 }
@@ -15073,11 +15114,14 @@ async function renderConsumerNotification() {
     if (dists?.length) {
       const evIds = [...new Set(dists.map(d => d.recall_event_id))];
       const { data: evs } = await sb.from('recall_events')
-        .select('id, product_name, lot_number, severity, reason, published_at, is_drill')
+        .select('id, product_name, lot_number, severity, reason, published_at, is_drill, closed_at')
         .in('id', evIds)
         .eq('is_drill', false)
         .order('published_at', { ascending: false });
-      recallEvents = evs || [];
+      // notify-consumers refuses an event closed more than 30 days ago, so do
+      // not offer one here and produce a 403 at send time.
+      const cutoff = Date.now() - 30 * 86400 * 1000;
+      recallEvents = (evs || []).filter(ev => !ev.closed_at || new Date(ev.closed_at).getTime() > cutoff);
     }
 
     // Manual recalls: only active ones created by this org (not RASFF/FDA imports)
