@@ -41,8 +41,13 @@ exports.handler = async (event) => {
     return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON' }) };
   }
 
-  const { recall_event_id, recall_id, test } = body;
-
+  const { internalSecretOk } = require('../lib/auth');
+  const { recall_event_id, recall_id, internal_secret } = body;
+  // Server-to-server only. The single caller is webhook-recall.js, which
+  // sends INTERNAL_NOTIFY_SECRET (the variable notify-event.js already uses).
+  if (!internalSecretOk(internal_secret)) {
+    return { statusCode: 401, body: JSON.stringify({ error: 'Unauthorized' }) };
+  }
   if (!recall_event_id && !recall_id) {
     return { statusCode: 400, body: JSON.stringify({ error: 'recall_event_id or recall_id required' }) };
   }
@@ -62,10 +67,11 @@ exports.handler = async (event) => {
         .from('recall_events')
         .select('id, product_name, lot_number, barcode, reason, severity, is_drill, created_at, source_org_id')
         .eq('id', recall_event_id)
+        .is('closed_at', null)
         .single();
 
       if (evErr || !recallEvent) {
-        return { statusCode: 404, body: JSON.stringify({ error: 'recall_event not found', detail: evErr?.message }) };
+        return { statusCode: 404, body: JSON.stringify({ error: 'recall_event not found', detail: 'not found' }) };
       }
 
       recallData = {
@@ -113,10 +119,11 @@ exports.handler = async (event) => {
         .from('recalls')
         .select('id, product_name, lot_number, barcode_number, description, source, active, created_at, organisation_id')
         .eq('id', recall_id)
+        .eq('active', true)
         .single();
 
       if (rErr || !recall) {
-        return { statusCode: 404, body: JSON.stringify({ error: 'recall not found', detail: rErr?.message }) };
+        return { statusCode: 404, body: JSON.stringify({ error: 'recall not found', detail: 'not found' }) };
       }
 
       recallData = {
@@ -186,8 +193,8 @@ exports.handler = async (event) => {
       const isNO     = (org.region || 'no') === 'no';
 
       const subject = isDrill
-        ? `[DRILL] Batch'd Recall Drill: ${esc(recallData.product_name)}`
-        : `Recall Alert: ${esc(recallData.product_name)}${recallData.lot_number ? ` — Lot ${esc(recallData.lot_number)}` : ''}`;
+        ? `[DRILL] Batch'd Recall Drill: ${recallData.product_name}`
+        : `Recall Alert: ${recallData.product_name}${recallData.lot_number ? ` — Lot ${recallData.lot_number}` : ''}`;
 
       const html = buildRecallEmailHtml({
         org, recallData, exposure, isDrill, isNO,
@@ -242,7 +249,7 @@ function buildRecallEmailHtml({ org, recallData, exposure, isDrill, isNO, dashbo
     : '';
 
   const severityLabel = recallData.severity
-    ? `<div style="display:inline-block;background:${accentColor}20;color:${accentColor};border:1px solid ${accentColor}50;border-radius:4px;padding:2px 10px;font-size:11px;font-weight:700;font-family:monospace;margin-bottom:12px;">${recallData.severity.toUpperCase()}</div>`
+    ? `<div style="display:inline-block;background:${accentColor}20;color:${accentColor};border:1px solid ${accentColor}50;border-radius:4px;padding:2px 10px;font-size:11px;font-weight:700;font-family:monospace;margin-bottom:12px;">${esc(String(recallData.severity || '')).toUpperCase()}</div>`
     : '';
 
   const sourceLabel = {
@@ -256,7 +263,7 @@ function buildRecallEmailHtml({ org, recallData, exposure, isDrill, isNO, dashbo
   // Exposure block
   let exposureHtml = '';
   if (exposure && exposure.total > 0) {
-    const storeList = [...exposure.stores].slice(0, 5).join(', ') + (exposure.stores.size > 5 ? ` +${exposure.stores.size - 5} more` : '');
+    const storeList = [...exposure.stores].slice(0, 5).map(esc).join(', ') + (exposure.stores.size > 5 ? ` +${exposure.stores.size - 5} more` : '');
     exposureHtml = `
       <div style="background:#ff5c5c15;border:1px solid #ff5c5c40;border-radius:8px;padding:14px 16px;margin:16px 0;">
         <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:#ff5c5c;font-weight:700;margin-bottom:10px;">
