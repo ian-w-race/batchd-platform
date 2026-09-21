@@ -97,34 +97,31 @@ The big one. Also contains the `send_invitation` fix.
 
 New query → paste → **Run** → confirm the destructive-operation warning.
 
-**Read the messages panel below the editor.** The last line must read exactly:
+**Expected: `Success. No rows returned`.** That is what success looks like — this
+script creates policies and functions, it doesn't return data. Supabase's SQL
+editor does **not** display `RAISE NOTICE` output, so you will not see the
+migration's own progress messages. Step 4 checks the result properly.
 
-> `OK: 019 policies gone; 020 helpers, guards, invitation policies, hardened send_invitation and plan flag in place.`
+## Step 4 — Verify migration 020 did everything (~1 min)
 
-🛑 **Stop and message me if** any line starts `SKIPPED`, or the last line differs. `SKIPPED` means existing data doesn't fit a new rule — not an error, but a safeguard didn't get created.
+    cat /Users/johnponchak/batchd-platform/docs/verify-020.sql | pbcopy
 
-## Step 4 — Verify the takeover hole is closed (~1 min)
+New query → paste → **Run**. You get 9 rows. **Every one must say `PASS`.**
 
-New query → paste → **Run**:
+The rows that matter most:
+- **`send_invitation hardened (THE IMPORTANT ONE)`** — this is the org-takeover fix
+- **`CHECK constraints (expect 4; fewer means SKIPPED)`** — fewer than 4 means some existing data didn't fit a rule
+- **`unique indexes (expect 2; fewer means SKIPPED)`** — same
 
-```sql
-SELECT prosecdef                                          AS security_definer,
-       proconfig                                          AS search_path_pinned,
-       position('Not authorised to invite' in prosrc) > 0 AS has_authorisation_check
-FROM pg_proc WHERE proname = 'send_invitation';
-```
-
-**Expected:** `true`, `{search_path=public}`, `true`.
-
-🛑 **Stop and message me if** `has_authorisation_check` is `false`. This is the single most important fix in the release.
+🛑 **Stop and message me if any row says `*** FAIL ***`.**
 
 ## Step 5 — Turn the plans on (~1 min)
 
     cat /Users/johnponchak/batchd-platform/migrations/020a_set_existing_orgs_pov.sql | pbcopy
 
-New query → paste → **Run**.
-
-**Expected:** `OK: 6 organisation(s) set to pov. Paying orgs on active and churned orgs were left alone.`
+New query → paste → **Run**. **Expected: `Success. No rows returned`** (the
+migration's own message is a NOTICE, which Supabase doesn't display). Step 6
+confirms it worked.
 
 ⚠️ **Do not skip.** Without it, AI product recognition stops for every user the moment you deploy.
 
@@ -195,11 +192,17 @@ Save the result somewhere safe (a password manager). If step 1 section 7 was emp
 
 New query → paste → **Run** → confirm the destructive-operation warning.
 
-The messages panel prints a lot of `BEFORE ...` lines (a record of the old rules) and `dropped open policy ...` lines. That is normal and is exactly what step 1 predicted. The **last** line must read:
+**Expected: `Success. No rows returned`.** As before, the migration's own
+progress messages are NOTICEs that Supabase does not display.
 
-> `OK: no USING(true)/CHECK(true) policies remain on the tenant tables.`
+Then verify it properly:
 
-🛑 **Stop and message me if** any line starts with `STILL OPEN:`.
+    cat /Users/johnponchak/batchd-platform/docs/verify-021.sql | pbcopy
+
+New query → paste → **Run**. You get 7 rows. **Every one must say `PASS`**, in
+particular `NO open policies left on tenant tables`.
+
+🛑 **Stop and message me if any row says `*** FAIL ***`.**
 
 ---
 
