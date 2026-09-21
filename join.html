@@ -178,26 +178,40 @@ const ROLE_DESTINATIONS = {
   mfr_qa:        'https://app.batchdapp.com/manufacturer.html',
 };
 
+// Helper: HTML-escape any string we interpolate (defence against weird names).
+// Module scope so every screen on this page can use it, not just showForm.
+const esc = (s) => String(s == null ? '' : s)
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
+
 async function init() {
   const params = new URLSearchParams(window.location.search);
   const token  = params.get('token');
 
-  if (!token) {
+  // The invite token is a bearer credential. Move it out of the address bar
+  // (and so out of history, referrers and shoulder-surfing) into
+  // sessionStorage, which survives the refresh this page sometimes needs.
+  let joinToken = token;
+  try {
+    if (joinToken) { sessionStorage.setItem('batchd_join_token', joinToken); history.replaceState(null, '', location.pathname); }
+    else joinToken = sessionStorage.getItem('batchd_join_token');
+  } catch (_) {}
+
+  if (!joinToken) {
     showError('No invitation token found.', 'Please use the link from your invitation email.');
     return;
   }
 
-  // 2026-09-09 security fix. This used to SELECT from `invitations`
-  // directly with the public anon key. The live policy on that table was
-  // USING (true) for anon, so the .eq('token', …) was only a client-side
-  // filter — the entire pending-invite table, tokens included, was
-  // dumpable by anyone. get_invitation_by_token() is SECURITY DEFINER and
-  // returns one row of display fields for the supplied token only.
-  // The direct-read fallback keeps this page working on a deployment
-  // where migration 018 has not been applied yet; it disappears in
-  // practice once 019 revokes the anon policy.
+  // get_invitation_by_token() is SECURITY DEFINER and returns one row of
+  // display fields for the supplied token only. The direct-read fallback that
+  // used to sit beside it was removed 2026-09-20 along with migration 019's
+  // anon policy: reading `invitations` from the browser is no longer possible
+  // and no longer needed.
   let inv = null, error = null;
-  const rpcRes = await sb.rpc('get_invitation_by_token', { p_token: token });
+  const rpcRes = await sb.rpc('get_invitation_by_token', { p_token: joinToken });
   if (!rpcRes.error && Array.isArray(rpcRes.data) && rpcRes.data.length) {
     const r = rpcRes.data[0];
     inv = {
@@ -221,11 +235,7 @@ async function init() {
       _viaRpc: true,
     };
   } else {
-    const legacy = await sb.from('invitations')
-      .select('*, stores(name)')
-      .eq('token', token)
-      .maybeSingle();
-    inv = legacy.data; error = legacy.error;
+    error = rpcRes.error || new Error('Invitation not found.');
   }
 
   if (error || !inv) {
@@ -241,26 +251,18 @@ async function init() {
     return;
   }
 
-  // Fetch org name separately — avoids RLS join issue with anon key
-  let orgName = inv._orgName || 'your organisation';
-  if (!inv._viaRpc) {
-    const { data: orgData } = await sb.from('organisations')
-      .select('name').eq('id', inv.organisation_id).maybeSingle();
-    if (orgData?.name) orgName = orgData.name;
-  }
-  inv._orgName = orgName;
+  // The org name comes from the RPC; organisations is not readable here.
+  inv._orgName = inv._orgName || 'your organisation';
 
   // Resolve manager_store_ids → store names for the multi-store chip display.
   // Stays empty for non-manager invites or managers covering one store.
   inv._managerStoreNames = [];
   if (Array.isArray(inv.manager_store_ids) && inv.manager_store_ids.length > 0) {
-    const { data: storeRows } = await sb.from('stores')
-      .select('id, name')
-      .in('id', inv.manager_store_ids);
-    inv._managerStoreNames = (storeRows || []).map(s => s.name);
+    const { data: _storeNames } = await sb.rpc('get_invitation_store_names', { p_token: joinToken });
+    inv._managerStoreNames = Array.isArray(_storeNames) ? _storeNames : [];
   }
 
-  inv._token = token; // needed by accept_invitation RPC
+  inv._token = joinToken; // needed by accept_invitation RPC
   _invitation = inv;
   showForm(inv);
 }
@@ -270,13 +272,6 @@ function showForm(inv) {
   const storeName = inv.stores?.name || null;
   const roleLabel = ROLE_LABELS[inv.role] || inv.role.replace(/_/g, ' ');
 
-  // Helper: HTML-escape any string we interpolate (defence against weird names)
-  const esc = (s) => String(s == null ? '' : s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 
   // Multi-store managers: build a chip per assigned store.
   // _managerStoreNames is fetched separately below (RLS-safe lookup).
@@ -449,94 +444,11 @@ async function acceptInvitation() {
       p_employee_id: employeeId,
     });
 
-    // Server handled membership, manager stores, profile and settings.
-    let _serverHandled = !_acc.error;
+    // The RPC is the only path. Migration 019 removed the policies the old
+    // client-side fallback relied on, so any error here is final and must
+    // surface to the invitee rather than being retried from the browser.
+    if (_acc.error) throw new Error(_acc.error.message);
 
-    if (_acc.error) {
-    // A genuine server-side rejection (already used, expired, wrong
-    // email) must surface, not fall through to the legacy path.
-    const _accMsg = (_acc.error.message || '').toLowerCase();
-    if (_accMsg.includes('already been used') || _accMsg.includes('expired')
-        || _accMsg.includes('different email') || _accMsg.includes('not found')) {
-      throw new Error(_acc.error.message);
-    }
-    // Otherwise the RPC is probably missing (migration 018 not applied) —
-    // fall back to the legacy client-side writes below.
-    console.warn('[join] accept_invitation RPC unavailable, using legacy path:', _acc.error.message);
-    }
-
-    if (!_serverHandled) {
-    // ── LEGACY CLIENT-SIDE PATH ──────────────────────────────────────
-    // Only reached where migration 018 has not been applied. Remove this
-    // whole block once 019 has run everywhere.
-    // Mark invitation accepted — do this regardless of whether account was new or existing
-    await sb.from('invitations').update({ accepted: true, user_id: userId }).eq('id', _invitation.id);
-
-    // Add to organisation (idempotent — ignore duplicate key errors).
-    // For store_manager invites with manager_store_ids, the canonical
-    // assignment lives in store_manager_stores (handled below);
-    // store_id on the org-member row is left NULL for managers because
-    // the join table is many-to-many.
-    const memberRowStoreId = (_invitation.role === 'store_manager' && Array.isArray(_invitation.manager_store_ids) && _invitation.manager_store_ids.length > 0)
-      ? null
-      : (_invitation.store_id || null);
-    const { error: memberErr } = await sb.from('organisation_members').insert({
-      organisation_id: _invitation.organisation_id,
-      user_id:         userId,
-      role:            _invitation.role,
-      store_id:        memberRowStoreId,
-      full_name:       name,
-      phone_number:    phone,
-      hire_date:       hireDate,
-      store_role:      storeRole,
-      employee_id:     employeeId,
-      joined_at:       new Date().toISOString(),
-    });
-    if (memberErr && !memberErr.message.includes('duplicate')) throw memberErr;
-
-    // Set is_manager flag for store_manager role — controls manager tab in scanning app
-    if (_invitation.role === 'store_manager') {
-      await sb.from('user_profiles').upsert({
-        id:         userId,
-        is_manager: true,
-      }, { onConflict: 'id' });
-
-      // Multi-store assignment: one row per (manager, store) in
-      // store_manager_stores. Best-effort — if some rows fail we
-      // surface a warning but don't block account creation, since
-      // a corp_admin can fix assignments after the fact.
-      if (Array.isArray(_invitation.manager_store_ids) && _invitation.manager_store_ids.length > 0) {
-        const smsRows = _invitation.manager_store_ids.map(storeId => ({
-          user_id:         userId,
-          store_id:        storeId,
-          organisation_id: _invitation.organisation_id,
-          assigned_by:     _invitation.invited_by || null,
-        }));
-        const { error: smsErr } = await sb.from('store_manager_stores').insert(smsRows);
-        if (smsErr) console.warn('[acceptInvitation] store_manager_stores insert failed:', smsErr.message);
-      }
-    }
-
-    // Region precedence on invitation accept (migration 012, 2026-05):
-    //   1. invitations.region (set per-invite by the corp admin in the dashboard)
-    //   2. organisations.region (the org's default — original fallback)
-    //   3. 'no' (final fallback if neither is set, shouldn't happen in practice)
-    // recall_source is org-level since migration 012 — no longer written here.
-    // The scanner reads organisations.recall_source on login; this row only
-    // needs to mark onboarding_done and set the user's region preference.
-    let effectiveRegion = _invitation.region || null;
-    if (!effectiveRegion) {
-      const { data: orgSettings } = await sb.from('organisations')
-        .select('region').eq('id', _invitation.organisation_id).maybeSingle();
-      effectiveRegion = orgSettings?.region || 'no';
-    }
-    await sb.from('user_settings').upsert({
-      user_id:              userId,
-      region:               effectiveRegion,
-      recall_lookback_days: 180,
-      onboarding_done:      true,
-    }, { onConflict: 'user_id' });
-    } // end legacy client-side path
 
     // Show success then auto-redirect with session tokens
     const orgName   = _invitation._orgName || 'your organisation';
@@ -552,8 +464,8 @@ async function acceptInvitation() {
         </div>
         <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:24px;margin-bottom:8px;">Welcome to Batch'd!</div>
         <div style="font-size:12px;color:var(--muted);line-height:1.8;margin-bottom:20px;">
-          You've joined <strong style="color:var(--text);">${orgName}</strong><br>
-          as a <strong style="color:var(--accent);">${roleLabel}</strong>.
+          You've joined <strong style="color:var(--text);">${esc(orgName)}</strong><br>
+          as a <strong style="color:var(--accent);">${esc(roleLabel)}</strong>.
         </div>
         <div style="font-size:12px;color:var(--muted);display:flex;align-items:center;justify-content:center;gap:8px;">
           <div class="spinner spinner-muted"></div>
@@ -596,7 +508,7 @@ async function acceptInvitation() {
     const orgName = _invitation?._orgName || 'your organisation';
     showMsg(e.message || 'Could not complete setup. Please try again.', 'error');
     btn.disabled = false;
-    btn.innerHTML = `Join ${orgName} →`;
+    btn.innerHTML = `Join ${esc(orgName)} →`;
   }
 }
 
