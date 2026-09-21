@@ -185,12 +185,25 @@ and HTTP probes, no Netlify login):
   index.html at their root (HTTP 200); the JS hostname snippet in
   index.html then redirects client-side to the stub pages. The three
   stubs and admin.html all answer 200 on app.batchdapp.com.
-Still needs the Netlify dashboard: SECRETS.md says two Netlify sites
-deploy this repo and that the www.batchdapp.com site runs the cron
-schedules (SCHEDULED_FUNCTIONS_DISABLED=true everywhere else). Since
-all custom domains sit on one site, the second site must be the one
-with no custom domain. Confirm which netlify.app name belongs to
-which site, and that the env var is set the right way round.
+CORRECTED 2026-09-21: **THREE** Netlify sites deploy this repo, not two.
+All three show github.com/ian-w-race/batchd-platform as their
+repository (verified in the Netlify UI). Earlier notes here and in
+SECRETS.md said two; that was wrong.
+
+Consequences:
+- Every environment variable this repo's functions read must exist, with
+  the same value, on ALL THREE sites. INTERNAL_NOTIFY_SECRET especially:
+  push-recall-email fails closed without it.
+- netlify.toml arms the recall-escalation (every 30 min) and
+  fetch-recall-feeds (daily) schedules on EVERY site that deploys it, so
+  SCHEDULED_FUNCTIONS_DISABLED=true must be set on two of the three.
+  If it is missing on more than one, stores receive duplicate escalation
+  emails; if it is true on all three, neither job runs at all. Needs
+  verifying in the Netlify UI.
+- The host-scoped redirects in netlify.toml are host-exact, so any
+  netlify.app name not named there serves dashboard.html and admin.html
+  without the canonicalising 301s. Not an auth hole (the same sign-in
+  applies) but it is an extra unlinked surface.
 The code references www.batchdapp.com only in complaint-widget.js and
 in the origin allowlists of send-invite.js and supplier-invite.js.
 

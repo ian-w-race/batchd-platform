@@ -91,22 +91,41 @@ Batch'd Demo, Test Manufacturer Co) and 6 flipping to `pov`.
 
 🛑 **Stop and message me if** any still says `trial` or is blank.
 
-# Step 7 — Environment variable on BOTH Netlify sites (~5 min)
+# Step 7 — Environment variables on ALL THREE Netlify sites (~10 min)
 
-Netlify → **Sites** in the top nav. Two sites deploy this repo.
+Confirmed 2026-09-21: **three** sites deploy this repo, not two as the docs
+previously said. All three show `github.com/ian-w-race/batchd-platform`.
 
-For **each** site:
+## 7a — `INTERNAL_NOTIFY_SECRET` on all three
+
+Netlify → **Sites**. For **each** of the three:
 1. Click the site name
 2. Left sidebar → **Site configuration**
 3. Left sidebar → **Environment variables**
 4. Find `INTERNAL_NOTIFY_SECRET`
 
-**Both sites must have it, and the value must be identical.** Click the
-reveal/eye icon to compare. If one is missing it, click **Add a variable** and
-copy the value across from the other.
+**All three must have it, with an identical value.** Click the reveal/eye icon
+to compare. If one is missing it, **Add a variable** and copy the value across.
 
 Why: recall alert emails now require this secret. If the site your ERP webhook
 hits doesn't have it, those emails stop and nothing visibly errors.
+
+## 7b — `SCHEDULED_FUNCTIONS_DISABLED` on all three (check, don't change yet)
+
+On the same screen, note whether `SCHEDULED_FUNCTIONS_DISABLED` exists and what
+it is set to, for each site.
+
+`netlify.toml` arms `recall-escalation` (every 30 minutes) and
+`fetch-recall-feeds` (daily) on **every** site that deploys it. Exactly **one**
+site should be missing this variable or have it `false`; the other two must have
+it `true`.
+
+- Missing/false on more than one site → stores receive **duplicate** recall
+  escalation emails
+- `true` on all three → escalation emails and the daily feed import **never run**
+
+This is a pre-existing condition, not something this release introduces. Report
+what you find before changing it.
 
 # Step 8 — Push the branch (~1 min)
 

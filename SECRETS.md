@@ -6,6 +6,10 @@ documents what each one is, where it's used, and how to rotate it.
 
 Set/inspect at: Netlify → Site settings → Environment variables.
 
+⚠️ **THREE Netlify sites deploy this repo** (verified 2026-09-21). Every
+variable below must exist with the SAME value on all three, except
+`SCHEDULED_FUNCTIONS_DISABLED`, which is deliberately different per site.
+
 | Variable | Used by | What it is | Rotation |
 |---|---|---|---|
 | `SUPABASE_SERVICE_KEY` | All functions that read/write the DB (`recall-*`, `notify-*`, `ai-analyze`, `ocr`, `fetch-recall-feeds`, `send-invite`, `triage-complaint`, …) | Supabase **service-role** key — bypasses RLS. The most sensitive secret in the stack. | Supabase → Project Settings → API → rotate service role key, then update here. Everything server-side breaks until updated. |
@@ -15,7 +19,7 @@ Set/inspect at: Netlify → Site settings → Environment variables.
 | `ANTHROPIC_API_KEY` | `ai-analyze`, `ocr` | Anthropic API key for AI product identification / NL query. Billing-sensitive. | console.anthropic.com → API keys. |
 | `INTERNAL_NOTIFY_SECRET` | `notify-event`, `push-recall-email` (required, fails closed), `triage-complaint` (also salts the complaint IP hash) | Shared secret allowing internal functions to trigger notifications without a user JWT. **Must exist on BOTH Netlify sites with the same value** — push-recall-email rejects the ERP webhook's alert without it. Changing it re-salts complaints.ip_hash, which only resets public rate-limit counters. | Generate a new long random string, update in Netlify — used only inside this site, so no external coordination needed. |
 | `APP_BASE_URL` | Email templates (links back to the dashboard) | Public dashboard URL; defaults to `https://corporate.batchdapp.com`. Not secret. | — |
-| `SCHEDULED_FUNCTIONS_DISABLED` | `recall-escalation`, `fetch-recall-feeds` | Cron-singleton switch: two Netlify sites deploy this repo, and both arm the netlify.toml schedules. Set to `true` on every site EXCEPT the one designated to run crons (the www.batchdapp.com site). If this is set to `true` on ALL sites, no escalation emails and no feed imports run at all. | — |
+| `SCHEDULED_FUNCTIONS_DISABLED` | `recall-escalation`, `fetch-recall-feeds` | Cron-singleton switch. **THREE** Netlify sites deploy this repo (corrected 2026-09-21; this file previously said two), and every one of them arms the netlify.toml schedules. Set to `true` on all sites EXCEPT the single one designated to run crons. Missing on more than one site = duplicate escalation emails to stores. `true` on all three = no escalation emails and no feed imports at all. Verify in the Netlify UI. | — |
 | MapTiler key (in `dashboard.html`, not an env var) | The shared store-map renderer (Command Center / Store Network / recall detail) | **Publishable** map-tile key, embedded client-side BY DESIGN and locked to our domains via MapTiler's allowed-HTTP-origins list (cloud.maptiler.com → API Keys). Same category as the Supabase anon key — an audit finding it in the HTML is a false alarm. | Rotate in MapTiler's dashboard + update `_MAPTILER_KEY` in dashboard.html if abused; free tier = 100k tiles/month, usage visible in MapTiler Analytics. |
 | `URL` | `fetch-recall-feeds` (self-calls the recall-feeds proxy) | **Set automatically by Netlify** to the site's primary URL. Do not create manually. | — |
 
