@@ -20,7 +20,10 @@ files. Never partial diffs or code snippets to manually insert.
   Netlify site and is not part of this repo. Never edit it from here
   and never mix its files with this platform's.
 - Routing: host-scoped rules in netlify.toml are the authority for the
-  domain split. There is no _redirects file. The JS hostname snippet at
+  domain split. There is no _redirects file. netlify.toml also carries
+  the security headers, the forced 404s that keep CLAUDE.md, SECRETS.md,
+  SCHEMA.md, migrations/ and docs/ off the public site, and
+  `node_bundler = "esbuild"` for netlify/lib/auth.js (all 2026-09-20). The JS hostname snippet at
   the top of index.html is a fallback that only redirects the retired
   manufacturer, admin and supplier subdomains. See "Domains and
   routing" below.
@@ -46,16 +49,21 @@ manufacturer side has been retired:
   67 percent. ROADMAP-2026-08.md lists retiring that axis as open work.
 
 Leftovers from the manufacturer era that still exist in the code:
-- signup.html still offers a "Manufacturer" card at step 0. Choosing it
-  creates an organisations row with type manufacturer and a mfr_admin
-  membership, then redirects to the retired manufacturer.html stub.
+- signup.html's "Manufacturer" card was REMOVED 2026-09-20 and
+  create_organisation_with_admin now rejects p_type 'manufacturer'
+  (migration 020). No live flow can create a manufacturer org any more.
+  signup.html's checkExistingSession still routes an EXISTING mfr_admin
+  to the stub, because such rows exist in the database.
 - landing.html (last touched 2026-04-30) still pitches the
   manufacturer-retailer network and links to manufacturer.html.
 - webhook-recall.js, docs.html and the "ERP Webhook API" card in
-  Settings (dashboard.html around line 12078) only work for orgs with
-  type manufacturer and an api_key. No live flow can create such an
-  org except the signup leftover above.
-- manufacturer-welcome.js and supplier-invite.js have no callers.
+  Settings only work for orgs with type manufacturer. Since 2026-09-20
+  the key is matched by sha256 hash against organisation_api_keys
+  (migration 021); organisations.api_key is nulled but the column stays,
+  so the Settings card and admin.html's `select *` still work. No live
+  flow can create a manufacturer org any more.
+- manufacturer-welcome.js and supplier-invite.js were deleted
+  2026-09-20 (no callers).
 
 ## The files
 Line counts and last-modified dates are from the local working folder
@@ -115,10 +123,9 @@ Public intake surfaces (no login):
 - complaint-widget.js (519 lines, 2026-05-02): embeddable version of
   the same form. Hardcodes the triage URL on www.batchdapp.com. Nothing
   in this repo references it.
-- trace.html (171 lines, 2026-04-30): consumer traceability lookup
-  that calls trace.js. trace.js reads product_lots and shipments,
-  which nothing in the retailer-only platform writes. Effectively
-  dormant.
+- trace.html: RETIRED 2026-09-20. Renders a static notice and makes no
+  network call; /.netlify/functions/trace answers 410. It was an
+  unauthenticated service-role read over legacy tables.
 
 Marketing pages, not linked from any live surface:
 - landing.html (1,026 lines, 2026-04-30): old landing page with a demo
@@ -267,6 +274,30 @@ Flags from the scan:
   via the scan_recall_matches table
 - Manual/push recalls count if exact lot or barcode matches an
   on-shelf scan (removed_from_shelf_at IS NULL)
+
+## Migrations 020 and 021 (security hardening, 2026-09-20)
+Written but NOT applied by the code change. Order matters:
+- `019_lock_down_membership_policies.sql` (pre-existing, still unapplied
+  as of 2026-09-13) runs first.
+- `020_helpers_membership_ai_flag.sql` runs next and before the deploy.
+  Org-parameterised SECURITY DEFINER helpers (batchd_my_active_org_ids,
+  batchd_is_corp_admin_of, batchd_is_manager_of, batchd_is_platform_admin,
+  batchd_org_ai_enabled and friends), insert/update guard triggers on
+  organisation_members, corp-admin-only policies on invitations, the
+  organisations.plan CHECK plus its guard trigger, hardened
+  create_organisation_with_admin / accept_invitation /
+  get_invitation_by_token (same signatures as 018), the new
+  get_invitation_store_names RPC, and complaints.ip_hash.
+- `021_tenant_tables_lockdown.sql` runs only AFTER the deploy is live on
+  both Netlify sites. It drops every open policy on scans, stores,
+  organisations, recall_distributions and recall_acknowledgements,
+  replaces them with org-scoped ones, locks user_profiles to its owner,
+  moves ERP API keys into the service-role-only organisation_api_keys
+  table as sha256 hashes (organisations.api_key is nulled but kept), and
+  moves retailer-targeted complaints onto receiving_org_id.
+
+Both run in one transaction and are re-runnable. Full sequence, manual
+steps and acceptance checks: `docs/SECURITY-ROLLOUT-2026-09.md`.
 
 ## Schema reference
 See SCHEMA.md (repo root) for the canonical column-by-column reference
@@ -501,25 +532,33 @@ All functions read secrets from environment variables. SUPABASE_URL is
 optional everywhere (falls back to the hardcoded project URL). URL is
 set by Netlify automatically.
 
+Shared auth lives in `netlify/lib/auth.js` (outside functions/ so Netlify
+does not deploy it; `node_bundler = "esbuild"` in netlify.toml bundles it
+into each caller). It exports verifyUser, activeMembership,
+isPlatformAdmin, orgAiEnabled, requireMember, requireAi, internalSecretOk
+and json. Functions run with the service-role key, which bypasses RLS, so
+these checks are the tenant boundary for every function.
+
+Six dead functions were deleted 2026-09-20 (investigation-notify,
+manufacturer-welcome, supplier-invite, staff-invite, staff-invite-accept,
+bootstrap-off-seed), along with accept-invite.html and send-invite's
+demo_request branch. 13 functions remain.
+
 | Function | Purpose | Auth | Env vars | Called by |
 |---|---|---|---|---|
-| ai-analyze.js | Anthropic proxy: synthesize_investigation, nl_query | Bearer JWT, must be an org member | ANTHROPIC_API_KEY, SUPABASE_SERVICE_KEY | dashboard.html |
-| bootstrap-off-seed.js | One-off Open Food Facts seed into products_pending | BOOTSTRAP_ADMIN_TOKEN | BOOTSTRAP_ADMIN_TOKEN, SUPABASE_SERVICE_KEY | Nothing in the app (docs/ARCHITECTURE.md only) |
-| fetch-recall-feeds.js | Daily FDA + Mattilsynet import into recalls per org | Scheduled, not URL-callable | SUPABASE_SERVICE_KEY, SUPABASE_URL, SCHEDULED_FUNCTIONS_DISABLED, URL | netlify.toml schedule; calls recall-feeds |
-| investigation-notify.js | Investigation request emails plus AI photo analysis | Bearer JWT corp_admin | ANTHROPIC_API_KEY, RESEND_API_KEY, SUPABASE_SERVICE_KEY, SUPABASE_URL | No caller found in repo |
-| manufacturer-welcome.js | Welcome email for manufacturer signups | None | RESEND_API_KEY | No caller (retired flow) |
-| notify-consumers.js | Consumer recall notification emails | Bearer JWT corp_admin of org_id | RESEND_API_KEY, SUPABASE_SERVICE_KEY, SUPABASE_URL | dashboard.html |
-| notify-event.js | Per-event emails: recall_pushed, complaint_filed, drill_scheduled | INTERNAL_NOTIFY_SECRET or Bearer JWT | APP_BASE_URL, INTERNAL_NOTIFY_SECRET, RESEND_API_KEY, SUPABASE_SERVICE_KEY | dashboard.html, triage-complaint.js |
-| ocr.js | Anthropic vision proxy: identify_product, read_barcode, localise_lot, extract_codes, extract_raw_cluster | Bearer JWT, org member | ANTHROPIC_API_KEY, SUPABASE_SERVICE_KEY | index.html (callOcrFunction, 5536) |
-| push-recall-email.js | Recall alert emails to org contacts, both recall sources | INTERNAL_NOTIFY_SECRET or Bearer JWT corp_admin | INTERNAL_NOTIFY_SECRET, RESEND_API_KEY, SUPABASE_SERVICE_KEY, SUPABASE_URL | webhook-recall.js only |
+| ai-analyze.js | Anthropic proxy: synthesize_investigation, nl_query | `requireAi`: Bearer JWT, active member of body `org_id`, org plan pov/active | ANTHROPIC_API_KEY, SUPABASE_SERVICE_KEY | dashboard.html |
+| fetch-recall-feeds.js | Daily FDA + Mattilsynet import into recalls per org | Scheduled, not URL-callable | SUPABASE_SERVICE_KEY, SUPABASE_URL, SCHEDULED_FUNCTIONS_DISABLED, URL | netlify.toml schedule (fetches the upstream feeds directly, NOT via recall-feeds.js) |
+| notify-consumers.js | Consumer recall notification emails | Bearer JWT corp_admin of org_id, AND the recall must belong to that org | RESEND_API_KEY, SUPABASE_SERVICE_KEY, SUPABASE_URL | dashboard.html |
+| notify-event.js | Per-event emails: recall_pushed, complaint_filed, drill_scheduled | INTERNAL_NOTIFY_SECRET or Bearer JWT (active membership only) | APP_BASE_URL, INTERNAL_NOTIFY_SECRET, RESEND_API_KEY, SUPABASE_SERVICE_KEY | dashboard.html, triage-complaint.js |
+| ocr.js | Anthropic vision proxy: identify_product, read_barcode, localise_lot, extract_codes, extract_raw_cluster | `requireAi`: Bearer JWT, active member of body `org_id`, org plan pov/active | ANTHROPIC_API_KEY, SUPABASE_SERVICE_KEY | index.html (callOcrFunction) |
+| push-recall-email.js | Recall alert emails to org contacts, both recall sources | INTERNAL_NOTIFY_SECRET in the body, constant-time, fails closed | INTERNAL_NOTIFY_SECRET, RESEND_API_KEY, SUPABASE_SERVICE_KEY, SUPABASE_URL | webhook-recall.js only |
 | recall-escalation.js | 2h and 24h escalation emails for unacknowledged recalls | Scheduled, not URL-callable | RESEND_API_KEY, SCHEDULED_FUNCTIONS_DISABLED, SUPABASE_SERVICE_KEY, SUPABASE_URL | netlify.toml schedule |
-| recall-feeds.js | Proxies rasff, mattilsynet_rss, mattilsynet_page feeds to XML | None | None | index.html, fetch-recall-feeds.js |
+| recall-feeds.js | Proxies rasff, mattilsynet_rss, mattilsynet_page feeds to XML | Bearer JWT (any active session) | None | index.html only |
 | recall-reminder.js | On-demand reminder emails for the dashboard buttons | Bearer JWT, active corp_admin of orgId | RESEND_API_KEY, SUPABASE_SERVICE_KEY, SUPABASE_URL | dashboard.html |
-| send-invite.js | Staff invitation emails and demo request notifications | Origin or Referer allowlist | RESEND_API_KEY, SUPABASE_SERVICE_KEY, SUPABASE_URL | dashboard.html, admin.html, landing.html |
-| supplier-invite.js | Creates supplier_connections rows and emails invites | Origin allowlist | RESEND_API_KEY, SUPABASE_ANON_KEY, SUPABASE_SERVICE_KEY | No caller (retired flow) |
-| trace.js | Public traceability lookup for trace.html | None (public) | SUPABASE_SERVICE_KEY, SUPABASE_URL | trace.html |
-| triage-complaint.js | Complaint intake, AI triage, follow-up emails | None (public form) | ANTHROPIC_API_KEY, INTERNAL_NOTIFY_SECRET, RESEND_API_KEY, SUPABASE_SERVICE_KEY, URL | complaint.html, complaint-widget.js, dashboard.html, index.html |
-| webhook-recall.js | ERP webhook: creates recall_events and distributions for manufacturer orgs | X-Batchd-Api-Key matching organisations.api_key, type manufacturer | ANTHROPIC_API_KEY, INTERNAL_NOTIFY_SECRET, SUPABASE_SERVICE_KEY | External ERP systems (documented in docs.html) |
+| send-invite.js | Staff invitation emails | Bearer JWT corp_admin **of the invitation's own org** (or platform admin); org name, role and inviter come from the invitation row | RESEND_API_KEY, SUPABASE_SERVICE_KEY, SUPABASE_URL | dashboard.html, admin.html |
+| trace.js | RETIRED 2026-09-20 — always answers 410 | None | None | old QR codes only |
+| triage-complaint.js | Complaint intake, AI triage, follow-up emails | Public form (honeypot + per-IP/org/email rate limits; org must be pov/active while PUBLIC_COMPLAINTS_REQUIRE_PLAN is true). Staff identity proven by Bearer JWT, never by body fields | ANTHROPIC_API_KEY, INTERNAL_NOTIFY_SECRET, RESEND_API_KEY, SUPABASE_SERVICE_KEY, URL | complaint.html, complaint-widget.js, dashboard.html, index.html |
+| webhook-recall.js | ERP webhook: creates recall_events and distributions for manufacturer orgs | X-Batchd-Api-Key, sha256-hashed against organisation_api_keys; org must be type manufacturer; 50 events/hour | INTERNAL_NOTIFY_SECRET, SUPABASE_SERVICE_KEY | External ERP systems (documented in docs.html) |
 
 Notes:
 - fetch-recall-feeds.js line 143 contains a stray control character.
@@ -529,15 +568,23 @@ Notes:
   from the dashboard. No client code calls it, and scheduled functions
   cannot be invoked by URL.
 - Model IDs in ai-analyze.js and ocr.js pin claude-sonnet-4-20250514;
-  ocr.js, triage-complaint.js and investigation-notify.js also use
-  claude-haiku-4-5-20251001.
+  ocr.js and triage-complaint.js also use claude-haiku-4-5-20251001.
+- ocr.js owns its prompt text (2026-09-20). The client names a template
+  (`promptId`: lot_extract_v1, autocapture_v1) and sends only
+  parameters — region, productName, contextHint, cropped, ocrText,
+  phase — each length-capped server-side. The US/EU regulatory wording
+  for lot extraction now lives in ocr.js REGION_HINT; the scanner passes
+  the signed-in user's _userRegion, so the jurisdiction gate is still at
+  the leaf.
 
 ## Security posture (client-side scan 2026-09-13)
 Scanned every .html and .js file in the repo root for JWTs, API keys,
 service-role keys, webhook URLs and password literals.
-- One Supabase JWT appears in admin.html (262), dashboard.html (1191),
-  index.html (5514), join.html (151) and signup.html (605). It is the
-  same token in all five and its payload says role anon. Expected.
+- One Supabase JWT appears in admin.html, dashboard.html, index.html,
+  join.html and signup.html. It is the same token in all five and its
+  payload says role anon. Expected.
+- The demo account's password literal was removed from admin.html
+  2026-09-20 and must be rotated: it is still in git history.
 - _MAPTILER_KEY in dashboard.html (5918) is a publishable map-tile
   key, origin-locked per SECRETS.md. Expected.
 - The Sentry browser-loader URL in index.html, dashboard.html,
@@ -550,6 +597,26 @@ service-role keys, webhook URLs and password literals.
 - The only non-secret fallbacks in functions are the Supabase project
   URL, the corporate dashboard URL and the scanner site URL.
 - Rotation runbook: SECRETS.md.
+
+## Commercial plan flag (organisations.plan)
+
+Added 2026-09-20. Values: `trial` (default for self-serve signup), `pov`,
+`active` (paying), `churned`. Only a platform admin can change it —
+migration 020's `batchd_guard_org_commercial_columns` trigger blocks
+plan, billing_status, trial_expires_at and is_internal for everyone else,
+and admin.html's dropdown is the UI.
+
+What it gates:
+- Every Anthropic-backed feature. ocr.js and ai-analyze.js use
+  `requireAi`, which needs plan IN ('pov','active'). The scanner and the
+  dashboard read the plan at sign-in into `window._orgAiEnabled` and skip
+  the call (one toast, not one per frame) rather than 403-ing repeatedly.
+- Public complaint intake, while `PUBLIC_COMPLAINTS_REQUIRE_PLAN = true`
+  in triage-complaint.js. Staff intake is unaffected; AI triage still
+  only runs for pov/active, others get the manual-review fallback.
+
+A new org therefore has no AI until someone sets its plan. That is
+deliberate: Anthropic spend is billed to Batch'd.
 
 ## Market & jurisdiction
 - Primary market: United States (FSMA 204 compliance)
@@ -804,6 +871,9 @@ incremental per feature.
   Phase 2 OCR helpers stay in the file for revert; ocr.js is still
   called live for identify_product.
 - Dead or dormant files: landing.html, recall-roi-calculator.html,
-  trace.html, complaint-widget.js, manufacturer-welcome.js,
-  supplier-invite.js, bootstrap-off-seed.js and the three retired
-  stubs. Nothing in the repo references the first four.
+  trace.html (now a retired notice), complaint-widget.js and the three
+  retired stubs. manufacturer-welcome.js, supplier-invite.js,
+  bootstrap-off-seed.js, investigation-notify.js, staff-invite.js,
+  staff-invite-accept.js and accept-invite.html were deleted
+  2026-09-20. landing.html's demo form now POSTs to a branch of
+  send-invite.js that no longer exists.
