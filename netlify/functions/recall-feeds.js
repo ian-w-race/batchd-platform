@@ -10,8 +10,15 @@ const BROWSER_HEADERS = {
   'Cache-Control': 'no-cache',
 };
 
+const { verifyUser, json } = require('../lib/auth');
+
 exports.handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') return { statusCode: 200, headers: CORS, body: '' };
+  // Any active session is enough: the proxy only relays public regulator feeds
+  // and calls no paid API. Sole caller is the scanner (index.html). The daily
+  // import in fetch-recall-feeds.js fetches the upstream feeds directly and
+  // does not come through here.
+  if (!(await verifyUser(event))) return json(401, { error: 'Sign in required.' });
   const source = event.queryStringParameters?.source;
   try {
     if (source === 'rasff')            return await fetchRASFF();
