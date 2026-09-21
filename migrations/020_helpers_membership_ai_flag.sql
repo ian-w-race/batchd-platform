@@ -423,6 +423,100 @@ GRANT EXECUTE ON FUNCTION public.get_invitation_store_names(text) TO anon, authe
 ALTER TABLE public.complaints ADD COLUMN IF NOT EXISTS ip_hash text;
 CREATE INDEX IF NOT EXISTS complaints_ip_hash_created_idx ON public.complaints (ip_hash, created_at);
 
+-- ── 6c. send_invitation: add the missing authorisation check ─────────────
+-- Found 2026-09-21 by the pre-flight diagnostic. The live function is
+-- SECURITY DEFINER, has no search_path pinned, and takes p_organisation_id
+-- and p_role straight from the caller with NO check that the caller has
+-- anything to do with that organisation. Any signed-in user could call
+--   send_invitation('<any org id>', '<their own address>', 'corp_admin', NULL)
+-- and redeem the returned token at /join to become a corporate admin of any
+-- organisation on the platform.
+--
+-- The rest of 020 does NOT close this on its own: section 4's policies govern
+-- direct writes to invitations, and SECURITY DEFINER bypasses RLS; and
+-- accept_invitation deliberately trusts the invitation row, which is exactly
+-- what this function creates.
+--
+-- Signature and the four returned keys (token, org_name, inviter_email,
+-- invitation_id) are unchanged — dashboard.html and admin.html read them.
+-- DROP first because the original's return type was not captured and
+-- CREATE OR REPLACE cannot change a return type.
+--
+-- Token: two gen_random_uuid()s, hyphens stripped = 64 hex chars. Uses core
+-- PG13+ functions so this does not depend on the pgcrypto extension.
+
+DROP FUNCTION IF EXISTS public.send_invitation(uuid, text, text, uuid);
+
+CREATE FUNCTION public.send_invitation(
+  p_organisation_id uuid,
+  p_email           text,
+  p_role            text,
+  p_store_id        uuid DEFAULT NULL
+)
+RETURNS json
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_invitation_id uuid;
+  v_token         text;
+  v_org_name      text;
+  v_inviter_email text;
+  v_email         text := lower(trim(coalesce(p_email, '')));
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'You must be signed in to send an invitation.';
+  END IF;
+
+  -- The check that was missing.
+  IF NOT (public.batchd_is_corp_admin_of(p_organisation_id)
+          OR public.batchd_is_platform_admin()) THEN
+    RAISE EXCEPTION 'Not authorised to invite into this organisation.';
+  END IF;
+
+  -- Matches accept_invitation and section 4's INSERT policy. mfr_admin and
+  -- mfr_qa are deliberately absent: accept_invitation refuses them, so such
+  -- an invitation could be created but never redeemed.
+  IF p_role IS NULL OR p_role NOT IN ('staff','store_manager','corp_admin') THEN
+    RAISE EXCEPTION 'Role must be staff, store_manager or corp_admin.';
+  END IF;
+
+  IF v_email = '' OR v_email !~ '^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$' THEN
+    RAISE EXCEPTION 'A valid email address is required.';
+  END IF;
+
+  -- A named store must belong to the same organisation.
+  IF p_store_id IS NOT NULL AND NOT EXISTS (
+       SELECT 1 FROM public.stores
+        WHERE id = p_store_id AND organisation_id = p_organisation_id) THEN
+    RAISE EXCEPTION 'That store does not belong to this organisation.';
+  END IF;
+
+  SELECT name  INTO v_org_name      FROM public.organisations WHERE id = p_organisation_id;
+  SELECT email INTO v_inviter_email FROM auth.users          WHERE id = auth.uid();
+
+  v_token := replace(gen_random_uuid()::text, '-', '')
+          || replace(gen_random_uuid()::text, '-', '');
+
+  INSERT INTO public.invitations
+    (organisation_id, invited_by, email, role, store_id, token, expires_at, accepted)
+  VALUES
+    (p_organisation_id, auth.uid(), v_email, p_role, p_store_id, v_token,
+     now() + interval '30 days', false)
+  RETURNING id INTO v_invitation_id;
+
+  RETURN json_build_object(
+    'token',         v_token,
+    'org_name',      v_org_name,
+    'inviter_email', v_inviter_email,
+    'invitation_id', v_invitation_id
+  );
+END $$;
+
+REVOKE ALL ON FUNCTION public.send_invitation(uuid, text, text, uuid) FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.send_invitation(uuid, text, text, uuid) TO authenticated;
+
 -- ── 7. Post-check ────────────────────────────────────────────────────────
 DO $$
 DECLARE n int;
@@ -430,7 +524,7 @@ BEGIN
   SELECT count(*) INTO n FROM pg_policies WHERE schemaname='public' AND policyname IN
     ('Anyone can read invitation by token','Insert own membership','Admins can update org memberships','Delete own memberships');
   IF n > 0 THEN RAISE WARNING '019 policies still present: %', n;
-  ELSE RAISE NOTICE 'OK: 019 policies gone; 020 helpers, guards, invitation policies and plan flag in place.'; END IF;
+  ELSE RAISE NOTICE 'OK: 019 policies gone; 020 helpers, guards, invitation policies, hardened send_invitation and plan flag in place.'; END IF;
 END $$;
 
 COMMIT;

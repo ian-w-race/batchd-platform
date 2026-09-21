@@ -699,7 +699,10 @@ async function sendAdminInvite(orgId) {
   const email = prompt(`Send admin invitation for ${orgName}\n\nEnter email address:`);
   if (!email || !email.includes('@')) return;
 
-  const role = org?.type === 'manufacturer' ? 'mfr_admin' : 'corp_admin';
+  // Always corp_admin. accept_invitation and the hardened send_invitation
+  // (migration 020) both refuse mfr_admin, so an mfr_admin invitation could be
+  // created but never redeemed. The manufacturer side is retired.
+  const role = 'corp_admin';
 
   try {
     const { data: inv, error } = await sb.rpc('send_invitation', {
