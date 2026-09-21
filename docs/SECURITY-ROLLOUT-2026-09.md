@@ -315,21 +315,35 @@ where they are structural. A parity harness confirmed the generated prompt is
 **byte-identical** to today's across both regions, with and without crop and OCR
 text. No caller-controlled instruction text reaches Anthropic any more.
 
-**2. The `code_patterns` org-scoping from the brief was NOT applied.** The brief
-asked for `organisation_id` on two `code_patterns` inserts and on one update and
-two deletes. That table is not defined in any migration, `docs/ARCHITECTURE.md`
-line 14 calls it cross-organizational by design ("the moat"), and migration 021
-explicitly leaves it alone. If the column does not exist, the inserts 400 and
-pattern learning silently stops; if it exists but existing rows have NULL, every
-update becomes a no-op and learning stops too. Neither failure is visible without
-devtools. **Preflight query 10 settles it.** If `organisation_id` is present on
-`code_patterns`, tell Claude Code (or apply it yourself) — the change is: add
-`organisation_id: _currentOrgId` to the two inserts (`code_patterns` insert in
-the learn path and in `mgrAddSchema`), and `.eq('organisation_id', _currentOrgId)`
-to the update and the two deletes. The **reads** must stay unscoped either way.
-There is a real underlying issue here — today any user can edit or delete any
-org's learned pattern — but closing it needs a schema change, which is outside
-this brief.
+**2. The `code_patterns` org-scoping from the brief was NOT applied — decided
+2026-09-21 on the data.** The brief asked for `organisation_id` on two
+`code_patterns` inserts and on one update and two deletes. The pre-flight showed
+the column does exist, but that **12 of 39 rows have it NULL**, and three things
+then argue against the change:
+
+1. *It would silently break learning on those 12 rows.* Adding
+   `.eq('organisation_id', …)` to the update makes it match zero rows for a
+   legacy pattern. No error is raised; that product's lot-code pattern simply
+   stops improving forever. Exactly the silent-400 class of failure CLAUDE.md
+   warns about.
+2. *It buys no security.* Migration 021 deliberately does not touch
+   `code_patterns`, so there is no RLS policy on it either way. A filter added
+   in the browser is not a boundary — an attacker just omits it. Only an RLS
+   policy would close the real hole, and writing one requires deciding who owns
+   a row, which the 12 NULLs make ambiguous.
+3. *It may be against the design.* `docs/ARCHITECTURE.md` line 14 calls the
+   pattern library "validated through **cross-organizational** scanning … the
+   moat". If every retailer's scans are meant to improve a shared pattern, then
+   scoping **writes** per organisation fragments exactly the asset the product
+   is built around.
+
+So this is a product decision, not a security fix, and it is out of scope here.
+The underlying issue is real and unchanged: today any authenticated user can
+update or delete any organisation's learned pattern. Closing it properly is a
+follow-up needing three things — an ownership rule for shared patterns, a
+backfill for the 12 NULL rows, and an RLS policy (a migration 022).
+`docs/preflight-4-code-patterns-policies.sql` shows the table's current
+policies if you want to start that.
 
 **3. `send_invitation` was never inspected.** It is not in the repo and there was
 no database access. Preflight query 6 is how you check it. If it lacks a caller
