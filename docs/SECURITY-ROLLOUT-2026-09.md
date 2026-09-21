@@ -186,17 +186,18 @@ re-run 020 (safe — it is `CREATE OR REPLACE` / `IF NOT EXISTS` throughout).
 **M-4. Confirm the platform admin.** Only if preflight query 8 returned nothing.
 SQL in section 1.
 
-**M-5. Set the plans.** Do this before or immediately after the deploy, or OCR
-and NL query stop for everyone.
-```sql
-UPDATE public.organisations SET plan = 'active' WHERE id IN ('<paying org ids>');
-UPDATE public.organisations SET plan = 'pov'    WHERE id IN ('<design partner org ids>');
--- Your own org, so you keep AI while testing:
-UPDATE public.organisations SET plan = 'pov' WHERE id = '925923b5-22c6-433c-8812-7e32918dab66';
-SELECT id, name, plan FROM public.organisations ORDER BY plan, name;  -- check
-```
-After the deploy you can also do this from admin.html's plan dropdown
-(Trial / POV / Active / Churned).
+**M-5. Set the plans.** DECIDED 2026-09-20: every organisation that exists
+today goes on `pov`, so nothing breaks for anyone on deploy day; tighten later
+from admin.html. Run `migrations/020a_set_existing_orgs_pov.sql` right after
+020. It leaves orgs already marked `active` (paying) and `churned` alone, and
+it refuses to run twice so a later downgrade cannot be silently undone.
+
+Expected output: `OK: N organisation(s) set to pov. …`
+Then check: `SELECT id, name, plan FROM public.organisations ORDER BY plan, name;`
+
+New organisations created after this still start on `trial`, so a new self-serve
+signup gets no AI and no public complaint intake until you set its plan in
+admin.html. That is intentional.
 
 **M-6. `INTERNAL_NOTIFY_SECRET` on BOTH Netlify sites.**
 Netlify → Sites → pick the site → Site configuration → Environment variables.

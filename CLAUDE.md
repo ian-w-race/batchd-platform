@@ -615,8 +615,14 @@ What it gates:
   in triage-complaint.js. Staff intake is unaffected; AI triage still
   only runs for pov/active, others get the manual-review fallback.
 
-A new org therefore has no AI until someone sets its plan. That is
-deliberate: Anthropic spend is billed to Batch'd.
+A new org therefore has no AI and no public complaint intake until someone
+sets its plan. That is deliberate: Anthropic spend is billed to Batch'd.
+
+Rollout decision 2026-09-20: every organisation that existed at rollout was
+put on `pov` in one pass (`migrations/020a_set_existing_orgs_pov.sql`) so
+nothing broke on deploy day. Orgs already `active` (paying) and `churned`
+were left alone. That file refuses to run a second time, so a later
+downgrade from admin.html cannot be silently undone by re-running it.
 
 ## Market & jurisdiction
 - Primary market: United States (FSMA 204 compliance)
