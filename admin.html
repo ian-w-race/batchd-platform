@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <meta name="robots" content="noindex, nofollow" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Batch'd — Admin</title>
   <link rel="icon" type="image/png" href="/favicon.png" />
@@ -146,7 +147,7 @@
     <div class="auth-sub">Restricted access — Batch'd team only.</div>
     <div class="auth-msg" id="auth-msg"></div>
     <div class="field"><label>Email</label><input id="auth-email" type="email" placeholder="you@batchd.no" onkeydown="if(event.key==='Enter')doAuth()" /></div>
-    <div class="field"><label>Password</label><input id="auth-pw" type="password" placeholder="••••••••" onkeydown="if(event.key==='Enter')doAuth()" /></div>
+    <div class="field"><label>Password</label><input id="auth-pw" type="password" autocomplete="current-password" placeholder="••••••••" onkeydown="if(event.key==='Enter')doAuth()" /></div>
     <button class="auth-btn" id="auth-btn" onclick="doAuth()">Sign in →</button>
   </div>
 </div>
@@ -237,6 +238,7 @@
       <div class="field" style="margin:0;"><label>Plan</label>
         <select id="c-plan">
           <option value="trial">Trial</option>
+          <option value="pov">POV</option>
           <option value="active">Active</option>
         </select>
       </div>
@@ -258,11 +260,18 @@
 </div>
 
 <script>
+// HTML-escape any value interpolated into innerHTML (copied from join.html).
+const esc = (s) => String(s == null ? '' : s)
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
+
 const SUPABASE_URL = 'https://lurxucdmrugikdlvvebc.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1cnh1Y2RtcnVnaWtkbHZ2ZWJjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTU5NTQsImV4cCI6MjA4OTgzMTk1NH0.ewNhBbF8nUzpF9Ve822D9t8VLwB_hjk27KuFFEXct0A';
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-const BATCHED_ADMIN_USER_ID = '97da19d3-3daa-4f7a-bd9c-53e7ac8f8a5c';
 
 let _session = null;
 
@@ -396,7 +405,7 @@ async function renderOverview() {
         </div>
       </div>`;
   } catch(e) {
-    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error: ${e.message}</div>`;
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error: ${esc(e.message)}</div>`;
   }
 }
 
@@ -469,11 +478,11 @@ async function renderCustomers() {
                   ${list.map(o => `
                     <tr>
                       <td>
-                        <div style="font-size:12px;font-weight:600;color:var(--text);">${o.name}</div>
-                        <div style="font-size:10px;color:var(--muted);margin-top:1px;">${o.contact_email||'—'}</div>
+                        <div style="font-size:12px;font-weight:600;color:var(--text);">${esc(o.name)}</div>
+                        <div style="font-size:10px;color:var(--muted);margin-top:1px;">${esc(o.contact_email||'—')}</div>
                       </td>
-                      <td style="padding:11px 8px;"><span class="badge badge-${o.type}">${o.type}</span></td>
-                      <td style="padding:11px 8px;"><span class="badge badge-${o.plan||'trial'}">${o.plan||'trial'}</span></td>
+                      <td style="padding:11px 8px;"><span class="badge badge-${esc(o.type)}">${esc(o.type)}</span></td>
+                      <td style="padding:11px 8px;"><span class="badge badge-${esc(o.plan||'trial')}">${esc(o.plan||'trial')}</span></td>
                       <td style="padding:11px 8px;color:var(--muted);">${memberCounts[o.id]||0}</td>
                       <td style="padding:11px 8px;color:var(--muted);">${storeCounts[o.id]||0}</td>
                       <td style="padding:11px 8px;color:var(--muted);">${o.region==='us'?'🇺🇸 US':'🇳🇴 NO'}</td>
@@ -487,7 +496,7 @@ async function renderCustomers() {
         </div>
       </div>`;
   } catch(e) {
-    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error: ${e.message}</div>`;
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error: ${esc(e.message)}</div>`;
   }
 }
 
@@ -616,10 +625,10 @@ async function openOrgModal(orgId) {
     document.getElementById('org-modal-content').innerHTML = `
       <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px;">
         <div>
-          <div class="modal-title">${org.name}</div>
+          <div class="modal-title">${esc(org.name)}</div>
           <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
-            <span class="badge badge-${org.type}">${org.type}</span>
-            <span class="badge badge-${org.plan||'trial'}">${org.plan||'trial'}</span>
+            <span class="badge badge-${esc(org.type)}">${esc(org.type)}</span>
+            <span class="badge badge-${esc(org.plan||'trial')}">${esc(org.plan||'trial')}</span>
             <span style="font-size:10px;color:var(--muted);">${org.region==='us'?'🇺🇸 United States':'🇳🇴 Norway / EU'}</span>
           </div>
         </div>
@@ -642,11 +651,11 @@ async function openOrgModal(orgId) {
       </div>
 
       <div style="margin-bottom:16px;padding:12px 14px;background:var(--surface2);border-radius:8px;font-size:11px;line-height:1.8;">
-        <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Contact</span><span>${org.contact_email||'—'}</span></div>
+        <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Contact</span><span>${esc(org.contact_email||'—')}</span></div>
         <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Created</span><span>${new Date(org.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}</span></div>
         <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Last scan</span><span>${lastScan ? new Date(lastScan).toLocaleDateString('en-GB') : 'Never'}</span></div>
         ${org.trial_expires_at ? `<div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Trial expires</span><span style="color:${new Date(org.trial_expires_at)<new Date()?'var(--danger)':'var(--warn)'};">${new Date(org.trial_expires_at).toLocaleDateString('en-GB')}</span></div>` : ''}
-        ${org.notes ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);color:var(--muted);">${org.notes}</div>` : ''}
+        ${org.notes ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);color:var(--muted);">${esc(org.notes)}</div>` : ''}
       </div>
 
       <!-- Plan control -->
@@ -655,12 +664,13 @@ async function openOrgModal(orgId) {
           <label>Plan status</label>
           <select id="org-plan-${org.id}" onchange="updateOrgPlan('${org.id}', this.value)">
             <option value="trial"   ${org.plan==='trial'  ?'selected':''}>Trial</option>
+            <option value="pov"     ${org.plan==='pov'    ?'selected':''}>POV</option>
             <option value="active"  ${org.plan==='active' ?'selected':''}>Active</option>
             <option value="churned" ${org.plan==='churned'?'selected':''}>Churned</option>
           </select>
         </div>
         <div style="display:flex;align-items:flex-end;">
-          <button onclick="sendAdminInvite('${org.id}','${org.name.replace(/'/g,"\\'")}')" class="btn-ghost" style="width:100%;justify-content:center;">
+          <button onclick="sendAdminInvite('${org.id}')" class="btn-ghost" style="width:100%;justify-content:center;">
             Invite admin →
           </button>
         </div>
@@ -669,7 +679,7 @@ async function openOrgModal(orgId) {
       <button onclick="closeOrgModal()" class="btn-ghost" style="width:100%;justify-content:center;">Close</button>`;
 
   } catch(e) {
-    document.getElementById('org-modal-content').innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error: ${e.message}<br><button onclick="closeOrgModal()" class="btn-ghost" style="margin-top:12px;">Close</button></div>`;
+    document.getElementById('org-modal-content').innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error: ${esc(e.message)}<br><button onclick="closeOrgModal()" class="btn-ghost" style="margin-top:12px;">Close</button></div>`;
   }
 }
 
@@ -682,11 +692,13 @@ async function updateOrgPlan(orgId, plan) {
   if (error) { alert('Could not update plan: ' + error.message); }
 }
 
-async function sendAdminInvite(orgId, orgName) {
+async function sendAdminInvite(orgId) {
+  // Name and type come from the row, never from the markup that opened this.
+  const { data: org } = await sb.from('organisations').select('name, type').eq('id', orgId).single();
+  const orgName = org?.name || 'this organisation';
   const email = prompt(`Send admin invitation for ${orgName}\n\nEnter email address:`);
   if (!email || !email.includes('@')) return;
 
-  const { data: org } = await sb.from('organisations').select('type').eq('id', orgId).single();
   const role = org?.type === 'manufacturer' ? 'mfr_admin' : 'corp_admin';
 
   try {
@@ -780,12 +792,6 @@ async function renderDemo() {
         <div class="panel">
           <div class="panel-header"><div class="panel-title">Demo access</div></div>
           <div class="panel-body">
-            <div style="margin-bottom:14px;padding:12px;background:var(--surface2);border-radius:8px;font-size:11px;line-height:1.8;">
-              <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:8px;">Share with prospects</div>
-              <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">URL</span><span>corporate.batchdapp.com</span></div>
-              <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Email</span><span>demo@batchdapp.com</span></div>
-              <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Password</span><span style="font-family:'DM Mono',monospace;">Batchd2026!</span></div>
-            </div>
             <div style="font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:12px;">
               The demo account resets automatically every 24 hours. Use "Seed demo data" before a sales call to ensure it's in a clean, populated state.
             </div>
@@ -794,7 +800,7 @@ async function renderDemo() {
         </div>
       </div>`;
   } catch(e) {
-    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error: ${e.message}</div>`;
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error: ${esc(e.message)}</div>`;
   }
 }
 
