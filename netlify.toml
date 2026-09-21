@@ -99,6 +99,102 @@
   status = 301
   force = true
 
+# ── Functions bundler (2026-09-20) ───────────────────────────────────
+# netlify/lib/auth.js is shared by several functions via require('../lib/auth').
+# esbuild follows that require and bundles it into each function.
+[functions]
+  node_bundler = "esbuild"
+
+# ── Block internal repo files from the public site (2026-09-20) ─────────────
+# The repo root is the publish directory, so anything not blocked here is served.
+[[redirects]]
+  from = "/CLAUDE.md"
+  to = "/404.html"
+  status = 404
+  force = true
+[[redirects]]
+  from = "/SECRETS.md"
+  to = "/404.html"
+  status = 404
+  force = true
+[[redirects]]
+  from = "/SCHEMA.md"
+  to = "/404.html"
+  status = 404
+  force = true
+[[redirects]]
+  from = "/README.md"
+  to = "/404.html"
+  status = 404
+  force = true
+[[redirects]]
+  from = "/ROADMAP-2026-08.md"
+  to = "/404.html"
+  status = 404
+  force = true
+[[redirects]]
+  from = "/CLAUDE_DESIGN_BRIEF.md"
+  to = "/404.html"
+  status = 404
+  force = true
+[[redirects]]
+  from = "/.ui-polish-checklist.md"
+  to = "/404.html"
+  status = 404
+  force = true
+[[redirects]]
+  from = "/netlify.toml"
+  to = "/404.html"
+  status = 404
+  force = true
+[[redirects]]
+  from = "/package.json"
+  to = "/404.html"
+  status = 404
+  force = true
+[[redirects]]
+  from = "/package-lock.json"
+  to = "/404.html"
+  status = 404
+  force = true
+[[redirects]]
+  from = "/migrations/*"
+  to = "/404.html"
+  status = 404
+  force = true
+[[redirects]]
+  from = "/docs/*"
+  to = "/404.html"
+  status = 404
+  force = true
+
+# ── Security headers (2026-09-20) ───────────────────────────────────────
+# No page in this repo is designed to be framed (complaint-widget.js is a script
+# embed, not an iframe). Do NOT add camera=() to Permissions-Policy: the scanner
+# uses the camera. A full script-src CSP is not possible yet (inline handlers).
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    Content-Security-Policy = "frame-ancestors 'none'; object-src 'none'; base-uri 'self'"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "geolocation=(), microphone=(), payment=(), usb=()"
+    Strict-Transport-Security = "max-age=31536000; includeSubDomains"
+
+# The invite token travels in the query string: no referrer, no caching.
+[[headers]]
+  for = "/join*"
+  [headers.values]
+    Referrer-Policy = "no-referrer"
+    Cache-Control = "no-store"
+
+[[headers]]
+  for = "/admin.html"
+  [headers.values]
+    X-Robots-Tag = "noindex, nofollow"
+    Cache-Control = "no-store"
+
 # ── Scheduled functions ─────────────────────────────────────
 # recall-escalation runs every 30 minutes and sends 2h/24h escalation
 # emails to stores that haven't acknowledged recalls.
