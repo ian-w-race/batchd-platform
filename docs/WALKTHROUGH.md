@@ -271,13 +271,26 @@ https://app.batchdapp.com/signup in a private window.
 - ✅ Step 1 shows **only** a Retailer card — no Manufacturer card
 - Complete with a throwaway email → ✅ lands in the dashboard
 
-## Test 10 — Admin
+## Test 10 — Admin, including creating an organisation
 
 https://app.batchdapp.com/admin.html
 - ✅ You can sign in and see the customer list
 - ✅ Open any org → the Plan dropdown has **POV** between Trial and Active
 - ✅ The "Share with prospects" box with the demo password is gone
 - ✅ **Invite admin** on any org still sends
+- ✅ **Create a throwaway organisation.** 021 drops the old
+  `Authenticated users can create an organisation` policy (it let *any*
+  signed-in account insert *any* organisation row). Your admin path works
+  instead through the new platform-admin policy, so this proves it. Delete the
+  test org afterwards, or leave it — it costs nothing.
+
+## Test 11 — Self-serve signup still creates an organisation
+
+Already covered by test 9, but this is the other half of the same question:
+signup works through the `create_organisation_with_admin` function, which is
+`SECURITY DEFINER` and bypasses row-level security, so the dropped policy does
+not affect it. If test 9 put you in a dashboard with your new org's name in the
+corner, this path is proven.
 
 ---
 
