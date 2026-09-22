@@ -105,10 +105,37 @@ Netlify → **Sites**. For **each** of the three:
 4. Find `INTERNAL_NOTIFY_SECRET`
 
 **All three must have it, with an identical value.** Click the reveal/eye icon
-to compare. If one is missing it, **Add a variable** and copy the value across.
+to compare.
 
-Why: recall alert emails now require this secret. If the site your ERP webhook
-hits doesn't have it, those emails stop and nothing visibly errors.
+**If it does not exist anywhere (confirmed 2026-09-21 — it didn't), create it:**
+
+    openssl rand -hex 32 | tr -d '\n' | pbcopy
+
+That puts a 64-character random secret on your clipboard without printing it.
+**Do not copy anything else until you have pasted it into all three sites.**
+Save it to a password manager too.
+
+Then on each site: **Add a variable** → **Add a single variable** →
+key `INTERNAL_NOTIFY_SECRET` → value **Cmd+V** → scopes must include
+**Functions** → **Same value for all deploy contexts** → **Create variable**.
+
+Don't tick "Contains secret values" on the first one — Netlify then hides the
+value and you can't read it back to confirm the other two match. Add it to all
+three first, mark it secret afterwards if you want.
+
+Why it matters:
+- `push-recall-email` now **requires** it and fails closed, so the ERP webhook's
+  recall alert emails don't send without it.
+- `notify-event` already required it and already failed closed, which means
+  `triage-complaint`'s `complaint_filed` notifications to corp admins and store
+  managers **have never been sent**. Setting this fixes that too.
+- `triage-complaint` also uses it to salt the complaint IP hash. Changing it
+  later only resets public rate-limit counters.
+
+**Also check on each site:** Site configuration → **Build & deploy** →
+**Branch to deploy**. The repo has a `staging` branch; any site watching it
+rather than `main` will not pick up the merge in step 10 and will keep running
+old code against the new database rules.
 
 ## 7b — `SCHEDULED_FUNCTIONS_DISABLED` on all three (check, don't change yet)
 
