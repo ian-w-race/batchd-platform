@@ -165,6 +165,7 @@ async function verifyCallerOrgMembership(jwt, orgId) {
       select: 'user_id,role',
       user_id: `eq.${userId}`,
       organisation_id: `eq.${orgId}`,
+      active: 'not.is.false',
     });
     if (!Array.isArray(members) || members.length === 0) return false;
     const role = members[0]?.role;

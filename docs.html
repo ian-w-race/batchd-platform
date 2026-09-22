@@ -257,9 +257,9 @@ curl -X POST https://app.batchdapp.com/.netlify/functions/webhook-recall \
             <td><span class="badge opt">Optional</span></td>
           </tr>
           <tr>
-            <td>target_retailer_ids</td>
+            <td>target_retailer_ids<br><span style="opacity:.7">(or retailer_org_ids)</span></td>
             <td style="color:var(--info);font-family:'DM Mono',monospace;font-size:11px;">string[]</td>
-            <td>Array of specific Batch'd retailer org IDs to target. If omitted, the recall is sent to all active trading partners.</td>
+            <td>Array of specific Batch'd retailer org IDs to target. Either key is accepted; target_retailer_ids wins if both are sent. Ids that are not active trading partners are ignored. If omitted, the recall is sent to all active trading partners.</td>
             <td><span class="badge opt">Optional</span></td>
           </tr>
         </tbody>
@@ -288,11 +288,13 @@ curl -X POST https://app.batchdapp.com/.netlify/functions/webhook-recall \
       <div class="code-wrap">
         <button class="copy-btn" onclick="copyCode(this)">Copy</button>
         <pre>{
-  <span class="kw">"recall_event_id"</span>: <span class="str">"8f3a2b1c-..."</span>,  <span class="cmt">// UUID of the created recall event</span>
-  <span class="kw">"retailer_count"</span>:  <span class="num">12</span>,             <span class="cmt">// Number of retailers notified</span>
-  <span class="kw">"store_count"</span>:     <span class="num">47</span>,             <span class="cmt">// Total stores across all retailers</span>
-  <span class="kw">"emails_sent"</span>:     <span class="num">12</span>,             <span class="cmt">// Confirmation emails dispatched</span>
-  <span class="kw">"is_drill"</span>:        <span class="num">false</span>
+  <span class="kw">"success"</span>:            <span class="num">true</span>,
+  <span class="kw">"recall_event_id"</span>:    <span class="str">"8f3a2b1c-..."</span>,  <span class="cmt">// UUID of the created recall event</span>
+  <span class="kw">"retailers_notified"</span>: <span class="num">12</span>,             <span class="cmt">// Number of retailer orgs distributed to</span>
+  <span class="kw">"message"</span>:            <span class="str">"Recall event created and distributed to 12 retailer organisations."</span>,
+  <span class="kw">"links"</span>: {
+    <span class="kw">"recall_event"</span>: <span class="str">"https://app.batchdapp.com/manufacturer.html#recall_8f3a2b1c-..."</span>
+  }
 }</pre>
       </div>
 
@@ -301,6 +303,7 @@ curl -X POST https://app.batchdapp.com/.netlify/functions/webhook-recall \
         <div class="resp-code err">401</div><div class="resp-desc">Missing or invalid API key</div>
         <div class="resp-code err">400</div><div class="resp-desc">Missing required fields — check <code style="font-family:'DM Mono',monospace;font-size:11px;">product_name</code>, <code style="font-family:'DM Mono',monospace;font-size:11px;">lot_number</code>, <code style="font-family:'DM Mono',monospace;font-size:11px;">reason</code>, <code style="font-family:'DM Mono',monospace;font-size:11px;">severity</code></div>
         <div class="resp-code err">422</div><div class="resp-desc">Invalid <code style="font-family:'DM Mono',monospace;font-size:11px;">severity</code> value</div>
+        <div class="resp-code err">429</div><div class="resp-desc">Rate limit: at most 50 recall events per hour per organisation</div>
         <div class="resp-code err">500</div><div class="resp-desc">Internal error — retry with exponential backoff</div>
       </div>
     </section>

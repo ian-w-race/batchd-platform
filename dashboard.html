@@ -1198,6 +1198,9 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 // prefixes, currency, retention rules, regulator contacts, terminology
 // panel) MUST read _orgRegion. See CLAUDE.md "Jurisdiction precedence".
 let _session = null, _orgId = null, _orgName = '', _orgRegion = 'no', _orgDefaultRegion = 'no';
+// user_id -> display label, filled by renderStaff so deactivateMember can show
+// a name in its confirm dialog without carrying one through an onclick.
+let _staffLabelByUserId = {};
 let _userId = null, _userEmail = '', _userRole = null, _storeId = null;
 
 // Date-format override — hoisted up here (instead of next to _dashLocale)
@@ -1899,6 +1902,11 @@ async function initDashboard(user) {
 
   _orgId    = member.organisation_id;
   _userRole = member.role;
+  // Commercial flag: AI features require organisations.plan pov|active.
+  try {
+    const { data: _planRow } = await sb.from('organisations').select('plan').eq('id', _orgId).maybeSingle();
+    window._orgAiEnabled = ['pov', 'active'].includes(_planRow?.plan);
+  } catch (_) { window._orgAiEnabled = false; }
   _storeId  = member.store_id || null;
   _userId   = user.id;
   _userEmail = user.email;
@@ -2059,7 +2067,7 @@ function formatSeverity(sev) {
 
 function sevPill(sev) {
   const { label, color, bg } = formatSeverity(sev);
-  return `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:${bg};color:${color};font-weight:600;white-space:nowrap;">${label}</span>`;
+  return `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:${bg};color:${color};font-weight:600;white-space:nowrap;">${esc(label)}</span>`;
 }
 
 // Region-aware date formatting for the dashboard
@@ -2247,9 +2255,9 @@ const fmtDT        = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'num
         ${step < 4 ? '<div style="position:absolute;left:14px;top:30px;bottom:-12px;width:1.5px;background:var(--glass-border);"></div>' : ''}
         <div style="width:30px;height:30px;border-radius:50%;background:${bg[status]};border:1.5px solid ${colors[status]};display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:12px;font-weight:700;color:${colors[status]};">${step}</div>
         <div style="flex:1;padding-bottom:20px;">
-          <div style="font-size:13px;font-weight:600;color:var(--text);">${label}</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:2px;line-height:1.5;">${detail}</div>
-          ${sublabel ? '<div style="font-size:10px;color:'+colors[status]+';margin-top:4px;">'+sublabel+'</div>' : ''}
+          <div style="font-size:13px;font-weight:600;color:var(--text);">${esc(label)}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;line-height:1.5;">${esc(detail)}</div>
+          ${sublabel ? '<div style="font-size:10px;color:'+colors[status]+';margin-top:4px;">'+esc(sublabel)+'</div>' : ''}
         </div>
       </div>`;
     };
@@ -2257,7 +2265,7 @@ const fmtDT        = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'num
     if (shipments.length === 0 && scans.length === 0) {
       el.innerHTML = `<div style="background:var(--surface);border:1px solid var(--glass-border);border-radius:12px;padding:28px;text-align:center;">
         <div style="font-size:28px;margin-bottom:12px;">🔍</div>
-        <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:6px;">No records found for lot "${lotCode}"</div>
+        <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:6px;">No records found for lot "${esc(lotCode)}"</div>
         <div style="font-size:12px;color:var(--muted);">Try a shorter prefix — fuzzy matching will find variants automatically.</div>
       </div>`;
       return;
@@ -2268,7 +2276,7 @@ const fmtDT        = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'num
       ${isRecalled ? `<div style="background:rgba(var(--danger-rgb),0.08);border:1px solid rgba(var(--danger-rgb),0.3);border-radius:10px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:10px;">
         <div style="width:8px;height:8px;border-radius:50%;background:var(--danger);box-shadow:0 0 8px rgba(var(--danger-rgb),0.5);flex-shrink:0;"></div>
         <div style="flex:1;font-size:12px;color:var(--danger);">
-          <strong>ACTIVE RECALL</strong> — ${recalls[0].product_name||'Product'} · ${recalls[0].reason||'—'} · ${recalls[0].severity||'—'}
+          <strong>ACTIVE RECALL</strong> — ${esc(recalls[0].product_name||'Product')} · ${esc(recalls[0].reason||'—')} · ${esc(recalls[0].severity||'—')}
         </div>
         <button onclick="showPanel('recalls')" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid rgba(var(--danger-rgb),0.3);background:none;color:var(--danger);cursor:pointer;font-family:inherit;">View recall →</button>
       </div>` : ''}
@@ -2277,8 +2285,8 @@ const fmtDT        = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'num
       <div style="background:var(--surface);border:1px solid var(--glass-border);border-radius:12px;padding:16px 18px;margin-bottom:16px;">
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
           <div>
-            <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;color:var(--text);">${productName}</div>
-            <div style="font-size:11px;color:var(--muted);margin-top:2px;font-family:'DM Mono',monospace;">${lotCode}</div>
+            <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;color:var(--text);">${esc(productName)}</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px;font-family:'DM Mono',monospace;">${esc(lotCode)}</div>
           </div>
           ${isRecalled ? '<span style="font-size:10px;padding:3px 10px;border-radius:10px;background:rgba(var(--danger-rgb),0.12);color:var(--danger);font-weight:700;">⚠ RECALLED</span>' : '<span style="font-size:10px;padding:3px 10px;border-radius:10px;background:rgba(var(--accent-rgb),0.12);color:var(--accent);font-weight:600;">✓ No active recall</span>'}
         </div>
@@ -2299,7 +2307,7 @@ const fmtDT        = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'num
         <div style="position:relative;">
           ${chainNode(1, mfrName + ' — Manufacturer', shipments.length > 0 ? `${shipments.length} shipment${shipments.length!==1?'s':''} logged · ${totalQty} ${unit} total · First shipped ${fmtDate(shipments[shipments.length-1]?.shipped_at)}` : 'No shipment records on file — connect this manufacturer as a partner to receive shipment data', shipments.length?'ok':'muted', shipments.length?`Lot code: ${lotCode}`:null)}
           ${chainNode(2, storesShipped.length > 0 ? storesShipped.join(', ') : 'Receiving stores', storesShipped.length > 0 ? shipments.map(s=>`${s.stores?.name||'?'} — ${s.quantity} ${s.unit||''} received ${fmtDate(s.shipped_at)}`).slice(0,4).join(' · ') : 'No store receipt records', storesShipped.length?'ok':'muted', storesShipped.length?`${storesShipped.length} store${storesShipped.length!==1?'s':''} received this lot`:null)}
-          ${chainNode(3, scans.length > 0 ? 'Scanned onto shelves' : 'Shelf placement', scans.length > 0 ? `${scans.length} scan${scans.length!==1?'s':''} by staff · ${storesSeen.join(', ')}` : 'No scan records for this lot — staff may not have scanned it, or lot code may differ slightly', scans.length?'ok':'warn', scans.length?`Latest scan: ${fmtDT(scans[0]?.created_at)}`:null)}
+          ${chainNode(3, scans.length > 0 ? 'Scanned onto shelves' : 'Shelf placement', scans.length > 0 ? `${scans.length} scan${scans.length!==1?'s':''} by staff · ${storesSeen.map(esc).join(', ')}` : 'No scan records for this lot — staff may not have scanned it, or lot code may differ slightly', scans.length?'ok':'warn', scans.length?`Latest scan: ${fmtDT(scans[0]?.created_at)}`:null)}
           ${chainNode(4, isRecalled ? 'Recall response' : 'Recall status', isRecalled ? (acks.length > 0 ? `${acks.filter(a=>a.status==='confirmed').length}/${acks.length} stores resolved · ${acks.reduce((s,a)=>s+(a.units_pulled||0),0)} units pulled` : 'Recall pushed — awaiting store acknowledgements') : 'No recall issued for this lot', isRecalled?(acks.every(a=>a.status==='confirmed')?'ok':'danger'):'ok', isRecalled?recalls[0].severity:null)}
         </div>
       </div>
@@ -2313,10 +2321,10 @@ const fmtDT        = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'num
             <thead><tr><th>Store</th><th>Scanned by</th><th>Date & time</th><th>Source</th></tr></thead>
             <tbody>
               ${scans.slice(0,20).map(s=>`<tr>
-                <td>${s.store_name||'—'}</td>
-                <td style="color:var(--muted);">${s.scanned_by||'—'}</td>
+                <td>${esc(s.store_name||'—')}</td>
+                <td style="color:var(--muted);">${esc(s.scanned_by||'—')}</td>
                 <td style="font-family:'DM Mono',monospace;font-size:10px;">${fmtDT(s.created_at)}</td>
-                <td style="font-size:10px;color:var(--muted);">${s.tlc_source||'Manual'}</td>
+                <td style="font-size:10px;color:var(--muted);">${esc(s.tlc_source||'Manual')}</td>
               </tr>`).join('')}
             </tbody>
           </table>
@@ -2328,10 +2336,19 @@ const fmtDT        = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'num
   }
 }
 
+// AI features are POV/Paying only. One message, used by both the pre-check
+// and the mid-session downgrade path.
+function _showAiDisabled(el) {
+  el.innerHTML = '<div style="background:var(--surface);border:1px solid var(--glass-border);border-radius:10px;padding:14px 16px;font-size:12px;color:var(--muted);">'
+    + "AI queries are not enabled for this organisation. Contact Batch'd to enable them.</div>";
+}
+
 async function runNLQuery() {
   const question = document.getElementById('nl-query-input')?.value?.trim();
   const el       = document.getElementById('nl-result');
   if (!el || !question) return;
+
+  if (!window._orgAiEnabled) { _showAiDisabled(el); return; }
 
   el.innerHTML = '<div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);padding:12px 0;"><div class="spinner"></div> Interpreting your question…</div>';
 
@@ -2353,9 +2370,13 @@ organisation_id for this user = "${_orgId}"`;
     const res = await fetch('/.netlify/functions/ai-analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_aiJwt}` },
-      body: JSON.stringify({ task: 'nl_query', data: { question, schema } }),
+      body: JSON.stringify({ task: 'nl_query', org_id: _orgId, data: { question, schema } }),
     });
     const json = await res.json();
+    // Covers a plan downgrade mid-session.
+    if (res.status === 403 && json?.code === 'ai_disabled') {
+      window._orgAiEnabled = false; _showAiDisabled(el); return;
+    }
     const text = json.result || '';
 
     let parsed;
@@ -2522,7 +2543,7 @@ async function renderOnboarding() {
         title: 'Add your store network',
         desc: "Register the physical store locations that Batch'd will track. Each store gets its own scan history and compliance score.",
         detail: hasStores
-          ? `${storesRes.data.length} store${storesRes.data.length!==1?'s':''} registered: ${storesRes.data.slice(0,3).map(s=>s.name).join(', ')}${storesRes.data.length>3?' +more':''}`
+          ? `${storesRes.data.length} store${storesRes.data.length!==1?'s':''} registered: ${storesRes.data.slice(0,3).map(s=>esc(s.name)).join(', ')}${storesRes.data.length>3?' +more':''}`
           : 'No stores registered yet.',
         cta: 'Add stores →', action: `showPanel('stores')`,
         reg: 'Required for all regulatory frameworks',
@@ -2649,7 +2670,13 @@ function handleDeepLink() {
   const panel  = params.get('panel');
   const highlight = params.get('highlight') || params.get('recall_event_id');
   const lot    = params.get('lot');
-  const detailId = params.get('id'); // generic id param — used by recall-detail
+  // Only a known panel and a well-formed uuid are honoured: both land in
+  // innerHTML downstream (renderComingSoon prints the panel name).
+  const KNOWN_PANELS = ['overview','onboarding','recalls','stores','traceability','staff','compliance','reports',
+                        'settings','triage','investigations','consumer-notify','terminology','lotcheck',
+                        'recall-detail','recall-composer'];
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const detailId = UUID_RE.test(params.get('id') || '') ? params.get('id') : null;
   if (highlight) _deepLinkHighlight = highlight;
   if (lot)       _deepLinkHighlight = lot;
   // recall-detail panel needs the recall_event id stashed BEFORE
@@ -2658,7 +2685,7 @@ function handleDeepLink() {
   if (panel === 'recall-detail' && detailId) {
     _currentRecallDetailId = detailId;
   }
-  const target = (panel && panel !== 'overview') ? panel : 'overview';
+  const target = (panel && KNOWN_PANELS.includes(panel)) ? panel : 'overview';
   if (params.toString()) {
     window.history.replaceState({}, '', window.location.pathname);
   }
@@ -3337,8 +3364,8 @@ el.innerHTML = `
               const store = stores.find(s => s.id === a.store_id);
               return `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:11px;">
                 <div>
-                  <div style="color:var(--text);font-weight:500;">${ev?.product_name || 'Recall'}</div>
-                  <div style="color:var(--muted);">${store?.name || 'Unknown store'}</div>
+                  <div style="color:var(--text);font-weight:500;">${esc(ev?.product_name || 'Recall')}</div>
+                  <div style="color:var(--muted);">${esc(store?.name || 'Unknown store')}</div>
                 </div>
                 <div style="font-size:10px;color:var(--warn);">${fmtTime(a.created_at)}</div>
               </div>`;
@@ -3556,13 +3583,13 @@ async function renderRecalls() {
           <div style="display:flex;align-items:center;gap:10px;">
             <div style="width:28px;height:28px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent-dim)" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></div>
             <div>
-              <div style="font-size:13px;font-weight:700;color:var(--text);">${storeName}${appBadge}</div>
+              <div style="font-size:13px;font-weight:700;color:var(--text);">${esc(storeName)}${appBadge}</div>
               <div style="font-size:11px;color:var(--accent);margin-top:1px;">All 5 steps complete${a.units_pulled?' · '+a.units_pulled+' units removed':''}${a.acknowledged_at?' · '+fmtDashDT(a.acknowledged_at):''}</div>
             </div>
           </div>
           <div style="display:flex;gap:8px;">
             <button onclick="showStoreTimeline('${a.id}')" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;">Timeline</button>
-            <button onclick="generateStoreAuditReport('${a.id}','${storeName.replace(/'/g,"\\'")}' )" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid rgba(var(--accent-rgb),0.3);background:none;color:var(--accent);cursor:pointer;">Audit record</button>
+            <button onclick="generateStoreAuditReport('${a.id}')" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid rgba(var(--accent-rgb),0.3);background:none;color:var(--accent);cursor:pointer;">Audit record</button>
           </div>
         </div>
       </div>`;
@@ -3571,7 +3598,7 @@ async function renderRecalls() {
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">
         <div style="flex:1;min-width:220px;">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px;">
-            <div style="font-size:13px;font-weight:700;color:var(--text);">${storeName}</div>
+            <div style="font-size:13px;font-weight:700;color:var(--text);">${esc(storeName)}</div>
             <span style="font-size:10px;padding:2px 8px;border-radius:10px;background:${idx===0?'rgba(var(--danger-rgb),0.12)':'rgba(var(--warn-rgb),0.12)'};color:${idx===0?'var(--danger)':'var(--warn)'};font-weight:600;">Step ${idx+1} of 5</span>
           </div>
           ${stepCircles(a.status)}
@@ -3587,7 +3614,7 @@ async function renderRecalls() {
           ${elapsed !== null ? `<div style="font-size:10px;color:var(--muted);">${elapsed < 60 ? elapsed+'m' : Math.floor(elapsed/60)+'h '+elapsed%60+'m'} since last update</div>` : ''}
           ${nextStep ? `<button onclick="advanceAckStatus('${a.id}','${nextStep}','${recallEventId}')" style="background:var(--accent);color:var(--accent-on-primary);border:none;border-radius:8px;padding:9px 18px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;letter-spacing:0.01em;box-shadow:0 1px 3px rgba(0,0,0,0.25);">${STEP_LABELS[nextStep]} →</button>` : ''}
           <button onclick="showStoreTimeline('${a.id}')" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;">Timeline</button>
-          ${idx === 0 ? `<button onclick="sendRecallReminder('${recallEventId}','${(productName||'').replace(/'/g,"\\'")}')" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid rgba(var(--warn-rgb),0.3);background:none;color:var(--warn);cursor:pointer;">📧 Remind</button>` : ''}
+          ${idx === 0 ? `<button onclick="sendRecallReminder('${recallEventId}')" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid rgba(var(--warn-rgb),0.3);background:none;color:var(--warn);cursor:pointer;">📧 Remind</button>` : ''}
         </div>
       </div>
     </div>`;
@@ -3747,7 +3774,7 @@ async function renderRecalls() {
           <div style="flex:1;font-size:12px;font-weight:600;color:var(--accent);">All ${evAcks.length} store${evAcks.length!==1?'s':''} confirmed — audit trail locked</div>
           ${isDrill
             ? `<button onclick="event.stopPropagation();generateDrillCertificate('${p.recall_event_id}')" style="font-size:11px;padding:6px 12px;border-radius:7px;border:1px solid rgba(var(--accent-rgb),0.35);background:rgba(var(--accent-rgb),0.07);color:var(--accent);cursor:pointer;font-weight:600;">🏅 Certificate</button>`
-            : `<button onclick="event.stopPropagation();generateJointRecallReport('${p.recall_event_id}','${(ev.product_name||'').replace(/'/g,"\\'")}' )" style="font-size:11px;padding:6px 12px;border-radius:7px;border:1px solid rgba(var(--accent-rgb),0.35);background:rgba(var(--accent-rgb),0.08);color:var(--accent);cursor:pointer;font-weight:600;">📄 Joint report</button>`}
+            : `<button onclick="event.stopPropagation();generateJointRecallReport('${p.recall_event_id}')" style="font-size:11px;padding:6px 12px;border-radius:7px;border:1px solid rgba(var(--accent-rgb),0.35);background:rgba(var(--accent-rgb),0.08);color:var(--accent);cursor:pointer;font-weight:600;">📄 Joint report</button>`}
           ${ev.lot_number ? `<a href="https://batchd-app.netlify.app?view=history&lot=${encodeURIComponent(ev.lot_number||'')}" onclick="event.stopPropagation();" target="_blank" style="font-size:11px;padding:6px 12px;border-radius:7px;border:1px solid var(--glass-border);background:none;color:var(--muted);text-decoration:none;display:inline-flex;align-items:center;gap:5px;" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--muted)'">📱 App</a>` : ''}
         </div>` : ''}
 
@@ -3796,8 +3823,8 @@ async function renderRecalls() {
         <div style="width:32px;height:32px;border-radius:50%;background:rgba(var(--accent-rgb),0.1);border:1px solid rgba(var(--accent-rgb),0.2);display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;">👤</div>
         <div>
           <div style="font-size:11px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;color:var(--muted);margin-bottom:2px;">Recall coordinator</div>
-          <div style="font-size:13px;font-weight:700;color:var(--text);">${coord.recall_coordinator_name}</div>
-          ${coord.recall_coordinator_contact ? `<div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">${coord.recall_coordinator_contact}</div>` : ''}
+          <div style="font-size:13px;font-weight:700;color:var(--text);">${esc(coord.recall_coordinator_name)}</div>
+          ${coord.recall_coordinator_contact ? `<div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">${esc(coord.recall_coordinator_contact)}</div>` : ''}
         </div>
       </div>
       <button onclick="showPanel('settings')" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid var(--glass-border);background:none;color:var(--muted);cursor:pointer;">Edit →</button>
@@ -4096,7 +4123,7 @@ async function launchDrill() {
     // failed — same outcome as before, just with one more attempt to recover.
     if (createdRecallEventId) {
       try {
-        await sb.from('recall_events').delete().eq('id', createdRecallEventId);
+        await sb.from('recall_events').delete().eq('id', createdRecallEventId).eq('source_org_id', _orgId);
       } catch(cleanupErr) {
         console.warn('[launchDrill] cleanup failed after error:', cleanupErr?.message);
       }
@@ -5024,7 +5051,7 @@ async function _composerPushRecall() {
     // and acks cascade from the event delete where FKs allow it.
     if (createdRecallEventId) {
       try {
-        await sb.from('recall_events').delete().eq('id', createdRecallEventId);
+        await sb.from('recall_events').delete().eq('id', createdRecallEventId).eq('source_org_id', _orgId);
       } catch (cleanupErr) {
         console.warn('[composer push] cleanup failed after error:', cleanupErr?.message);
       }
@@ -5509,7 +5536,7 @@ async function resolveManualRecall(recallId, btn) {
   }
 }
 
-async function sendRecallReminder(recallEventId, productName) {
+async function sendRecallReminder(recallEventId) {
   // 2026-08-05 core-loop fix: this button POSTed to recall-reminder,
   // which did not exist in the repo — every click 404'd. The function
   // now exists (auth'd corp_admin-only wrapper around the reminder
@@ -6875,7 +6902,8 @@ async function markRecallComplete(recallEventId) {
         closed_by:   _userId || null,
         closed_note: note || null
       })
-      .eq('id', recallEventId);
+      .eq('id', recallEventId)
+      .eq('source_org_id', _orgId);
 
     if (error) {
       // Migration 008 not yet applied — surface specific guidance
@@ -7822,9 +7850,9 @@ async function renderStores() {
                 <tr>
                   <td><div class="store-name">${esc(s.name)}</div></td>
                   <td><span class="recall-status ${s.active?'status-resolved':'status-pending'}">${s.active?'Active':'Inactive'}</span></td>
-                  <td style="color:var(--muted);font-size:11px;">${s.store_code||'—'}</td>
+                  <td style="color:var(--muted);font-size:11px;">${esc(s.store_code||'—')}</td>
                   <td style="color:var(--muted);font-size:11px;">
-                    <span title="${_mapDot.t}" aria-label="${_mapDot.t}" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${_mapDot.c};margin-right:8px;vertical-align:middle;flex-shrink:0;"></span>${s.address||'—'}
+                    <span title="${_mapDot.t}" aria-label="${_mapDot.t}" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${_mapDot.c};margin-right:8px;vertical-align:middle;flex-shrink:0;"></span>${esc(s.address||'—')}
                   </td>
                   <td style="text-align:right;white-space:nowrap;">
                     ${_hasCoords(s) ? `<button onclick="viewStoreOnMap('${s.id}')" title="View on map" aria-label="View ${esc(s.name)} on the map"
@@ -8164,7 +8192,7 @@ async function renderTraceability(tab) {
         <select id="trace-store" onchange="filterTraceability()"
           style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-family:'DM Mono',monospace;font-size:12px;color:var(--text);outline:none;cursor:pointer;">
           <option value="">All stores</option>
-          ${[...new Set(list.map(s=>s.store_name).filter(Boolean))].sort().map(s=>`<option value="${s}">${s}</option>`).join('')}
+          ${[...new Set(list.map(s=>s.store_name).filter(Boolean))].sort().map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('')}
         </select>
         <select id="trace-status" onchange="filterTraceability()"
           style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-family:'DM Mono',monospace;font-size:12px;color:var(--text);outline:none;cursor:pointer;">
@@ -8229,7 +8257,7 @@ async function renderTraceability(tab) {
                 : list.map(p => `
                   <tr>
                     <td style="padding:10px 18px;">
-                      <div style="font-size:12px;font-weight:500;color:var(--text);">${p.product_name||'—'}</div>
+                      <div style="font-size:12px;font-weight:500;color:var(--text);">${esc(p.product_name||'—')}</div>
                       ${p.brand_key ? `<div style="font-size:10px;color:var(--muted);margin-top:1px;">${p.brand_key}</div>` : ''}
                     </td>
                     <td style="padding:10px 18px;font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;max-width:160px;">
@@ -8238,7 +8266,7 @@ async function renderTraceability(tab) {
                     <td style="padding:10px 18px;font-size:10px;color:var(--muted);max-width:200px;line-height:1.5;">
                       ${p.label_hint ? p.label_hint.replace(/Label text observed:.*?(?=\.|$)/s,'').trim().slice(0,120)+(p.label_hint.length>120?'…':'') : '—'}
                     </td>
-                    <td style="padding:10px 18px;font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${p.barcode_number||'—'}</td>
+                    <td style="padding:10px 18px;font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${esc(p.barcode_number||'—')}</td>
                     <td style="padding:10px 18px;">
                       <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;color:var(--text);">${p.scan_count||0}</div>
                     </td>
@@ -8457,6 +8485,7 @@ async function renderStaff() {
   // and by role-order as fallback for members who joined before user_id was tracked
   const emailByUserId    = {};
   const fullNameByUserId = {};
+  _staffLabelByUserId    = {};
   const emailsByRole     = {};
   acceptedInv.forEach(inv => {
     if (inv.user_id) {
@@ -8673,6 +8702,7 @@ async function renderStaff() {
               // a user_id shortcut as last resort. Sub-line carries the
               // email when the headline is the full name, so both stay
               // visible — corp admin can identify the row at a glance.
+              _staffLabelByUserId[m.user_id] = email || fullName || m.user_id;
               const headline    = fullName || email || (m.user_id.slice(0,8) + '…');
               const initial     = (fullName || email || roleLabel)[0].toUpperCase();
               const showEmailSub = fullName && email && email !== fullName;
@@ -8686,7 +8716,7 @@ async function renderStaff() {
                   </div>
                 </div>
                 <span class="recall-status status-resolved" style="flex-shrink:0;">Active</span>
-                <button onclick="deactivateMember('${m.user_id}', '${esc(email || fullName || m.user_id)}')"
+                <button onclick="deactivateMember('${m.user_id}')"
                   style="font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;margin-left:4px;flex-shrink:0;"
                   onmouseenter="this.style.borderColor='var(--danger)';this.style.color='var(--danger)'"
                   onmouseleave="this.style.borderColor='var(--border)';this.style.color='var(--muted)'"
@@ -8747,7 +8777,10 @@ async function renderStaff() {
   }
 }
 
-async function deactivateMember(userId, identifier) {
+async function deactivateMember(userId) {
+  // Label for the confirm dialog comes from the map renderStaff built, not
+  // from the markup that rendered the button.
+  const identifier = _staffLabelByUserId[userId] || userId;
   // Defense-in-depth role guard (added 2026-05-27 per audit). Managers
   // see the Staff Activity panel (Chunk A scoping) and the Deactivate
   // button renders for everyone — gate here so a manager can't deactivate
@@ -9208,8 +9241,8 @@ function renderComplianceDashboard(el) {
           <div style="background:var(--surface2);border-radius:8px;padding:12px 14px;">
             <div style="font-size:11px;font-weight:700;color:var(--text);margin-bottom:4px;">Recall coordinator</div>
             ${d.coordinator?.name
-              ? `<div style="font-size:13px;font-weight:600;color:var(--accent);">${d.coordinator.name}</div>
-                 <div style="font-size:10px;color:var(--muted);margin-top:2px;">${d.coordinator.contact || 'No contact on file'}</div>`
+              ? `<div style="font-size:13px;font-weight:600;color:var(--accent);">${esc(d.coordinator.name)}</div>
+                 <div style="font-size:10px;color:var(--muted);margin-top:2px;">${esc(d.coordinator.contact || 'No contact on file')}</div>`
               : `<div style="font-size:12px;color:var(--danger);font-weight:600;">Not assigned</div>
                  <div style="font-size:10px;color:var(--muted);margin-top:2px;">${isUS?'Required under FDA 21 CFR 7.49':'Required by Mattilsynet guidance'}</div>
                  <button onclick="showPanel('settings')" style="margin-top:8px;font-family:'DM Mono',monospace;font-size:10px;padding:4px 10px;border-radius:5px;border:1px solid rgba(var(--danger-rgb),0.3);background:none;color:var(--danger);cursor:pointer;">Assign →</button>`}
@@ -9752,7 +9785,7 @@ function renderComplianceResults(el) {
           ${d.drills.map(dr => `
             <div style="display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-bottom:1px solid rgba(var(--surface-tint-rgb),0.5);">
               <div>
-                <div style="font-size:12px;font-weight:500;color:var(--text);">${dr.product_name||'Mock drill'}</div>
+                <div style="font-size:12px;font-weight:500;color:var(--text);">${esc(dr.product_name||'Mock drill')}</div>
                 <div style="font-size:10px;color:var(--muted);margin-top:2px;">${new Date(dr.started_at).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',year:'numeric'})}</div>
               </div>
               <button onclick="generateDrillReport('${dr.id}')" style="font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;">↓ PDF</button>
@@ -9949,7 +9982,7 @@ function injectPrintButton(html) {
     .replace('</body>', _batchdDocFooter() + printBtn + '</body>');
 }
 
-async function generateJointRecallReport(recallEventId, productName) {
+async function generateJointRecallReport(recallEventId) {
   const btn = event?.target;
   const origText = btn?.textContent;
   if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
@@ -10036,7 +10069,7 @@ async function generateJointRecallReport(recallEventId, productName) {
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Joint Recall Completion Report — ${ev.product_name || productName}</title>
+<title>Joint Recall Completion Report — ${esc(ev.product_name || 'Recall')}</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 13px; color: #1a2e2a; background: #fff; padding: 40px; max-width: 860px; margin: 0 auto; }
@@ -10089,7 +10122,7 @@ async function generateJointRecallReport(recallEventId, productName) {
   </div>
   <div class="meta-box">
     <div class="meta-label">Severity</div>
-    <div class="meta-val">${ev.severity?formatSeverity(ev.severity).label:'—'}</div>
+    <div class="meta-val">${esc(ev.severity?formatSeverity(ev.severity).label:'—')}</div>
     ${ev.reason ? `<div class="meta-sub">${esc(ev.reason)}</div>` : ''}
   </div>
   <div class="meta-box">
@@ -10098,7 +10131,7 @@ async function generateJointRecallReport(recallEventId, productName) {
   </div>
   <div class="meta-box">
     <div class="meta-label">Authority reference</div>
-    <div class="meta-val">${ev.authority_reference || docRef}</div>
+    <div class="meta-val">${esc(ev.authority_reference || docRef)}</div>
   </div>
 </div>
 ${ev.description ? `<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:10px 14px;font-size:12px;color:#374151;line-height:1.6;margin-bottom:16px;">${esc(ev.description)}</div>` : ''}
@@ -10107,13 +10140,13 @@ ${ev.description ? `<div style="background:#f9fafb;border:1px solid #e5e7eb;bord
 <div class="meta-grid">
   <div class="meta-box">
     <div class="meta-label">Manufacturer (recall initiator)</div>
-    <div class="meta-val">${mfrOrg.name || ev.source_org_id || '—'}</div>
+    <div class="meta-val">${esc(mfrOrg.name || ev.source_org_id || '—')}</div>
     ${mfrOrg.recall_coordinator_name ? `<div class="meta-sub">Coordinator: ${esc(mfrOrg.recall_coordinator_name)}</div>` : ''}
-    ${mfrOrg.recall_coordinator_contact || mfrOrg.contact_email ? `<div class="meta-sub">${mfrOrg.recall_coordinator_contact || mfrOrg.contact_email}</div>` : ''}
+    ${mfrOrg.recall_coordinator_contact || mfrOrg.contact_email ? `<div class="meta-sub">${esc(mfrOrg.recall_coordinator_contact || mfrOrg.contact_email)}</div>` : ''}
   </div>
   <div class="meta-box">
     <div class="meta-label">Retailer (this organisation)</div>
-    <div class="meta-val">${org.name || '—'}</div>
+    <div class="meta-val">${esc(org.name || '—')}</div>
     ${org.recall_coordinator_name ? `<div class="meta-sub">Coordinator: ${esc(org.recall_coordinator_name)}</div>` : ''}
     ${org.contact_email ? `<div class="meta-sub">${esc(org.contact_email)}</div>` : ''}
   </div>
@@ -10153,7 +10186,7 @@ ${scanDetails.length > 0 ? `
       <td>${esc(s.store_name||'—')}</td>
       <td style="font-family:monospace;font-size:11px;">${s.created_at?new Date(s.created_at).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'—'}</td>
       <td style="font-family:monospace;font-size:11px;">${s.removed_from_shelf_at?new Date(s.removed_from_shelf_at).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'Not yet pulled'}</td>
-      <td style="font-size:11px;">${(s.scanned_by||'—').split('@')[0]}</td>
+      <td style="font-size:11px;">${esc((s.scanned_by||'—').split('@')[0])}</td>
     </tr>`).join('')}
   </tbody>
 </table>` : ''}
@@ -10181,14 +10214,14 @@ ${allDone ? `
 <h2>Authorisation</h2>
 <div class="sig-box">
   <div>
-    <h3>Manufacturer — ${mfrOrg.name || '—'}</h3>
+    <h3>Manufacturer — ${esc(mfrOrg.name || '—')}</h3>
     <div class="sig-line">Recall coordinator signature &amp; date</div>
-    ${mfrOrg.recall_coordinator_name ? `<div style="font-size:11px;color:#6b7280;margin-top:6px;">${esc(mfrOrg.recall_coordinator_name)}${mfrOrg.recall_coordinator_contact?' · '+mfrOrg.recall_coordinator_contact:''}</div>` : ''}
+    ${mfrOrg.recall_coordinator_name ? `<div style="font-size:11px;color:#6b7280;margin-top:6px;">${esc(mfrOrg.recall_coordinator_name)}${mfrOrg.recall_coordinator_contact?' · '+esc(mfrOrg.recall_coordinator_contact):''}</div>` : ''}
   </div>
   <div>
-    <h3>Retailer — ${org.name || '—'}</h3>
+    <h3>Retailer — ${esc(org.name || '—')}</h3>
     <div class="sig-line">Recall coordinator signature &amp; date</div>
-    ${org.recall_coordinator_name ? `<div style="font-size:11px;color:#6b7280;margin-top:6px;">${esc(org.recall_coordinator_name)}${org.contact_email?' · '+org.contact_email:''}</div>` : ''}
+    ${org.recall_coordinator_name ? `<div style="font-size:11px;color:#6b7280;margin-top:6px;">${esc(org.recall_coordinator_name)}${org.contact_email?' · '+esc(org.contact_email):''}</div>` : ''}
   </div>
 </div>` : ''}
 
@@ -10217,7 +10250,7 @@ ${allDone ? `
   }
 }
 
-async function generateStoreAuditReport(ackId, storeName) {
+async function generateStoreAuditReport(ackId) {
   const btn = event?.target;
   if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
   try {
@@ -10231,6 +10264,9 @@ async function generateStoreAuditReport(ackId, storeName) {
       .eq('organisation_id', _orgId)
       .single();
     if (!a) throw new Error('Acknowledgement not found');
+    // The store name comes from the row this query already joins, not from
+    // the markup that opened the report.
+    const storeName = a.stores?.name || '—';
     const ev  = a.recall_events || {};
     const org = a.organisations || {};
     const fmtDt = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
@@ -10249,7 +10285,7 @@ async function generateStoreAuditReport(ackId, storeName) {
     <div class="row"><span class="lbl">Product</span><span class="val">${esc(ev.product_name||'—')}</span></div>
     <div class="row"><span class="lbl">Lot number</span><span class="val" style="font-family:monospace;">${esc(ev.lot_number||'—')}</span></div>
     <div class="row"><span class="lbl">Reason</span><span class="val">${esc(ev.reason||'—')}</span></div>
-    <div class="row"><span class="lbl">Severity</span><span class="val">${ev.severity?formatSeverity(ev.severity).label:'—'}</span></div>
+    <div class="row"><span class="lbl">Severity</span><span class="val">${esc(ev.severity?formatSeverity(ev.severity).label:'—')}</span></div>
     <h2>Response — ${esc(storeName)}</h2>
     <div class="row"><span class="lbl">Notified</span><span class="val">${fmtDt(a.created_at)}</span></div>
     <div class="row"><span class="lbl">Acknowledged</span><span class="val">${fmtDt(a.acknowledged_at)}</span></div>
@@ -10279,9 +10315,9 @@ async function generateStoreAuditReport(ackId, storeName) {
   }
 }
 
-async function generateRecallAuditReport(recallEventId, productName) {
+async function generateRecallAuditReport(recallEventId) {
   // Alias — full joint report covers everything the single-event audit did
-  return generateJointRecallReport(recallEventId, productName);
+  return generateJointRecallReport(recallEventId);
 }
 
 
@@ -10303,7 +10339,7 @@ async function generateComplianceReport() {
       { label:'Operational coverage',score:sc.coverageScore, detail:`${d.storesActiveRecent}/${d.activeStores.length} stores active (30 days)` },
     ];
 
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Compliance Report — ${org?.name||_orgName}</title>
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Compliance Report — ${esc(org?.name||_orgName)}</title>
     <style>
     body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#111;margin:0;padding:32px 48px;max-width:820px}
     @media print{body{padding:20px}.no-print{display:none}@page{margin:20mm}}
@@ -10325,7 +10361,7 @@ async function generateComplianceReport() {
     </div>
     <div class="header">
       <div><div class="logo">Batch'd</div><h1>Compliance Assessment Report</h1>
-      <div style="font-size:12px;color:#555;margin-top:4px;">${org?.name||_orgName} · ${today}</div></div>
+      <div style="font-size:12px;color:#555;margin-top:4px;">${esc(org?.name||_orgName)} · ${today}</div></div>
       <div style="text-align:right;font-size:11px;color:#666;line-height:1.8;">
         Regulatory framework: ${isUS?'FSMA 204 / FDA':'EU Reg. 178/2002 / Mattilsynet'}<br>
         Contact: ${org?.contact_email||'—'}<br>
@@ -10338,7 +10374,7 @@ async function generateComplianceReport() {
     </div>
     <h2>Compliance assessment summary</h2>
     <p style="line-height:1.7;color:#333;margin-bottom:16px;">
-      ${org?.name||_orgName} achieved an overall readiness score of <strong>${sc.overallScore}%</strong> under ${isUS?'FSMA 204 and FDA requirements':'EU Regulation 178/2002 and Mattilsynet requirements'}. This assessment was conducted automatically from live traceability records maintained in the Batch'd platform on ${today}.
+      ${esc(org?.name||_orgName)} achieved an overall readiness score of <strong>${sc.overallScore}%</strong> under ${isUS?'FSMA 204 and FDA requirements':'EU Regulation 178/2002 and Mattilsynet requirements'}. This assessment was conducted automatically from live traceability records maintained in the Batch'd platform on ${today}.
     </p>
     <h2>Record keeping</h2>
     <div class="check"><div class="check-icon ${d.scans.length>0?'pass':'fail'}">${d.scans.length>0?'✓':'✗'}</div><div><strong>Scan records on file</strong><br><span style="color:#666;">${d.scans.length} product records</span></div></div>
@@ -10352,9 +10388,9 @@ async function generateComplianceReport() {
     <div class="check"><div class="check-icon ${d.activeStores.length>0?'pass':'fail'}">${d.activeStores.length>0?'✓':'✗'}</div><div><strong>Store network registered</strong><br><span style="color:#666;">${d.activeStores.length} active stores</span></div></div>
     <div class="check"><div class="check-icon ${d.storesActiveRecent===d.activeStores.length&&d.activeStores.length>0?'pass':'fail'}">${d.storesActiveRecent===d.activeStores.length&&d.activeStores.length>0?'✓':'✗'}</div><div><strong>No dark stores</strong><br><span style="color:#666;">${d.storesActiveRecent} of ${d.activeStores.length} stores scanning in last 30 days</span></div></div>
     <div style="margin-top:20px;padding:12px 14px;background:#f0fdf4;border-left:3px solid #34d399;font-size:11px;color:var(--accent-on-primary);line-height:1.6;">
-      <strong>Note:</strong> This report is generated from traceability records maintained in the Batch'd platform. It is intended as an internal readiness indicator and supporting documentation for audits. Legal compliance responsibilities remain with ${org?.name||_orgName}. This document should be reviewed by qualified food safety counsel before submission to regulatory bodies.
+      <strong>Note:</strong> This report is generated from traceability records maintained in the Batch'd platform. It is intended as an internal readiness indicator and supporting documentation for audits. Legal compliance responsibilities remain with ${esc(org?.name||_orgName)}. This document should be reviewed by qualified food safety counsel before submission to regulatory bodies.
     </div>
-    <div class="footer"><span>Batch'd · batchd.no · ${org?.name||_orgName} · Confidential</span><span>Generated ${today}</span></div>
+    <div class="footer"><span>Batch'd · batchd.no · ${esc(org?.name||_orgName)} · Confidential</span><span>Generated ${today}</span></div>
     </body></html>`;
 
     const win = window.open('','_blank');
@@ -10637,7 +10673,7 @@ function printReport() {
   const reportContent = document.getElementById('main-content')?.innerHTML || '';
   const today = new Date().toLocaleDateString(_dashLocale(), {weekday:'long',day:'numeric',month:'long',year:'numeric'});
   const win = window.open('', '_blank');
-  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Batch'd Report — ${_orgName}</title>
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Batch'd Report — ${esc(_orgName)}</title>
   <style>
     body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#111;margin:0;padding:24px 40px;max-width:1000px;}
     @media print{@page{margin:20mm}body{padding:0}.no-print{display:none}}
@@ -10653,7 +10689,7 @@ function printReport() {
     <button onclick="window.print()" style="display:inline!important;background:#065f46;color:#fff;border:none;border-radius:6px;padding:7px 16px;font-weight:700;cursor:pointer;">Print / Save PDF</button>
   </div>
   <div class="report-hdr">
-    <div><div class="logo">Batch'd</div><div style="font-size:12px;color:#555;margin-top:4px;">${_orgName} · Generated ${today}</div></div>
+    <div><div class="logo">Batch'd</div><div style="font-size:12px;color:#555;margin-top:4px;">${esc(_orgName)} · Generated ${today}</div></div>
   </div>
   ${reportContent}
   ${_batchdDocFooter()}
@@ -10791,10 +10827,10 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
             ${data.length === 0 ? `<tr><td colspan="7"><div class="empty">No scans in this date range.</div></td></tr>` :
             data.map(s => `<tr>
               <td style="white-space:nowrap;font-size:11px;color:var(--muted);">${fmtDT(s.created_at)}</td>
-              <td><div style="font-size:12px;font-weight:500;color:var(--text);">${s.product_name||'—'}</div></td>
-              <td style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">${s.lot_number||'—'}${s.barcode_number?'<br><span style="font-size:10px;">'+s.barcode_number+'</span>':''}</td>
-              <td style="font-size:11px;color:var(--muted);">${s.store_name||'—'}</td>
-              <td style="font-size:11px;color:var(--muted);">${(s.scanned_by||'—').split('@')[0]}</td>
+              <td><div style="font-size:12px;font-weight:500;color:var(--text);">${esc(s.product_name||'—')}</div></td>
+              <td style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">${esc(s.lot_number||'—')}${s.barcode_number?'<br><span style="font-size:10px;">'+esc(s.barcode_number)+'</span>':''}</td>
+              <td style="font-size:11px;color:var(--muted);">${esc(s.store_name||'—')}</td>
+              <td style="font-size:11px;color:var(--muted);">${esc((s.scanned_by||'—').split('@')[0])}</td>
               <td style="font-size:11px;color:var(--muted);">${s.supplier_name||'—'}</td>
               <td>${s.recall_resolved
                 ? `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(var(--accent-rgb),0.12);color:var(--accent);font-weight:600;">Resolved</span>`
@@ -10838,14 +10874,14 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
               const sevColor = formatSeverity(r.severity).color;
               return `<tr>
                 <td style="white-space:nowrap;font-size:11px;color:var(--muted);">${fmtDate(d)}</td>
-                <td style="font-size:12px;font-weight:600;color:var(--text);">${r.product_name||'—'}
+                <td style="font-size:12px;font-weight:600;color:var(--text);">${esc(r.product_name||'—')}
                   ${r.is_drill?`<div style="font-size:10px;color:var(--warn);">DRILL</div>`:''}
                 </td>
-                <td style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">${r.lot_number||'—'}</td>
+                <td style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">${esc(r.lot_number||'—')}</td>
                 <td><span style="font-size:10px;padding:2px 8px;border-radius:10px;${isPushed?'background:rgba(var(--info-light-rgb),0.1);color:var(--info);':'background:rgba(var(--accent-muted-rgb),0.1);color:var(--muted);'}">
                   ${isPushed?'Manufacturer':(r.source||'Manual')}</span></td>
-                <td style="font-size:11px;color:${sevColor};">${r.severity?formatSeverity(r.severity).label:'—'}</td>
-                <td style="font-size:11px;color:var(--muted);max-width:180px;">${r.reason||'—'}</td>
+                <td style="font-size:11px;color:${sevColor};">${esc(r.severity?formatSeverity(r.severity).label:'—')}</td>
+                <td style="font-size:11px;color:var(--muted);max-width:180px;">${esc(r.reason||'—')}</td>
                 <td><span style="font-size:10px;padding:2px 8px;border-radius:10px;background:${(isPushed||r.active)?'rgba(var(--danger-rgb),0.12)':'rgba(var(--accent-rgb),0.12)'};color:${(isPushed||r.active)?'var(--danger)':'var(--accent)'};">${(isPushed||r.active)?'Active':'Resolved'}</span></td>
               </tr>`;}).join('')}
           </tbody>
@@ -10928,7 +10964,7 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
         ${statTile(avgScore+'%', 'Avg compliance', avgScore>=80?'var(--accent)':avgScore>=60?'var(--warn)':'var(--danger)')}
       </div>
       ${dark > 0 ? `<div style="background:rgba(var(--danger-rgb),0.06);border:1px solid rgba(var(--danger-rgb),0.2);border-radius:10px;padding:12px 16px;margin-bottom:14px;font-size:12px;color:var(--danger);">
-        ⚠ ${dark} dark store${dark!==1?'s':''} detected — no scanning activity in the last 7 days: ${data.filter(s=>s.status==='dark').map(s=>s.name).join(', ')}
+        ⚠ ${dark} dark store${dark!==1?'s':''} detected — no scanning activity in the last 7 days: ${data.filter(s=>s.status==='dark').map(s=>esc(s.name)).join(', ')}
       </div>` : ''}
       <div class="panel"><div class="panel-body" style="padding:0;">
         <table class="store-table" style="width:100%;">
@@ -10940,7 +10976,7 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
             ${data.length === 0 ? `<tr><td colspan="8"><div class="empty">No stores configured.</div></td></tr>` :
             data.map(s => `<tr>
               <td style="font-size:12px;font-weight:600;color:var(--text);">${esc(s.name)}</td>
-              <td style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${s.store_code||'—'}</td>
+              <td style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${esc(s.store_code||'—')}</td>
               <td><span style="font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600;background:${s.status==='active'?'rgba(var(--accent-rgb),0.12)':s.status==='slow'?'rgba(var(--warn-rgb),0.12)':'rgba(var(--danger-rgb),0.12)'};color:${s.status==='active'?'var(--accent)':s.status==='slow'?'var(--warn)':'var(--danger)'};">${s.status.charAt(0).toUpperCase()+s.status.slice(1)}</span></td>
               <td>
                 <div style="display:flex;align-items:center;gap:6px;">
@@ -10987,15 +11023,15 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
       <div class="panel" style="margin-bottom:14px;border-color:var(--danger);">
         <div class="panel-header" style="background:rgba(var(--danger-rgb),0.03);">
           <div>
-            <div class="panel-title" style="color:var(--danger);">🚨 ${r.product_name}</div>
-            <div class="panel-sub">${r.severity?formatSeverity(r.severity).label:''}${r.lot_number?' · Lot: '+r.lot_number:''} · Published ${fmtDate(r.published_at)}</div>
+            <div class="panel-title" style="color:var(--danger);">🚨 ${esc(r.product_name)}</div>
+            <div class="panel-sub">${r.severity?formatSeverity(r.severity).label:''}${r.lot_number?' · Lot: '+esc(r.lot_number):''} · Published ${fmtDate(r.published_at)}</div>
           </div>
           <button onclick="navigator.clipboard.writeText(document.getElementById('notice-text').value).then(()=>{this.textContent='Copied ✓';setTimeout(()=>this.textContent='Copy text',2000)})"
             style="font-family:'DM Mono',monospace;font-size:11px;padding:6px 12px;border-radius:6px;border:1px solid var(--glass-border);background:none;color:var(--muted);cursor:pointer;flex-shrink:0;">Copy text</button>
         </div>
         <div class="panel-body">
           <textarea id="notice-text" rows="14"
-            style="width:100%;background:var(--surface2);border:1px solid var(--glass-border);border-radius:8px;padding:12px 14px;font-family:'DM Mono',monospace;font-size:12px;color:var(--text);resize:vertical;line-height:1.7;">${noticeText}</textarea>
+            style="width:100%;background:var(--surface2);border:1px solid var(--glass-border);border-radius:8px;padding:12px 14px;font-family:'DM Mono',monospace;font-size:12px;color:var(--text);resize:vertical;line-height:1.7;">${esc(noticeText)}</textarea>
           <div id="customer-match-results" style="margin-top:14px;"></div>
           <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:14px;">
             <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:8px;">Match against customer purchase list</div>
@@ -11041,12 +11077,12 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
             ${data.length === 0 ? `<tr><td colspan="8"><div class="empty">No records in this date range.</div></td></tr>` :
             data.map(s => `<tr>
               <td style="white-space:nowrap;font-size:11px;color:var(--muted);">${fmtDate(s.created_at)}</td>
-              <td style="font-size:12px;font-weight:500;color:var(--text);">${s.product_name||'—'}</td>
-              <td style="font-size:11px;color:${s.lot_number?'var(--text)':'var(--danger)'};font-family:'DM Mono',monospace;">${s.lot_number||'⚠ missing'}</td>
-              <td style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${s.barcode_number||'—'}</td>
+              <td style="font-size:12px;font-weight:500;color:var(--text);">${esc(s.product_name||'—')}</td>
+              <td style="font-size:11px;color:${s.lot_number?'var(--text)':'var(--danger)'};font-family:'DM Mono',monospace;">${esc(s.lot_number||'⚠ missing')}</td>
+              <td style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${esc(s.barcode_number||'—')}</td>
               <td style="font-size:11px;color:${s.supplier_name?'var(--muted)':'var(--warn)'};">${s.supplier_name||'—'}</td>
-              <td style="font-size:11px;color:var(--muted);">${s.store_name||'—'}</td>
-              <td style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${s.reference_document||'—'}</td>
+              <td style="font-size:11px;color:var(--muted);">${esc(s.store_name||'—')}</td>
+              <td style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${esc(s.reference_document||'—')}</td>
               <td>${isUS
                 ? (s.is_ftl ? `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(var(--info-light-rgb),0.1);color:var(--info);font-weight:600;">FTL ✓</span>` : `<span style="font-size:10px;color:var(--muted);">—</span>`)
                 : (s.recall_resolved ? `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(var(--accent-rgb),0.12);color:var(--accent);font-weight:600;">Resolved</span>` : `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(var(--accent-muted-rgb),0.08);color:var(--muted);">On shelf</span>`)}
@@ -11135,7 +11171,7 @@ el.innerHTML = `
           <table class="store-table" style="width:100%;">
             <thead><tr><th>Customer</th><th>Email</th><th>Store</th><th>Purchase date</th></tr></thead>
             <tbody>
-              ${matched.slice(0,20).map(c => '<tr><td style="font-size:12px;font-weight:500;color:var(--text);">' + (c.name||'—') + '</td><td style="font-size:11px;color:var(--muted);font-family:DM Mono,monospace;">' + c.email + '</td><td style="font-size:11px;color:var(--muted);">' + c.store + '</td><td style="font-size:11px;color:var(--muted);">' + c.date + '</td></tr>').join('')}
+              ${matched.slice(0,20).map(c => '<tr><td style="font-size:12px;font-weight:500;color:var(--text);">' + esc(c.name||'—') + '</td><td style="font-size:11px;color:var(--muted);font-family:DM Mono,monospace;">' + esc(c.email) + '</td><td style="font-size:11px;color:var(--muted);">' + esc(c.store) + '</td><td style="font-size:11px;color:var(--muted);">' + esc(c.date) + '</td></tr>').join('')}
               ${matched.length > 20 ? '<tr><td colspan="4" style="text-align:center;font-size:11px;color:var(--muted);padding:10px;">+' + (matched.length - 20) + ' more in downloaded CSV</td></tr>' : ''}
             </tbody>
           </table>
@@ -11874,9 +11910,9 @@ async function renderSettings() {
           <div class="panel-body">
             <div id="org-settings-msg" style="display:none;font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;"></div>
             <div class="field"><label>Organisation name</label>
-              <input id="org-name-input" type="text" value="${org?.name||_orgName}" /></div>
+              <input id="org-name-input" type="text" value="${esc(org?.name||_orgName)}" /></div>
             <div class="field"><label>Contact email</label>
-              <input id="org-email-input" type="email" value="${org?.contact_email||''}" placeholder="e.g. safety@yourcompany.com" /></div>
+              <input id="org-email-input" type="email" value="${esc(org?.contact_email||'')}" placeholder="e.g. safety@yourcompany.com" /></div>
             <div class="field"><label>Region <span style="color:var(--muted);font-size:10px;text-transform:none;letter-spacing:0;">— org-wide default</span></label>
               <select id="org-region-input" ${isAdmin ? '' : 'disabled style="opacity:0.55;cursor:not-allowed;"'}>
                 <option value="no" ${_orgDefaultRegion!=='us'?'selected':''}>Norway</option>
@@ -11912,7 +11948,7 @@ async function renderSettings() {
             <div class="field"><label>Role</label>
               <input type="text" value="${_userRole?.replace('_',' ')||'corp_admin'}" readonly style="opacity:0.7;text-transform:capitalize;" /></div>
             <div class="field" style="margin-bottom:0;"><label>Organisation</label>
-              <input type="text" value="${_orgName}" readonly style="opacity:0.7;" /></div>
+              <input type="text" value="${esc(_orgName)}" readonly style="opacity:0.7;" /></div>
             <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border);">
               <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">To change your password or email, visit account settings.</div>
               <a href="https://batchdapp.com" style="font-size:11px;color:var(--accent);text-decoration:none;">batchdapp.com →</a>
@@ -12546,7 +12582,7 @@ async function renderStoreManagerOverview() {
       ${pendingAcks > 0 ? `
       <div style="background:rgba(var(--danger-rgb),0.08);border:1px solid rgba(var(--danger-rgb),0.25);border-radius:10px;padding:12px 16px;display:flex;align-items:center;gap:12px;margin-bottom:20px;">
         <div style="width:8px;height:8px;border-radius:50%;background:var(--danger);animation:blink 1.2s ease-in-out infinite;flex-shrink:0;"></div>
-        <div style="font-size:12px;color:var(--danger);flex:1;"><strong>${pendingAcks} recall${pendingAcks!==1?'s':''}</strong> require acknowledgement at ${storeName}.</div>
+        <div style="font-size:12px;color:var(--danger);flex:1;"><strong>${pendingAcks} recall${pendingAcks!==1?'s':''}</strong> require acknowledgement at ${esc(storeName)}.</div>
         <button onclick="showPanel('recalls')" style="font-size:11px;color:var(--danger);border:1px solid rgba(var(--danger-rgb),0.4);border-radius:6px;padding:5px 12px;background:none;cursor:pointer;">View →</button>
       </div>` : ''}
 
@@ -12554,7 +12590,7 @@ async function renderStoreManagerOverview() {
         <div class="kpi-card blue">
           <div class="kpi-label">Scans today</div>
           <div class="kpi-value">${scansToday}</div>
-          <div class="kpi-sub">${scans.length} total at ${storeName}</div>
+          <div class="kpi-sub">${scans.length} total at ${esc(storeName)}</div>
         </div>
         <div class="kpi-card green">
           <div class="kpi-label">Products on shelf</div>
@@ -12576,17 +12612,17 @@ async function renderStoreManagerOverview() {
       <div class="two-col">
         <div class="panel">
           <div class="panel-header">
-            <div><div class="panel-title">Recent scans</div><div class="panel-sub">${storeName}</div></div>
+            <div><div class="panel-title">Recent scans</div><div class="panel-sub">${esc(storeName)}</div></div>
             <button class="panel-action" onclick="showPanel('traceability')">All scans →</button>
           </div>
           <div class="panel-body">
             ${recent.length === 0
-              ? `<div class="empty">No scans yet at ${storeName}.</div>`
+              ? `<div class="empty">No scans yet at ${esc(storeName)}.</div>`
               : recent.map(s => `
                 <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(var(--surface-tint-rgb),0.5);">
                   <div style="flex:1;min-width:0;">
-                    <div style="font-size:12px;color:var(--text);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${s.product_name||'—'}</div>
-                    <div style="font-size:10px;color:var(--muted);">Lot: ${s.lot_number||'—'} · ${s.created_at?fmtDash(s.created_at):''}</div>
+                    <div style="font-size:12px;color:var(--text);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(s.product_name||'—')}</div>
+                    <div style="font-size:10px;color:var(--muted);">Lot: ${esc(s.lot_number||'—')} · ${s.created_at?fmtDash(s.created_at):''}</div>
                   </div>
                   ${s.recall_resolved?`<span style="font-size:10px;background:rgba(var(--accent-rgb),0.1);color:var(--accent);padding:2px 7px;border-radius:8px;">Resolved</span>`
                   :s.removed_from_shelf_at?`<span style="font-size:10px;background:rgba(var(--warn-rgb),0.1);color:var(--warn);padding:2px 7px;border-radius:8px;">Removed</span>`
@@ -12617,7 +12653,7 @@ async function renderStoreManagerOverview() {
                 : acks.slice(0,4).map(a => `
                   <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid rgba(var(--surface-tint-rgb),0.4);">
                     <div style="width:6px;height:6px;border-radius:50%;flex-shrink:0;background:${a.status==='confirmed'?'var(--accent)':a.status==='notified'?'var(--danger)':'var(--warn)'}"></div>
-                    <div style="flex:1;font-size:11px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${a.recall_events?.product_name||'—'}</div>
+                    <div style="flex:1;font-size:11px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(a.recall_events?.product_name||'—')}</div>
                     <span style="font-size:10px;color:${a.status==='confirmed'?'var(--accent)':a.status==='notified'?'var(--danger)':'var(--warn)'};">${a.status}</span>
                   </div>`).join('')}
               ${acks.length > 4 ? `<div style="font-size:10px;color:var(--muted);padding-top:8px;cursor:pointer;" onclick="showPanel('recalls')">View all ${acks.length} →</div>` : ''}
@@ -13052,7 +13088,10 @@ async function submitDashPhoneComplaint() {
     submitted_by_label: 'Staff (phone intake)'
   };
   try {
-    const res = await fetch('/.netlify/functions/triage-complaint', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    // Staff intake must prove who it is: triage-complaint derives source and
+    // the audit actor from this JWT, never from the payload.
+    const { data: { session: _tcSession } } = await sb.auth.getSession();
+    const res = await fetch('/.netlify/functions/triage-complaint', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (_tcSession?.access_token || '') }, body: JSON.stringify(payload) });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Submission failed');
     const s = dashTriageLevelStyle(data.triage_level);
@@ -13061,14 +13100,14 @@ async function submitDashPhoneComplaint() {
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:32px;text-align:center;">
           <div style="display:inline-block;background:${s.bg};color:${s.color};font-size:11px;font-weight:700;font-family:'DM Mono',monospace;padding:4px 12px;border-radius:6px;letter-spacing:0.05em;margin-bottom:16px;">${s.label}</div>
           <div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:8px;">Complaint logged and triaged</div>
-          <div style="font-size:12px;font-family:'DM Mono',monospace;color:var(--muted);margin-bottom:16px;">${data.complaint_number}</div>
-          <div style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:20px;">${data.triage_summary}</div>
+          <div style="font-size:12px;font-family:'DM Mono',monospace;color:var(--muted);margin-bottom:16px;">${esc(data.complaint_number)}</div>
+          <div style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:20px;">${esc(data.triage_summary)}</div>
           ${payload.customer_email ? `<div style="font-size:12px;color:var(--muted);margin-bottom:20px;">Follow-up email sent to ${payload.customer_email}.</div>` : ''}
           ${data.pattern_alert ? `
             <div style="background:rgba(var(--warn-rgb),0.08);border:1px solid rgba(var(--warn-rgb),0.3);border-radius:8px;padding:12px 16px;margin-bottom:20px;text-align:left;">
               <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2.5"><path d="M12 2L2 19h20L12 2z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17" r="0.6" fill="var(--warn)" stroke="none"/></svg>
-                <span style="font-size:12px;font-weight:700;color:var(--warn);">PATTERN DETECTED: ${data.pattern_alert.title.toUpperCase()}</span>
+                <span style="font-size:12px;font-weight:700;color:var(--warn);">PATTERN DETECTED: ${esc(data.pattern_alert.title.toUpperCase())}</span>
               </div>
               <div style="font-size:12px;color:var(--muted);">${data.pattern_alert.count} complaints about this product in the last 7 days. Consider notifying the manufacturer.</div>
             </div>
@@ -13279,7 +13318,9 @@ async function updateDashTriageStatus(id, newStatus) {
   try {
     // Both writes destructure { error } so RLS denials don't silently land
     // a fake "status changed" outcome with the audit log out of sync.
-    const { error: updErr } = await sb.from('complaints').update({ status: newStatus }).eq('id', id);
+    const { data: updRows, error: updErr } = await sb.from('complaints')
+      .update({ status: newStatus }).eq('id', id).eq('receiving_org_id', _orgId).select('id');
+    if (!updErr && (!updRows || updRows.length === 0)) throw new Error('Complaint not found in this organisation');
     if (updErr) throw updErr;
     const { error: logErr } = await sb.from('complaint_audit_log').insert({ complaint_id: id, action: 'status_changed_to_' + newStatus, actor_label: 'Staff' });
     if (logErr) throw logErr;
@@ -13323,7 +13364,7 @@ function renderComingSoon(name) {
   document.getElementById('main-content').innerHTML = `
     <div style="display:flex;align-items:center;justify-content:center;height:300px;flex-direction:column;gap:12px;color:var(--muted);">
       <div style="font-size:32px;opacity:0.3;">🔨</div>
-      <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;color:var(--text);">${name} — coming soon</div>
+      <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;color:var(--text);">${esc(name)} — coming soon</div>
       <div style="font-size:12px;">This module is in development.</div>
     </div>`;
 }
@@ -13515,7 +13556,7 @@ async function csvParseAndPreview(text, filename) {
   document.getElementById('csv-preview-content').innerHTML = `
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;flex-wrap:wrap;">
       <div style="background:rgba(var(--accent-rgb),0.1);border:1px solid rgba(var(--accent-rgb),0.3);border-radius:8px;padding:6px 12px;font-size:12px;color:var(--accent);">✓ ${rows.length} rows · ${headers.length} columns</div>
-      <div style="font-size:12px;color:var(--muted);">${filename}</div>
+      <div style="font-size:12px;color:var(--muted);">${esc(filename)}</div>
     </div>
 
     <div style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:18px;">
@@ -13598,7 +13639,7 @@ function csvUpdatePreview() {
       ${preview.map((row,i) => `<tr style="background:${i%2?'rgba(0,0,0,0.1)':'transparent'};">
         ${mapped.map(f => {
           const val = row[fieldMap[f.key]] || '';
-          return `<td style="font-size:11px;color:${val?'var(--text)':'rgba(var(--accent-muted-rgb),0.3)'};padding:8px 10px;border-bottom:1px solid rgba(var(--surface-tint-rgb),0.4);font-family:${f.type==='mono'?'DM Mono,monospace':'inherit'};max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${val||'—'}</td>`;
+          return `<td style="font-size:11px;color:${val?'var(--text)':'rgba(var(--accent-muted-rgb),0.3)'};padding:8px 10px;border-bottom:1px solid rgba(var(--surface-tint-rgb),0.4);font-family:${f.type==='mono'?'DM Mono,monospace':'inherit'};max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(val||'—')}</td>`;
         }).join('')}
       </tr>`).join('')}
     </tbody>
@@ -13840,7 +13881,7 @@ const fmtElapsed = d => { if (!d) return '—'; const ms = Date.now()-new Date(d
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--accent-dim)" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
           </div>
           <div style="flex:1;">
-            <div style="font-size:13px;font-weight:700;color:var(--text);">${inv.product_name||'Product investigation'}</div>
+            <div style="font-size:13px;font-weight:700;color:var(--text);">${esc(inv.product_name||'Product investigation')}</div>
             <div style="font-size:11px;color:var(--accent);margin-top:2px;">Closed · You responded · From ${mfrName} · ${fmtDate(inv.created_at)}</div>
           </div>
         </div>`;
@@ -13852,11 +13893,11 @@ const fmtElapsed = d => { if (!d) return '—'; const ms = Date.now()-new Date(d
           <div style="flex:1;min-width:220px;">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap;">
               <div style="width:7px;height:7px;border-radius:50%;background:${urgColors[inv.urgency_class||2]};flex-shrink:0;"></div>
-              <div style="font-size:13px;font-weight:700;color:var(--text);">${inv.product_name||'Product investigation'}</div>
+              <div style="font-size:13px;font-weight:700;color:var(--text);">${esc(inv.product_name||'Product investigation')}</div>
               <span style="font-size:10px;padding:2px 8px;border-radius:var(--r-pill);background:rgba(${urgRgb[inv.urgency_class||2]},0.09);color:${urgColors[inv.urgency_class||2]};">${urgLabels[inv.urgency_class||2]}</span>
             </div>
             <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">
-              ${inv.issue_type?issueLabels[inv.issue_type]||inv.issue_type:'Issue investigation'} · ${inv.lot_number?`Lot <span style="font-family:'DM Mono',monospace;color:var(--text);">${inv.lot_number}</span> · `:''}From ${mfrName} · ${fmtElapsed(inv.created_at)} ago
+              ${inv.issue_type?issueLabels[inv.issue_type]||inv.issue_type:'Issue investigation'} · ${inv.lot_number?`Lot <span style="font-family:'DM Mono',monospace;color:var(--text);">${esc(inv.lot_number)}</span> · `:''}From ${mfrName} · ${fmtElapsed(inv.created_at)} ago
             </div>
 
             <!-- Step circles -->
@@ -13974,7 +14015,7 @@ async function openDashInvestResponse(invId) {
       <div style="padding:22px 26px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:12px;">
         <div>
           <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:15px;color:var(--text);">Submit investigation response</div>
-          <div style="font-size:12px;color:var(--muted);margin-top:3px;">${inv.product_name} · ${issueLabels[inv.issue_type]||inv.issue_type}</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:3px;">${esc(inv.product_name)} · ${issueLabels[inv.issue_type]||inv.issue_type}</div>
           ${inv.issue_description ? `<div style="font-size:11px;color:var(--info);margin-top:6px;padding:8px 10px;background:rgba(var(--info-light-rgb),0.06);border-radius:6px;line-height:1.5;">${inv.issue_description}</div>` : ''}
           ${inv.instructions ? `<div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5;">📋 <strong>Instructions:</strong> ${inv.instructions}</div>` : ''}
         </div>
@@ -14195,8 +14236,8 @@ async function generateDrillReport(drillId) {
 
       return `
         <div style="margin-bottom:32px;padding-bottom:24px;border-bottom:1px solid #ddd;">
-          <h3 style="font-size:14px;color:#111;margin:0 0 4px;">Drill: ${ev.product_name || 'Unknown product'}</h3>
-          <div style="font-size:11px;color:#666;margin-bottom:14px;">${drillDate} · Lot: ${ev.lot_number || '—'} · ${ev.severity || 'Simulated'} severity · Reason: ${ev.reason || 'Mock drill exercise'}</div>
+          <h3 style="font-size:14px;color:#111;margin:0 0 4px;">Drill: ${esc(ev.product_name || 'Unknown product')}</h3>
+          <div style="font-size:11px;color:#666;margin-bottom:14px;">${drillDate} · Lot: ${esc(ev.lot_number || '—')} · ${esc(ev.severity || 'Simulated')} severity · Reason: ${esc(ev.reason || 'Mock drill exercise')}</div>
           <table style="width:100%;border-collapse:collapse;margin-bottom:12px;">
             <thead><tr style="background:#f5f5f5;">
               <th style="text-align:left;padding:6px 10px;font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:#555;border-bottom:1px solid #ddd;">Store</th>
@@ -14208,7 +14249,7 @@ async function generateDrillReport(drillId) {
                 ? `<tr><td colspan="3" style="padding:10px;font-size:11px;color:#888;font-style:italic;">No store acknowledgement records for this drill.</td></tr>`
                 : acks.map(a => `
                   <tr style="border-bottom:1px solid #eee;">
-                    <td style="padding:7px 10px;font-size:11px;">${a.stores?.name || '—'}</td>
+                    <td style="padding:7px 10px;font-size:11px;">${esc(a.stores?.name || '—')}</td>
                     <td style="padding:7px 10px;font-size:11px;">
                       <span style="padding:2px 8px;border-radius:10px;background:${a.status==='confirmed'?'#d1fae5':a.status==='notified'?'#fef3c7':'#e0f2fe'};color:${a.status==='confirmed'?'#065f46':a.status==='notified'?'#d97706':'#0c4a6e'};font-size:10px;font-weight:600;">${a.status==='confirmed'?'Resolved':(a.status.charAt(0).toUpperCase()+a.status.slice(1))}</span>
                     </td>
@@ -14240,7 +14281,7 @@ async function generateDrillReport(drillId) {
 
     const html = `<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="UTF-8"><title>Recall Drill Compliance Report — ${org?.name || _orgName}</title>
+<head><meta charset="UTF-8"><title>Recall Drill Compliance Report — ${esc(org?.name || _orgName)}</title>
 <style>
   body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 12px; color: #111; margin: 0; padding: 32px 48px; max-width: 800px; }
   @media print { body { padding: 20px; } .no-print { display: none; } @page { margin: 20mm; } }
@@ -14267,7 +14308,7 @@ async function generateDrillReport(drillId) {
     <div>
       <div class="logo">Batch'd</div>
       <h1 style="margin-top:6px;">Recall Drill Compliance Report</h1>
-      <div style="font-size:12px;color:#555;margin-top:4px;">${org?.name || _orgName} · Generated ${today}</div>
+      <div style="font-size:12px;color:#555;margin-top:4px;">${esc(org?.name || _orgName)} · Generated ${today}</div>
     </div>
     <div class="meta">
       Regulatory reference: ${regRef}<br>
@@ -14295,7 +14336,7 @@ async function generateDrillReport(drillId) {
 
   <h2>Executive Summary</h2>
   <p style="line-height:1.7;color:#333;">
-    ${org?.name || _orgName} has conducted <strong>${drills.length} mock recall drill${drills.length!==1?'s':''}</strong>
+    ${esc(org?.name || _orgName)} has conducted <strong>${drills.length} mock recall drill${drills.length!==1?'s':''}</strong>
     in the past 12 months. ${drills.length >= 1
       ? `This satisfies the ${isUS?'FDA-recommended':'industry best practice'} requirement for at least one annual recall readiness exercise.`
       : `This does not satisfy the ${isUS?'FDA-recommended':'industry best practice'} requirement for annual recall readiness exercises. A drill should be conducted as soon as possible.`}
@@ -14312,7 +14353,7 @@ async function generateDrillReport(drillId) {
   </div>
 
   <div class="footer">
-    <span>Batch'd · batchd.no · Confidential — ${org?.name || _orgName} internal use</span>
+    <span>Batch'd · batchd.no · Confidential — ${esc(org?.name || _orgName)} internal use</span>
     <span>Generated ${today} · ${window.location.hostname}</span>
   </div>
 </body>
@@ -14393,7 +14434,7 @@ const fmtDT      = d => d ? new Date(d).toLocaleString(_dashLocale(), {day:'nume
 
     const storeRows = acks.map(a => `
       <tr style="border-bottom:1px solid #f0f0f0;">
-        <td style="padding:7px 12px;font-size:11px;color:#333;">${a.stores?.name || '—'}</td>
+        <td style="padding:7px 12px;font-size:11px;color:#333;">${esc(a.stores?.name || '—')}</td>
         <td style="padding:7px 12px;">
           <span style="display:inline-block;padding:2px 9px;border-radius:10px;font-size:10px;font-weight:700;
             background:${a.status==='confirmed'?'#d1fae5':a.status==='notified'?'#fef3c7':'#e0f2fe'};
@@ -14408,7 +14449,7 @@ const fmtDT      = d => d ? new Date(d).toLocaleString(_dashLocale(), {day:'nume
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Recall Drill Certificate — ${org.name || _orgName}</title>
+<title>Recall Drill Certificate — ${esc(org.name || _orgName)}</title>
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700;800;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -14788,7 +14829,7 @@ const fmtDT      = d => d ? new Date(d).toLocaleString(_dashLocale(), {day:'nume
     <div>
       <div class="cert-logo">Batch'd</div>
       <div class="cert-title">Recall Readiness Certificate</div>
-      <div class="cert-org">${org.name || _orgName}</div>
+      <div class="cert-org">${esc(org.name || _orgName)}</div>
       <div class="cert-date">Drill conducted ${drillDate}</div>
     </div>
     <div class="pass-badge ${passed ? 'pass' : 'fail'}">
@@ -14815,7 +14856,7 @@ const fmtDT      = d => d ? new Date(d).toLocaleString(_dashLocale(), {day:'nume
 
     <!-- Declaration -->
     <div class="declaration">
-      This certificate confirms that <strong>${org.name || _orgName}</strong> conducted a
+      This certificate confirms that <strong>${esc(org.name || _orgName)}</strong> conducted a
       <strong>mock product recall drill</strong> on <strong>${drillDate}</strong> using the
       Batch'd recall management platform. The drill simulated a manufacturer recall notification
       distributed across the organisation's store network, testing the full 5-step response chain:
@@ -14880,8 +14921,8 @@ const fmtDT      = d => d ? new Date(d).toLocaleString(_dashLocale(), {day:'nume
     <div class="sig-box">
       <div class="sig-label">Recall coordinator (responsible party)</div>
       ${coord.recall_coordinator_name
-        ? `<div class="sig-name">${coord.recall_coordinator_name}</div>
-           <div class="sig-contact">${coord.recall_coordinator_contact || ''}</div>`
+        ? `<div class="sig-name">${esc(coord.recall_coordinator_name)}</div>
+           <div class="sig-contact">${esc(coord.recall_coordinator_contact || '')}</div>`
         : `<div style="font-size:12px;color:#9ca3af;font-style:italic;">No coordinator assigned — set one in Settings</div>`}
       <div class="sig-line"></div>
       <div class="sig-placeholder"></div>
@@ -14898,7 +14939,7 @@ const fmtDT      = d => d ? new Date(d).toLocaleString(_dashLocale(), {day:'nume
 
   <!-- Footer -->
   <div class="cert-footer">
-    <span>Batch'd · batchd.no · ${org.name || _orgName}</span>
+    <span>Batch'd · batchd.no · ${esc(org.name || _orgName)}</span>
     <span class="cert-ref">${certRef}</span>
     <span>Generated ${today}</span>
   </div>
@@ -15010,7 +15051,7 @@ async function renderPatternAlerts() {
               ${hasCritical?'⚠ Pattern alert — critical complaints':'Pattern alert — multiple stores affected'}
             </div>
             <div style="font-size:12px;color:var(--text);margin-top:2px;">
-              <strong>${p.name}</strong> — ${p.items.length} complaints across ${stores.size} store${stores.size!==1?'s':''} in the last 30 days
+              <strong>${esc(p.name)}</strong> — ${p.items.length} complaints across ${stores.size} store${stores.size!==1?'s':''} in the last 30 days
             </div>
             <div style="font-size:11px;color:var(--muted);margin-top:4px;">This may warrant a supplier investigation or proactive recall assessment.</div>
           </div>
@@ -15073,11 +15114,14 @@ async function renderConsumerNotification() {
     if (dists?.length) {
       const evIds = [...new Set(dists.map(d => d.recall_event_id))];
       const { data: evs } = await sb.from('recall_events')
-        .select('id, product_name, lot_number, severity, reason, published_at, is_drill')
+        .select('id, product_name, lot_number, severity, reason, published_at, is_drill, closed_at')
         .in('id', evIds)
         .eq('is_drill', false)
         .order('published_at', { ascending: false });
-      recallEvents = evs || [];
+      // notify-consumers refuses an event closed more than 30 days ago, so do
+      // not offer one here and produce a 403 at send time.
+      const cutoff = Date.now() - 30 * 86400 * 1000;
+      recallEvents = (evs || []).filter(ev => !ev.closed_at || new Date(ev.closed_at).getTime() > cutoff);
     }
 
     // Manual recalls: only active ones created by this org (not RASFF/FDA imports)
@@ -15155,7 +15199,7 @@ async function renderConsumerNotification() {
           <div id="cn-recall-list">
             ${allRecalls.slice(0, 5).map((r,idx) => {
               const isSelected = _consumerNotifRecallId === r.id;
-              return `<div class="cn-recall-row" data-idx="${idx}" data-product="${(r.product_name||'').toLowerCase()}" data-lot="${(r.lot_number||'').toLowerCase()}" data-source="${r._type}" data-severity="${(r.severity||'').toLowerCase()}" data-date="${new Date(r.published_at||r.created_at).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',year:'numeric'}).toLowerCase()}"
+              return `<div class="cn-recall-row" data-idx="${idx}" data-product="${esc((r.product_name||'').toLowerCase())}" data-lot="${esc((r.lot_number||'').toLowerCase())}" data-source="${r._type}" data-severity="${esc((r.severity||'').toLowerCase())}" data-date="${new Date(r.published_at||r.created_at).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',year:'numeric'}).toLowerCase()}"
                 onclick="selectNotifRecall('${r.id}','${encodeURIComponent(r.product_name||'')}','${encodeURIComponent(r.lot_number||'')}','${encodeURIComponent(r.reason||'')}')"
                 style="display:flex;align-items:center;gap:14px;padding:14px 18px;border-bottom:1px solid var(--border);cursor:pointer;background:${isSelected?'rgba(var(--accent-rgb),0.06)':'transparent'};transition:background 0.15s;"
                 onmouseover="if(!this.classList.contains('cn-selected'))this.style.background='rgba(var(--accent-rgb),0.04)'" onmouseout="if(!this.classList.contains('cn-selected'))this.style.background='transparent'">
@@ -15346,13 +15390,13 @@ function cnFilterRecalls() {
         ${isSel?'<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--accent-dim)" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>':''}
       </div>
       <div style="flex:1;min-width:0;">
-        <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${r.product_name||'—'}</div>
+        <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(r.product_name||'—')}</div>
         <div style="font-size:11px;color:var(--muted);margin-top:2px;">
-          ${r.lot_number?`Lot: <span style="font-family:'DM Mono',monospace;">${r.lot_number}</span> · `:''}
+          ${r.lot_number?`Lot: <span style="font-family:'DM Mono',monospace;">${esc(r.lot_number)}</span> · `:''}
           ${r._type==='pushed'?'Manufacturer push':'Manual'} · ${r.date}
         </div>
       </div>
-      ${r.severity?`<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(var(--danger-rgb),0.1);color:var(--danger);white-space:nowrap;flex-shrink:0;">${r.severity}</span>`:''}
+      ${r.severity?`<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(var(--danger-rgb),0.1);color:var(--danger);white-space:nowrap;flex-shrink:0;">${esc(r.severity)}</span>`:''}
     </div>`;
   }).join('');
 }
@@ -15670,8 +15714,8 @@ async function showStoreTimeline(ackId) {
     <div style="background:var(--surface);border:1px solid var(--glass-border);border-radius:16px;width:100%;max-width:440px;box-shadow:var(--shadow-xl);">
       <div style="padding:18px 22px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:10px;">
         <div>
-          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:15px;">${a.stores?.name||'Store'} — Response timeline</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:3px;">${ev.product_name||''}${ev.lot_number?' · Lot: '+ev.lot_number:''}</div>
+          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:15px;">${esc(a.stores?.name||'Store')} — Response timeline</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:3px;">${esc(ev.product_name||'')}${ev.lot_number?' · Lot: '+esc(ev.lot_number):''}</div>
         </div>
         <button onclick="document.getElementById('dash-store-timeline-modal').remove()" aria-label="Close" style="background:none;border:none;color:var(--muted);cursor:pointer;line-height:1;padding:0;display:inline-flex;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
       </div>

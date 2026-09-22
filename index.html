@@ -5534,16 +5534,32 @@ const dlog = _DEBUG_LOG ? console.log.bind(console) : () => {};
 // call sites already happen post-sign-in, so the session should always
 // be present; we still guard with a clear error if it isn't.
 async function callOcrFunction(task, imageB64, extra) {
+  // AI is a POV/Paying feature. Skip the round trip when the org is not on one;
+  // every caller already treats a null result as "no AI suggestion".
+  if (window._orgAiEnabled === false) { _aiDisabledToastOnce(); return null; }
   const { data: { session } } = await sb.auth.getSession();
   const jwt = session?.access_token;
   if (!jwt) throw new Error('Sign in to use AI capture.');
   const resp = await fetch('/.netlify/functions/ocr', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${jwt}` },
-    body: JSON.stringify({ task, image: imageB64, extra: extra || {} }),
+    body: JSON.stringify({ task, image: imageB64, org_id: _currentOrgId, extra: extra || {} }),
   });
+  if (resp.status === 403) {
+    // Plan changed mid-session, or the org was never enabled.
+    const _b = await resp.json().catch(() => ({}));
+    if (_b?.code === 'ai_disabled') { window._orgAiEnabled = false; _aiDisabledToastOnce(); return null; }
+  }
   if (!resp.ok) throw new Error(`OCR function error: ${resp.status}`);
   return resp.json();
+}
+
+// One toast per session, not one per frame — autocapture calls this on a loop.
+let _aiDisabledToastShown = false;
+function _aiDisabledToastOnce() {
+  if (_aiDisabledToastShown) return;
+  _aiDisabledToastShown = true;
+  try { showToast('AI product recognition is not enabled for this organisation.'); } catch (_) {}
 }
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -5769,6 +5785,11 @@ async function showApp(user) {
 
       _currentOrgId    = member.organisation_id;
       _currentUserRole = member.role || null;
+      // Commercial flag: AI features require organisations.plan pov|active.
+      try {
+        const { data: _planRow } = await sb.from('organisations').select('plan').eq('id', _currentOrgId).maybeSingle();
+        window._orgAiEnabled = ['pov', 'active'].includes(_planRow?.plan);
+      } catch (_) { window._orgAiEnabled = false; }
       if (member.store_id) {
         window._managerStoreId   = member.store_id;
         window._managerStoreName = null;
@@ -7315,7 +7336,7 @@ function printExposureNotice() {
   const { en, no, product, store } = window._exposureNoticePrint;
   const win = window.open('', '_blank');
   win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
-  <title>Customer Exposure Notice — ${product}</title>
+  <title>Customer Exposure Notice — ${esc(product)}</title>
   <style>
     body { font-family: Arial, sans-serif; font-size: 12px; max-width: 680px; margin: 40px auto; padding: 0 20px; color: #111; }
     h2 { color: #c0392b; border-bottom: 2px solid #c0392b; padding-bottom: 8px; }
@@ -7364,12 +7385,12 @@ async function _obLoadStores() {
       _currentStoreName = stores[0].name;
     }
     el.innerHTML = stores.map(s => `
-      <button onclick="obSelectStore('${s.id}','${s.name.replace(/'/g,"\\'")}',this)"
+      <button onclick="obSelectStore('${s.id}', this.dataset.name, this)" data-name="${esc(s.name)}"
         class="ob-choice-btn${_obSelectedStore?.id === s.id ? ' active' : ''}"
         style="padding:12px 14px;">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;"><path d="M3 9l1.5-5h15L21 9"/><path d="M3 9a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0"/><path d="M5 12v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-8"/><path d="M10 21v-5h4v5"/></svg>
         <div style="text-align:left;">
-          <div style="font-weight:700;font-size:13px;">${s.name}</div>
+          <div style="font-weight:700;font-size:13px;">${esc(s.name)}</div>
         </div>
         ${_obSelectedStore?.id === s.id ? '<span style="margin-left:auto;color:var(--accent);">✓</span>' : ''}
       </button>`).join('');
@@ -8978,7 +8999,8 @@ async function identifyProduct(blob) {
   try {
     const b64 = await blobToBase64(blob);
     const data = await callOcrFunction('identify_product', b64);
-    return data.content?.[0]?.text?.trim() || 'Unknown product';
+    // null when the org has no AI plan — treated as "no suggestion".
+    return data?.content?.[0]?.text?.trim() || 'Unknown product';
   } catch(e) {
     return 'Unknown product';
   }
@@ -9669,9 +9691,19 @@ async function _syncOfflineQueueImpl() {
   if (!offlineQueue.length) return;
 
   let synced = 0;
+  let discardedOtherOrg = 0;
   const remaining = [];
   for (const item of offlineQueue) {
     try {
+      // A queued scan belongs to the org that was signed in when it was taken.
+      // If a different org is signed in now, dropping it is correct: replaying
+      // it would file another tenant's scan against this one, and migration
+      // 021's insert policy would reject it anyway.
+      if (item.payload?.organisation_id && item.payload.organisation_id !== _currentOrgId) {
+        discardedOtherOrg++;
+        continue;
+      }
+      if (item.payload) item.payload.scanned_by = currentUser?.email || item.payload.scanned_by || null;
       const ts = item.ts || Date.now();
       const orgPrefix = (item.payload?.organisation_id || 'unknown').slice(0, 8);
       const productPath = `orgs/${orgPrefix}/scans/${ts}_product.jpg`;
@@ -9752,6 +9784,10 @@ async function _syncOfflineQueueImpl() {
     toast.textContent = `${synced} offline scan${synced>1?'s':''} synced`;
     document.body.appendChild(toast);
     setTimeout(() => toast.remove(), 3000);
+  }
+
+  if (discardedOtherOrg > 0) {
+    showToast(`${discardedOtherOrg} queued scan${discardedOtherOrg>1?'s':''} belonged to another organisation and ${discardedOtherOrg>1?'were':'was'} discarded.`, 'warn', 5000);
   }
 }
 
@@ -10775,6 +10811,15 @@ async function fetchFDARecalls() {
   return added;
 }
 
+// The recall-feeds proxy requires a signed-in session (2026-09-20): it was
+// an open relay anyone could drive. One helper so every caller sends the JWT.
+async function _fetchRecallFeed(source) {
+  const { data: { session: _fs } } = await sb.auth.getSession();
+  return fetch('/.netlify/functions/recall-feeds?source=' + encodeURIComponent(source), {
+    headers: { 'Authorization': 'Bearer ' + (_fs?.access_token || '') },
+  });
+}
+
 // ── DEPRECATED: fetchRASFFRecalls ────────────────────────────
 // RASFF has no reliable public API — this function has never succeeded.
 // It was calling the Netlify recall-feeds proxy which only implements
@@ -10782,7 +10827,7 @@ async function fetchFDARecalls() {
 // food safety alerts via Mattilsynet's public RSS feed instead.
 // Kept here for reference; nothing calls this function any more.
 async function fetchRASFFRecalls() {
-  const resp = await fetch('/.netlify/functions/recall-feeds?source=rasff');
+  const resp = await _fetchRecallFeed('rasff');
   if (!resp.ok) throw new Error('RASFF proxy error ' + resp.status);
   const xml = await resp.text();
   const parser = new DOMParser();
@@ -10829,7 +10874,7 @@ async function fetchMattilsynetRecalls() {
   const _isDupe = (title) => _existingNames.some(n =>
     title.length > 60 ? n.startsWith(title.slice(0, 60)) : n === title.slice(0, 120));
   try {
-    const resp = await fetch('/.netlify/functions/recall-feeds?source=mattilsynet_rss');
+    const resp = await _fetchRecallFeed('mattilsynet_rss');
     if (!resp.ok) throw new Error('Mattilsynet RSS proxy error ' + resp.status);
     const xml = await resp.text();
     if (!xml) throw new Error('Empty Mattilsynet feed');
@@ -10859,7 +10904,7 @@ async function fetchMattilsynetRecalls() {
   } catch(e) {
     console.warn('Mattilsynet RSS failed, trying tilbakekallinger page:', e);
     try {
-      const resp2 = await fetch('/.netlify/functions/recall-feeds?source=mattilsynet_page');
+      const resp2 = await _fetchRecallFeed('mattilsynet_page');
       if (!resp2.ok) throw new Error('page proxy error');
       const html = await resp2.text();
       const matches = [...html.matchAll(/href="\/tilbakekallinger\/([^"]+)"[^>]*>([^<]{10,})</g)];
@@ -11221,7 +11266,7 @@ function renderRecords(records, recallQ) {
     <div class="record-card ${matchLevel === 'exact' ? 'recall-match' : matchLevel === 'possible' ? 'recall-possible' : matchLevel === 'raw' ? 'recall-possible' : ''} ${r.recall_resolved ? 'recall-resolved' : ''} ${r.removed_from_shelf_at ? 'shelf-removed' : ''}" style="animation-delay:${i*0.04}s">
       <div class="record-thumb">
         ${r.product_photo_url
-          ? `<img src="${r.product_photo_url}" alt="Product" onclick="openLightbox('${r.product_photo_url}')" style="cursor:pointer;" />`
+          ? `<img src="${esc(r.product_photo_url)}" alt="Product" onclick="openLightbox('${esc(r.product_photo_url)}')" style="cursor:pointer;" />`
           : '<div class="record-thumb-placeholder"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg><span>No photo</span></div>'}
       </div>
       <div class="record-info">
@@ -11253,8 +11298,8 @@ function renderRecords(records, recallQ) {
         ${r.complaint_filed ? `<div style="display:inline-flex;align-items:center;gap:5px;margin-top:4px;font-size:10px;font-family:'DM Mono',monospace;padding:3px 9px;border-radius:10px;background:rgba(var(--warn-rgb),0.1);border:1px solid rgba(var(--warn-rgb),0.3);color:var(--warn);">Complaint filed</div>` : ''}
         ${exposureHtml}
         <div class="record-photos">
-          ${r.product_photo_url ? `<img class="thumb-mini" src="${r.product_photo_url}" title="Product label" onclick="openLightbox('${r.product_photo_url}')" / alt="">` : ''}
-          ${r.barcode_photo_url ? `<img class="thumb-mini" src="${r.barcode_photo_url}" title="Lot code photo" onclick="openLightbox('${r.barcode_photo_url}')" / alt="">` : ''}
+          ${r.product_photo_url ? `<img class="thumb-mini" src="${esc(r.product_photo_url)}" title="Product label" onclick="openLightbox('${esc(r.product_photo_url)}')" / alt="">` : ''}
+          ${r.barcode_photo_url ? `<img class="thumb-mini" src="${esc(r.barcode_photo_url)}" title="Lot code photo" onclick="openLightbox('${esc(r.barcode_photo_url)}')" / alt="">` : ''}
         </div>
         <!-- Audit note + shelf update panel — core traceability fields are locked -->
           <div id="lot-edit-${r.id}" style="display:none;margin-top:8px;padding:12px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;">
@@ -11302,7 +11347,7 @@ function renderRecords(records, recallQ) {
             }
             ${isMatch ? `<button onclick="openRecallActionSheet('${r.id}')" style="font-family:'DM Mono',monospace;font-size:11px;padding:4px 12px;border-radius:6px;border:1px solid ${matchLevel === 'exact' ? 'var(--danger)' : 'var(--warn)'};background:${matchLevel === 'exact' ? 'rgba(var(--danger-rgb),0.1)' : 'rgba(var(--warn-rgb),0.1)'};color:${matchLevel === 'exact' ? 'var(--danger)' : 'var(--warn)'};cursor:pointer;font-weight:700;">${t('card.takeAction')}</button>` : ''}
             ${isRaw ? `<span style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;display:block;margin-top:4px;">Recall code found in label capture. Check physical product before pulling.</span>` : ''}
-            ${!isMatch ? `<button onclick="openComplaintSheet('${r.id}','${esc(r.product_name||'')}','${esc(r.lot_number||'')}','${esc(r.barcode_number||'')}','${esc(r.store_name||'')}')" style="font-family:'DM Mono',monospace;font-size:11px;padding:4px 10px;border-radius:6px;border:1px solid rgba(var(--info-light-rgb),0.3);background:rgba(var(--info-light-rgb),0.07);color:var(--info);cursor:pointer;">${t('card.reportConcern')}</button>` : ''}
+            ${!isMatch ? `<button onclick="openComplaintSheet('${r.id}')" style="font-family:'DM Mono',monospace;font-size:11px;padding:4px 10px;border-radius:6px;border:1px solid rgba(var(--info-light-rgb),0.3);background:rgba(var(--info-light-rgb),0.07);color:var(--info);cursor:pointer;">${t('card.reportConcern')}</button>` : ''}
           </div>
         </div>
       </div>
@@ -12280,7 +12325,7 @@ async function buildShiftSummary() {
       html += `<div style="font-size:11px;color:var(--muted);text-align:center;">
         Scanning since ${firstScan.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}
         ${pace > 0 ? `· ~${pace} min per scan` : ''}
-        ${storesScanned.length > 0 ? `· <strong style="color:var(--text);">${storesScanned.join(', ')}</strong>` : ''}
+        ${storesScanned.length > 0 ? `· <strong style="color:var(--text);">${storesScanned.map(esc).join(', ')}</strong>` : ''}
       </div>`;
     }
 
@@ -12767,6 +12812,7 @@ async function fsmaExport() {
     // Fetch all scans in range — filter FTL-flagged ones
     let query = sb.from('scans')
       .select('*')
+      .eq('organisation_id', _currentOrgId)
       .gte('created_at', fromVal + 'T00:00:00')
       .lte('created_at', toVal + 'T23:59:59')
       .order('created_at', { ascending: true });
@@ -12979,7 +13025,7 @@ function exportCSV() {
 }
 
 function esc(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
 // Canonical recall-alert glyph (design system: stroke-only alert-triangle).
@@ -14085,12 +14131,9 @@ function _acLoop() {
       if (!_acActive) { _acChecking = false; return; }
       try {
         const b64 = await blobToBase64(blob);
-        const prompt = _acPhase === 'product'
-          ? 'Is there a food product label clearly visible, in focus, and filling most of the frame? Answer only YES or NO.'
-          : 'Is there a lot number, batch number, or production code clearly visible and readable in this image? Answer only YES or NO.';
-
-        const result = await callOcrFunction('extract_codes', b64, { prompt, useHaiku: true });
-        const answer = (result.content?.[0]?.text || '').trim().toUpperCase();
+        // Prompt text lives in ocr.js; the client names the template and phase.
+        const result = await callOcrFunction('extract_codes', b64, { promptId: 'autocapture_v1', phase: _acPhase, useHaiku: true });
+        const answer = (result?.content?.[0]?.text || '').trim().toUpperCase();
         if (_acActive && answer.startsWith('YES')) {
           // Perf fix #17: reset backoff counter on success
           _acConsecutiveNo = 0;
@@ -16149,44 +16192,22 @@ async function extractCodesFromImage(blob, learnedContext, tesseractText = null)
     // Only add specifics that the model genuinely can't know without context:
     // the product name (for brand-specific patterns) and any learned format.
 
-    const regionHint = isUSRegion
-      ? 'US grocery context. Lot code is the TLC (Traceability Lot Code) under FSMA 204 — look for LOT, L#, BATCH, PACK DATE, Julian date code. Ignore UPC/EAN barcodes, zip codes, plant numbers (EST. ####).'
-      : [
-          'Norwegian/EU grocery context.',
-          'The lot code ("partinummer") is the production batch identifier — NOT a best-before date or timestamp.',
-          '',
-          'Return the code following these label keywords as the lot:',
-          '  ETTER [code] → lot code   |   PARTI [code] → lot code',
-          '  BATCH [code] → lot code   |   L.nr [code] or L [code] → lot code',
-          '  GOD [code] → lot code only if no ETTER/PARTI/BATCH/L.nr keyword exists',
-          '',
-          'IGNORE: dates (BEST FØR / Holdbar til / DD.MM.YY), times (OFTE / OFTEST HH:MM), EU plant codes (NO XXXX EF), EAN barcodes.',
-          'If none of the above keywords appear, return the most prominent alphanumeric production code visible.',
-        ].join('\n');
+    // ── EXTRACTION PROMPT ────────────────────────────────────
+    // The prompt text (including the US/EU regulatory wording) lives in
+    // netlify/functions/ocr.js as the lot_extract_v1 template, so no
+    // caller-controlled instruction text reaches Anthropic. The client
+    // sends only these parameters; ocr.js length-caps each one and picks
+    // the region copy, which keeps the jurisdiction gate at the leaf.
+    const extractParams = {
+      promptId:    'lot_extract_v1',
+      region:      isUSRegion ? 'us' : 'no',
+      productName,
+      contextHint,
+      cropped:     !!localisedCrop,
+      ocrText:     tesseractText || null,
+    };
 
-    const coreInstructions =
-      `Find the lot/batch code (production traceability identifier) on this food packaging photo.\n` +
-      `${regionHint}\n` +
-      (productName ? `Product: "${productName}"\n` : '') +
-      (contextHint ? `${contextHint}\n` : '') +
-      `Return ONLY valid JSON, no markdown:\n` +
-      `{"lot":"code or null","expiry":"date as printed or null","lot_confidence":"high|medium|low","lot_is_date":false,"location_hint":"where on pack","anchor_before":"label text before code or null","anchor_after":"text after code or null","raw":"ALL visible text verbatim up to 500 chars — capture everything: lot, dates, plant codes, weights, brand, times, all codes. This full text is stored as a searchable fallback for recall matching."}`;
-
-    // ── PASS 1: PRIMARY EXTRACTION (sonnet) ──────────────────
-    const cropNote = localisedCrop
-      ? (isUSRegion ? 'This is a tight crop of US food packaging focused on the TLC region. '
-                    : 'This is a tight crop of Norwegian/EU food packaging focused on the lot code region. ')
-      : '';
-    const pass1Prompt = cropNote ? `${cropNote}${coreInstructions}` : coreInstructions;
-
-    // If tesseract extracted text on-device, prepend it as high-quality context.
-    // This dramatically improves Sonnet's accuracy — it sees the text directly
-    // rather than having to read it from the image. Think of it as "reading ahead."
-    const enrichedPrompt = tesseractText
-      ? `On-device OCR extracted this text from the image:\n"${tesseractText.slice(0, 350)}"\n\nUse this text to identify the lot code. ${pass1Prompt}`
-      : pass1Prompt;
-
-    const pass1 = await callOcrApi(b64Primary, enrichedPrompt, false); // Sonnet — capable
+    const pass1 = await callOcrApi(b64Primary, extractParams, false); // Sonnet — capable
     dlog(`[Pass 1] ${localisedCrop ? 'localised crop' : 'full image'}:`, pass1);
 
     // ── PASS 2: REMOVED for speed ─────────────────────────
@@ -16323,10 +16344,10 @@ async function extractCodesFromImage(blob, learnedContext, tesseractText = null)
   }
 }
 
-async function callOcrApi(b64, promptText, useHaiku = false) {
+async function callOcrApi(b64, params, useHaiku = false) {
   try {
-    const data = await callOcrFunction('extract_codes', b64, { prompt: promptText, useHaiku });
-    const text = data.content?.[0]?.text?.trim() || '{}';
+    const data = await callOcrFunction('extract_codes', b64, { ...params, useHaiku });
+    const text = data?.content?.[0]?.text?.trim() || '{}';
     const clean = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
     try {
       return JSON.parse(clean);
@@ -18393,7 +18414,7 @@ async function loadMgrOnShelf() {
         <div style="margin-bottom:14px;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--surface);">
           <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--surface2);">
             <div>
-              <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:14px;color:var(--text);">${store.store}</div>
+              <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:14px;color:var(--text);">${esc(store.store)}</div>
               <div style="font-size:11px;color:var(--muted);margin-top:2px;">${store.items.length} ${isNO?'poster':'records'} · ${store.units} ${isNO?'enheter':'units'} · ${store.products.size} ${isNO?'produkter':'products'}</div>
             </div>
             <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:22px;color:var(--accent);">${store.units}</div>
@@ -18401,12 +18422,12 @@ async function loadMgrOnShelf() {
           ${store.items.slice(0, 12).map(s => `
             <div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;">
               <div style="flex:1;min-width:0;">
-                <div style="font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${s.product_name||'—'}</div>
-                <div style="font-size:10px;color:var(--muted);margin-top:2px;font-family:'DM Mono',monospace;">${s.lot_number || (isNO?'Parti utilgjengelig':'Lot N/A')} · ${fmtDate(s.created_at)}</div>
+                <div style="font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(s.product_name||'—')}</div>
+                <div style="font-size:10px;color:var(--muted);margin-top:2px;font-family:'DM Mono',monospace;">${esc(s.lot_number || (isNO?'Parti utilgjengelig':'Lot N/A'))} · ${fmtDate(s.created_at)}</div>
               </div>
               <div style="font-size:11px;color:var(--muted);text-align:right;flex-shrink:0;">
                 <div style="font-weight:600;color:var(--text);">${s.quantity||1} ${isNO?'stk':'units'}</div>
-                <div style="font-size:10px;">${(s.scanned_by||'').split('@')[0]||'—'}</div>
+                <div style="font-size:10px;">${esc((s.scanned_by||'').split('@')[0]||'—')}</div>
               </div>
             </div>`).join('')}
           ${store.items.length > 12 ? `<div style="padding:10px 16px;font-size:11px;color:var(--muted);text-align:center;">+${store.items.length - 12} ${isNO?'til':'more'}</div>` : ''}
@@ -18505,8 +18526,8 @@ async function loadMgrPatterns() {
       // Header row
       html += '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px;">';
       html += '<div style="min-width:0;flex:1;">';
-      html += '<div style="font-size:13px;font-weight:600;color:var(--text);font-family:\'Figtree\',sans-serif;">' + (p.product_name||'\u2014') + '</div>';
-      if (p.barcode_number) html += '<div style="font-size:10px;color:var(--muted);font-family:\'DM Mono\',monospace;margin-top:2px;">' + p.barcode_number + '</div>';
+      html += '<div style="font-size:13px;font-weight:600;color:var(--text);font-family:\'Figtree\',sans-serif;">' + esc(p.product_name||'\u2014') + '</div>';
+      if (p.barcode_number) html += '<div style="font-size:10px;color:var(--muted);font-family:\'DM Mono\',monospace;margin-top:2px;">' + esc(p.barcode_number) + '</div>';
       html += '</div>';
 
       // Badges
@@ -18520,11 +18541,11 @@ async function loadMgrPatterns() {
       html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">';
       html += '<div style="background:var(--surface2);border-radius:6px;padding:8px 10px;">'
             + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:3px;">Lot format</div>'
-            + '<div style="font-size:11px;color:var(--text);font-family:\'DM Mono\',monospace;">' + (p.lot_format||'\u2014') + '</div></div>';
+            + '<div style="font-size:11px;color:var(--text);font-family:\'DM Mono\',monospace;">' + esc(p.lot_format||'\u2014') + '</div></div>';
       const hint = p.label_hint ? p.label_hint.slice(0,90) + (p.label_hint.length>90?'\u2026':'') : '\u2014';
       html += '<div style="background:var(--surface2);border-radius:6px;padding:8px 10px;">'
             + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:3px;">Label location</div>'
-            + '<div style="font-size:11px;color:var(--muted);line-height:1.4;">' + hint + '</div></div>';
+            + '<div style="font-size:11px;color:var(--muted);line-height:1.4;">' + esc(hint) + '</div></div>';
       html += '</div>';
 
       // Crop bar
@@ -18532,7 +18553,7 @@ async function loadMgrPatterns() {
 
       // Example code
       if (p.code_a) {
-        html += '<div style="margin-top:8px;font-size:10px;color:var(--muted);font-family:\'DM Mono\',monospace;">Example: <span style="color:var(--text);">' + p.code_a + '</span>' + (p.code_b?' / '+p.code_b:'') + '</div>';
+        html += '<div style="margin-top:8px;font-size:10px;color:var(--muted);font-family:\'DM Mono\',monospace;">Example: <span style="color:var(--text);">' + esc(p.code_a) + '</span>' + (p.code_b?' / '+esc(p.code_b):'') + '</div>';
       }
       html += '</div>';
     });
@@ -18977,7 +18998,7 @@ async function loadStoreMgmt() {
   if (!el) return;
   el.innerHTML = `<div style="font-size:13px;color:var(--muted);padding:20px 0;text-align:center;"><div class="spinner" style="margin:0 auto 8px;"></div>${t('js.loading')}</div>`;
   try {
-    const { data, error } = await sb.from('stores').select('id, name, active, created_at').order('name');
+    const { data, error } = await sb.from('stores').select('id, name, active, created_at').eq('organisation_id', _currentOrgId).order('name');
     if (error) throw error;
     if (!data || !data.length) {
       el.innerHTML = `<div style="font-size:13px;color:var(--muted);padding:20px 0;text-align:center;">${currentLang==='no'?'Ingen butikker ennå — legg til en butikk ovenfor.':'No stores yet — add one above.'}</div>`;
@@ -18993,7 +19014,7 @@ async function loadStoreMgmt() {
           </div>
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0;">
-          <button onclick="openEditStore('${s.id}', ${JSON.stringify(esc(s.name))})" style="font-family:'DM Mono',monospace;font-size:11px;padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);cursor:pointer;">
+          <button onclick="openEditStore('${s.id}', this.dataset.name)" data-name="${esc(s.name)}" style="font-family:'DM Mono',monospace;font-size:11px;padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);cursor:pointer;">
             ${currentLang==='no'?'Endre':'Rename'}
           </button>
           <button onclick="toggleStoreActive('${s.id}', ${!s.active})" style="font-family:'DM Mono',monospace;font-size:11px;padding:4px 10px;border-radius:6px;cursor:pointer;${s.active
@@ -19047,12 +19068,12 @@ async function saveStoreForm() {
   try {
     if (_editingStoreId) {
       // Rename existing store
-      const { error } = await sb.from('stores').update({ name }).eq('id', _editingStoreId);
+      const { error } = await sb.from('stores').update({ name }).eq('id', _editingStoreId).eq('organisation_id', _currentOrgId);
       if (error) throw error;
       showToast(currentLang==='no' ? `Butikknavn oppdatert til "${name}"` : `Store renamed to "${name}"`, 'ok', 3000);
     } else {
       // Add new store
-      const { error } = await sb.from('stores').insert({ name, active: true });
+      const { error } = await sb.from('stores').insert({ name, active: true, organisation_id: _currentOrgId });
       if (error) throw error;
       showToast(currentLang==='no' ? `"${name}" lagt til` : `"${name}" added`, 'ok', 3000);
     }
@@ -19068,7 +19089,7 @@ async function saveStoreForm() {
 
 async function toggleStoreActive(id, active) {
   try {
-    const { error } = await sb.from('stores').update({ active }).eq('id', id);
+    const { error } = await sb.from('stores').update({ active }).eq('id', id).eq('organisation_id', _currentOrgId);
     if (error) throw error;
     await loadStoreMgmt();
     // Refresh staff dropdown — deactivated stores should disappear
@@ -19379,7 +19400,7 @@ async function loadMgrEscalated() {
       <div class="record-card recall-match" style="animation-delay:${i*0.04}s;margin-bottom:0;">
         <div class="record-thumb">
           ${r.product_photo_url
-            ? `<img src="${r.product_photo_url}" alt="Product" onclick="openLightbox('${r.product_photo_url}')" style="cursor:pointer;" />`
+            ? `<img src="${esc(r.product_photo_url)}" alt="Product" onclick="openLightbox('${esc(r.product_photo_url)}')" style="cursor:pointer;" />`
             : '<div class="record-thumb-placeholder"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg><span>No photo</span></div>'}
         </div>
         <div class="record-info">
@@ -19402,8 +19423,8 @@ async function loadMgrEscalated() {
           </div>` : ''}
           ${exposureHtml}
           <div class="record-photos">
-            ${r.product_photo_url ? `<img class="thumb-mini" src="${r.product_photo_url}" onclick="openLightbox('${r.product_photo_url}')" / alt="">` : ''}
-            ${r.barcode_photo_url ? `<img class="thumb-mini" src="${r.barcode_photo_url}" onclick="openLightbox('${r.barcode_photo_url}')" / alt="">` : ''}
+            ${r.product_photo_url ? `<img class="thumb-mini" src="${esc(r.product_photo_url)}" onclick="openLightbox('${esc(r.product_photo_url)}')" / alt="">` : ''}
+            ${r.barcode_photo_url ? `<img class="thumb-mini" src="${esc(r.barcode_photo_url)}" onclick="openLightbox('${esc(r.barcode_photo_url)}')" / alt="">` : ''}
           </div>
           <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-top:8px;">
             <div class="record-time">${t('card.placedOn')} ${placedStr}</div>
@@ -20321,8 +20342,8 @@ function _populateRecallDetails(r) {
     </div>`).join('');
 
   const photos = [
-    r.product_photo_url && `<img src="${r.product_photo_url}" onclick="openLightbox('${r.product_photo_url}')" style="width:72px;height:72px;object-fit:cover;border-radius:8px;cursor:pointer;border:1px solid var(--border);" alt="Product scan photo" title="Product photo" />`,
-    r.barcode_photo_url && `<img src="${r.barcode_photo_url}" onclick="openLightbox('${r.barcode_photo_url}')" style="width:72px;height:72px;object-fit:cover;border-radius:8px;cursor:pointer;border:1px solid var(--border);" alt="Product scan photo" title="Lot code photo" />`,
+    r.product_photo_url && `<img src="${esc(r.product_photo_url)}" onclick="openLightbox('${esc(r.product_photo_url)}')" style="width:72px;height:72px;object-fit:cover;border-radius:8px;cursor:pointer;border:1px solid var(--border);" alt="Product scan photo" title="Product photo" />`,
+    r.barcode_photo_url && `<img src="${esc(r.barcode_photo_url)}" onclick="openLightbox('${esc(r.barcode_photo_url)}')" style="width:72px;height:72px;object-fit:cover;border-radius:8px;cursor:pointer;border:1px solid var(--border);" alt="Product scan photo" title="Lot code photo" />`,
   ].filter(Boolean).join('');
 
   el.innerHTML = `
@@ -20796,6 +20817,17 @@ function openComplaintSheetFromRecall() {
 }
 
 function openComplaintSheet(scanId, productName, lotNumber, barcodeNumber, storeName) {
+  // Called with the id alone from the scan cards: look the rest up rather than
+  // threading user data through an onclick attribute (same pattern as
+  // openRecallActionSheet). The 5-argument form is still used elsewhere.
+  if (productName === undefined) {
+    const rec = allRecords.find(x => x.id === scanId)
+             || _mgrAllScans.find(x => x.id === scanId) || {};
+    productName   = rec.product_name   || '';
+    lotNumber     = rec.lot_number     || '';
+    barcodeNumber = rec.barcode_number || '';
+    storeName     = rec.store_name     || '';
+  }
   _complaintScanId = scanId;
   _complaintScanData = { productName, lotNumber, barcodeNumber, storeName };
 
@@ -20924,9 +20956,12 @@ async function submitComplaintFromScan() {
   };
 
   try {
+    // Staff intake must prove who it is: triage-complaint derives source and
+    // the audit actor from this JWT, never from the payload.
+    const { data: { session: _tcSession } } = await sb.auth.getSession();
     const res = await fetch('/.netlify/functions/triage-complaint', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (_tcSession?.access_token || '') },
       body: JSON.stringify(payload)
     });
     const data = await res.json();
@@ -20963,7 +20998,7 @@ async function submitComplaintFromScan() {
       ? `Active recall matched — manager auto-notified. Recalled lot: ${_cRecallMatch.lot_number || 'see recall details'}`
       : (data.triage_summary || '');
     document.getElementById('complaint-success-triage').innerHTML =
-      `<span style="background:${levelColor.replace('var','rgba').replace(')',',0.12)').replace('rgba(var','rgba(')};color:${levelColor};font-size:10px;font-weight:700;font-family:'DM Mono',monospace;padding:2px 8px;border-radius:4px;letter-spacing:0.05em;">${effectiveLevel.toUpperCase()}</span> ${triageSummary}`;
+      `<span style="background:${levelColor.replace('var','rgba').replace(')',',0.12)').replace('rgba(var','rgba(')};color:${levelColor};font-size:10px;font-weight:700;font-family:'DM Mono',monospace;padding:2px 8px;border-radius:4px;letter-spacing:0.05em;">${effectiveLevel.toUpperCase()}</span> ${esc(triageSummary)}`;
     const recallWarnEl = document.getElementById('complaint-recall-match-warning');
     if (recallWarnEl) {
       if (_cRecallMatch) {

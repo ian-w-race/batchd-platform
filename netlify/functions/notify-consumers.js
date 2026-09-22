@@ -57,6 +57,28 @@ async function verifyCorpAdminOfOrg(jwt, orgId) {
   } catch { return false; }
 }
 
+const { sbGet, isUuid } = require('../lib/auth');
+const MAX_CUSTOMERS = 5000;
+// Permissive shape check; apostrophes are legal in local parts.
+const isValidEmail = (e) => /^[^\s@<>"\\,;]+@[^\s@<>"\\,;]+\.[^\s@<>"\\,;]+$/.test(String(e || ''));
+
+// The recall must belong to org: a manual recall of the org (active), or a recall_event
+// created by the org or distributed to it (open, or closed within the last 30 days).
+async function loadRecallForOrg(recallId, orgId) {
+  if (!isUuid(recallId) || !isUuid(orgId)) return null;
+  const orgName = (await sbGet(`organisations?id=eq.${orgId}&select=name&limit=1`))?.[0]?.name || null;
+  const manual = await sbGet(`recalls?id=eq.${recallId}&organisation_id=eq.${orgId}&active=eq.true&select=product_name,lot_number,description&limit=1`);
+  if (manual?.[0]) return { product_name: manual[0].product_name, lot_number: manual[0].lot_number, reason: manual[0].description, org_name: orgName };
+  const since = new Date(Date.now() - 30 * 86400 * 1000).toISOString();
+  const ev = await sbGet(`recall_events?id=eq.${recallId}&is_drill=eq.false&or=(closed_at.is.null,closed_at.gte.${encodeURIComponent(since)})&select=product_name,lot_number,reason,source_org_id&limit=1`);
+  if (!ev?.[0]) return null;
+  if (ev[0].source_org_id !== orgId) {
+    const dist = await sbGet(`recall_distributions?recall_event_id=eq.${recallId}&retailer_org_id=eq.${orgId}&select=id&limit=1`);
+    if (!dist?.length) return null;
+  }
+  return { product_name: ev[0].product_name, lot_number: ev[0].lot_number, reason: ev[0].reason, org_name: orgName };
+}
+
 // Max batch size per Resend call — stay under their 100/call limit
 const BATCH_SIZE = 50;
 
@@ -84,19 +106,26 @@ exports.handler = async (event) => {
     return { statusCode: 403, body: JSON.stringify({ error: 'Not authorised. Sign in as a corporate admin of this organisation.' }) };
   }
 
+  const recall = await loadRecallForOrg(recall_event_id, org_id);
+  if (!recall) {
+    return { statusCode: 403, body: JSON.stringify({ error: 'That recall is not active for this organisation.' }) };
+  }
+
   if (!customers || !Array.isArray(customers) || customers.length === 0) {
     return { statusCode: 400, body: JSON.stringify({ error: 'customers array required' }) };
   }
 
-  if (!product_name) {
-    return { statusCode: 400, body: JSON.stringify({ error: 'product_name required' }) };
+  if (customers.length > MAX_CUSTOMERS) {
+    return { statusCode: 413, body: JSON.stringify({ error: 'At most ' + MAX_CUSTOMERS + ' customers per send. Split the list.' }) };
   }
 
   // Deduplicate by email
   const seen = new Set();
   const uniqueCustomers = customers.filter(c => {
-    if (!c.email || seen.has(c.email.toLowerCase())) return false;
-    seen.add(c.email.toLowerCase());
+    const e = typeof c?.email === 'string' ? c.email.trim().toLowerCase() : '';
+    if (!isValidEmail(e) || seen.has(e)) return false;
+    c.email = e;
+    seen.add(e);
     return true;
   });
 
@@ -104,9 +133,10 @@ exports.handler = async (event) => {
     return { statusCode: 200, body: JSON.stringify({ sent: 0, skipped: 'no valid emails' }) };
   }
 
-  const subject    = `Important: Product recall notice — ${product_name}`;
+  const recallProduct = recall.product_name || 'Recalled product';
+  const subject    = `Important: Product recall notice — ${recallProduct}`;
   const today      = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
-  const senderName = org_name || "Your retailer";
+  const senderName = recall.org_name || "Your retailer";
 
   let sent   = 0;
   let failed = 0;
@@ -124,9 +154,9 @@ exports.handler = async (event) => {
       html:    buildNoticeHtml({
         customerName: customer.name || null,
         orgName:      senderName,
-        productName:  product_name,
-        lotNumber:    lot_number,
-        reason:       reason,
+        productName:  recallProduct,
+        lotNumber:    recall.lot_number,
+        reason:       recall.reason,
         today,
       }),
     }));

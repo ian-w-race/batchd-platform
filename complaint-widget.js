@@ -334,6 +334,12 @@ textarea.bwd-input{resize:vertical;min-height:80px;line-height:1.5;}
         + '</select></div>',
     '</div>',
 
+    // Honeypot: off-screen and aria-hidden, so a human never fills it.
+    // triage-complaint.js drops any submission where it is non-empty.
+    '<div style="position:absolute;left:-9999px;top:-9999px;height:0;overflow:hidden" aria-hidden="true">',
+      '<label>Website <input type="text" name="website" id="bwd-website" tabindex="-1" autocomplete="off"></label>',
+    '</div>',
+
     '<div id="bwd-error"></div>',
     '<button id="bwd-submit">' + t.submit + '</button>',
     '</div>',
@@ -493,7 +499,8 @@ textarea.bwd-input{resize:vertical;min-height:80px;line-height:1.5;}
       medical_attention: document.getElementById('bwd-medical').value||null,
       still_has_product: hasProductVal ? hasProductVal.startsWith('Yes') : null,
       storage_method: document.getElementById('bwd-storage').value||null,
-      submitted_by_label: 'Customer (web widget)'
+      submitted_by_label: 'Customer (web widget)',
+      website: (document.getElementById('bwd-website') || {}).value || ''
     };
 
     fetch(TRIAGE_URL, {
