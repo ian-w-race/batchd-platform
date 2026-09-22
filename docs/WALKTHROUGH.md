@@ -1,6 +1,6 @@
 # Batch'd security rollout — all steps
 
-Updated 2026-09-21. **You are here: step 5.**
+Updated 2026-09-21. **You are here: step 8.**
 
 ## Progress
 
@@ -10,10 +10,10 @@ Updated 2026-09-21. **You are here: step 5.**
 | 2 | Migration 019 | ✅ done |
 | 3 | Migration 020 | ✅ done |
 | 4 | Verify 020 | ✅ done — all 9 PASS, nothing skipped. **The org-takeover hole is closed.** |
-| 5 | Turn the plans on | ⬅️ **you are here** |
-| 6 | Confirm the plans | |
-| 7 | Netlify env var, both sites | |
-| 8 | Push the branch | |
+| 5 | Turn the plans on | ✅ done |
+| 6 | Confirm the plans | ✅ done |
+| 7 | Netlify env vars, all THREE sites | ✅ done |
+| 8 | Push the branch | ⬅️ **you are here** |
 | 9 | Open the pull request | |
 | 10 | Merge | |
 | 11 | Wait for both deploys | |
@@ -69,7 +69,7 @@ data was already clean. `send_invitation` is hardened.
 
 ---
 
-# ⬅️ Step 5 — Turn the plans on (~1 min)
+# ✅ Step 5 — Turn the plans on — DONE
 
     cat /Users/johnponchak/batchd-platform/migrations/020a_set_existing_orgs_pov.sql | pbcopy
 
@@ -78,7 +78,7 @@ New query → paste → **Run**. Expect **`Success. No rows returned`**.
 ⚠️ **Do not skip.** Without it, AI product recognition stops for every user the
 moment you deploy.
 
-# Step 6 — Confirm the plans (~1 min)
+# ✅ Step 6 — Confirm the plans — DONE
 
 New query → paste → **Run**:
 
@@ -91,7 +91,7 @@ Batch'd Demo, Test Manufacturer Co) and 6 flipping to `pov`.
 
 🛑 **Stop and message me if** any still says `trial` or is blank.
 
-# Step 7 — Environment variables on ALL THREE Netlify sites (~10 min)
+# ✅ Step 7 — Environment variables on ALL THREE Netlify sites — DONE
 
 Confirmed 2026-09-21: **three** sites deploy this repo, not two as the docs
 previously said. All three show `github.com/ian-w-race/batchd-platform`.
@@ -154,12 +154,51 @@ it `true`.
 This is a pre-existing condition, not something this release introduces. Report
 what you find before changing it.
 
-# Step 8 — Push the branch (~1 min)
+# ⬅️ Step 8 — Push the branch (~5 min)
 
     cd /Users/johnponchak/batchd-platform && git push -u origin security-hardening-2026-09
 
-*If it asks for a username and password:* GitHub no longer accepts passwords
-here — you need a personal access token. Message me and I'll walk you through it.
+GitHub no longer accepts passwords for git. If you get
+`Invalid username or token`, you need a **classic** personal access token.
+
+**It must be a classic token, not a fine-grained one.** Fine-grained tokens only
+reach repos owned by the token's own account; this repo belongs to `ian-w-race`
+and you push as `John-ponchak`, so only a classic token works.
+
+## 8a — Create the token
+
+Open **https://github.com/settings/tokens/new**
+(If you land on "Fine-grained tokens", click **Tokens (classic)** in the left
+sidebar → **Generate new token (classic)**.)
+
+- **Note:** `batchd-platform push`
+- **Expiration:** 90 days
+- **Scopes:** tick the top-level **`repo`** checkbox — that is the only one needed
+- Scroll down → **Generate token**
+
+Copy it now; GitHub shows it once. **Do not paste it into chat.**
+
+## 8b — Push again
+
+    cd /Users/johnponchak/batchd-platform && git push -u origin security-hardening-2026-09
+
+- **Username:** `John-ponchak`
+- **Password:** paste the **token**
+
+Nothing appears as you paste — that is normal. Press Enter. `osxkeychain` is
+already configured, so it is saved and you won't be asked again.
+
+## 8c — If it fails again
+
+| Error | Meaning | Fix |
+|---|---|---|
+| `Invalid username or token` | Wrong username, or token not copied fully | Username is `John-ponchak`; regenerate the token |
+| `403` / `Permission denied` | Token valid, but your account lacks **write** access | Ian must add you as a collaborator with Write on `ian-w-race/batchd-platform` (repo Settings → Collaborators) |
+| No prompt at all | Stale keychain entry | Clear it, then retry the push |
+
+Clear a stale credential:
+
+    printf "protocol=https\nhost=github.com\n\n" | git credential reject
 
 # Step 9 — Open the pull request (~2 min)
 
