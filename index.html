@@ -5076,12 +5076,12 @@
             </div>
           </div>
           <div id="recall-authority-us" style="display:none;">
-            <div style="margin-bottom:8px;" id="recall-fda-text">For Class I recalls, report via the FDA Reportable Food Registry (RFR) within <strong>24 hours</strong> of discovering the problem.</div>
-            <div id="recall-fsis-note" style="display:none;margin-bottom:8px;padding:6px 10px;background:rgba(var(--warn-rgb),0.08);border-radius:6px;font-size:11px;color:var(--warn);">This product (meat/poultry/eggs) may be regulated by USDA FSIS — notify your local FSIS District Office within 24 hours.</div>
+            <div style="margin-bottom:8px;" id="recall-fda-text">Retail stores do not file with the FDA Reportable Food Registry; that duty belongs to registered facilities. For a recall in progress, the recalling firm notifies the FDA district recall coordinator (21 CFR 7.46). Your job is to <strong>pull, hold and document</strong>.</div>
+            <div id="recall-fsis-note" style="display:none;margin-bottom:8px;padding:6px 10px;background:rgba(var(--warn-rgb),0.08);border-radius:6px;font-size:11px;color:var(--warn);">This product (meat/poultry/eggs) may be regulated by USDA FSIS. The recalling firm coordinates with FSIS; your job is the same: pull, hold and document.</div>
             <div style="display:flex;flex-direction:column;gap:6px;">
-              <a href="https://www.accessdata.fda.gov/scripts/rfr/index.cfm" target="_blank"
+              <a href="https://www.fda.gov/safety/recalls-market-withdrawals-safety-alerts" target="_blank"
                  style="display:inline-flex;align-items:center;gap:6px;padding:7px 12px;background:rgba(var(--info-rgb),0.08);border:1px solid rgba(var(--info-rgb),0.25);border-radius:7px;color:var(--info);font-family:'DM Mono',monospace;font-size:11px;font-weight:700;text-decoration:none;">
-                File with FDA Reportable Food Registry
+                Open the FDA recall listing
               </a>
               <div style="font-size:11px;color:var(--muted);">FDA: <strong style="color:var(--text);">1-888-INFO-FDA</strong> &nbsp;·&nbsp; FSIS: <strong style="color:var(--text);">1-888-MPHotline</strong></div>
             </div>
@@ -5564,6 +5564,29 @@ function _aiDisabledToastOnce() {
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
+
+// US-only (2026-09-29), Phase 0 of the FSMA 204 handoff: one region-keyed
+// citation table so every US statute reference is typed once. Anchors were
+// checked against fda.gov and the eCFR structure of 21 CFR Part 1 Subpart S
+// on 2026-09-29 (implementation handoff, section 9). The NO branch is frozen
+// and keeps its existing literals; do not add to it. Declared on window so
+// every script block in this file can read it.
+window._CITATIONS = {
+  us: {
+    rule:           'FSMA 204',
+    subpart:        '21 CFR Part 1 Subpart S',
+    plan:           '21 CFR 1.1315',
+    receivingKde:   '21 CFR 1.1345',
+    availability:   '21 CFR 1.1455',
+    retention:      '21 CFR 1.1455(a)',
+    exemptions:     '21 CFR 1.1305',
+    recallNotify:   '21 CFR 7.46',
+    recallComms:    '21 CFR 7.49',
+    recallEnd:      '21 CFR 7.55',
+    complianceDate: 'July 20, 2028',
+    rfrRetail: 'Retail stores do not file with the FDA Reportable Food Registry; that duty belongs to registered facilities. For a recall in progress, the recalling firm notifies the FDA district recall coordinator (21 CFR 7.46). Your job is to pull, hold and document.',
+  },
+};
 // ── STATE ───────────────────────────────────────────────────
 let productStream = null;
 let barcodeStream = null;
@@ -6135,14 +6158,14 @@ function openTerminologyOverlay(regionOverride) {
       'The unique identifier assigned to a specific production batch of food.',
       'Batch\'d bruker "partinummer" i alle norske visninger i samsvar med Mattilsynets offisielle terminologi.',
       'Under FSMA 204, a TLC must be recorded at every Critical Tracking Event. Batch\'d captures it at shelf placement.',
-      r('Matloven §14', 'FSMA 204 §1.1330'))}
+      r('Matloven §14', `FSMA 204, ${_CITATIONS.us.receivingKde}`))}
 
     ${term('Hylleplassering', 'Shelf placement',
       'Handlingen der en ansatt plasserer et produkt på en hylle — utløseren for å opprette en sporingspost i Batch\'d.',
       "The act of a staff member placing a product onto a store shelf — the trigger for creating a traceability record in Batch'd.",
       'Hver post fanger: produktnavn, partinummer, utløpsdato, butikk, hylle, antall enheter, ansattnavn og tidsstempel.',
       'Each record captures: product name, lot code, expiry, store, shelf, units, staff member name, and timestamp.',
-      r('Matloven §14', 'FSMA 204 CTE — Receiving'))}
+      r('Matloven §14', 'FSMA 204 CTE: Receiving'))}
 
     ${term('GS1-128 / Applikasjonsidentifikator', 'GS1-128 / Application Identifier',
       'Standardisert strekkodeformat som koder inn flere dataelementer i én strekkode: partinummer (AI 10), utløpsdato (AI 17), produksjonsdato (AI 11), mengde (AI 37).',
@@ -6963,7 +6986,7 @@ function applyRegion() {
        <option value='Tilbaketrekking — Market withdrawal'>Tilbaketrekking — product removed before consumer purchase</option>`;
   // Supplier label
   const sl = document.getElementById('supplier-field-label');
-  if (sl) sl.textContent = isUS ? 'optional — FSMA 204 (USA) one step back' : 'optional — EU Art. 18 / Mattilsynet traceability';
+  if (sl) sl.textContent = isUS ? 'optional, FSMA 204 (USA) one step back' : 'optional — EU Art. 18 / Mattilsynet traceability';
   // Record retention
   const rr = document.getElementById('settings-retention-notice');
   if (rr) rr.innerHTML = isUS
@@ -20757,12 +20780,12 @@ function renderRegQuickRef() {
   const rows = isUS ? [
     { label:'Primary authority', value:'FDA (food) / USDA FSIS (meat, poultry, eggs)', color:'var(--info)' },
     { label:'Class I removal target', value:'Within 2 hours of notification (FMI retail guidance)', color:'var(--danger)' },
-    { label:'RFR notification', value:'Within 24 hours for reportable foods (Class I)', color:'var(--warn)' },
-    { label:'FSMA 204 (USA) compliance', value:'July 20, 2028 — electronic traceability records for FTL foods', color:'var(--info)' },
+    { label:'FDA notification', value:'Made by the recalling firm (21 CFR 7.46). A retail store pulls, holds and documents.', color:'var(--warn)' },
+    { label:'FSMA 204 (USA) compliance', value:'July 20, 2028, electronic traceability records for FTL foods', color:'var(--info)' },
     { label:'Record retention', value:'2 years minimum (FSMA 21 CFR Part 1 Subpart S)', color:'var(--accent)' },
     { label:'FDA contact', value:'1-888-INFO-FDA (1-888-463-6332)', color:'var(--accent)' },
     { label:'FSIS contact', value:'1-888-MPHotline (1-888-674-6854)', color:'var(--accent)' },
-    { label:'FDA RFR portal', value:'accessdata.fda.gov/scripts/rfr', link:'https://www.accessdata.fda.gov/scripts/rfr/index.cfm', color:'var(--info)' },
+    { label:'FDA recall listing', value:'fda.gov/safety/recalls-market-withdrawals-safety-alerts', link:'https://www.fda.gov/safety/recalls-market-withdrawals-safety-alerts', color:'var(--info)' },
   ] : [
     { label:'Primary authority', value:'Mattilsynet (Norwegian Food Safety Authority)', color:'var(--accent)' },
     { label:'EU framework', value:'EU Reg. 178/2002 — General Food Law (Art. 19)', color:'var(--accent)' },

@@ -1198,6 +1198,31 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 // prefixes, currency, retention rules, regulator contacts, terminology
 // panel) MUST read _orgRegion. See CLAUDE.md "Jurisdiction precedence".
 let _session = null, _orgId = null, _orgName = '', _orgRegion = 'no', _orgDefaultRegion = 'no';
+
+// US-only (2026-09-29), Phase 0 of the FSMA 204 handoff: one region-keyed
+// citation table so every US statute reference is typed once. Anchors were
+// checked against fda.gov and the eCFR structure of 21 CFR Part 1 Subpart S
+// on 2026-09-29 (implementation handoff, section 9). The NO branch is frozen
+// and keeps its existing literals; do not add to it.
+const _CITATIONS = {
+  us: {
+    rule:           'FSMA 204',
+    subpart:        '21 CFR Part 1 Subpart S',
+    plan:           '21 CFR 1.1315',      // traceability plan
+    receivingKde:   '21 CFR 1.1345',      // receiving key data elements
+    availability:   '21 CFR 1.1455',      // records to the FDA within 24 hours, sortable spreadsheet
+    retention:      '21 CFR 1.1455(a)',   // two-year retention
+    exemptions:     '21 CFR 1.1305',
+    recallNotify:   '21 CFR 7.46',        // the recalling firm notifies the FDA
+    recallComms:    '21 CFR 7.49',        // recall communications
+    recallEnd:      '21 CFR 7.55',        // recall termination
+    complianceDate: 'July 20, 2028',
+    // Retail stores are not registered facilities and owe no Reportable Food
+    // Registry filing. This sentence replaces every "file with the RFR"
+    // instruction the product used to show retailers.
+    rfrRetail: 'Retail stores do not file with the FDA Reportable Food Registry; that duty belongs to registered facilities. For a recall in progress, the recalling firm notifies the FDA district recall coordinator (21 CFR 7.46). Your job is to pull, hold and document.',
+  },
+};
 // user_id -> display label, filled by renderStaff so deactivateMember can show
 // a name in its confirm dialog without carrying one through an onclick.
 let _staffLabelByUserId = {};
@@ -8640,12 +8665,10 @@ async function renderStaff() {
             </div>
           </div>
 
-          <!-- Default region for the invitee (migration 012, 2026-05).
-               Useful for multi-region orgs that want to invite, e.g., a
-               Norwegian staff member into a US-default org. Defaults to
-               "Inherit org default" (NULL in DB) — same behaviour as
-               before this field existed. -->
-          <div class="field" style="margin-top:12px;margin-bottom:0;">
+          <!-- The per-invitee region picker was removed 2026-09-29 (US-only
+               decision). invitations.region stays NULL, so the invitee
+               inherits the organization default at accept time. -->
+          <div class="field" style="display:none;margin-top:12px;margin-bottom:0;">
             <label>Default region <span style="color:var(--muted);font-size:10px;text-transform:none;letter-spacing:0;">— invitee's region on first login</span></label>
             <select id="inv-region">
               <option value="">Inherit org default (${_orgDefaultRegion === 'us' ? 'United States' : 'Norway'})</option>
@@ -8930,7 +8953,7 @@ async function sendInvitation() {
   const hireDate     = document.getElementById('inv-hire-date')?.value             || null;
   // Default region for the invitee (migration 012). NULL means "inherit
   // org default" — join.html falls back to organisations.region on accept.
-  const region       = document.getElementById('inv-region')?.value                || null;
+    const region = null;  // US-only (2026-09-29): invitees inherit the organization default; the picker is gone.
 
   btn.disabled = true;
   btn.innerHTML = '<div class="spinner"></div> Sending…';
@@ -9061,8 +9084,8 @@ function renderComplianceDashboard(el) {
   if (d.scans.length === 0)                                              gaps.push({ cat:'Record keeping',    msg:'No scan records — open the scanning app and start scanning products', link:"showPanel('traceability')" });
   else if (d.lotScans/Math.max(d.scans.length,1) < 0.7)                 gaps.push({ cat:'Record keeping',    msg:`Lot code coverage is ${Math.round(d.lotScans/Math.max(d.scans.length,1)*100)}% — target 100% to meet ${isUS?'FSMA 204':'EU 178/2002'} requirements`, link:null });
   if (d.supplierScans === 0 && d.scans.length > 0)                      gaps.push({ cat:'Traceability',       msg:`Supplier names not recorded on any scans — ask staff to enter supplier during scanning`, link:null });
-  if (isUS && (d.tlcSourceScans||0) === 0 && d.scans.length > 0)        gaps.push({ cat:'Traceability',       msg:`TLC source not recorded on any scans — required KDE under FSMA 204 §1.1330`, link:null });
-  if (isUS && (d.refDocScans||0) === 0 && d.scans.length > 0)           gaps.push({ cat:'Traceability',       msg:`Reference document not recorded on any scans — required KDE under FSMA 204 §1.1330`, link:null });
+  if (isUS && (d.tlcSourceScans||0) === 0 && d.scans.length > 0)        gaps.push({ cat:'Traceability',       msg:`TLC source not recorded on any scans . Required KDE under ${_CITATIONS.us.receivingKde}`, link:null });
+  if (isUS && (d.refDocScans||0) === 0 && d.scans.length > 0)           gaps.push({ cat:'Traceability',       msg:`Reference document not recorded on any scans . Required KDE under ${_CITATIONS.us.receivingKde}`, link:null });
   if (!d.drillInYear)                                                    gaps.push({ cat:'Recall readiness',   msg:'No mock recall drill in the last 12 months — run one now to test your response chain', link:"showPanel('recalls')" });
   if (!d.coordinator)                                                      gaps.push({ cat:'Recall readiness',   msg:`No recall coordinator assigned — required by ${isUS?'FDA 21 CFR 7.49':'Mattilsynet guidance'}`, link:"showPanel('settings')" });
   if (d.acks.length > 0 && d.acksProgressed === 0)                       gaps.push({ cat:'Recall readiness',   msg:'Recalls received but none acknowledged — open the Recalls panel and progress your response', link:"showPanel('recalls')" });
@@ -9070,7 +9093,7 @@ function renderComplianceDashboard(el) {
   else if (d.activeStores.length - d.storesActiveRecent > 0)            gaps.push({ cat:'Store coverage',     msg:`${d.activeStores.length - d.storesActiveRecent} dark store${d.activeStores.length-d.storesActiveRecent!==1?'s':''} detected — no recent scanning activity`, link:"showPanel('stores')" });
 
   const catCards = [
-    { label:'Record keeping',     score:sc.docScore,       icon:'📄', reg:isUS?'FSMA 204 §1.1330':'EU 178/2002 Art. 17',
+    { label:'Record keeping',     score:sc.docScore,       icon:'📄', reg:isUS?`${_CITATIONS.us.rule}, ${_CITATIONS.us.receivingKde}`:'EU 178/2002 Art. 17',
       stats:`${d.scans.length} records · ${Math.round(d.lotScans/Math.max(d.scans.length,1)*100)}% lot code coverage`,
       step:1 },
     { label:'Traceability chain', score:sc.traceScore,     icon:'🔗', reg:isUS?'FSMA 204 KDEs / CTEs':'EU 178/2002 Art. 18',
@@ -9078,7 +9101,7 @@ function renderComplianceDashboard(el) {
         ? `${Math.round((d.tlcSourceScans||0)/Math.max(d.scans.length,1)*100)}% TLC source · ${Math.round((d.refDocScans||0)/Math.max(d.scans.length,1)*100)}% ref doc · ${Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)}% supplier`
         : `${Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)}% supplier coverage on scans`,
       step:2 },
-    { label:'Recall readiness',   score:sc.recallScore,    icon:'🚨', reg:isUS?'FDA 21 CFR · 24h RFR notification':'Mattilsynet §16 · Immediate notification',
+    { label:'Recall readiness',   score:sc.recallScore,    icon:'🚨', reg:isUS?`FDA ${_CITATIONS.us.recallNotify} · recalling firm notifies the FDA`:'Mattilsynet §16 · Immediate notification',
       stats:`${d.drills.length} drill${d.drills.length!==1?'s':''} · ${d.acksConfirmed} full response${d.acksConfirmed!==1?'s':''} completed`,
       step:3 },
     { label:'Store coverage',     score:sc.coverageScore,  icon:'🏪', reg:isUS?'FSMA 204 — records per location':'EU 178/2002 Art. 3 — all stages',
@@ -9088,7 +9111,7 @@ function renderComplianceDashboard(el) {
 
   // Authority contacts
   const authority = isUS ? [
-    { name:'FDA RFR Portal', detail:'Class I recall: notify within 24 hours (21 CFR 7.46)', url:'https://www.accessdata.fda.gov/scripts/rfr/index.cfm', phone:'1-888-INFO-FDA (1-888-463-6332)', color:'var(--info)' },
+    { name:'FDA', detail:_CITATIONS.us.rfrRetail, url:'https://www.fda.gov/safety/recalls-market-withdrawals-safety-alerts', phone:'1-888-INFO-FDA (1-888-463-6332)', color:'var(--info)' },
     { name:'USDA FSIS', detail:'Meat, poultry, and eggs: mandatory recall authority', url:'https://www.fsis.usda.gov/recalls', phone:'1-888-674-6854', color:'var(--warn)' },
   ] : [
     { name:'Mattilsynet', detail:'Varsle umiddelbart ved fare for forbruker (Matloven §16)', url:'https://www.mattilsynet.no/skjemaer/meldeskjema-for-virksomhetene', phone:'22 40 00 00 · Alarmtelefon: 03008', color:'var(--accent)' },
@@ -9229,7 +9252,7 @@ function renderComplianceDashboard(el) {
       <div class="panel" style="margin:0 0 14px;">
         <div style="padding:13px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
           <div style="font-size:12px;font-weight:700;color:var(--text);">📅 Record retention &amp; coordinator</div>
-          <div style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);">${isUS?'FSMA 204 §1.1345 · 2 year minimum':'Matloven §14 · shelf-life + 6 months'}</div>
+          <div style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);">${isUS?`${_CITATIONS.us.rule} ${_CITATIONS.us.retention} · 2 year minimum`:'Matloven §14 · shelf-life + 6 months'}</div>
         </div>
         <div style="padding:14px 18px;display:grid;grid-template-columns:1fr 1fr;gap:12px;">
           <div style="background:var(--surface2);border-radius:8px;padding:12px 14px;">
@@ -9244,7 +9267,7 @@ function renderComplianceDashboard(el) {
               ? `<div style="font-size:13px;font-weight:600;color:var(--accent);">${esc(d.coordinator.name)}</div>
                  <div style="font-size:10px;color:var(--muted);margin-top:2px;">${esc(d.coordinator.contact || 'No contact on file')}</div>`
               : `<div style="font-size:12px;color:var(--danger);font-weight:600;">Not assigned</div>
-                 <div style="font-size:10px;color:var(--muted);margin-top:2px;">${isUS?'Required under FDA 21 CFR 7.49':'Required by Mattilsynet guidance'}</div>
+                 <div style="font-size:10px;color:var(--muted);margin-top:2px;">${isUS?`Named on recall communications (FDA ${_CITATIONS.us.recallComms})`:'Required by Mattilsynet guidance'}</div>
                  <button onclick="showPanel('settings')" style="margin-top:8px;font-family:'DM Mono',monospace;font-size:10px;padding:4px 10px;border-radius:5px;border:1px solid rgba(var(--danger-rgb),0.3);background:none;color:var(--danger);cursor:pointer;">Assign →</button>`}
           </div>
         </div>
@@ -9259,7 +9282,7 @@ function renderComplianceDashboard(el) {
         <div style="padding:14px 18px;display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;">
           ${[
             { icon:'📋', name:'Joint recall completion report', desc:'Both parties, per-store chain, full audit timeline', fn:`generateJointRecallReport && d.acks.length > 0 ? showPanel('recalls') : showToast('No active recalls — push a recall first','warn',3000)` },
-            { icon:'🔍', name:isUS?'FSMA 204 KDE export':'Traceability export (CSV)', desc:isUS?'FDA-format CSV with all KDEs per FSMA 204 §1.1330':'Lot codes, stores, timestamps, suppliers', fn:`showPanel('reports')` },
+            { icon:'🔍', name:isUS?'FSMA 204 KDE export':'Traceability export (CSV)', desc:isUS?`FDA-format CSV with the receiving key data elements, ${_CITATIONS.us.receivingKde}`:'Lot codes, stores, timestamps, suppliers', fn:`showPanel('reports')` },
             { icon:'📊', name:'Compliance report', desc:'Overall score, category breakdown, priority actions', fn:`generateComplianceReport()` },
             { icon:'🗂', name:'Audit trail export', desc:'Full scan history filterable by store, date, product', fn:`showPanel('reports')` },
           ].map(doc => `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:9px;padding:13px 14px;cursor:pointer;transition:border-color 0.2s;" onclick="${doc.fn}" onmouseover="this.style.borderColor='rgba(var(--accent-rgb),0.3)'" onmouseout="this.style.borderColor='var(--border)'">
@@ -9301,7 +9324,7 @@ function renderComplianceStart(el) {
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px;">
             ${[
-              {n:'1', label:'Record keeping', desc:'Lot codes, scan volume, documentation completeness', reg: isUS?'FSMA 204 §1.1330':'EU 178/2002 Art. 18'},
+              {n:'1', label:'Record keeping', desc:'Lot codes, scan volume, documentation completeness', reg: isUS?`${_CITATIONS.us.rule}, ${_CITATIONS.us.receivingKde}`:'EU 178/2002 Art. 18'},
               {n:'2', label:'Traceability chain', desc:'Supplier connections, one step back, manufacturer links', reg: isUS?'FSMA 204 KDEs':'EU 178/2002 Art. 18'},
               {n:'3', label:'Recall readiness', desc:'Drills conducted, response chain, acknowledgement speed', reg: isUS?'FDA 24h notification':'Mattilsynet §16'},
               {n:'4', label:'Operational coverage', desc:'Active stores, recent scanning, dark store detection', reg: isUS?'FSMA 204 CTEs':'EU 178/2002 Art. 3'},
@@ -9487,7 +9510,7 @@ function renderComplianceCategory(el, step) {
   const categories = [
     {
       n: 1, label: 'Record keeping',
-      reg: isUS ? 'FSMA 204 §1.1330 — Key Data Elements at Critical Tracking Events' : 'EU Reg. 178/2002 Art. 17 — Operators must ensure food safety and maintain records',
+      reg: isUS ? `${_CITATIONS.us.rule}, ${_CITATIONS.us.receivingKde}: key data elements at receiving` : 'EU Reg. 178/2002 Art. 17 — Operators must ensure food safety and maintain records',
       score: sc.docScore,
       checks: [
         {
@@ -9517,7 +9540,7 @@ function renderComplianceCategory(el, step) {
     },
     {
       n: 2, label: 'Traceability chain',
-      reg: isUS ? 'FSMA 204 — Traceability Lot Code source, one step forward / one step back' : 'EU Reg. 178/2002 Art. 18 — One step back, one step forward traceability at all stages',
+      reg: isUS ? `${_CITATIONS.us.rule}: Traceability Lot Code source, one step forward / one step back` : 'EU Reg. 178/2002 Art. 18 — One step back, one step forward traceability at all stages',
       score: sc.traceScore,
       checks: [
         {
@@ -9532,7 +9555,7 @@ function renderComplianceCategory(el, step) {
           label: 'TLC source documented (FSMA 204 KDE)',
           detail: (d.tlcSourceScans||0) > 0
             ? `${d.tlcSourceScans} of ${d.scans.length} records include TLC source (${Math.round((d.tlcSourceScans||0)/Math.max(d.scans.length,1)*100)}%)`
-            : 'No TLC source recorded — required Key Data Element under FSMA 204 §1.1330',
+            : `No TLC source recorded. Required key data element under ${_CITATIONS.us.receivingKde}`,
           action: 'Staff should enter the TLC source field when scanning products — this is the document or system that assigned the lot code',
         }] : []),
         // US-specific: FSMA 204 KDE — Reference document
@@ -9541,7 +9564,7 @@ function renderComplianceCategory(el, step) {
           label: 'Reference document recorded (FSMA 204 KDE)',
           detail: (d.refDocScans||0) > 0
             ? `${d.refDocScans} of ${d.scans.length} records include a reference document (${Math.round((d.refDocScans||0)/Math.max(d.scans.length,1)*100)}%)`
-            : 'No reference documents on record — required Key Data Element under FSMA 204 §1.1330',
+            : `No reference documents on record. Required key data element under ${_CITATIONS.us.receivingKde}`,
           action: 'Staff should enter the purchase order, invoice, or delivery note number when scanning received goods',
         }] : []),
         // EU-specific: coverage threshold check
@@ -9571,7 +9594,7 @@ function renderComplianceCategory(el, step) {
     },
     {
       n: 3, label: 'Recall readiness',
-      reg: isUS ? 'FDA 21 CFR — Class I recalls require RFR notification within 24 hours. Annual drill recommended.' : 'Mattilsynet §16 — Recall obligation and notification procedures. Annual drill best practice.',
+      reg: isUS ? `FDA 21 CFR Part 7. The recalling firm notifies the FDA (${_CITATIONS.us.recallNotify}); a retail store pulls, holds and documents. Annual drill recommended.` : 'Mattilsynet §16 — Recall obligation and notification procedures. Annual drill best practice.',
       score: sc.recallScore,
       checks: [
         {
@@ -9602,7 +9625,7 @@ function renderComplianceCategory(el, step) {
     },
     {
       n: 4, label: 'Operational coverage',
-      reg: isUS ? 'FSMA 204 — Records required for each Critical Tracking Event at each receiving location' : 'EU Reg. 178/2002 Art. 3 — Traceability applies at all stages of production, processing and distribution',
+      reg: isUS ? `${_CITATIONS.us.rule}: records required at each receiving location (${_CITATIONS.us.receivingKde})` : 'EU Reg. 178/2002 Art. 3 — Traceability applies at all stages of production, processing and distribution',
       score: sc.coverageScore,
       checks: [
         {
@@ -10203,8 +10226,8 @@ ${timelineRows.map(row => `
 <table>
   <tbody>
     <tr><td style="font-weight:600;width:220px;">Framework</td><td>${refReg}</td></tr>
-    <tr><td style="font-weight:600;">Record retention required</td><td>${isUS ? 'Minimum 2 years — FDA 21 CFR 1.337' : 'Shelf life + 6 months minimum — EU Reg. 178/2002 Art. 17'}</td></tr>
-    <tr><td style="font-weight:600;">Notification obligation</td><td>${isUS ? 'FDA Reportable Food Registry — Class I: within 24 hours' : 'Mattilsynet — immediate notification required (umiddelbart)'}</td></tr>
+    <tr><td style="font-weight:600;">Record retention required</td><td>${isUS ? `Minimum 2 years, FDA ${_CITATIONS.us.retention}` : 'Shelf life + 6 months minimum — EU Reg. 178/2002 Art. 17'}</td></tr>
+    <tr><td style="font-weight:600;">Notification obligation</td><td>${isUS ? `None for a retail store. The recalling firm notifies the FDA (${_CITATIONS.us.recallNotify}). Pull, hold and document.` : 'Mattilsynet — immediate notification required (umiddelbart)'}</td></tr>
     <tr><td style="font-weight:600;">Response chain verified</td><td>${allDone ? '✓ All stores confirmed — complete' : `${confirmed.length} of ${acks.length} stores confirmed`}</td></tr>
     <tr><td style="font-weight:600;">Document reference</td><td style="font-family:monospace;">${docRef}</td></tr>
   </tbody>
@@ -10485,7 +10508,7 @@ async function renderReports() {
         stats: [
           { val: recallCount, label: 'recall events' },
           { val: dists.length > 0 ? '5-step' : '—', label: 'response chain' },
-          { val: isUS ? 'FDA RFR' : 'Mattilsynet', label: 'authority format' },
+          { val: isUS ? 'FDA' : 'Mattilsynet', label: 'authority' },
         ],
         reg: isUS ? 'FDA 21 CFR 7' : 'Matloven §16',
       },
@@ -10513,7 +10536,7 @@ async function renderReports() {
           { val: lotCoverage + '%', label: 'lot code capture' },
           { val: isUS ? 'FDA CSV' : 'EU CSV', label: 'export format' },
         ],
-        reg: isUS ? 'FSMA 204 §1.1330' : 'EU 178/2002 Art. 18',
+        reg: isUS ? `${_CITATIONS.us.rule}, ${_CITATIONS.us.receivingKde}` : 'EU 178/2002 Art. 18',
       },
     ];
 
@@ -11052,7 +11075,7 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
     const supPct  = data.length ? Math.round(withSup/data.length*100) : 0;
     el.innerHTML = reportHeader(
       isUS ? 'FSMA 204 KDE export' : 'EU traceability export',
-      `${data.length} records · ${isUS?'FSMA 204 §1.1330':'EU Reg. 178/2002 Art. 18'}`,
+      `${data.length} records · ${isUS?`${_CITATIONS.us.rule}, ${_CITATIONS.us.receivingKde}`:'EU Reg. 178/2002 Art. 18'}`,
       'fsma') +
       `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:18px;">
         ${statTile(data.length, 'Total records')}
@@ -11713,7 +11736,7 @@ function renderTerminology() {
       ${section('Recall severity classes')}
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:0 18px;margin-top:8px;">
         ${isUS ? `
-        ${term('Class I', 'Reasonable probability that use of or exposure to the product will cause serious adverse health consequences or death.', 'Highest severity. FDA requires notification within 24 hours via the Rapid Response (RFR) portal. Batch\'d surfaces the RFR portal link and a countdown timer automatically on Class I recalls.', 'FDA 21 CFR 7.3(m)(1)')}
+        ${term('Class I', 'Reasonable probability that use of or exposure to the product will cause serious adverse health consequences or death.', `Highest severity. The recalling firm notifies the FDA (${_CITATIONS.us.recallNotify}); a retail store pulls, holds and documents. Batch'd starts the countdown timer automatically on Class I recalls.`, 'FDA 21 CFR 7.3(m)(1)')}
         ${term('Class II', 'Remote probability of adverse health consequences, or where the probability of serious adverse health consequences is remote.', 'Standard recall. No specific notification deadline, but prompt action is expected.', 'FDA 21 CFR 7.3(m)(2)')}
         ${term('Class III', 'Use of or exposure to the product is not likely to cause any adverse health consequences.', 'Lowest severity. Includes label errors and minor violations.', 'FDA 21 CFR 7.3(m)(3)')}
         ${term('Market withdrawal', 'A firm\'s removal or correction of a product that has not violated FDA regulations but involves a minor violation or is being done for commercial reasons.', 'Not classified as a recall. No regulatory notification required, but documentation of the action is recommended.', 'FDA 21 CFR 7.3(j)')}
@@ -11741,7 +11764,7 @@ function renderTerminology() {
         ${term('One step back / One step forward',
           '"One step back" means you can identify the supplier or manufacturer you received the product from. "One step forward" means you can identify where you supplied the product to.',
           `${isUS ? 'FSMA 204 requires food businesses to maintain records sufficient to identify the immediate previous source and immediate subsequent recipient of a food.' : 'Matloven §14 requires food businesses to have a system that can identify all businesses from which a product was received (one step back) and to which it was supplied (one step forward).'} Batch\'d satisfies "one step back" through the manufacturer trading partner connection and incoming shipment records. "One step forward" is automatically satisfied when products are scanned at shelf placement — each scan creates a traceable record of the product at the retail location.`,
-          isUS ? 'FSMA 204 §1.1330' : 'Matloven §14')}
+          isUS ? `${_CITATIONS.us.rule}, ${_CITATIONS.us.receivingKde}` : 'Matloven §14')}
         ${term('GS1-128 / GS1 Application Identifier',
           'A standardised barcode format that encodes multiple data elements (lot number, expiry date, production date, quantity, serial number) within a single barcode.',
           'GS1 Application Identifiers (AIs) are two-to-four digit codes that identify each data element. AI(10) = lot/batch number. AI(17) = expiry date. AI(15) = best-before date. AI(11) = production date. AI(21) = serial number. AI(37) = quantity. When Batch\'d scans a GS1-128 barcode, it extracts all encoded AIs simultaneously — a single scan can capture lot, expiry, and quantity at once.',
@@ -11913,12 +11936,9 @@ async function renderSettings() {
               <input id="org-name-input" type="text" value="${esc(org?.name||_orgName)}" /></div>
             <div class="field"><label>Contact email</label>
               <input id="org-email-input" type="email" value="${esc(org?.contact_email||'')}" placeholder="e.g. safety@yourcompany.com" /></div>
-            <div class="field"><label>Region <span style="color:var(--muted);font-size:10px;text-transform:none;letter-spacing:0;">— org-wide default</span></label>
-              <select id="org-region-input" ${isAdmin ? '' : 'disabled style="opacity:0.55;cursor:not-allowed;"'}>
-                <option value="no" ${_orgDefaultRegion!=='us'?'selected':''}>Norway</option>
-                <option value="us" ${_orgDefaultRegion==='us'?'selected':''}>United States</option>
-              </select>
-              <div style="font-size:10.5px;color:var(--muted);margin-top:6px;line-height:1.55;">Default region applied to every new user. To assign a different region to a specific person, set it on their invitation in <em>Staff → Invite team member → Default region</em>. Existing users keep the region they were assigned at signup.</div></div>
+            <!-- The org region dropdown was removed 2026-09-29 (US-only decision).
+                 organisations.region stays as a column and keeps its stored
+                 value; saveOrgSettings() writes it back unchanged. -->
 
             <!-- Recall feeds — org-level (migration 012, 2026-05). Corp admin only. -->
             <div class="field"><label>Recall feeds <span style="color:var(--muted);font-size:10px;text-transform:none;letter-spacing:0;">— compliance decision, applies to whole org</span></label>
@@ -12420,7 +12440,7 @@ async function saveOrgSettings() {
   if (_userRole !== 'corp_admin') return;  // safety guard — UI is also disabled
   const name   = document.getElementById('org-name-input').value.trim();
   const email  = document.getElementById('org-email-input').value.trim();
-  const region = document.getElementById('org-region-input').value;
+  const region = _orgDefaultRegion || 'us';  // US-only (2026-09-29): no picker; the stored value is written back unchanged.
   const recallSource = window._orgFeedsDraft || _readOrgFeedsCurrent();
   const btn    = document.getElementById('btn-save-org');
   const msgEl  = document.getElementById('org-settings-msg');

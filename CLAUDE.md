@@ -4,11 +4,43 @@ Verified against the repo on 2026-09-13. Where a fact could not be
 confirmed from the code it is marked "needs verification" with a note
 on what would settle it.
 
+## Decision 2026-09-29: United States only
+Batch'd has abandoned the Norwegian market entirely for the foreseeable
+future. Every new feature, string, export, drill script and doc is for
+US grocery retail under FSMA 204. The US/NO region system described in
+"Jurisdiction precedence" below is FROZEN, not removed:
+- Never add a Norwegian branch, string, regulator, statute, currency,
+  phone prefix or date format to new code. Where an existing helper
+  forces two branches, pass the US string to both and comment
+  `// US-only (2026-09-29): NO branch intentionally identical`.
+- New organisations always get region 'us' and recall_source 'fda'.
+  DONE 2026-09-29 (Phase 0): signup.html hardcodes region 'us', sets
+  organisations.recall_source to 'fda' right after the RPC creates the
+  row, and writes user_settings.recall_source 'fda'; the region picker
+  is gone from signup, from the Settings Organisation card
+  (saveOrgSettings writes the stored value back unchanged) and from the
+  staff invite form (invitations.region stays NULL, so invitees inherit
+  the org default). Columns stay. To move an existing org to US, run
+  `update organisations set region = 'us' where id = '<org id>';` and
+  the same on that org's user_settings rows.
+- Existing NO rows keep working through the old branches. Do not rip
+  the region layer out; it is a large risky edit with no customer
+  payoff. Do not fix Norwegian copy defects.
+- The Mattilsynet feed code stays but is unused by new orgs.
+- Market entry is the two-category wedge (bagged leafy greens and nut
+  butters, both on the FDA Food Traceability List). The build spec is
+  the project doc claude/batchd-fsma204-niche-implementation-handoff.md.
+
 ## Who I am building with
 Ian Race, not a developer. Always provide complete, ready-to-use
 files. Never partial diffs or code snippets to manually insert.
 
 ## The golden rules
+- Write in American English, never British English. This applies to
+  UI copy, emails, docs and every reply to Ian (color, organization,
+  license, center). Do not rename existing code identifiers, table or
+  column names that use British spelling (for example the
+  organisations table), since that would break the database and code.
 - Think carefully before building anything
 - Work surgically. Do not break what works
 - Never expose API keys in client-side code. The only keys allowed in
@@ -115,7 +147,10 @@ Live application surfaces:
   webhook-recall.js. Linked from Settings. Manufacturer-facing, see
   leftovers above.
 - privacy.html (108 lines) and terms.html (94 lines), both 2026-08-06:
-  legal pages, reachable at /privacy and /terms.
+  legal pages, reachable at /privacy and /terms. Found 2026-09-29:
+  terms.html exists only in Ian's local folder and was never uploaded
+  to GitHub, so /terms and /terms.html return 404 in production while
+  signup.html and privacy.html link to /terms. Fix is to upload it.
 
 Public intake surfaces (no login):
 - complaint.html (505 lines, 2026-05-02): consumer complaint form that
@@ -142,7 +177,7 @@ Retired stubs (80 lines each, 2026-05-05):
 
 Not application files: README.md (2 lines), SCHEMA.md, SECRETS.md,
 ROADMAP-2026-08.md, CLAUDE_DESIGN_BRIEF.md, .ui-polish-checklist.md,
-docs/ARCHITECTURE.md, migrations/ (19 SQL files plus
+docs/ARCHITECTURE.md, migrations/ (22 SQL files, 001 to 021 with 020a, plus
 CHECK_MIGRATIONS.sql), assets/, fonts/, netlify/functions/ (18
 functions), netlify.toml, package.json (pins @supabase/supabase-js
 2.112.1 for the functions).
@@ -202,7 +237,7 @@ Consequences:
   verifying in the Netlify UI.
 - The host-scoped redirects in netlify.toml are host-exact, so any
   netlify.app name not named there serves dashboard.html and admin.html
-  without the canonicalising 301s. Not an auth hole (the same sign-in
+  without the canonicalizing 301s. Not an auth hole (the same sign-in
   applies) but it is an extra unlinked surface.
 The code references www.batchdapp.com only in complaint-widget.js and
 in the origin allowlists of send-invite.js and supplier-invite.js.
@@ -430,6 +465,46 @@ narrow policy or a fallback; admin.html relies on open reads for its
 platform-wide views and needs platform-admin policies keyed on
 organisation_members.is_batched_admin.
 
+## Phase 0 of the FSMA 204 handoff (shipped locally 2026-09-29)
+Spec: Claude outputs/batchd-fsma204-niche-implementation-handoff.md,
+Phase 0, adjusted for the US-only decision (the Norwegian half, the
+4-hour EU tooltip and the Matloven citations, was dropped). What changed:
+- Reportable Food Registry copy. Every surface that told a retail store
+  to file with the RFR within 24 hours now says the recalling firm
+  notifies the FDA district recall coordinator (21 CFR 7.46) and the
+  store pulls, holds and documents. Dashboard: compliance category tag,
+  authority contact card (now "FDA", linking to the FDA recall listing
+  instead of the RFR portal), recall readiness pillar, coordination
+  sheet, recalls report card, Class I terminology. Scanner: Take Action
+  sheet US block (button now opens the FDA recall listing), FSIS note,
+  regulatory quick reference rows. The sentence itself lives once in
+  `_CITATIONS.us.rfrRetail` in each file.
+- Citation table. `_CITATIONS.us` (const in dashboard.html after the
+  state declaration; `window._CITATIONS` in index.html after the
+  Supabase client) holds rule, subpart, plan 1.1315, receivingKde
+  1.1345, availability 1.1455, retention 1.1455(a), exemptions 1.1305,
+  recallNotify 7.46, recallComms 7.49, recallEnd 7.55, complianceDate.
+  Two wrong citations were corrected on the way: receiving KDEs were
+  cited as §1.1330 (that section is initial packing) and retention was
+  cited as §1.1345 in one place and "21 CFR 1.337" in another. Both now
+  read through the table. Remaining hand-typed US literals in code
+  comments and in static HTML were left; migrate them when the line is
+  next touched.
+- Region pickers removed and US defaults set (see the decision section
+  at the top).
+- join.html: phone placeholder +1, name placeholder Americanized, the
+  location-pin emoji in store chips replaced with an inline SVG, "as a
+  Store Staff" grammar fixed.
+- signup.html: Norwegian example placeholders replaced, manufacturer-
+  era "trading partners" sentence replaced, the store emoji on the type
+  card replaced with an inline SVG, em dashes removed from copy.
+- SMOKE.md created at the repo root with the Phase 0 checks and the
+  handoff's later-phase checks.
+Not done in Phase 0: a British-to-American sweep of existing UI copy
+("Organisation" panel titles and labels remain), the read-only render of
+prefilled join details, and the invite email's "as a staff" wording
+(that string lives in send-invite.js).
+
 ## Recall counting rules (platform-wide)
 A recall requires action only when ALL THREE are true:
 1. The recall is active (active = true)
@@ -569,7 +644,7 @@ demo_request branch. 13 functions remain.
 | recall-feeds.js | Proxies rasff, mattilsynet_rss, mattilsynet_page feeds to XML | Bearer JWT (any active session) | None | index.html only |
 | recall-reminder.js | On-demand reminder emails for the dashboard buttons | Bearer JWT, active corp_admin of orgId | RESEND_API_KEY, SUPABASE_SERVICE_KEY, SUPABASE_URL | dashboard.html |
 | send-invite.js | Staff invitation emails | Bearer JWT corp_admin **of the invitation's own org** (or platform admin); org name, role and inviter come from the invitation row | RESEND_API_KEY, SUPABASE_SERVICE_KEY, SUPABASE_URL | dashboard.html, admin.html |
-| trace.js | RETIRED 2026-09-20 — always answers 410 | None | None | old QR codes only |
+| trace.js | RETIRED 2026-09-20, always answers 410 | None | None | old QR codes only |
 | triage-complaint.js | Complaint intake, AI triage, follow-up emails | Public form (honeypot + per-IP/org/email rate limits; org must be pov/active while PUBLIC_COMPLAINTS_REQUIRE_PLAN is true). Staff identity proven by Bearer JWT, never by body fields | ANTHROPIC_API_KEY, INTERNAL_NOTIFY_SECRET, RESEND_API_KEY, SUPABASE_SERVICE_KEY, URL | complaint.html, complaint-widget.js, dashboard.html, index.html |
 | webhook-recall.js | ERP webhook: creates recall_events and distributions for manufacturer orgs | X-Batchd-Api-Key, sha256-hashed against organisation_api_keys; org must be type manufacturer; 50 events/hour | INTERNAL_NOTIFY_SECRET, SUPABASE_SERVICE_KEY | External ERP systems (documented in docs.html) |
 
@@ -584,8 +659,8 @@ Notes:
   ocr.js and triage-complaint.js also use claude-haiku-4-5-20251001.
 - ocr.js owns its prompt text (2026-09-20). The client names a template
   (`promptId`: lot_extract_v1, autocapture_v1) and sends only
-  parameters — region, productName, contextHint, cropped, ocrText,
-  phase — each length-capped server-side. The US/EU regulatory wording
+  parameters (region, productName, contextHint, cropped, ocrText,
+  phase), each length-capped server-side. The US/EU regulatory wording
   for lot extraction now lives in ocr.js REGION_HINT; the scanner passes
   the signed-in user's _userRegion, so the jurisdiction gate is still at
   the leaf.
@@ -614,7 +689,7 @@ service-role keys, webhook URLs and password literals.
 ## Commercial plan flag (organisations.plan)
 
 Added 2026-09-20. Values: `trial` (default for self-serve signup), `pov`,
-`active` (paying), `churned`. Only a platform admin can change it —
+`active` (paying), `churned`. Only a platform admin can change it;
 migration 020's `batchd_guard_org_commercial_columns` trigger blocks
 plan, billing_status, trial_expires_at and is_internal for everyone else,
 and admin.html's dropdown is the UI.
@@ -638,11 +713,19 @@ were left alone. That file refuses to run a second time, so a later
 downgrade from admin.html cannot be silently undone by re-running it.
 
 ## Market & jurisdiction
-- Primary market: United States (FSMA 204 compliance)
-- Testing ground: Norway (EU 178/2002)
-- Ian is a US citizen living in Norway temporarily
+- Only market: United States (FSMA 204). Decided 2026-09-29.
+- Norway was the testing ground until 2026-09-29 and is abandoned for
+  the foreseeable future. The NO code paths are frozen (see the
+  decision at the top of this file).
+- Ian is a US citizen living in Norway temporarily; that is a fact
+  about the founder, not the market.
 
 ## Jurisdiction precedence (critical: never mix jurisdictions)
+
+FROZEN 2026-09-29. This section documents how the existing region layer
+works so legacy NO rows keep rendering correctly and so nobody mixes
+jurisdictions by accident. It is not an instruction to build Norwegian
+variants of anything new. New code is US-only.
 
 Batch'd is a regulatory-assistance platform. The product must never
 display regulatory copy, regulator names, phone prefixes, currency,
