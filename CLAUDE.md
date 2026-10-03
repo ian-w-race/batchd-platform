@@ -177,7 +177,7 @@ Retired stubs (80 lines each, 2026-05-05):
 
 Not application files: README.md (2 lines), SCHEMA.md, SECRETS.md,
 ROADMAP-2026-08.md, CLAUDE_DESIGN_BRIEF.md, .ui-polish-checklist.md,
-docs/ARCHITECTURE.md, migrations/ (22 SQL files, 001 to 021 with 020a, plus
+docs/ARCHITECTURE.md, migrations/ (27 SQL files, 001 to 026 with 020a, plus
 CHECK_MIGRATIONS.sql), assets/, fonts/, netlify/functions/ (18
 functions), netlify.toml, package.json (pins @supabase/supabase-js
 2.112.1 for the functions).
@@ -283,7 +283,10 @@ netlify/functions on 2026-09-13. Column lists per table were derived
 the same way and are approximate; verify against information_schema
 before relying on them.
 
-Tables (29): code_patterns, complaint_audit_log, complaint_messages,
+Tables (34 after migrations 022 to 026 are applied; 29 referenced by
+code on 2026-09-13 plus ftl_overrides, receiving_events,
+records_requests, suppliers, traceability_plans): code_patterns,
+complaint_audit_log, complaint_messages,
 complaints, investigation_requests, investigation_responses,
 invitations, mock_recall_drills, organisation_members, organisations,
 product_lots, products, products_pending, products_public (view),
@@ -504,6 +507,47 @@ Not done in Phase 0: a British-to-American sweep of existing UI copy
 ("Organisation" panel titles and labels remain), the read-only render of
 prefilled join details, and the invite email's "as a staff" wording
 (that string lives in send-invite.js).
+
+## Phase 1 of the FSMA 204 handoff (migrations written 2026-10-03)
+Five migrations, numbered 022 to 026 because John's 020, 020a and 021
+already exist (the handoff said 021 to 025). Each runs in one
+transaction, is re-runnable, enables RLS, revokes anon, and uses John's
+helpers in his b2N_ policy pattern. Applied status: run
+migrations/CHECK_MIGRATIONS.sql; acceptance: docs/verify-022-026.sql
+(every row PASS). Column-level detail is in SCHEMA.md, "Phase 1 tables".
+- 022 suppliers: supplier directory with the 21 CFR 1.1345 location
+  fields, country default 'US', active flag, updated_at trigger
+  (batchd_touch_updated_at, new, reusable). Deviation from the handoff:
+  any active member may INSERT (the receiving form lets staff add a
+  supplier name); UPDATE is corp_admin or manager; DELETE corp_admin.
+- 023 receiving_events: the Receiving CTE, plus scans.receiving_event_id
+  (FK, set null on delete, indexed). CHECKs on tlc_source_type,
+  reference_document_type, source, status, quantity >= 0. Trigger
+  batchd_receiving_set_retention fills retain_until with received_at
+  plus two years when the client sends null. No client DELETE.
+- 024 organisations columns: annual_food_sales_band,
+  operates_registered_facility, operates_distribution_center,
+  fsma_applicability, focus_categories, pricing_tier,
+  network_benchmarks_opt_in, traceability_plan_contact_name and
+  _phone, traceability_plan_updated_at. Deviation: the handoff's
+  plan_tier is named pricing_tier so it cannot be confused with
+  organisations.plan (commercial status, migration 020). The
+  Reportable Food Registry guidance from Phase 0 is to be gated on
+  operates_registered_facility in Phase 5.
+- 025 products FTL flags (is_ftl, ftl_category, ftl_confirmed_source,
+  ftl_confirmed_at) and ftl_overrides (per-org, by GTIN or normalized
+  name, unique per org on each). products keeps its existing policies.
+  Phase 2 note: the scanner reads products through the products_public
+  view, which is not defined in any migration; if the view does not
+  expose the new columns the client falls through to the name regex.
+- 026 records_requests (minutes_to_produce is a stored generated
+  column) and traceability_plans (unique per org on version). corp_admin
+  writes, members read.
+Not in Phase 1: mock_recall_drills.scenario_text and
+stores.external_code (Phase 6 and 7; a small later migration, 028 or
+after, since 027 is John's code_patterns slot).
+netlify.toml also gained forced 404s for /SMOKE.md and
+/CHECK_MIGRATIONS.sql on 2026-10-03; SMOKE.md was being served publicly.
 
 ## Recall counting rules (platform-wide)
 A recall requires action only when ALL THREE are true:

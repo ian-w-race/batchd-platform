@@ -466,3 +466,126 @@ The DB-side `trigger_recall_sweep` function tries to upsert into
 matching unique constraint or index existed. Adding the unique index
 satisfies the upsert and prevents future duplicate match rows for the
 same (scan, recall) pair.
+
+## Phase 1 tables (migrations 022 to 026, 2026-10-03)
+
+Added for the FSMA 204 implementation handoff. US-only. Every table has
+RLS enabled, no anon privileges, and policies in migration 021's
+pattern (`b2N_<table>_<who>_<action>`) using the SECURITY DEFINER
+helpers from migration 020: `batchd_my_active_org_ids()`,
+`batchd_is_corp_admin_of(uuid)`, `batchd_is_manager_of(uuid)`,
+`batchd_is_platform_admin()`. Column lists below are the migration
+definitions, not an information_schema dump.
+
+### suppliers (022)
+Per-organisation supplier directory. The immediate previous source
+"location description" for receiving records (21 CFR 1.1345).
+
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid PK | gen_random_uuid() |
+| organisation_id | uuid FK organisations | cascade |
+| name | text NOT NULL | unique per org, case-insensitive |
+| phone, street_address, city, region, postal_code | text | region is the US state |
+| country | text NOT NULL DEFAULT 'US' | ISO 3166-1 alpha-2 |
+| gln | text | GS1 Global Location Number, optional |
+| supplier_type | text NOT NULL DEFAULT 'distributor' | CHECK: distributor, manufacturer, farm, other |
+| is_exempt_entity | boolean NOT NULL DEFAULT false | receiving from an exempt entity relaxes the TLC requirement |
+| category_hints | text[] | FTL category keys |
+| seeded_from | text | 'category_kit:<key>' when created by a kit |
+| active | boolean NOT NULL DEFAULT true | prefer deactivate over delete |
+| created_at, updated_at | timestamptz | updated_at kept by trigger batchd_touch_updated_at |
+| created_by | uuid FK auth.users | DEFAULT auth.uid() |
+
+Policies: members SELECT; active members INSERT; corp_admin or manager
+UPDATE; corp_admin DELETE; platform admin ALL.
+
+### receiving_events (023)
+The Receiving critical tracking event, one row per lot per delivery
+line. `scans.receiving_event_id` (uuid, FK, ON DELETE SET NULL, indexed)
+links a shelf scan to its delivery.
+
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid PK | |
+| organisation_id | uuid FK organisations NOT NULL | |
+| store_id | uuid FK stores | set null on delete |
+| supplier_id | uuid FK suppliers | set null on delete |
+| supplier_name_snapshot | text | copied at write time |
+| product_name | text NOT NULL | |
+| gtin | text | normalized AI(01) or retail GTIN |
+| traceability_lot_code | text | the TLC |
+| tlc_source_type | text | CHECK: supplier_label, shipping_document, assigned_by_us, not_required_exempt_source |
+| tlc_source_reference | text | |
+| quantity | numeric NOT NULL | CHECK >= 0 |
+| unit_of_measure | text NOT NULL | free text; the app offers case, each, bag, lb, pallet |
+| received_at | timestamptz NOT NULL DEFAULT now() | editable for back-entry |
+| reference_document_type | text | CHECK: PO, BOL, invoice, ASN, other |
+| reference_document_number | text | |
+| is_ftl, ftl_confirmed_by_staff | boolean NOT NULL DEFAULT false | |
+| ftl_category | text | |
+| pack_date, best_by | date | AI(11); AI(15) or AI(17) |
+| raw_label_capture, label_photo_url | text | |
+| source | text NOT NULL DEFAULT 'staff_scan' | CHECK: staff_scan, wholesaler_import, manual_entry |
+| status | text NOT NULL DEFAULT 'received' | CHECK: expected, received, rejected |
+| import_batch_id | uuid | Phase 7 |
+| received_by | text | staff email |
+| notes | text | |
+| client_uuid | uuid UNIQUE | offline replay idempotency |
+| retain_until | timestamptz | trigger sets received_at + 2 years when null (21 CFR 1.1455(a)) |
+| created_at | timestamptz NOT NULL DEFAULT now() | |
+
+Indexes: (organisation_id, traceability_lot_code); (organisation_id,
+store_id, received_at desc); (organisation_id, store_id, status).
+Policies: members SELECT; active members INSERT; corp_admin or manager
+UPDATE; no client DELETE; platform admin ALL.
+
+### organisations, new columns (024)
+annual_food_sales_band (CHECK: under_250k, 250k_to_1m, 1m_to_10m,
+over_10m, undisclosed), operates_registered_facility boolean,
+operates_distribution_center boolean, fsma_applicability (CHECK:
+exempt, covered_no_spreadsheet, covered, unknown; computed by the app),
+focus_categories text[] NOT NULL DEFAULT '{}', pricing_tier (CHECK:
+pilot, starter, essential, professional, readiness; informational, and
+distinct from organisations.plan which is the commercial status from
+migration 020), network_benchmarks_opt_in boolean DEFAULT false,
+traceability_plan_contact_name, traceability_plan_contact_phone,
+traceability_plan_updated_at. No policy changes.
+
+### products, new columns, and ftl_overrides (025)
+products: is_ftl boolean (null = unknown), ftl_category text,
+ftl_confirmed_source (CHECK: staff, admin, wholesaler_feed, regex),
+ftl_confirmed_at timestamptz.
+
+ftl_overrides: id, organisation_id FK, gtin, product_name_normalized,
+is_ftl NOT NULL, ftl_category, set_by, created_at. CHECK that gtin or
+product_name_normalized is present. Unique per org on gtin (where not
+null) and on product_name_normalized (where gtin is null). Policies:
+members SELECT; corp_admin or manager INSERT and UPDATE; corp_admin
+DELETE; platform admin ALL. Resolution order in code: org override by
+GTIN, org override by normalized name, products.is_ftl by GTIN, then the
+scanner's name regex.
+
+### records_requests and traceability_plans (026)
+records_requests: id, organisation_id FK, is_drill DEFAULT true,
+requested_at DEFAULT now(), requested_by, scope_lot, scope_product,
+scope_date_from, scope_date_to, produced_at, produced_by, row_count,
+minutes_to_produce (generated, stored: minutes between requested_at
+and produced_at), file_name, notes.
+
+traceability_plans: id, organisation_id FK, version integer NOT NULL
+(unique per org), content_json jsonb NOT NULL, rendered_html,
+generated_at DEFAULT now(), generated_by, superseded_at.
+
+Policies on both: members SELECT; corp_admin INSERT and UPDATE; no
+client DELETE; platform admin ALL.
+
+### Migration log entry
+
+#### 2026-10-03: migrations 022 to 026 written (Phase 1 of the FSMA 204 handoff)
+Written on 2026-10-03; applied status is reported by
+`migrations/CHECK_MIGRATIONS.sql` and verified by
+`docs/verify-022-026.sql`. Numbering shifted up from the handoff's
+021 to 025 because migrations 020, 020a and 021 (security hardening,
+applied 2026-09-22) already exist. Migration 027 is reserved for the
+code_patterns ownership fix noted in docs/WALKTHROUGH.md.
