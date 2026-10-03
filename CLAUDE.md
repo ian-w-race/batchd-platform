@@ -104,7 +104,7 @@ the file's modification time, not a commit date. Files dated
 2026-04-30 22:48 have not changed since the repo was downloaded.
 
 Live application surfaces:
-- index.html (21,976 lines, 2026-09-09): staff scanning app (PWA).
+- index.html (about 22,800 lines after Phase 2, 2026-10-03): staff scanning app (PWA).
   Canonical URL is https://batchd-app.netlify.app/ (confirmed by Ian
   2026-09-13): every scanner link in dashboard.html points there, the
   installed PWAs were added from there, and the manifest start_url is
@@ -548,6 +548,73 @@ stores.external_code (Phase 6 and 7; a small later migration, 028 or
 after, since 027 is John's code_patterns slot).
 netlify.toml also gained forced 404s for /SMOKE.md and
 /CHECK_MIGRATIONS.sql on 2026-10-03; SMOKE.md was being served publicly.
+
+## Phase 2 of the FSMA 204 handoff: scanner receiving mode (built 2026-10-03)
+index.html only. English only. Verified: every inline script block passes
+node --check, the page loads with no console errors, the parser passes
+seven synthetic case-label cases, and the form renders at phone width.
+Not yet verified against real case labels (Ian owes three photos) or
+against the live database (needs a signed-in session).
+- Mode switch at the top of the Scan view: Shelf (the existing three
+  phases) and Receiving. Persisted per device in localStorage
+  `batched_scan_mode`; `applyScanMode()` hides the stepper and phases and
+  shows `#receiving-panel`. Available to every role.
+- Receiving form (`rcv*` functions, module sits just before
+  blobToBase64): live camera via a separate ZXing reader on the shared
+  stream (`rcvStartScanner`, CODE_128, DataMatrix, QR, EAN, ITF, RSS),
+  "Photograph label" through a file input decoded with ZXing (and, when
+  the org has AI, `identify_product` for the name), a typed GS1 string
+  field, product and GTIN (GTIN looks up products_public by
+  barcode_normalized), lot, best-by, quantity, unit segmented control
+  (case, each, bag, lb, pallet; last unit remembered), supplier picker
+  with inline "Add supplier" (any active member may add; policies from
+  migration 022), reference document type and number (remembered per
+  store for 30 minutes), date received (defaults to now), notes.
+- FTL resolution order: ftl_overrides by GTIN, ftl_overrides by
+  normalized name, products_public.is_ftl (400 tolerated until the view
+  exposes migration 025's columns), then detectFtlCategory. Confirm chip
+  writes an override for corp_admin and store_manager via select then
+  insert or update (not upsert: the unique indexes are partial, so
+  PostgREST's on_conflict cannot target them).
+- Save writes one receiving_events row (migration 023) with
+  client_uuid; offline it queues `{kind:'receiving', payload, labelB64}`
+  in `batched_offline_queue`, and `_syncOfflineQueueImpl` replays it
+  through `_replayReceivingItem` (23505 counts as synced). Label photos
+  go to the scan-photos bucket under orgs/<org>/receiving/.
+- After a save, a back-door recall check reads BOTH sources (recalls
+  table and recall_distributions joined to recall_events) and warns to
+  hold the lot. Advisory only; it does not change active-recall counts.
+- Shelf-scan link: `rcvComputeLinkForPhase3` runs when phase 3 opens
+  (alongside checkPrePlacementRecall), finds the newest received row in
+  the org within 45 days whose normalized lot equals or is contained in
+  the scan's raw capture (store match when both known), shows a chip in
+  `#p3-receiving-link`, and saveRecord writes `receiving_event_id`.
+  resetForm clears it. History cards show a "Delivery" chip from
+  `window._rcvLinkMap`.
+- Recalls view: a recall whose lot matches a received row with no
+  linked shelf scan renders with a "HELD AT RECEIVING" pill and a
+  "Received, not yet on shelf" line; held-only items are excluded from
+  the drawer badge count (three-condition rule).
+- Manager tab "Receiving" (`loadMgrReceiving`): org rows with store and
+  date-range filters, and a simple CSV (`rcvExportCsv`, formula-safe)
+  that Phase 4's shared builder will replace.
+- parseGS1: 4-char weight AIs 3100 to 3106 and 3200 to 3206 added (the
+  old 3-char entries misread them), `netWeightKg` and `netWeightLb`
+  derived, and the raw-format boundary rule changed: when any FNC1 is
+  present a variable field reads to the next FNC1; only FNC1-less
+  strings guess a boundary, and then only on the food-label AI set.
+  Before this, lot RM240928 parsed as "RM" because "240" is an AI.
+- Default region fallbacks flipped to 'us' in both apps (`_userRegion`,
+  `_obRegion` fallbacks, `_orgRegion`, `_orgDefaultRegion`,
+  `org?.region` fallback). Stored values still win; the header badge no
+  longer flashes NOR before settings load.
+- Pre-existing, noticed, not fixed: the deactivated-member and
+  no-membership branches at sign-in write to `auth-view` and `main-app`,
+  ids that do not exist in the page (the login overlay is
+  `login-screen`), so those branches would throw. Separate fix.
+- Local preview for the scanner: `.claude/launch.json` runs
+  `.claude/serve.js` (Node static server on 127.0.0.1:8787). Neither
+  file is uploaded.
 
 ## Recall counting rules (platform-wide)
 A recall requires action only when ALL THREE are true:

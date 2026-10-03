@@ -3372,6 +3372,38 @@
   .record-card { transition: box-shadow var(--dur-normal) var(--ease-out), transform var(--dur-normal) var(--ease-out); }
   .record-card:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); }
 
+    /* ── Receiving mode (Phase 2 of the FSMA 204 handoff, 2026-10-03). US-only. ── */
+    .scan-mode-switch { display:flex; gap:6px; padding:10px 12px 0; }
+    .scan-mode-btn { flex:1; padding:9px 10px; border-radius:10px; border:1px solid var(--border); background:var(--surface2); color:var(--muted); font-family:'DM Mono',monospace; font-size:11px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; }
+    .scan-mode-btn.active { background:rgba(var(--accent-rgb),0.12); border-color:rgba(var(--accent-rgb),0.45); color:var(--accent); }
+    .rcv-panel { display:none; padding:14px 14px 18px; }
+    .rcv-panel.active { display:block; }
+    .rcv-title { font-family:'Figtree',sans-serif; font-weight:700; font-size:16px; color:var(--text); margin-bottom:4px; }
+    .rcv-sub { font-size:12px; color:var(--muted); line-height:1.55; margin-bottom:12px; }
+    .rcv-cam { position:relative; border-radius:12px; overflow:hidden; background:var(--bg); border:1px solid var(--border); margin-bottom:10px; min-height:160px; }
+    .rcv-cam video { width:100%; max-height:240px; object-fit:cover; display:block; }
+    .rcv-cam-hint { position:absolute; left:0; right:0; bottom:0; padding:6px 10px; font-size:11px; color:var(--text); background:rgba(0,0,0,0.45); font-family:'DM Mono',monospace; text-align:center; }
+    .rcv-actions { display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap; }
+    .rcv-actions .btn { flex:1; min-width:120px; justify-content:center; }
+    .rcv-grid2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .rcv-seg { display:flex; gap:6px; flex-wrap:wrap; }
+    .rcv-seg button { padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface2); color:var(--muted); font-family:'DM Mono',monospace; font-size:12px; cursor:pointer; }
+    .rcv-seg button.active { background:rgba(var(--accent-rgb),0.12); border-color:rgba(var(--accent-rgb),0.45); color:var(--accent); }
+    .rcv-chip { display:inline-flex; align-items:center; gap:6px; font-size:11px; font-family:'DM Mono',monospace; padding:4px 10px; border-radius:999px; border:1px solid var(--border); color:var(--muted); background:var(--surface2); cursor:default; }
+    button.rcv-chip { cursor:pointer; }
+    .rcv-chip.on { color:var(--accent); border-color:rgba(var(--accent-rgb),0.45); background:rgba(var(--accent-rgb),0.1); }
+    .rcv-chip.warn { color:var(--warn); border-color:rgba(var(--warn-rgb),0.45); background:rgba(var(--warn-rgb),0.1); }
+    .rcv-ftl-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:2px 0 12px; }
+    .rcv-msg { min-height:18px; font-size:12px; margin:6px 0 10px; }
+    .rcv-retained { font-size:11px; color:var(--muted); font-family:'DM Mono',monospace; margin-top:8px; }
+    .rcv-inline { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    .rcv-inline input, .rcv-inline select { flex:1 1 140px; min-width:120px; background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:9px 12px; color:var(--text); font-family:'DM Mono',monospace; font-size:13px; }
+    .rcv-inline .btn { width:auto; flex:0 0 auto; }
+    #p3-receiving-link { display:none; margin:6px 0 10px; }
+    .mgr-rcv-row { display:grid; grid-template-columns:1.6fr 1fr 1fr 0.8fr; gap:8px; padding:10px 12px; border:1px solid var(--border); border-radius:10px; background:var(--surface); margin-bottom:8px; font-size:12px; }
+    .mgr-rcv-row .k { font-size:10px; color:var(--muted); font-family:'DM Mono',monospace; text-transform:uppercase; letter-spacing:0.06em; }
+    .mgr-rcv-filters select { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:8px 10px; color:var(--text); font-family:'DM Mono',monospace; font-size:12px; }
+    @media (max-width:520px) { .rcv-grid2 { grid-template-columns:1fr; } .mgr-rcv-row { grid-template-columns:1fr 1fr; } }
 </style>
 </head>
 <body>
@@ -3539,6 +3571,14 @@
     <!-- Unified scan flow card -->
     <div class="flow-card">
 
+      <!-- Scan mode switch (Phase 2 of the FSMA 204 handoff, 2026-10-03).
+           Shelf is the existing three-phase flow. Receiving is the one-screen
+           back-door record (receiving_events). US-only; English only. -->
+      <div class="scan-mode-switch" id="scan-mode-switch">
+        <button type="button" class="scan-mode-btn active" id="scan-mode-shelf" onclick="setScanMode('shelf')">Shelf</button>
+        <button type="button" class="scan-mode-btn" id="scan-mode-receiving" onclick="setScanMode('receiving')">Receiving</button>
+      </div>
+
       <!-- Progress stepper -->
       <div class="flow-stepper">
         <div class="flow-step active" id="step-dot-1">
@@ -3553,6 +3593,76 @@
           <div class="flow-step-dot" id="step-dot-3-circle">3</div>
           <div class="flow-step-label" data-i18n="step.place">Place on Shelf</div>
         </div>
+      </div>
+
+      <!-- ── Receiving mode (Phase 2 of the FSMA 204 handoff, 2026-10-03) ── -->
+      <div class="rcv-panel" id="receiving-panel">
+        <div class="rcv-title">Receiving</div>
+        <div class="rcv-sub">Scan the case label to record what arrived, from whom and when. This is the record FSMA 204 asks a store to keep.</div>
+        <div class="rcv-cam" id="rcv-cam" style="display:none;">
+          <video id="rcv-video" autoplay playsinline muted></video>
+          <div class="rcv-cam-hint">Point at the GS1-128 or DataMatrix on the case label</div>
+        </div>
+        <div class="rcv-actions">
+          <button type="button" class="btn btn-primary" id="rcv-btn-scan" onclick="rcvToggleScanner()">Scan case label</button>
+          <label class="btn btn-ghost" style="cursor:pointer;">Photograph label<input type="file" accept="image/*" capture="environment" id="rcv-photo-input" style="display:none;" onchange="rcvPhotoChosen(this)" /></label>
+        </div>
+        <div class="field"><label>Label text (GS1 string, optional)</label>
+          <input type="text" id="rcv-raw" placeholder="(01)00812345678905(10)LOT123(17)261231" autocorrect="off" autocapitalize="characters" onchange="rcvApplyRawText()" /></div>
+        <div class="rcv-grid2">
+          <div class="field"><label>Product</label><input type="text" id="rcv-product" placeholder="Product name" oninput="rcvOnProductInput()" /></div>
+          <div class="field"><label>GTIN</label><input type="text" id="rcv-gtin" placeholder="AI(01) or retail barcode" inputmode="numeric" onchange="rcvOnGtinChange()" /></div>
+        </div>
+        <div class="rcv-ftl-row" id="rcv-ftl-row"></div>
+        <div class="rcv-grid2">
+          <div class="field"><label>Lot code (TLC)</label><input type="text" id="rcv-lot" placeholder="AI(10) or as printed" autocorrect="off" autocapitalize="characters" /></div>
+          <div class="field"><label>Best by</label><input type="date" id="rcv-best-by" /></div>
+        </div>
+        <div class="rcv-grid2">
+          <div class="field"><label>Quantity</label><input type="number" id="rcv-qty" min="0" step="1" value="1" inputmode="numeric" /></div>
+          <div class="field"><label>Unit</label><div class="rcv-seg" id="rcv-unit-seg">
+            <button type="button" data-unit="case" class="active" onclick="rcvSetUnit('case')">case</button>
+            <button type="button" data-unit="each" onclick="rcvSetUnit('each')">each</button>
+            <button type="button" data-unit="bag" onclick="rcvSetUnit('bag')">bag</button>
+            <button type="button" data-unit="lb" onclick="rcvSetUnit('lb')">lb</button>
+            <button type="button" data-unit="pallet" onclick="rcvSetUnit('pallet')">pallet</button>
+          </div></div>
+        </div>
+        <div class="field"><label>Supplier</label>
+          <div class="rcv-inline">
+            <select id="rcv-supplier" onchange="rcvOnSupplierChange()"><option value="">Select supplier…</option></select>
+            <button type="button" class="btn btn-ghost" onclick="rcvToggleAddSupplier()" style="white-space:nowrap;">Add</button>
+          </div>
+          <div id="rcv-add-supplier" style="display:none;margin-top:8px;">
+            <div class="rcv-inline">
+              <input type="text" id="rcv-new-supplier-name" placeholder="Supplier business name" />
+              <input type="tel" id="rcv-new-supplier-phone" placeholder="Phone (optional)" />
+              <button type="button" class="btn btn-primary" onclick="rcvAddSupplier()" style="white-space:nowrap;">Save supplier</button>
+            </div>
+            <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5;">Address, city, state and zip can be completed later in the dashboard. FSMA 204 asks for the full location of the immediate previous source.</div>
+          </div>
+          <div id="rcv-supplier-note" class="rcv-retained"></div>
+        </div>
+        <div class="rcv-grid2">
+          <div class="field"><label>Reference document</label><div class="rcv-seg" id="rcv-doc-seg">
+            <button type="button" data-doc="PO" class="active" onclick="rcvSetDocType('PO')">PO</button>
+            <button type="button" data-doc="BOL" onclick="rcvSetDocType('BOL')">BOL</button>
+            <button type="button" data-doc="invoice" onclick="rcvSetDocType('invoice')">Invoice</button>
+            <button type="button" data-doc="ASN" onclick="rcvSetDocType('ASN')">ASN</button>
+            <button type="button" data-doc="other" onclick="rcvSetDocType('other')">Other</button>
+          </div></div>
+          <div class="field"><label>Document number</label><input type="text" id="rcv-doc-number" placeholder="e.g. PO 48213" autocorrect="off" /></div>
+        </div>
+        <div class="rcv-grid2">
+          <div class="field"><label>Date received</label><input type="datetime-local" id="rcv-received-at" /></div>
+          <div class="field"><label>Notes</label><input type="text" id="rcv-notes" placeholder="Optional" /></div>
+        </div>
+        <div class="rcv-msg" id="rcv-msg"></div>
+        <button type="button" class="btn-next" id="rcv-btn-save" onclick="rcvSave()">Record receipt</button>
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          <button type="button" class="btn btn-ghost" style="flex:1;justify-content:center;" onclick="rcvDoneDelivery()">Done with this delivery</button>
+        </div>
+        <div class="rcv-retained" id="rcv-retained"></div>
       </div>
 
       <!-- ── Phase 1: Product Label ── -->
@@ -3897,6 +4007,7 @@
             <div class="review-value" id="review-barcode">—</div>
           </div>
 
+          <div id="p3-receiving-link"></div>
           <div class="review-photos" id="review-photos"></div>
 
           <!-- Shelf location (optional, pre-filled from top bar) -->
@@ -4275,6 +4386,7 @@
     <button class="mgr-tab" id="mgr-tab-staff" data-i18n="tab.staffActivity" onclick="switchMgrTab('staff')">Staff Activity</button>
     <button class="mgr-tab" id="mgr-tab-recalls" data-i18n="tab.recallMgmt" onclick="switchMgrTab('recalls')">Recall Management</button>
     <button class="mgr-tab" id="mgr-tab-audit" data-i18n="tab.auditExport" onclick="switchMgrTab('audit')">Audit Export</button>
+    <button class="mgr-tab" id="mgr-tab-receiving" onclick="switchMgrTab('receiving')">Receiving</button>
     <!-- Escalated manager tab removed 2026-05-27 (Chunk D). The
          loadMgrEscalated / toggleEscalatedTab functions are now
          unreferenced and will be pruned with the rest of the dead
@@ -4304,6 +4416,24 @@
   </div>
 
   <!-- Store Management Panel -->
+  <!-- Receiving (Phase 2 of the FSMA 204 handoff, 2026-10-03) -->
+  <div id="mgr-panel-receiving" style="display:none;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:10px;">
+      <div>
+        <div style="font-size:16px;font-weight:700;font-family:'Figtree',sans-serif;color:var(--text);">Receiving</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px;">Deliveries recorded at the back door: the Receiving critical tracking event for FSMA 204.</div>
+      </div>
+      <button type="button" class="btn btn-ghost" onclick="rcvExportCsv()" style="font-size:12px;padding:8px 14px;">Export CSV</button>
+    </div>
+    <div class="mgr-rcv-filters" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+      <select id="mgr-rcv-store" onchange="loadMgrReceiving()" style="flex:1;min-width:140px;"><option value="">All stores</option></select>
+      <select id="mgr-rcv-days" onchange="loadMgrReceiving()" style="min-width:130px;">
+        <option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="90">Last 90 days</option><option value="365">Last year</option>
+      </select>
+    </div>
+    <div id="mgr-rcv-list"><div style="font-size:13px;color:var(--muted);padding:20px 0;text-align:center;">Loading…</div></div>
+  </div>
+
   <div id="mgr-panel-storemgmt" style="display:none;">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
       <div>
@@ -5773,7 +5903,7 @@ async function showApp(user) {
     // Use canonical _userRegion (per CLAUDE.md jurisdiction rule).
     // Falling back to metadata/localStorage let stale device state
     // override an admin-assigned region.
-    updateDrawerAccount(currentUser._displayName || user.email, _userRegion || 'no');
+    updateDrawerAccount(currentUser._displayName || user.email, _userRegion || 'us');
   }
 
   // Reset sign-in button in case it's stuck in loading state
@@ -5813,6 +5943,7 @@ async function showApp(user) {
         const { data: _planRow } = await sb.from('organisations').select('plan').eq('id', _currentOrgId).maybeSingle();
         window._orgAiEnabled = ['pov', 'active'].includes(_planRow?.plan);
       } catch (_) { window._orgAiEnabled = false; }
+      loadSuppliersCache();   // Phase 2 (2026-10-03): supplier picker for the receiving form
       if (member.store_id) {
         window._managerStoreId   = member.store_id;
         window._managerStoreName = null;
@@ -7381,7 +7512,7 @@ function printExposureNotice() {
 // ── ONBOARDING (#10) ──────────────────────────────────────────
 let _obSlide = 0;
 let _obRegion = null;      // 'us' | 'no'
-let _userRegion = 'no';    // active region — 'us'|'no' — loaded from DB
+let _userRegion = 'us';    // active region, 'us' or 'no', loaded from DB. Default flipped to 'us' 2026-10-03 (US-only decision); stored values still win.
 let _obSources = new Set(); // selected recall sources
 const OB_KEY   = 'batched_onboarding_done_v1';
 const OB_TOTAL = 6;
@@ -7712,11 +7843,11 @@ async function _obFinish() {
       onboarding_done: true,
       recall_source: source,
       recall_lookback_days: recallLookbackDays,
-      region: _obRegion || 'no'
+      region: _obRegion || 'us'
     }, { onConflict: 'user_id' });
   } catch(e) { console.warn('Could not save onboarding state to DB:', e); }
   // Apply region regardless of DB success
-  _userRegion = _obRegion || 'no';
+  _userRegion = _obRegion || 'us';
   applyRegion();
 
   document.getElementById('onboarding-modal').style.display = 'none';
@@ -7942,6 +8073,8 @@ function goToPhase(n) {
     populateReview();
     // Run pre-placement recall check asynchronously after phase transition
     setTimeout(checkPrePlacementRecall, 200);
+    // Phase 2 (2026-10-03): best-effort link to the delivery this lot came in on
+    setTimeout(rcvComputeLinkForPhase3, 50);
   }
 
   // Stop ZXing if leaving phase 2 barcode mode
@@ -8252,6 +8385,8 @@ document.addEventListener('DOMContentLoaded', () => {
 // ── NAV ─────────────────────────────────────────────────────
 function showView(view) {
   document.body.classList.toggle('scan-active', view === 'scan');
+  // Phase 2 (2026-10-03): receiving mode lives inside the Scan view.
+  if (view !== 'scan') rcvStopScanner(); else applyScanMode();
   document.querySelectorAll('nav button').forEach(b => {
     const bview = b.getAttribute('onclick') && b.getAttribute('onclick').match(/showView\('(\w+)'\)/);
     if (bview) b.classList.toggle('active', bview[1] === view);
@@ -9430,6 +9565,9 @@ async function saveRecord() {
     // Firefox 95+); older browsers fall back to null and lose the protection
     // (same behavior as before this change).
     client_uuid:        (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : null,
+    // Phase 2 (2026-10-03): the receiving record this lot came in on, when one
+    // matched at phase 3. Best-effort; the receiving record is the legal record.
+    receiving_event_id: _pendingReceivingLink?.id || null,
   };
 
   // ── Offline support ──
@@ -9718,6 +9856,12 @@ async function _syncOfflineQueueImpl() {
   const remaining = [];
   for (const item of offlineQueue) {
     try {
+      // Phase 2 (2026-10-03): queued receipts replay through their own path.
+      if (item.kind === 'receiving') {
+        const outcome = await _replayReceivingItem(item);
+        if (outcome === 'discard') discardedOtherOrg++; else synced++;
+        continue;
+      }
       // A queued scan belongs to the org that was signed in when it was taken.
       // If a different org is signed in now, dropping it is correct: replaying
       // it would file another tenant's scan against this one, and migration
@@ -9875,6 +10019,11 @@ function resetForm() {
   phase1Mode = 'label';
   const _hint = document.getElementById('lot-location-hint');
   if (_hint) _hint.style.display = 'none';
+
+  // Phase 2 (2026-10-03): clear the delivery link
+  _pendingReceivingLink = null;
+  const _p3link = document.getElementById('p3-receiving-link');
+  if (_p3link) { _p3link.style.display = 'none'; _p3link.innerHTML = ''; }
 
   // Clear product state
   productBlob = null;
@@ -10976,6 +11125,17 @@ async function loadHistory() {
   ]);
   if (scansRes.error) { grid.innerHTML = '<div class="empty-state"><h3>Error loading records</h3><p>' + scansRes.error.message + '</p></div>'; return; }
   allRecords = scansRes.data || [];
+  // Phase 2 (2026-10-03): receiving_event_id → delivery summary for the cards.
+  window._rcvLinkMap = {};
+  try {
+    const _rcvIds = [...new Set(allRecords.map(r => r.receiving_event_id).filter(Boolean))];
+    for (let i = 0; i < _rcvIds.length; i += 200) {
+      const { data: _rcvRows } = await sb.from('receiving_events')
+        .select('id, supplier_name_snapshot, received_at, reference_document_type, reference_document_number')
+        .in('id', _rcvIds.slice(i, i + 200));
+      (_rcvRows || []).forEach(x => { window._rcvLinkMap[x.id] = x; });
+    }
+  } catch (_) {}
   let pushedRecalls = [];
   const distRows = distRes.data || [];
   if (distRows.length) {
@@ -11309,6 +11469,7 @@ function renderRecords(records, recallQ) {
           ${r.barcode_number ? `<span class="meta-chip">${t('card.barcodeLabel')} <strong>${esc(r.barcode_number)}</strong></span>` : ''}
           ${r.lot_number     ? `<span class="meta-chip">${t('card.lotLabel')} <strong>${esc(r.lot_number)}</strong></span>` : ''}
           ${r.supplier_name  ? `<span class="meta-chip">${t('card.supplierLabel')} <strong>${esc(r.supplier_name)}</strong></span>` : ''}
+          ${r.receiving_event_id && window._rcvLinkMap?.[r.receiving_event_id] ? `<span class="meta-chip" style="color:var(--accent);border-color:rgba(var(--accent-rgb),0.45);">Delivery: <strong>${esc(window._rcvLinkMap[r.receiving_event_id].supplier_name_snapshot || 'supplier not recorded')}</strong> ${esc(fmtRegionDate(window._rcvLinkMap[r.receiving_event_id].received_at))}${window._rcvLinkMap[r.receiving_event_id].reference_document_number ? ' · ' + esc(window._rcvLinkMap[r.receiving_event_id].reference_document_type || '') + ' ' + esc(window._rcvLinkMap[r.receiving_event_id].reference_document_number) : ''}</span>` : ''}
           ${r.is_ftl ? `<span class="meta-chip" style="color:var(--info);border-color:var(--info);background:rgba(var(--info-rgb),0.08);">FSMA 204 (USA)</span>` : ''}
           ${r.batch_number   ? `<span class="meta-chip">${t("card.batch")} <strong>${esc(r.batch_number)}</strong></span>` : ''}
         </div>
@@ -16495,6 +16656,16 @@ function _deriveGS1SemanticFields(gs1) {
   gs1.quantity       = a['37'] ? parseInt(a['37'], 10) : null;
   gs1.gtin           = a['01'] || a['02'] || null;
   gs1.packDate       = _gs1ParseDate(a['13']) || null;
+  // Net weight from AI 310n (kg) or 320n (lb); n is the implied decimal count.
+  const _w = (prefix) => {
+    for (let n = 0; n <= 6; n++) {
+      const v = a[prefix + n];
+      if (v && /^\d{6}$/.test(v)) return parseInt(v, 10) / Math.pow(10, n);
+    }
+    return null;
+  };
+  gs1.netWeightKg = _w('310');
+  gs1.netWeightLb = _w('320');
 }
 function parseGS1(raw) {
   const result = { lot: null, batch: null, all: {} };
@@ -16537,6 +16708,12 @@ function parseGS1(raw) {
     '240': null, '241': null, '242': null, '243': null,
     '250': null, '251': null, '253': null, '254': null, '255': null,
     '310': 6, '311': 6, '312': 6, '313': 6, '314': 6, '315': 6, '316': 6,
+    // Net weight AIs are four digits: 310n (kg) and 320n (lb), n = implied
+    // decimals, then a six-digit value. Listed as 4-char keys so the raw
+    // parser (which tries 4, 3, 2) reads them correctly. Added 2026-10-03
+    // for case labels; 320n is the US form.
+    '3100': 6, '3101': 6, '3102': 6, '3103': 6, '3104': 6, '3105': 6, '3106': 6,
+    '3200': 6, '3201': 6, '3202': 6, '3203': 6, '3204': 6, '3205': 6, '3206': 6,
     '400': null, '401': null, '402': null, '403': null,
     '410': 13, '411': 13, '412': 13, '413': 13, '414': 13, '415': 13, '416': 13, '417': 13,
     '420': null, '421': null, '422': null,
@@ -16585,15 +16762,24 @@ function parseGS1(raw) {
     if (fixedLen !== null) {
       val = s.substr(i, fixedLen); i += fixedLen;
     } else {
+      // Variable-length value. GS1 terminates these with FNC1 (\x1D). When the
+      // scanner preserved any FNC1 in this string, trust it: read to the next
+      // FNC1 or the end. Only when the whole string has no FNC1 at all fall
+      // back to guessing a boundary, and then only on the AIs that follow a
+      // lot on food case labels. The old guess used the full AI table, so a
+      // lot like RM240928 stopped at "RM" because "240" is an AI prefix
+      // (2026-10-03, Phase 2).
+      const _BOUNDARY_AIS = ['00','01','02','10','11','13','15','17','21','37',
+        '3100','3101','3102','3103','3104','3105','3106','3200','3201','3202','3203','3204','3205','3206'];
       let end = i;
       while (end < s.length && s[end] !== FNC1) {
-        let foundAI = false;
-        for (const len of [4, 3, 2]) {
-          if (Object.prototype.hasOwnProperty.call(AI_LENGTHS, s.substr(end, len))) {
-            foundAI = true; break;
+        if (!_hasFNC1 && end > i) {
+          let foundAI = false;
+          for (const len of [4, 2]) {
+            if (_BOUNDARY_AIS.includes(s.substr(end, len))) { foundAI = true; break; }
           }
+          if (foundAI) break;
         }
-        if (foundAI && end > i) break;
         end++;
       }
       val = s.substring(i, end); i = end;
@@ -16609,6 +16795,566 @@ function parseGS1(raw) {
   return result;
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════
+// RECEIVING MODE (Phase 2 of the FSMA 204 handoff, 2026-10-03). US-only.
+// One-screen record of the Receiving critical tracking event, 21 CFR
+// 1.1345: what arrived, from whom, when, how much. Writes receiving_events
+// (migration 023) through the same offline-queue pattern as saveRecord.
+// Shelf scans link to the newest matching receiving record
+// (findReceivingLink, 45-day window). Suppliers come from the suppliers
+// table (migration 022). FTL status resolves in the handoff's order:
+// org override by GTIN, org override by normalized name, product catalog,
+// then the name regex. English only; the NO branch is frozen.
+// ═══════════════════════════════════════════════════════════════════════
+let _scanMode = 'shelf';
+let _rcvPrefsLoaded = false;
+let _rcvReader = null;              // ZXing reader for the receiving camera, separate from zxingReader
+let _rcvLastCode = null, _rcvLastCodeAt = 0;
+let _rcvLabelBlob = null;           // label photo, uploaded as label_photo_url
+let _rcvParsed = null;              // last parseGS1 result
+let _rcvRawCapture = null;          // verbatim scanned or typed label string
+let _rcvUnit = 'case';
+let _rcvDocType = 'PO';
+let _rcvFtl = { isFtl: false, category: null, label: null, source: null, confirmed: null };
+let _suppliers = [];
+let _pendingReceivingLink = null;   // receiving row a shelf scan will link to
+let _mgrRcvRows = [];
+const _RCV_UNITS = ['case', 'each', 'bag', 'lb', 'pallet'];
+const _RCV_DOCS  = ['PO', 'BOL', 'invoice', 'ASN', 'other'];
+
+function _rcvEl(id) { return document.getElementById(id); }
+function _rcvNormLot(v) { return String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); }
+function _rcvMsg(text, type) {
+  const el = _rcvEl('rcv-msg'); if (!el) return;
+  el.innerHTML = text ? `<span class="status-pill ${type || 'info'}">${text}</span>` : '';
+}
+function _rcvLocalDateTimeValue(d) {
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+// ── Mode switch ──────────────────────────────────────────────────────────
+function setScanMode(mode) {
+  _scanMode = (mode === 'receiving') ? 'receiving' : 'shelf';
+  try { localStorage.setItem('batched_scan_mode', _scanMode); } catch (_) {}
+  applyScanMode();
+}
+function applyScanMode() {
+  if (!_rcvEl('receiving-panel')) return;
+  if (!_rcvPrefsLoaded) {
+    _rcvPrefsLoaded = true;
+    try { _scanMode = localStorage.getItem('batched_scan_mode') === 'receiving' ? 'receiving' : 'shelf'; } catch (_) {}
+    try { const u = localStorage.getItem('batched_rcv_unit'); if (_RCV_UNITS.includes(u)) _rcvUnit = u; } catch (_) {}
+  }
+  const rcv = _scanMode === 'receiving';
+  _rcvEl('scan-mode-shelf')?.classList.toggle('active', !rcv);
+  _rcvEl('scan-mode-receiving')?.classList.toggle('active', rcv);
+  const stepper = document.querySelector('#view-scan .flow-stepper');
+  if (stepper) stepper.style.display = rcv ? 'none' : '';
+  document.querySelectorAll('#view-scan .flow-phase').forEach(ph => { ph.style.display = rcv ? 'none' : ''; });
+  _rcvEl('receiving-panel').classList.toggle('active', rcv);
+  if (rcv) { stopZXing(); rcvInitForm(); } else { rcvStopScanner(); }
+}
+function rcvInitForm() {
+  const at = _rcvEl('rcv-received-at'); if (at && !at.value) at.value = _rcvLocalDateTimeValue(new Date());
+  rcvSetUnit(_rcvUnit);
+  rcvSetDocType(_rcvDocType);
+  if (!_suppliers.length && _currentOrgId) loadSuppliersCache(); else rcvRenderSupplierOptions();
+  rcvRestoreDocMemory();
+  rcvRenderFtl();
+}
+function rcvSetUnit(u) {
+  if (!_RCV_UNITS.includes(u)) u = 'case';
+  _rcvUnit = u;
+  try { localStorage.setItem('batched_rcv_unit', u); } catch (_) {}
+  document.querySelectorAll('#rcv-unit-seg button').forEach(b => b.classList.toggle('active', b.dataset.unit === u));
+}
+function rcvSetDocType(d) {
+  if (!_RCV_DOCS.includes(d)) d = 'other';
+  _rcvDocType = d;
+  document.querySelectorAll('#rcv-doc-seg button').forEach(b => b.classList.toggle('active', b.dataset.doc === d));
+}
+
+// ── Suppliers ────────────────────────────────────────────────────────────
+const _RCV_SUPPLIER_COLS = 'id,name,phone,street_address,city,region,postal_code,is_exempt_entity,active,seeded_from';
+async function loadSuppliersCache() {
+  if (!_currentOrgId) return;
+  try {
+    const { data, error } = await sb.from('suppliers').select(_RCV_SUPPLIER_COLS)
+      .eq('organisation_id', _currentOrgId).eq('active', true).order('name');
+    if (error) throw error;
+    _suppliers = data || [];
+  } catch (e) { console.warn('[receiving] suppliers load failed:', e.message); _suppliers = []; }
+  rcvRenderSupplierOptions();
+}
+function _rcvSupplierComplete(x) { return !!(x && x.name && x.phone && x.street_address && x.city && x.region && x.postal_code); }
+function rcvRenderSupplierOptions() {
+  const sel = _rcvEl('rcv-supplier'); if (!sel) return;
+  const current = sel.value;
+  let recent = [];
+  try { recent = JSON.parse(localStorage.getItem('batched_rcv_recent_suppliers') || '[]'); } catch (_) {}
+  const rank = id => { const i = recent.indexOf(id); return i === -1 ? 999 : i; };
+  const sorted = [..._suppliers].sort((a, b) => (rank(a.id) - rank(b.id)) || String(a.name || '').localeCompare(String(b.name || '')));
+  sel.innerHTML = '<option value="">Select supplier…</option>' + sorted.map(x =>
+    `<option value="${esc(x.id)}">${esc(x.name)}${_rcvSupplierComplete(x) ? '' : ' (address incomplete)'}${x.is_exempt_entity ? ' (exempt source)' : ''}</option>`).join('');
+  if (current && _suppliers.some(x => x.id === current)) sel.value = current;
+  rcvOnSupplierChange();
+}
+function rcvOnSupplierChange() {
+  const note = _rcvEl('rcv-supplier-note'); if (!note) return;
+  const x = _suppliers.find(y => y.id === _rcvEl('rcv-supplier')?.value);
+  if (!x) { note.textContent = ''; return; }
+  note.textContent = x.is_exempt_entity
+    ? 'Exempt source: a lot code is not required for this supplier (21 CFR 1.1345).'
+    : (_rcvSupplierComplete(x) ? '' : 'Address incomplete. A manager can finish it in the dashboard.');
+}
+function rcvToggleAddSupplier() {
+  const box = _rcvEl('rcv-add-supplier'); if (!box) return;
+  box.style.display = box.style.display === 'none' ? 'block' : 'none';
+  if (box.style.display === 'block') _rcvEl('rcv-new-supplier-name')?.focus();
+}
+async function rcvAddSupplier() {
+  const name = _rcvEl('rcv-new-supplier-name')?.value.trim();
+  const phone = _rcvEl('rcv-new-supplier-phone')?.value.trim() || null;
+  if (!name) { _rcvMsg('Supplier name is required.', 'warn'); return; }
+  if (!_currentOrgId) { _rcvMsg('Organization not loaded yet.', 'warn'); return; }
+  try {
+    const { data, error } = await sb.from('suppliers')
+      .insert({ organisation_id: _currentOrgId, name, phone })
+      .select(_RCV_SUPPLIER_COLS).single();
+    if (error) throw error;
+    _suppliers.push(data);
+    rcvRenderSupplierOptions();
+    _rcvEl('rcv-supplier').value = data.id; rcvOnSupplierChange();
+    _rcvEl('rcv-new-supplier-name').value = ''; _rcvEl('rcv-new-supplier-phone').value = '';
+    rcvToggleAddSupplier();
+    _rcvMsg(`Supplier "${esc(name)}" added.`, 'ok');
+  } catch (e) {
+    const dup = e.code === '23505' || /duplicate|unique/i.test(e.message || '');
+    _rcvMsg(dup ? 'A supplier with that name already exists.' : 'Could not add supplier: ' + esc(e.message || 'unknown error'), 'error');
+  }
+}
+
+// ── Camera and label reading ─────────────────────────────────────────────
+async function rcvToggleScanner() { if (_rcvReader) { rcvStopScanner(); return; } await rcvStartScanner(); }
+async function rcvStartScanner() {
+  if (typeof ZXing === 'undefined') { _rcvMsg('Barcode reader not loaded. Photograph the label or type it in.', 'warn'); return; }
+  const vid = _rcvEl('rcv-video'), cam = _rcvEl('rcv-cam'); if (!vid || !cam) return;
+  const stream = await getSharedStream(); if (!stream) return;
+  cam.style.display = 'block';
+  const hints = new Map();
+  const fmts = [ZXing.BarcodeFormat.CODE_128, ZXing.BarcodeFormat.DATA_MATRIX, ZXing.BarcodeFormat.QR_CODE,
+                ZXing.BarcodeFormat.EAN_13, ZXing.BarcodeFormat.UPC_A, ZXing.BarcodeFormat.ITF, ZXing.BarcodeFormat.RSS_14];
+  if (ZXing.BarcodeFormat.RSS_EXPANDED !== undefined) fmts.push(ZXing.BarcodeFormat.RSS_EXPANDED);
+  hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, fmts);
+  hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+  _rcvReader = new ZXing.BrowserMultiFormatReader(hints);
+  const btn = _rcvEl('rcv-btn-scan'); if (btn) btn.textContent = 'Stop camera';
+  vid.srcObject = stream;
+  _rcvReader.decodeFromStream(stream, vid, (result) => {
+    if (!result) return;
+    const code = result.getText(); if (!code) return;
+    const now = Date.now();
+    if (code === _rcvLastCode && now - _rcvLastCodeAt < 700) { rcvHandleCode(code); rcvStopScanner(); }
+    else { _rcvLastCode = code; _rcvLastCodeAt = now; }
+  }).catch(e => { console.warn('[receiving] scanner error:', e); _rcvMsg('Camera could not start. Photograph the label instead.', 'warn'); rcvStopScanner(); });
+}
+function rcvStopScanner() {
+  if (_rcvReader) { try { _rcvReader.reset(); } catch (_) {} _rcvReader = null; }
+  const cam = _rcvEl('rcv-cam'); if (cam) cam.style.display = 'none';
+  const btn = _rcvEl('rcv-btn-scan'); if (btn) btn.textContent = 'Scan case label';
+  _rcvLastCode = null;
+}
+function rcvHandleCode(code) {
+  const raw = _rcvEl('rcv-raw'); if (raw) raw.value = code;
+  rcvApplyParsed(parseGS1(code), code);
+}
+function rcvApplyRawText() {
+  const v = _rcvEl('rcv-raw')?.value.trim();
+  if (v) rcvApplyParsed(parseGS1(v), v);
+}
+function rcvApplyParsed(gs1, rawText) {
+  _rcvParsed = gs1 || null;
+  _rcvRawCapture = rawText || null;
+  if (!gs1) return;
+  if (gs1.gtin) _rcvEl('rcv-gtin').value = gs1.gtin;
+  if (gs1.lot)  _rcvEl('rcv-lot').value = gs1.lot;
+  const best = gs1.bestBefore || gs1.expiry || null;
+  if (best) _rcvEl('rcv-best-by').value = best;
+  if (Number.isInteger(gs1.quantity) && gs1.quantity > 0) { _rcvEl('rcv-qty').value = gs1.quantity; }
+  else if (gs1.netWeightLb) { _rcvEl('rcv-qty').value = gs1.netWeightLb; rcvSetUnit('lb'); }
+  if (gs1.gtin) rcvOnGtinChange(); else rcvResolveFtl();
+  const ok = !!(gs1.lot || gs1.gtin);
+  _rcvMsg(ok ? 'Label read. Check the fields and pick the supplier.' : 'No GS1 data found in that string. Type the lot code.', ok ? 'ok' : 'warn');
+}
+async function rcvDecodeBlob(blob) {
+  if (typeof ZXing === 'undefined') return null;
+  const url = URL.createObjectURL(blob);
+  const img = new Image(); img.src = url;
+  await new Promise((res, rej) => { img.onload = res; img.onerror = rej; });
+  URL.revokeObjectURL(url);
+  const canvas = document.createElement('canvas');
+  canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+  canvas.getContext('2d').drawImage(img, 0, 0);
+  const r = new ZXing.BrowserMultiFormatReader().decode(canvas);
+  if (!r) return null;
+  const text = r.getText(); const parsed = parseGS1(text); parsed._raw = text; return parsed;
+}
+async function rcvPhotoChosen(input) {
+  const file = input.files && input.files[0]; if (!file) return;
+  _rcvLabelBlob = file;
+  _rcvMsg('Reading the label…', 'info');
+  let decoded = null;
+  try { decoded = await rcvDecodeBlob(file); } catch (_) {}
+  if (decoded && (decoded.lot || decoded.gtin)) {
+    _rcvEl('rcv-raw').value = decoded._raw || '';
+    rcvApplyParsed(decoded, decoded._raw);
+  } else {
+    // No barcode in the photo. If the org has AI, ask for the product name
+    // the same way Phase 1 does; the lot still has to be typed.
+    let name = null;
+    try {
+      if (window._orgAiEnabled !== false && !_rcvEl('rcv-product').value.trim()) {
+        const b64 = await blobToBase64(file);
+        const data = await callOcrFunction('identify_product', b64);
+        const text = data?.content?.[0]?.text?.trim();
+        if (text && text !== 'Unknown product') name = text;
+      }
+    } catch (_) {}
+    if (name) { _rcvEl('rcv-product').value = name; rcvResolveFtl(); }
+    _rcvMsg(name ? 'No barcode in the photo. Product name suggested; type the lot code.' : 'No barcode in the photo. Type the product and lot code.', 'warn');
+  }
+  input.value = '';
+}
+
+// ── Product and FTL resolution ───────────────────────────────────────────
+async function rcvOnGtinChange() {
+  const gtinRaw = _rcvEl('rcv-gtin')?.value.trim();
+  if (gtinRaw) {
+    const nameEl = _rcvEl('rcv-product');
+    if (nameEl && !nameEl.value.trim()) {
+      const name = await _lookupProductsPublic(normalizeBarcode(gtinRaw));
+      if (name) { nameEl.value = name; nameEl.classList.add('auto-filled'); }
+    }
+  }
+  rcvResolveFtl();
+}
+function rcvOnProductInput() { clearTimeout(window._rcvFtlTimer); window._rcvFtlTimer = setTimeout(rcvResolveFtl, 400); }
+async function rcvResolveFtl() {
+  const gtinRaw = _rcvEl('rcv-gtin')?.value.trim();
+  const name = _rcvEl('rcv-product')?.value.trim();
+  const norm = gtinRaw ? normalizeBarcode(gtinRaw) : null;
+  const key = name ? normaliseProductKey(name) : null;
+  let res = null;
+  const labelFor = cat => cat ? (FTL_CATEGORIES[cat]?.label || cat) : null;
+  if (_currentOrgId && norm) {
+    try {
+      const { data } = await sb.from('ftl_overrides').select('is_ftl,ftl_category').eq('organisation_id', _currentOrgId).eq('gtin', norm).limit(1);
+      if (data && data[0]) res = { isFtl: !!data[0].is_ftl, category: data[0].ftl_category, label: labelFor(data[0].ftl_category), source: 'override' };
+    } catch (_) {}
+  }
+  if (!res && _currentOrgId && key) {
+    try {
+      const { data } = await sb.from('ftl_overrides').select('is_ftl,ftl_category').eq('organisation_id', _currentOrgId).is('gtin', null).eq('product_name_normalized', key).limit(1);
+      if (data && data[0]) res = { isFtl: !!data[0].is_ftl, category: data[0].ftl_category, label: labelFor(data[0].ftl_category), source: 'override' };
+    } catch (_) {}
+  }
+  if (!res && norm) {
+    // products_public may not expose the migration 025 columns yet; a 400 here is expected and ignored.
+    try {
+      const { data } = await sb.from('products_public').select('is_ftl,ftl_category').eq('barcode_normalized', norm).limit(1);
+      const pr = data && data[0];
+      if (pr && pr.is_ftl !== null && pr.is_ftl !== undefined) res = { isFtl: !!pr.is_ftl, category: pr.ftl_category, label: labelFor(pr.ftl_category), source: 'product' };
+    } catch (_) {}
+  }
+  if (!res) { const d = detectFtlCategory(name); res = { isFtl: d.isFtl, category: d.category, label: d.label, source: 'regex' }; }
+  _rcvFtl = { ...res, confirmed: null };
+  rcvRenderFtl();
+}
+function rcvRenderFtl() {
+  const row = _rcvEl('rcv-ftl-row'); if (!row) return;
+  const f = _rcvFtl;
+  const srcTxt = f.source === 'override' ? 'confirmed for your organization' : f.source === 'product' ? 'from the product catalog' : f.source === 'regex' ? 'detected from the name' : '';
+  if (!f.isFtl) {
+    row.innerHTML = `<span class="rcv-chip">${f.source === 'override' ? 'Not a listed food, ' + srcTxt : 'Not on the Food Traceability List as far as Batch\'d can tell'}</span>`
+      + (f.source !== 'override' ? ` <button type="button" class="rcv-chip" onclick="rcvConfirmFtl(true)">It is a listed food</button>` : '');
+    return;
+  }
+  row.innerHTML = `<span class="rcv-chip on">FTL: ${esc(f.label || f.category || 'listed food')}${srcTxt ? ' · ' + srcTxt : ''}</span>`
+    + (f.source !== 'override' ? ` <button type="button" class="rcv-chip" onclick="rcvConfirmFtl(true)">Yes, listed</button> <button type="button" class="rcv-chip" onclick="rcvConfirmFtl(false)">No</button>` : '');
+}
+async function rcvConfirmFtl(yes) {
+  _rcvFtl.confirmed = yes;
+  _rcvFtl.isFtl = yes;
+  if (yes && !_rcvFtl.category) { const d = detectFtlCategory(_rcvEl('rcv-product')?.value); _rcvFtl.category = d.category; _rcvFtl.label = d.label; }
+  if (!yes) { _rcvFtl.category = null; _rcvFtl.label = null; }
+  // Managers and corp admins write an org override (migration 025 policies).
+  if (['corp_admin', 'store_manager'].includes(_currentUserRole) && _currentOrgId) {
+    const gtinRaw = _rcvEl('rcv-gtin')?.value.trim();
+    const norm = gtinRaw ? normalizeBarcode(gtinRaw) : null;
+    const key = normaliseProductKey(_rcvEl('rcv-product')?.value || '');
+    if (norm || key) {
+      try {
+        let q = sb.from('ftl_overrides').select('id').eq('organisation_id', _currentOrgId);
+        q = norm ? q.eq('gtin', norm) : q.is('gtin', null).eq('product_name_normalized', key);
+        const { data: existing } = await q.limit(1);
+        const row = { is_ftl: yes, ftl_category: yes ? _rcvFtl.category : null, set_by: currentUser?.email || null };
+        if (existing && existing[0]) {
+          const { error } = await sb.from('ftl_overrides').update(row).eq('id', existing[0].id); if (error) throw error;
+        } else {
+          const { error } = await sb.from('ftl_overrides').insert({ organisation_id: _currentOrgId, gtin: norm || null, product_name_normalized: norm ? null : key, ...row }); if (error) throw error;
+        }
+        _rcvFtl.source = 'override';
+      } catch (e) { console.warn('[receiving] FTL override write failed:', e.message); }
+    }
+  }
+  rcvRenderFtl();
+}
+
+// ── Delivery memory (same document for the next line, 30 minutes) ──────
+function _rcvDocKey() { return 'batched_rcv_doc_' + (_currentStoreId || 'nostore'); }
+function rcvRememberDoc() {
+  try {
+    localStorage.setItem(_rcvDocKey(), JSON.stringify({
+      type: _rcvDocType, number: _rcvEl('rcv-doc-number')?.value.trim() || '',
+      supplier: _rcvEl('rcv-supplier')?.value || '', at: Date.now(),
+    }));
+  } catch (_) {}
+}
+function rcvRestoreDocMemory() {
+  try {
+    const m = JSON.parse(localStorage.getItem(_rcvDocKey()) || 'null');
+    if (!m || Date.now() - m.at > 30 * 60 * 1000) return;
+    if (m.type) rcvSetDocType(m.type);
+    const num = _rcvEl('rcv-doc-number'); if (num && m.number && !num.value) num.value = m.number;
+    if (m.supplier && _suppliers.some(x => x.id === m.supplier)) { _rcvEl('rcv-supplier').value = m.supplier; rcvOnSupplierChange(); }
+    const ret = _rcvEl('rcv-retained'); if (ret) ret.textContent = m.number ? `Same delivery: ${m.type} ${m.number} kept for the next line.` : '';
+  } catch (_) {}
+}
+
+// ── Save ─────────────────────────────────────────────────────────────────
+async function rcvSave() {
+  const product = _rcvEl('rcv-product').value.trim();
+  const gtinRaw = _rcvEl('rcv-gtin').value.trim();
+  const lot = _rcvEl('rcv-lot').value.trim();
+  const qty = Number(_rcvEl('rcv-qty').value);
+  const supplierId = _rcvEl('rcv-supplier').value || null;
+  const supplier = _suppliers.find(x => x.id === supplierId) || null;
+  const docNumber = _rcvEl('rcv-doc-number').value.trim() || null;
+  const receivedAtRaw = _rcvEl('rcv-received-at').value;
+  const notes = _rcvEl('rcv-notes').value.trim() || null;
+  const storeId = _currentStoreId || null;
+  if (!storeId) { _rcvMsg('Select a store (house icon above) before recording a receipt.', 'warn'); return; }
+  if (!product) { _rcvMsg('Product name is required.', 'warn'); return; }
+  if (!(Number.isFinite(qty) && qty >= 0)) { _rcvMsg('Quantity must be a number.', 'warn'); return; }
+  const exempt = !!supplier?.is_exempt_entity;
+  if (!lot && !exempt) { _rcvMsg('Lot code is required unless the supplier is an exempt source.', 'warn'); return; }
+  if (!_currentOrgId) { _rcvMsg('Organization not loaded yet.', 'warn'); return; }
+  const receivedAt = receivedAtRaw ? new Date(receivedAtRaw).toISOString() : new Date().toISOString();
+  const payload = {
+    organisation_id: _currentOrgId,
+    store_id: storeId,
+    supplier_id: supplierId,
+    supplier_name_snapshot: supplier?.name || null,
+    product_name: product,
+    gtin: gtinRaw ? normalizeBarcode(gtinRaw) : null,
+    traceability_lot_code: lot || null,
+    tlc_source_type: lot ? 'supplier_label' : (exempt ? 'not_required_exempt_source' : null),
+    tlc_source_reference: null,
+    quantity: qty,
+    unit_of_measure: _rcvUnit,
+    received_at: receivedAt,
+    reference_document_type: docNumber ? _rcvDocType : null,
+    reference_document_number: docNumber,
+    is_ftl: !!_rcvFtl.isFtl,
+    ftl_category: _rcvFtl.isFtl ? (_rcvFtl.category || null) : null,
+    ftl_confirmed_by_staff: _rcvFtl.confirmed !== null,
+    pack_date: _rcvParsed?.packDate || _rcvParsed?.productionDate || null,
+    best_by: _rcvEl('rcv-best-by').value || null,
+    raw_label_capture: _rcvRawCapture || null,
+    source: 'staff_scan',
+    status: 'received',
+    received_by: currentUser?.email || null,
+    notes,
+    client_uuid: (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : null,
+  };
+  const btn = _rcvEl('rcv-btn-save'); btn.disabled = true; btn.textContent = 'Saving…';
+  if (!navigator.onLine) {
+    try {
+      const labelB64 = _rcvLabelBlob ? await blobToBase64(_rcvLabelBlob) : null;
+      offlineQueue.push({ kind: 'receiving', payload, labelB64, ts: Date.now() });
+      localStorage.setItem('batched_offline_queue', JSON.stringify(offlineQueue));
+      updateQueueBadge();
+      rcvAfterSave(payload, true);
+    } catch (e) { _rcvMsg('Could not save offline.', 'error'); }
+    btn.disabled = false; btn.textContent = 'Record receipt';
+    return;
+  }
+  try {
+    let labelUrl = null;
+    if (_rcvLabelBlob) {
+      const path = `orgs/${String(_currentOrgId).slice(0, 8)}/receiving/${Date.now()}_label.jpg`;
+      const up = await sb.storage.from('scan-photos').upload(path, _rcvLabelBlob, { contentType: _rcvLabelBlob.type || 'image/jpeg', upsert: true });
+      if (!up.error) labelUrl = sb.storage.from('scan-photos').getPublicUrl(path).data.publicUrl;
+    }
+    const { error } = await sb.from('receiving_events').insert({ ...payload, label_photo_url: labelUrl });
+    if (error) throw error;
+    rcvAfterSave(payload, false);
+    rcvCheckRecallForReceipt(payload);
+  } catch (e) { _rcvMsg('Could not save: ' + esc(e.message || 'unknown error'), 'error'); }
+  btn.disabled = false; btn.textContent = 'Record receipt';
+}
+function rcvAfterSave(payload, queued) {
+  rcvRememberDoc();
+  try {
+    const recent = JSON.parse(localStorage.getItem('batched_rcv_recent_suppliers') || '[]').filter(id => id !== payload.supplier_id);
+    if (payload.supplier_id) recent.unshift(payload.supplier_id);
+    localStorage.setItem('batched_rcv_recent_suppliers', JSON.stringify(recent.slice(0, 12)));
+  } catch (_) {}
+  showToast(queued ? 'Receipt queued. It syncs when you are back online.' : 'Received.', 'ok', 2500);
+  // Supplier, document and date stay for the next line of the same delivery.
+  ['rcv-raw', 'rcv-product', 'rcv-gtin', 'rcv-lot', 'rcv-best-by', 'rcv-notes'].forEach(id => { const el = _rcvEl(id); if (el) { el.value = ''; el.classList.remove('auto-filled'); } });
+  _rcvEl('rcv-qty').value = '1';
+  _rcvLabelBlob = null; _rcvRawCapture = null; _rcvParsed = null;
+  _rcvFtl = { isFtl: false, category: null, label: null, source: null, confirmed: null };
+  rcvRenderFtl();
+  if (!queued) _rcvMsg('', 'info');
+  const docNum = _rcvEl('rcv-doc-number').value.trim();
+  const ret = _rcvEl('rcv-retained'); if (ret) ret.textContent = docNum ? `Same delivery: ${_rcvDocType} ${docNum} kept for the next line.` : '';
+  rcvRenderSupplierOptions();
+}
+function rcvDoneDelivery() {
+  ['rcv-doc-number', 'rcv-notes'].forEach(id => { const el = _rcvEl(id); if (el) el.value = ''; });
+  const sel = _rcvEl('rcv-supplier'); if (sel) { sel.value = ''; rcvOnSupplierChange(); }
+  const at = _rcvEl('rcv-received-at'); if (at) at.value = _rcvLocalDateTimeValue(new Date());
+  try { localStorage.removeItem(_rcvDocKey()); } catch (_) {}
+  const ret = _rcvEl('rcv-retained'); if (ret) ret.textContent = '';
+  showToast('Delivery closed.', 'info', 1800);
+}
+
+// Recall check at the back door. Reads BOTH sources (recalls table and pushed
+// recall events) per CLAUDE.md, matches with recallMatchLevel, and warns so a
+// recalled lot can be held before it reaches the floor. Advisory only; it does
+// not change the platform's active-recall count.
+async function rcvCheckRecallForReceipt(payload) {
+  try {
+    const orgId = _currentOrgId; if (!orgId) return;
+    const [recallsRes, eventsRes] = await Promise.all([
+      sb.from('recalls').select('*').eq('active', true).eq('organisation_id', orgId).limit(300),
+      sb.from('recall_distributions')
+        .select('recall_event_id, recall_events!inner(id, product_name, lot_number, barcode, severity, reason, published_at, is_drill, closed_at)')
+        .eq('retailer_org_id', orgId).eq('recall_events.is_drill', false).limit(100),
+    ]);
+    const manual = (recallsRes.data || []).filter(r => !r.is_pushed && !r.recall_event_id);
+    const pushed = (eventsRes.data || []).map(d => d.recall_events).filter(ev => ev && !ev.closed_at).map(ev => ({ ...ev, barcode_number: ev.barcode }));
+    const pseudo = { lot_number: payload.traceability_lot_code, raw_capture: payload.raw_label_capture || payload.traceability_lot_code, barcode_number: payload.gtin, product_name: payload.product_name };
+    const hits = [...pushed, ...manual].filter(r => recallMatchLevel(pseudo, r).level === 'exact');
+    if (hits.length) {
+      _rcvMsg(`RECALL: this lot matches an active recall (${esc(hits[0].product_name || '')}). Hold it in the back room. Do not shelve it.`, 'error');
+      showToast('Recalled lot received. Hold it, do not shelve it.', 'error', 6000);
+    }
+  } catch (e) { console.warn('[receiving] recall check failed:', e.message); }
+}
+
+// ── Link shelf scans to receiving records ────────────────────────────────
+async function findReceivingLink(lotOrRaw, storeId) {
+  const norm = _rcvNormLot(lotOrRaw);
+  if (!norm || norm.length < 4 || !_currentOrgId) return null;
+  try {
+    const since = new Date(Date.now() - 45 * 86400000).toISOString();
+    const { data } = await sb.from('receiving_events')
+      .select('id, supplier_name_snapshot, received_at, reference_document_type, reference_document_number, traceability_lot_code, store_id')
+      .eq('organisation_id', _currentOrgId).eq('status', 'received').gte('received_at', since)
+      .order('received_at', { ascending: false }).limit(200);
+    const rows = (data || []).filter(r => {
+      const rn = _rcvNormLot(r.traceability_lot_code);
+      if (rn.length < 4) return false;
+      if (storeId && r.store_id && r.store_id !== storeId) return false;
+      return rn === norm || norm.includes(rn);
+    });
+    return rows[0] || null;
+  } catch (_) { return null; }
+}
+async function rcvComputeLinkForPhase3() {
+  _pendingReceivingLink = null;
+  const box = _rcvEl('p3-receiving-link'); if (box) { box.style.display = 'none'; box.innerHTML = ''; }
+  const lot = _rawCapture || document.getElementById('field-lot')?.value || '';
+  const link = await findReceivingLink(lot, _currentStoreId);
+  if (!link) return;
+  _pendingReceivingLink = link;
+  if (box) {
+    const doc = link.reference_document_number ? ' · ' + esc(link.reference_document_type || '') + ' ' + esc(link.reference_document_number) : '';
+    box.style.display = 'block';
+    box.innerHTML = `<span class="rcv-chip on">Linked to delivery from ${esc(link.supplier_name_snapshot || 'supplier not recorded')} on ${esc(fmtRegionDate(link.received_at))}${doc}</span>`;
+  }
+}
+
+// ── Offline replay of a queued receipt (called from _syncOfflineQueueImpl) ──
+async function _replayReceivingItem(item) {
+  if (item.payload?.organisation_id && item.payload.organisation_id !== _currentOrgId) return 'discard';
+  let labelUrl = null;
+  if (item.labelB64) {
+    try {
+      const blob = await base64ToBlob(item.labelB64, 'image/jpeg');
+      const path = `orgs/${String(item.payload.organisation_id || 'unknown').slice(0, 8)}/receiving/${item.ts || Date.now()}_label.jpg`;
+      const up = await sb.storage.from('scan-photos').upload(path, blob, { contentType: 'image/jpeg', upsert: true });
+      if (!up.error) labelUrl = sb.storage.from('scan-photos').getPublicUrl(path).data.publicUrl;
+    } catch (_) {}
+  }
+  const { error } = await sb.from('receiving_events').insert({ ...item.payload, label_photo_url: labelUrl });
+  if (error && error.code !== '23505') throw error;   // 23505 on client_uuid: already landed
+  return 'synced';
+}
+
+// ── Manager: Receiving tab ───────────────────────────────────────────────
+async function loadMgrReceiving() {
+  const el = _rcvEl('mgr-rcv-list'); if (!el || !_currentOrgId) return;
+  const storeSel = _rcvEl('mgr-rcv-store');
+  if (storeSel && storeSel.options.length <= 1) {
+    try {
+      const { data } = await sb.from('stores').select('id,name').eq('organisation_id', _currentOrgId).eq('active', true).order('name');
+      (data || []).forEach(st => { const o = document.createElement('option'); o.value = st.id; o.textContent = st.name; storeSel.appendChild(o); });
+    } catch (_) {}
+  }
+  const days = parseInt(_rcvEl('mgr-rcv-days')?.value || '30', 10);
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+  el.innerHTML = '<div style="font-size:13px;color:var(--muted);padding:20px 0;text-align:center;">Loading…</div>';
+  try {
+    let q = sb.from('receiving_events')
+      .select('id, received_at, supplier_name_snapshot, product_name, gtin, traceability_lot_code, quantity, unit_of_measure, reference_document_type, reference_document_number, received_by, is_ftl, ftl_category, status, store_id, stores(name)')
+      .eq('organisation_id', _currentOrgId).gte('received_at', since).order('received_at', { ascending: false }).limit(500);
+    if (storeSel?.value) q = q.eq('store_id', storeSel.value);
+    const { data, error } = await q;
+    if (error) throw error;
+    _mgrRcvRows = data || [];
+    if (!_mgrRcvRows.length) {
+      el.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--muted);font-size:13px;">No deliveries recorded in this period. Staff record them in the scanner under Scan, Receiving.</div>';
+      return;
+    }
+    el.innerHTML = _mgrRcvRows.map(r => `<div class="mgr-rcv-row">
+      <div><div class="k">Product</div><div style="font-weight:600;color:var(--text);">${esc(r.product_name)}</div><div style="color:var(--muted);">${r.traceability_lot_code ? 'Lot ' + esc(r.traceability_lot_code) : 'No lot (exempt source)'}${r.is_ftl ? ' · <span style="color:var(--info);">FTL</span>' : ''}</div></div>
+      <div><div class="k">From</div><div>${esc(r.supplier_name_snapshot || 'Not recorded')}</div><div style="color:var(--muted);">${r.reference_document_number ? esc(r.reference_document_type || '') + ' ' + esc(r.reference_document_number) : ''}</div></div>
+      <div><div class="k">Received</div><div>${esc(fmtRegionDate(r.received_at, true))}</div><div style="color:var(--muted);">${esc(r.stores?.name || '')}${r.received_by ? ' · ' + esc(String(r.received_by).split('@')[0]) : ''}</div></div>
+      <div><div class="k">Qty</div><div style="font-weight:700;">${esc(String(r.quantity))} ${esc(r.unit_of_measure)}</div><div style="color:var(--muted);">${esc(r.status)}</div></div>
+    </div>`).join('');
+  } catch (e) { el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:16px;">Error: ${esc(e.message)}</div>`; }
+}
+// Simple CSV for the manager tab. Phase 4 replaces it with the shared
+// FDA-shaped export builder. Cells starting with = + - @ are prefixed so a
+// spreadsheet does not treat them as formulas.
+function rcvExportCsv() {
+  const rows = _mgrRcvRows || [];
+  if (!rows.length) { showToast('Nothing to export for this period.', 'warn'); return; }
+  const cols = ['received_at', 'store', 'supplier', 'product_name', 'gtin', 'traceability_lot_code', 'quantity', 'unit_of_measure', 'reference_document_type', 'reference_document_number', 'is_ftl', 'ftl_category', 'status', 'received_by', 'id'];
+  const cell = v => { const str = v == null ? '' : String(v); const safe = /^[=+\-@]/.test(str) ? "'" + str : str; return /[",\n]/.test(safe) ? '"' + safe.replace(/"/g, '""') + '"' : safe; };
+  const lines = [cols.join(',')].concat(rows.map(r => [r.received_at, r.stores?.name || '', r.supplier_name_snapshot || '', r.product_name, r.gtin || '', r.traceability_lot_code || '', r.quantity, r.unit_of_measure, r.reference_document_type || '', r.reference_document_number || '', r.is_ftl ? 'yes' : 'no', r.ftl_category || '', r.status, r.received_by || '', r.id].map(cell).join(',')));
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = `batchd-receiving-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+}
 
 function blobToBase64(blob) {
   return new Promise((res, rej) => {
@@ -18360,7 +19106,7 @@ function mgrViewStoreScans(storeName) {
 function switchMgrTab(tab) {
   _mgrActiveTab = tab;
   // 'escalated' removed from tab list 2026-05-27 (Chunk D).
-  ['stores','onshelf','storemgmt','staff','recalls','audit','gs1','fsma','patterns','intel'].forEach(t => {
+  ['stores','onshelf','storemgmt','staff','recalls','audit','receiving','gs1','fsma','patterns','intel'].forEach(t => {
     document.getElementById('mgr-tab-' + t)?.classList.toggle('active', t === tab);
     const panel = document.getElementById('mgr-panel-' + t);
     if (panel) panel.style.display = t === tab ? 'block' : 'none';
@@ -18369,6 +19115,7 @@ function switchMgrTab(tab) {
   if (tab === 'audit') { populateFsmaExportStores(); populateMgrAuditStores(); }
   if (tab === 'fsma') { renderFsmaReadiness(); renderRegQuickRef(); }
   if (tab === 'storemgmt') loadStoreMgmt();
+  if (tab === 'receiving') loadMgrReceiving();
   if (tab === 'patterns') loadMgrPatterns();
   if (tab === 'intel') loadMgrIntel();
   if (tab === 'onshelf') loadMgrOnShelf();
@@ -21757,6 +22504,29 @@ async function loadRecallsView() {
     // them but the page silently empty — confusing and easy to miss.
     // Visual treatment branches on _matchLevel below so the user can tell
     // confirmed hits from "needs review."
+    // Phase 2 (2026-10-03): receiving records for a recalled lot with no shelf
+    // scan linked yet. Shown as a separate "held at receiving" state and never
+    // counted toward the active-recall number (three-condition rule).
+    const heldByRecall = {};
+    try {
+      const sinceRcv = new Date(Date.now() - 90 * 86400000).toISOString();
+      const { data: rcvRows } = await sb.from('receiving_events')
+        .select('id, traceability_lot_code, gtin, quantity, unit_of_measure, supplier_name_snapshot, received_at')
+        .eq('organisation_id', orgId).eq('status', 'received').gte('received_at', sinceRcv).limit(500);
+      if (rcvRows && rcvRows.length) {
+        const linked = new Set();
+        const rcvIds = rcvRows.map(x => x.id);
+        for (let i = 0; i < rcvIds.length; i += 200) {
+          const { data: ls } = await sb.from('scans').select('receiving_event_id').in('receiving_event_id', rcvIds.slice(i, i + 200));
+          (ls || []).forEach(sc => linked.add(sc.receiving_event_id));
+        }
+        for (const r of allRecalls) {
+          const hits = rcvRows.filter(x => !linked.has(x.id) && recallMatchLevel({ lot_number: x.traceability_lot_code, raw_capture: x.traceability_lot_code, barcode_number: x.gtin, product_name: null }, r).level === 'exact');
+          if (hits.length) heldByRecall[r.id] = hits;
+        }
+      }
+    } catch (e) { console.warn('[recalls] held-at-receiving lookup failed:', e.message); }
+
     function recallHighestMatchLevel(r) {
       let best = null;
       for (const s of scans) {
@@ -21772,7 +22542,7 @@ async function loadRecallsView() {
     // should only appear once. Prefer manufacturer push when available.
     const dedupeMap = new Map();
     for (const r of allRecalls) {
-      const _matchLevel = recallHighestMatchLevel(r);
+      const _matchLevel = recallHighestMatchLevel(r) || (heldByRecall[r.id] ? 'held' : null);
       if (!_matchLevel) continue;
       const annotated = { ...r, _matchLevel };
       const key = ((r.product_name || '').toLowerCase().trim()) + '|' + ((r.lot_number || '').toLowerCase().trim());
@@ -21791,14 +22561,14 @@ async function loadRecallsView() {
     const matched = Array.from(dedupeMap.values());
     // Sort exact (red) matches above possible (orange) ones so the most
     // urgent items render at the top of the list.
-    matched.sort((a, b) => {
-      if (a._matchLevel === b._matchLevel) return 0;
-      return a._matchLevel === 'exact' ? -1 : 1;
-    });
+    const _levelRank = { exact: 0, possible: 1, held: 2 };
+    matched.sort((a, b) => (_levelRank[a._matchLevel] ?? 3) - (_levelRank[b._matchLevel] ?? 3));
 
     // Update drawer badge
     const badge = document.getElementById('drawer-recall-badge');
-    if (badge) { badge.textContent = matched.length; badge.style.display = matched.length > 0 ? 'inline' : 'none'; }
+    // Held-at-receiving items are not active recalls and do not count in the badge.
+    const _badgeCount = matched.filter(m => m._matchLevel !== 'held').length;
+    if (badge) { badge.textContent = _badgeCount; badge.style.display = _badgeCount > 0 ? 'inline' : 'none'; }
 
     if (matched.length === 0) {
       container.innerHTML = '<div style="text-align:center;padding:40px 16px;color:var(--muted);"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="margin-bottom:12px;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg><div style="font-family:Figtree,sans-serif;font-weight:700;font-size:15px;color:var(--text);margin-bottom:6px;">No recall matches</div><div style="font-size:12px;line-height:1.6;">None of your scanned products match any active recall. Keep scanning to keep your records current.</div></div>';
@@ -21852,7 +22622,7 @@ async function loadRecallsView() {
       const accent  = isExact ? 'var(--danger)' : 'var(--warn)';
       const accentBg = isExact ? 'rgba(185,28,28,0.06)' : 'rgba(var(--warn-rgb),0.06)';
       const accentBorder = isExact ? 'rgba(185,28,28,0.22)' : 'rgba(var(--warn-rgb),0.30)';
-      const pillLabel = isExact ? 'ACTIVE' : 'REVIEW';
+      const pillLabel = isExact ? 'ACTIVE' : (r._matchLevel === 'held' ? 'HELD AT RECEIVING' : 'REVIEW');
       const pillBg = isExact ? 'rgba(185,28,28,0.1)' : 'rgba(var(--warn-rgb),0.12)';
 
       // ── Exposure summary from scan_recall_matches ──
@@ -21870,6 +22640,14 @@ async function loadRecallsView() {
         return (end - start) / 3600000; // ms → hours
       })) : null;
       const firstPlaced= rows.length ? rows.reduce((a, b) => a.placed_at < b.placed_at ? a : b).placed_at : null;
+
+      let heldHtml = '';
+      const heldRows = heldByRecall[r.id] || [];
+      if (heldRows.length) {
+        const heldQty = heldRows.reduce((acc, x) => acc + (Number(x.quantity) || 0), 0);
+        const heldUnit = heldRows[0].unit_of_measure || 'units';
+        heldHtml = '<div style="margin:8px 0;padding:8px 12px;background:rgba(var(--warn-rgb),0.08);border:1px solid rgba(var(--warn-rgb),0.3);border-radius:8px;font-size:11px;font-family:DM Mono,monospace;color:var(--warn);line-height:1.5;">Received, not yet on shelf: <strong>' + heldQty + ' ' + esc(heldUnit) + '</strong> in ' + heldRows.length + ' receiving record' + (heldRows.length === 1 ? '' : 's') + (heldRows[0].supplier_name_snapshot ? ' from ' + esc(heldRows[0].supplier_name_snapshot) : '') + '. Hold it in the back room.</div>';
+      }
 
       let exposureHtml = '';
       if (rows.length > 0) {
@@ -21898,8 +22676,8 @@ async function loadRecallsView() {
         + '<div style="font-size:10px;font-family:DM Mono,monospace;font-weight:700;letter-spacing:0.06em;color:var(--muted);margin-bottom:6px;">' + srcLabel + (dateStr ? ' · ' + dateStr : '') + '</div>'
         + (r.lot_number ? '<div style="font-size:12px;color:var(--muted);font-family:DM Mono,monospace;margin-bottom:4px;">Lot: <strong style="color:var(--text);">' + esc(r.lot_number) + '</strong></div>' : '')
         + ((r.reason || r.description) ? '<div style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:6px;">' + esc(r.reason || r.description) + '</div>' : '')
-        + (!isExact ? '<div style="font-size:11px;color:var(--warn);font-family:DM Mono,monospace;margin:6px 0;padding:6px 10px;background:rgba(var(--warn-rgb),0.06);border-radius:6px;line-height:1.5;">Product name match only — staff should verify whether the lot code on shelf matches this recall.</div>' : '')
-        + exposureHtml
+        + (!isExact && r._matchLevel !== 'held' ? '<div style="font-size:11px;color:var(--warn);font-family:DM Mono,monospace;margin:6px 0;padding:6px 10px;background:rgba(var(--warn-rgb),0.06);border-radius:6px;line-height:1.5;">Product name match only. Staff should verify whether the lot code on shelf matches this recall.</div>' : '')
+        + heldHtml + exposureHtml
         + '<button onclick="drawerNav(&apos;history&apos;)" style="margin-top:8px;width:100%;padding:9px;background:' + accentBg + ';border:1px solid ' + accentBorder + ';border-radius:8px;color:' + accent + ';font-family:DM Mono,monospace;font-size:11px;font-weight:700;cursor:pointer;letter-spacing:0.02em;">View matching records in History →</button>'
         + '</div>';
     }).join('');
