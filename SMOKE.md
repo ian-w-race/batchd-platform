@@ -59,3 +59,9 @@ not repeated here.
     or shipments remains.
 16. Offline: a receiving save with the network off replays on reconnect
     without duplicating.
+17. Dashboard, Settings, Suppliers card: add a supplier with phone,
+    street, city, state and ZIP; the row shows a green dot. Scanner,
+    Receiving: the supplier is in the picker without "(address
+    incomplete)". Manager Receiving tab, Export CSV: the supplier_phone,
+    supplier_street, supplier_city, supplier_state and supplier_zip
+    columns are filled for a receipt from that supplier.

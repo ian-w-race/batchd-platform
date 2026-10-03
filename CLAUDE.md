@@ -116,7 +116,7 @@ Live application surfaces:
   the first design partner installs. The scanner's own dashboard
   buttons (4798, 4904, 5485) point at app.batchdapp.com/dashboard.html,
   which 301s to corporate.
-- dashboard.html (15,698 lines, 2026-09-11): corporate retailer
+- dashboard.html (about 16,100 lines after Phase 3, 2026-10-03): corporate retailer
   dashboard. Served at the root of corporate.batchdapp.com; requests
   for /dashboard.html on the scanner domains 301 to corporate.
 - join.html (626 lines, 2026-09-13): invitation acceptance. Reads the
@@ -615,6 +615,65 @@ against the live database (needs a signed-in session).
 - Local preview for the scanner: `.claude/launch.json` runs
   `.claude/serve.js` (Node static server on 127.0.0.1:8787). Neither
   file is uploaded.
+
+## Phase 3 of the FSMA 204 handoff: supplier directory (built 2026-10-03)
+dashboard.html (a Settings card) plus a small index.html change. Verified:
+every inline script block passes node --check (dashboard 6, scanner 4),
+the module's pure functions pass a Node test file, and the card and its
+form render in a local preview with sample rows. Not yet verified against
+the live database (needs a signed-in session).
+- Settings card "Suppliers", visible to corp_admin and store_manager,
+  between the Organisation/Account row and "Your preferences". It loads
+  asynchronously: `renderSuppliersCard()` fills `#suppliers-body` after
+  the Settings shell renders, so a slow query never blocks Settings.
+  Table columns: completeness dot, name with type, GLN and tags (Exempt
+  source, Suggested, Inactive), phone, address, "Typically ships"
+  category hints, last used (newest receiving_events.received_at per
+  supplier_id, computed client-side from up to 2,000 rows), and Edit /
+  Deactivate or Activate / Delete. Delete is corp_admin only (migration
+  022 policy) and its confirm text points at Deactivate when the
+  supplier has receiving history, since receiving_events.supplier_id is
+  ON DELETE SET NULL and supplier_name_snapshot keeps the name. Inactive
+  rows hide behind a "Show inactive" checkbox. The topbar label stays
+  "Settings"; there is no new panel.
+- Completeness rule (`supplierIsComplete`): name, phone, street, city,
+  state and ZIP all present. Green dot, otherwise amber; the tooltip
+  text lives in `_SUPPLIER_COMPLETE_TIP` and a summary line says how
+  many "still need a full address". The scanner's `_rcvSupplierComplete`
+  checks the same six fields; keep the two in step.
+- Add/edit modal (`supplierOpenForm`, `supplierSave`): name, type
+  (distributor, manufacturer, farm, other), phone, GLN (13 digits or
+  blank), street, city, state (datalist of two-letter codes; full names
+  are normalized to codes by `supplierNormalizeState`), ZIP, country
+  (`supplierNormalizeCountry` maps US spellings to 'US', otherwise the
+  first two letters uppercased), "Typically ships" chips keyed like
+  FTL_CATEGORIES in index.html (`_SUPPLIER_CATEGORIES`, informational
+  until a later phase reads them), an exempt-source checkbox citing
+  `_CITATIONS.us.exemptions`, and on edit an Active checkbox. Error
+  mapping: 23505 "already exists"; 42501 and PGRST116 (an update that
+  matched no row under RLS) become a role message.
+- CSV import (`supplierOpenImport`) reuses the shared openCSVImport
+  engine with the handoff's columns name, phone, street, city, region
+  (labeled State), postal (labeled ZIP), country, gln, type, an
+  `autoMapFn` with header aliases, and a fictional two-row template.
+  `_supplierImportRow` inserts new names and, for a name that already
+  exists (case-insensitive), fills only the blank fields; a malformed
+  GLN is dropped instead of failing the row. `onComplete` re-renders the
+  card.
+- Scanner (index.html): the manager Receiving query embeds
+  `suppliers(name,phone,street_address,city,region,postal_code)` and
+  the CSV carries supplier_phone, supplier_street, supplier_city,
+  supplier_state and supplier_zip after the supplier name, so an
+  exported receiving record has all six location fields (handoff 3.1
+  acceptance). On entering Receiving mode the picker reloads the
+  supplier cache when it is older than five minutes
+  (`_suppliersLoadedAt`), so a supplier added in the dashboard appears
+  without signing out. Phase 2 already appended "(address incomplete)"
+  to picker entries; `<option>` elements cannot carry the amber dot the
+  handoff describes, so the text suffix stands in for it.
+- Not in Phase 3: category-kit seeds (`seeded_from`, Phase 6). The
+  "Suggested" tag already renders for inactive seeded rows, so Phase 6
+  needs no table change.
 
 ## Recall counting rules (platform-wide)
 A recall requires action only when ALL THREE are true:

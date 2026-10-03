@@ -16818,6 +16818,7 @@ let _rcvUnit = 'case';
 let _rcvDocType = 'PO';
 let _rcvFtl = { isFtl: false, category: null, label: null, source: null, confirmed: null };
 let _suppliers = [];
+let _suppliersLoadedAt = 0;   // Phase 3: the picker refreshes when stale (dashboard edits land within minutes)
 let _pendingReceivingLink = null;   // receiving row a shelf scan will link to
 let _mgrRcvRows = [];
 const _RCV_UNITS = ['case', 'each', 'bag', 'lb', 'pallet'];
@@ -16854,7 +16855,7 @@ function applyScanMode() {
   if (stepper) stepper.style.display = rcv ? 'none' : '';
   document.querySelectorAll('#view-scan .flow-phase').forEach(ph => { ph.style.display = rcv ? 'none' : ''; });
   _rcvEl('receiving-panel').classList.toggle('active', rcv);
-  if (rcv) { stopZXing(); rcvInitForm(); } else { rcvStopScanner(); }
+  if (rcv) { stopZXing(); rcvInitForm(); if (Date.now() - _suppliersLoadedAt > 300000) loadSuppliersCache(); } else { rcvStopScanner(); }
 }
 function rcvInitForm() {
   const at = _rcvEl('rcv-received-at'); if (at && !at.value) at.value = _rcvLocalDateTimeValue(new Date());
@@ -16885,6 +16886,7 @@ async function loadSuppliersCache() {
       .eq('organisation_id', _currentOrgId).eq('active', true).order('name');
     if (error) throw error;
     _suppliers = data || [];
+    _suppliersLoadedAt = Date.now();
   } catch (e) { console.warn('[receiving] suppliers load failed:', e.message); _suppliers = []; }
   rcvRenderSupplierOptions();
 }
@@ -17322,7 +17324,7 @@ async function loadMgrReceiving() {
   el.innerHTML = '<div style="font-size:13px;color:var(--muted);padding:20px 0;text-align:center;">Loading…</div>';
   try {
     let q = sb.from('receiving_events')
-      .select('id, received_at, supplier_name_snapshot, product_name, gtin, traceability_lot_code, quantity, unit_of_measure, reference_document_type, reference_document_number, received_by, is_ftl, ftl_category, status, store_id, stores(name)')
+      .select('id, received_at, supplier_name_snapshot, product_name, gtin, traceability_lot_code, quantity, unit_of_measure, reference_document_type, reference_document_number, received_by, is_ftl, ftl_category, status, store_id, stores(name), suppliers(name,phone,street_address,city,region,postal_code)')
       .eq('organisation_id', _currentOrgId).gte('received_at', since).order('received_at', { ascending: false }).limit(500);
     if (storeSel?.value) q = q.eq('store_id', storeSel.value);
     const { data, error } = await q;
@@ -17346,9 +17348,10 @@ async function loadMgrReceiving() {
 function rcvExportCsv() {
   const rows = _mgrRcvRows || [];
   if (!rows.length) { showToast('Nothing to export for this period.', 'warn'); return; }
-  const cols = ['received_at', 'store', 'supplier', 'product_name', 'gtin', 'traceability_lot_code', 'quantity', 'unit_of_measure', 'reference_document_type', 'reference_document_number', 'is_ftl', 'ftl_category', 'status', 'received_by', 'id'];
+  // Phase 3: the six location fields of the immediate previous source (21 CFR 1.1345) ride along with every row.
+  const cols = ['received_at', 'store', 'supplier', 'supplier_phone', 'supplier_street', 'supplier_city', 'supplier_state', 'supplier_zip', 'product_name', 'gtin', 'traceability_lot_code', 'quantity', 'unit_of_measure', 'reference_document_type', 'reference_document_number', 'is_ftl', 'ftl_category', 'status', 'received_by', 'id'];
   const cell = v => { const str = v == null ? '' : String(v); const safe = /^[=+\-@]/.test(str) ? "'" + str : str; return /[",\n]/.test(safe) ? '"' + safe.replace(/"/g, '""') + '"' : safe; };
-  const lines = [cols.join(',')].concat(rows.map(r => [r.received_at, r.stores?.name || '', r.supplier_name_snapshot || '', r.product_name, r.gtin || '', r.traceability_lot_code || '', r.quantity, r.unit_of_measure, r.reference_document_type || '', r.reference_document_number || '', r.is_ftl ? 'yes' : 'no', r.ftl_category || '', r.status, r.received_by || '', r.id].map(cell).join(',')));
+  const lines = [cols.join(',')].concat(rows.map(r => [r.received_at, r.stores?.name || '', r.supplier_name_snapshot || r.suppliers?.name || '', r.suppliers?.phone || '', r.suppliers?.street_address || '', r.suppliers?.city || '', r.suppliers?.region || '', r.suppliers?.postal_code || '', r.product_name, r.gtin || '', r.traceability_lot_code || '', r.quantity, r.unit_of_measure, r.reference_document_type || '', r.reference_document_number || '', r.is_ftl ? 'yes' : 'no', r.ftl_category || '', r.status, r.received_by || '', r.id].map(cell).join(',')));
   const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
   a.download = `batchd-receiving-${new Date().toISOString().slice(0, 10)}.csv`;

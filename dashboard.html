@@ -12001,6 +12001,27 @@ async function renderSettings() {
         </div>
       </div>
 
+      <!-- Row 1b: Suppliers. Phase 3 of the FSMA 204 handoff (2026-10-03).
+           Visible to corp_admin and store_manager (both can add and edit;
+           only corp_admin can delete, matching migration 022's policies).
+           The body loads asynchronously via renderSuppliersCard() so a slow
+           suppliers query never blocks the rest of Settings. -->
+      <div class="panel" style="margin:0;" id="suppliers-panel">
+        <div class="panel-header" style="flex-wrap:wrap;gap:10px;">
+          <div>
+            <div class="panel-title">Suppliers</div>
+            <div class="panel-sub">Your immediate previous sources. Every receiving record must carry the supplier's full location description (${_CITATIONS.us.receivingKde}).</div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn-ghost" onclick="supplierOpenImport()">Import CSV</button>
+            <button class="btn-primary" onclick="supplierOpenForm('')">Add supplier</button>
+          </div>
+        </div>
+        <div class="panel-body" id="suppliers-body">
+          <div style="display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12px;"><div class="spinner"></div> Loading suppliers…</div>
+        </div>
+      </div>
+
       <!-- Row 2: Your preferences — per-user settings (theme, language, feeds) -->
       <div class="panel" style="margin:0;">
         <div class="panel-header">
@@ -12164,6 +12185,7 @@ async function renderSettings() {
       `}
 
     </div>`;
+  renderSuppliersCard();   // Phase 3: fills #suppliers-body after the shell renders
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading settings: ${e.message}</div>`;
   }
@@ -12434,6 +12456,342 @@ async function saveUserPreferences() {
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Save preferences'; }
   }
+}
+
+// ══════════════════════════════════════════════════════════════
+// SUPPLIERS DIRECTORY (Settings card). Phase 3 of the FSMA 204 handoff, 2026-10-03.
+// Table: suppliers (migration 022). Policies: members read, active members
+// insert, corp_admin or store_manager update, corp_admin delete. The scanner's
+// receiving form lists active rows only, so Deactivate hides a supplier from
+// staff while the receiving history that points at it stays intact.
+// ══════════════════════════════════════════════════════════════
+const _SUPPLIER_COLS = 'id,name,phone,street_address,city,region,postal_code,country,gln,supplier_type,is_exempt_entity,category_hints,seeded_from,active,created_at,updated_at';
+const _SUPPLIER_TYPES = { distributor: 'Distributor', manufacturer: 'Manufacturer', farm: 'Farm', other: 'Other' };
+// Same keys as FTL_CATEGORIES in index.html. Keep the two lists in step.
+const _SUPPLIER_CATEGORIES = {
+  leafy_greens: 'Leafy greens', nut_butters: 'Nut butters', fresh_cut_produce: 'Fresh-cut produce', tomatoes: 'Tomatoes',
+  peppers: 'Peppers', cucumbers: 'Cucumbers', melons: 'Melons', sprouts: 'Sprouts', herbs: 'Fresh herbs',
+  tropical_fruits: 'Tropical tree fruits', soft_cheese: 'Soft cheese', shell_eggs: 'Shell eggs', finfish: 'Finfish',
+  smoked_finfish: 'Smoked finfish', crustaceans: 'Crustaceans', bivalves: 'Bivalve mollusks', deli_salads: 'Deli salads',
+};
+const _US_STATES = {
+  AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California', CO: 'Colorado', CT: 'Connecticut',
+  DE: 'Delaware', DC: 'District of Columbia', FL: 'Florida', GA: 'Georgia', HI: 'Hawaii', ID: 'Idaho', IL: 'Illinois',
+  IN: 'Indiana', IA: 'Iowa', KS: 'Kansas', KY: 'Kentucky', LA: 'Louisiana', ME: 'Maine', MD: 'Maryland',
+  MA: 'Massachusetts', MI: 'Michigan', MN: 'Minnesota', MS: 'Mississippi', MO: 'Missouri', MT: 'Montana',
+  NE: 'Nebraska', NV: 'Nevada', NH: 'New Hampshire', NJ: 'New Jersey', NM: 'New Mexico', NY: 'New York',
+  NC: 'North Carolina', ND: 'North Dakota', OH: 'Ohio', OK: 'Oklahoma', OR: 'Oregon', PA: 'Pennsylvania',
+  PR: 'Puerto Rico', RI: 'Rhode Island', SC: 'South Carolina', SD: 'South Dakota', TN: 'Tennessee', TX: 'Texas',
+  UT: 'Utah', VT: 'Vermont', VA: 'Virginia', WA: 'Washington', WV: 'West Virginia', WI: 'Wisconsin', WY: 'Wyoming',
+};
+const _SUPPLIER_COMPLETE_TIP = 'FSMA 204 requires the full location description of your immediate previous source: name, phone, street, city, state and ZIP.';
+let _suppliers = [];            // rows for this org, last load
+let _supplierLastUsed = {};     // supplier id -> newest received_at
+let _supplierShowInactive = false;
+
+function supplierIsComplete(s) { return !!(s && s.name && s.phone && s.street_address && s.city && s.region && s.postal_code); }
+function supplierCanEdit() { return _userRole === 'corp_admin' || _userRole === 'store_manager'; }
+function supplierNormalizeState(v) {
+  const t = String(v || '').trim(); if (!t) return null;
+  const up = t.toUpperCase();
+  if (_US_STATES[up]) return up;
+  const hit = Object.entries(_US_STATES).find(([, name]) => name.toLowerCase() === t.toLowerCase());
+  return hit ? hit[0] : t;
+}
+function supplierNormalizeCountry(v) {
+  const t = String(v || '').trim(); if (!t) return 'US';
+  if (/^(us|usa|u\.s\.a?\.?|united states( of america)?)$/i.test(t)) return 'US';
+  return t.toUpperCase().slice(0, 2);
+}
+function supplierAddressLine(s) {
+  return [s.street_address, s.city, [s.region, s.postal_code].filter(Boolean).join(' ')]
+    .map(x => (x == null ? '' : String(x).trim())).filter(Boolean).join(', ');
+}
+
+async function renderSuppliersCard() {
+  const el = document.getElementById('suppliers-body'); if (!el || !_orgId) return;
+  try {
+    const [supRes, rcvRes] = await Promise.all([
+      sb.from('suppliers').select(_SUPPLIER_COLS).eq('organisation_id', _orgId).order('name'),
+      sb.from('receiving_events').select('supplier_id, received_at').eq('organisation_id', _orgId)
+        .not('supplier_id', 'is', null).order('received_at', { ascending: false }).limit(2000),
+    ]);
+    if (supRes.error) throw supRes.error;
+    _suppliers = supRes.data || [];
+    _supplierLastUsed = {};
+    (rcvRes.data || []).forEach(r => { if (!_supplierLastUsed[r.supplier_id]) _supplierLastUsed[r.supplier_id] = r.received_at; });
+    el.innerHTML = _supplierTableHtml();
+  } catch (e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;">Could not load suppliers: ${esc(e.message || 'unknown error')}</div>`;
+  }
+}
+
+function _supplierTableHtml() {
+  const canEdit = supplierCanEdit();
+  const active = _suppliers.filter(s => s.active);
+  const inactive = _suppliers.filter(s => !s.active);
+  const incomplete = active.filter(s => !supplierIsComplete(s)).length;
+  const rows = _supplierShowInactive ? _suppliers : active;
+  if (!_suppliers.length) {
+    return `<div style="text-align:center;padding:28px 16px;color:var(--muted);font-size:12.5px;line-height:1.7;">
+      No suppliers yet. Add the distributors, manufacturers and farms you receive from, or import a spreadsheet.<br>
+      Staff can also add a supplier by name from the scanner's Receiving mode; you complete the address here.</div>`;
+  }
+  const tag = (text, color, bg) => `<span style="font-family:'DM Mono',monospace;font-size:9.5px;letter-spacing:0.06em;text-transform:uppercase;padding:2px 6px;border-radius:4px;background:${bg};color:${color};">${text}</span>`;
+  const tags = s => [
+    s.is_exempt_entity ? tag('Exempt source', 'var(--info)', 'rgba(var(--info-rgb),0.12)') : '',
+    !s.active && s.seeded_from ? tag('Suggested', 'var(--muted)', 'var(--surface2)') : '',
+    !s.active && !s.seeded_from ? tag('Inactive', 'var(--muted)', 'var(--surface2)') : '',
+  ].filter(Boolean).join(' ');
+  const dot = s => `<span title="${esc(_SUPPLIER_COMPLETE_TIP)}" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${supplierIsComplete(s) ? 'var(--accent)' : 'var(--warn)'};"></span>`;
+  const missing = '<span style="color:var(--warn);font-size:11px;">Missing</span>';
+  const lastUsed = s => _supplierLastUsed[s.id]
+    ? esc(new Date(_supplierLastUsed[s.id]).toLocaleDateString(_dashLocale(), { year: 'numeric', month: 'short', day: 'numeric' }))
+    : '<span style="color:var(--muted);">Never</span>';
+  const summary = `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
+    <div style="font-size:12px;color:var(--muted);">
+      <strong style="color:var(--text);">${active.length}</strong> active${incomplete
+        ? ` · <span style="color:var(--warn);" title="${esc(_SUPPLIER_COMPLETE_TIP)}">${incomplete} still need${incomplete === 1 ? 's' : ''} a full address</span>`
+        : ' · all addresses complete'}${inactive.length ? ` · ${inactive.length} inactive` : ''}
+    </div>
+    ${inactive.length ? `<label style="display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);cursor:pointer;"><input type="checkbox" ${_supplierShowInactive ? 'checked' : ''} onchange="_supplierShowInactive=this.checked;document.getElementById('suppliers-body').innerHTML=_supplierTableHtml();"> Show inactive</label>` : ''}
+  </div>`;
+  const body = rows.map(s => `<tr style="${s.active ? '' : 'opacity:0.6;'}">
+    <td style="width:26px;text-align:center;">${dot(s)}</td>
+    <td style="white-space:normal;"><div style="font-weight:600;">${esc(s.name)}</div>
+      <div style="font-size:10.5px;color:var(--muted);margin-top:2px;">${esc(_SUPPLIER_TYPES[s.supplier_type] || s.supplier_type || '')}${s.gln ? ' · GLN ' + esc(s.gln) : ''} ${tags(s)}</div></td>
+    <td style="font-family:'DM Mono',monospace;font-size:11px;">${s.phone ? esc(s.phone) : missing}</td>
+    <td style="white-space:normal;font-size:11.5px;line-height:1.5;">${supplierAddressLine(s) ? esc(supplierAddressLine(s)) : missing}${s.country && s.country !== 'US' ? ' <span style="color:var(--muted);">(' + esc(s.country) + ')</span>' : ''}</td>
+    <td style="white-space:normal;font-size:11px;color:var(--muted);">${(s.category_hints || []).map(k => esc(_SUPPLIER_CATEGORIES[k] || k)).join(', ')}</td>
+    <td style="font-family:'DM Mono',monospace;font-size:10.5px;color:var(--muted);">${lastUsed(s)}</td>
+    <td style="text-align:right;white-space:normal;">${canEdit ? `<div style="display:inline-flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;">
+      <button class="btn-ghost" style="padding:5px 10px;" onclick="supplierOpenForm('${s.id}')">Edit</button>
+      <button class="btn-ghost" style="padding:5px 10px;" onclick="supplierSetActive('${s.id}', ${s.active ? 'false' : 'true'})">${s.active ? 'Deactivate' : 'Activate'}</button>
+      ${_userRole === 'corp_admin' ? `<button class="btn-ghost" style="padding:5px 10px;color:var(--danger);border-color:rgba(var(--danger-rgb),0.35);" onclick="supplierDelete('${s.id}')">Delete</button>` : ''}
+    </div>` : ''}</td>
+  </tr>`).join('');
+  return summary + `<div style="overflow-x:auto;"><table class="store-table" style="width:100%;table-layout:auto;">
+    <thead><tr><th></th><th>Supplier</th><th>Phone</th><th>Address</th><th>Typically ships</th><th>Last used</th><th></th></tr></thead>
+    <tbody>${body}</tbody></table></div>
+    <div style="font-size:10.5px;color:var(--muted);margin-top:10px;line-height:1.6;">Green: name, phone, street, city, state and ZIP are all present. Amber: something is still missing. Deactivated suppliers stay on past receiving records but disappear from the scanner's picker.</div>`;
+}
+
+function _supHintBtn(key, label, on) {
+  return `<button type="button" data-key="${key}" data-on="${on ? '1' : '0'}" onclick="_supHintToggle(this)" style="font-family:'DM Mono',monospace;font-size:10.5px;padding:5px 10px;border-radius:999px;cursor:pointer;border:1.5px solid ${on ? 'var(--accent)' : 'var(--border)'};background:${on ? 'rgba(var(--accent-rgb),0.1)' : 'var(--surface2)'};color:${on ? 'var(--accent)' : 'var(--muted)'};">${label}</button>`;
+}
+function _supHintToggle(btn) {
+  const on = btn.dataset.on !== '1';
+  btn.dataset.on = on ? '1' : '0';
+  btn.style.borderColor = on ? 'var(--accent)' : 'var(--border)';
+  btn.style.background = on ? 'rgba(var(--accent-rgb),0.1)' : 'var(--surface2)';
+  btn.style.color = on ? 'var(--accent)' : 'var(--muted)';
+}
+
+function supplierOpenForm(id) {
+  if (!supplierCanEdit()) { showToast('Only corp admins and store managers can edit suppliers.', 'error', 4000); return; }
+  const s = id ? _suppliers.find(x => x.id === id) : null;
+  if (id && !s) { showToast('Supplier not found. Reload Settings and try again.', 'error', 3500); return; }
+  document.getElementById('supplier-modal')?.remove();
+  const m = document.createElement('div');
+  m.id = 'supplier-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:var(--background-overlay);z-index:9500;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(4px);';
+  const field = (label, inner) => `<div class="field" style="margin:0;"><label>${label}</label>${inner}</div>`;
+  const inp = (fid, val, ph, extra) => `<input id="${fid}" type="text" value="${esc(val || '')}" placeholder="${esc(ph || '')}" ${extra || ''} />`;
+  const hints = new Set(s?.category_hints || []);
+  m.innerHTML = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:20px;width:100%;max-width:640px;max-height:92vh;overflow:hidden;display:flex;flex-direction:column;">
+      <div style="padding:20px 24px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-shrink:0;">
+        <div>
+          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:15px;color:var(--text);">${s ? 'Edit supplier' : 'Add supplier'}</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:3px;">${esc(_SUPPLIER_COMPLETE_TIP)}</div>
+        </div>
+        <button onclick="document.getElementById('supplier-modal').remove()" aria-label="Close" style="background:none;border:none;color:var(--muted);cursor:pointer;padding:4px;display:inline-flex;flex-shrink:0;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+      </div>
+      <div style="flex:1;overflow-y:auto;padding:20px 24px;display:flex;flex-direction:column;gap:14px;">
+        <div id="supplier-form-msg" style="display:none;font-size:11px;padding:9px 12px;border-radius:6px;background:rgba(var(--danger-rgb),0.1);border:1px solid rgba(var(--danger-rgb),0.3);color:var(--danger);"></div>
+        <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;">
+          ${field('Supplier name', inp('sup-name', s?.name, 'Legal or trading name', 'maxlength="160"'))}
+          ${field('Type', `<select id="sup-type">${Object.entries(_SUPPLIER_TYPES).map(([k, v]) => `<option value="${k}" ${(s?.supplier_type || 'distributor') === k ? 'selected' : ''}>${v}</option>`).join('')}</select>`)}
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          ${field('Phone', inp('sup-phone', s?.phone, '+1 555 010 0100', 'inputmode="tel" maxlength="40"'))}
+          ${field('GLN (optional)', inp('sup-gln', s?.gln, '13 digits, if the supplier has one', 'inputmode="numeric" maxlength="13"'))}
+        </div>
+        ${field('Street address', inp('sup-street', s?.street_address, '100 Market St, Suite 200', 'maxlength="200"'))}
+        <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;">
+          ${field('City', inp('sup-city', s?.city, 'Salinas', 'maxlength="100"'))}
+          ${field('State', inp('sup-state', s?.region, 'CA', 'list="sup-state-list" maxlength="40" style="text-transform:uppercase;"'))}
+          ${field('ZIP', inp('sup-zip', s?.postal_code, '93901', 'inputmode="numeric" maxlength="12"'))}
+        </div>
+        <datalist id="sup-state-list">${Object.entries(_US_STATES).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</datalist>
+        <div style="max-width:140px;">${field('Country', inp('sup-country', s?.country || 'US', 'US', 'maxlength="2" style="text-transform:uppercase;"'))}</div>
+        <div>
+          <label style="display:block;font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">Typically ships (optional)</label>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;" id="sup-hints">${Object.entries(_SUPPLIER_CATEGORIES).map(([k, v]) => _supHintBtn(k, v, hints.has(k))).join('')}</div>
+          <div style="font-size:10.5px;color:var(--muted);margin-top:6px;line-height:1.55;">Food Traceability List categories this supplier usually delivers. Informational for now; later phases use it to pre-fill the FTL flag on receipts.</div>
+        </div>
+        <label style="display:flex;align-items:flex-start;gap:10px;font-size:12px;color:var(--text);cursor:pointer;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;">
+          <input type="checkbox" id="sup-exempt" ${s?.is_exempt_entity ? 'checked' : ''} style="margin-top:2px;">
+          <span><strong>Exempt source</strong><br><span style="color:var(--muted);font-size:11px;line-height:1.55;">This supplier is exempt from FSMA 204 (for example a qualifying small farm, ${esc(_CITATIONS.us.exemptions)}). Receipts from it do not need a traceability lot code, but you still record its name and location.</span></span>
+        </label>
+        ${s ? `<label style="display:flex;align-items:center;gap:10px;font-size:12px;color:var(--text);cursor:pointer;"><input type="checkbox" id="sup-active" ${s.active ? 'checked' : ''}> Active (shown in the scanner's supplier picker)</label>` : ''}
+      </div>
+      <div style="padding:14px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;flex-shrink:0;">
+        <button class="btn-ghost" onclick="document.getElementById('supplier-modal').remove()">Cancel</button>
+        <button class="btn-primary" id="sup-save-btn" onclick="supplierSave('${s ? s.id : ''}')">${s ? 'Save changes' : 'Add supplier'}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+  setTimeout(() => document.getElementById('sup-name')?.focus(), 50);
+}
+
+async function supplierSave(id) {
+  if (!supplierCanEdit()) return;
+  const v = fid => (document.getElementById(fid)?.value || '').trim();
+  const msgEl = document.getElementById('supplier-form-msg');
+  const setMsg = t => { if (msgEl) { msgEl.textContent = t; msgEl.style.display = t ? 'block' : 'none'; } };
+  const name = v('sup-name');
+  if (!name) { setMsg('Supplier name is required.'); return; }
+  const gln = v('sup-gln').replace(/\s+/g, '');
+  if (gln && !/^\d{13}$/.test(gln)) { setMsg('A GLN is exactly 13 digits. Leave it blank if the supplier does not have one.'); return; }
+  const hints = [...document.querySelectorAll('#sup-hints button[data-on="1"]')].map(b => b.dataset.key);
+  const payload = {
+    name,
+    supplier_type: _SUPPLIER_TYPES[v('sup-type')] ? v('sup-type') : 'distributor',
+    phone: v('sup-phone') || null,
+    street_address: v('sup-street') || null,
+    city: v('sup-city') || null,
+    region: supplierNormalizeState(v('sup-state')),
+    postal_code: v('sup-zip') || null,
+    country: supplierNormalizeCountry(v('sup-country')),
+    gln: gln || null,
+    category_hints: hints.length ? hints : null,
+    is_exempt_entity: !!document.getElementById('sup-exempt')?.checked,
+  };
+  const activeEl = document.getElementById('sup-active');
+  if (id && activeEl) payload.active = activeEl.checked;
+  const btn = document.getElementById('sup-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  setMsg('');
+  try {
+    const res = id
+      ? await sb.from('suppliers').update(payload).eq('id', id).eq('organisation_id', _orgId).select(_SUPPLIER_COLS).single()
+      : await sb.from('suppliers').insert({ ...payload, organisation_id: _orgId, active: true }).select(_SUPPLIER_COLS).single();
+    if (res.error) throw res.error;
+    document.getElementById('supplier-modal')?.remove();
+    showToast(id ? 'Supplier updated.' : 'Supplier added. The scanner picks it up within a few minutes.', 'ok', 3500);
+    await renderSuppliersCard();
+  } catch (e) {
+    const text = e.code === '23505' ? 'A supplier with this name already exists in your organization.'
+      : (e.code === '42501' || e.code === 'PGRST116') ? 'Nothing was saved. Your role is not allowed to change this supplier.'
+      : 'Could not save: ' + (e.message || 'unknown error');
+    setMsg(text);
+    if (btn) { btn.disabled = false; btn.textContent = id ? 'Save changes' : 'Add supplier'; }
+  }
+}
+
+async function supplierSetActive(id, active) {
+  if (!supplierCanEdit()) return;
+  const { error } = await sb.from('suppliers').update({ active: !!active }).eq('id', id).eq('organisation_id', _orgId);
+  if (error) { showToast('Could not update: ' + error.message, 'error', 4000); return; }
+  showToast(active ? 'Supplier activated.' : 'Supplier deactivated. It stays on past receiving records.', 'ok', 3000);
+  await renderSuppliersCard();
+}
+
+async function supplierDelete(id) {
+  if (_userRole !== 'corp_admin') { showToast('Only corp admins can delete suppliers.', 'error', 4000); return; }
+  const s = _suppliers.find(x => x.id === id); if (!s) return;
+  const used = !!_supplierLastUsed[id];
+  const warning = used
+    ? '\n\nReceiving records keep the supplier name but lose the link to this entry. Deactivate instead if you want the history intact.'
+    : '\n\nThis cannot be undone.';
+  if (!confirm('Delete ' + s.name + '?' + warning)) return;
+  const { error } = await sb.from('suppliers').delete().eq('id', id).eq('organisation_id', _orgId);
+  if (error) { showToast('Could not delete: ' + error.message, 'error', 4000); return; }
+  showToast('Supplier deleted.', 'ok', 2500);
+  await renderSuppliersCard();
+}
+
+// CSV import through the shared engine (openCSVImport). Handoff columns:
+// name, phone, street, city, region, postal, country, gln, type.
+function supplierOpenImport() {
+  if (!supplierCanEdit()) { showToast('Only corp admins and store managers can import suppliers.', 'error', 4000); return; }
+  openCSVImport({
+    title: 'Import suppliers',
+    description: 'One row per supplier. A name that already exists is updated where your file has a value and the record is blank.',
+    fields: [
+      { key: 'name',    label: 'Name',    required: true,  type: 'text' },
+      { key: 'phone',   label: 'Phone',   required: false, type: 'mono' },
+      { key: 'street',  label: 'Street',  required: false, type: 'text' },
+      { key: 'city',    label: 'City',    required: false, type: 'text' },
+      { key: 'region',  label: 'State',   required: false, type: 'mono' },
+      { key: 'postal',  label: 'ZIP',     required: false, type: 'mono' },
+      { key: 'country', label: 'Country', required: false, type: 'mono' },
+      { key: 'gln',     label: 'GLN',     required: false, type: 'mono' },
+      { key: 'type',    label: 'Type',    required: false, type: 'text' },
+    ],
+    templateExample: [
+      ['Example Produce Co', '+1 555 010 0100', '100 Market St', 'Salinas', 'CA', '93901', 'US', '', 'distributor'],
+      ['Example Nut Butter LLC', '+1 555 010 0101', '22 Mill Rd', 'Lexington', 'KY', '40507', 'US', '', 'manufacturer'],
+    ],
+    autoMapFn: headers => {
+      const aliases = {
+        name: ['name', 'supplier', 'supplier name', 'vendor', 'vendor name', 'company'],
+        phone: ['phone', 'telephone', 'tel', 'phone number'],
+        street: ['street', 'address', 'street address', 'address 1', 'address1', 'address line 1'],
+        city: ['city', 'town'],
+        region: ['state', 'region', 'province', 'st'],
+        postal: ['zip', 'zip code', 'zipcode', 'postal', 'postal code', 'postcode'],
+        country: ['country', 'country code'],
+        gln: ['gln', 'global location number'],
+        type: ['type', 'supplier type', 'kind'],
+      };
+      const norm = h => String(h).toLowerCase().replace(/[^a-z0-9]/g, '');
+      const map = {};
+      Object.entries(aliases).forEach(([key, list]) => {
+        const wanted = list.map(norm);
+        const hit = headers.find(h => wanted.includes(norm(h)));
+        if (hit) map[key] = hit;
+      });
+      return map;
+    },
+    insertRow: async (row) => _supplierImportRow(row),
+    onComplete: 'renderSuppliersCard()',
+  });
+}
+
+async function _supplierImportRow(row) {
+  const name = String(row.name || '').trim();
+  if (!name) return { error: 'name is required' };
+  const type = String(row.type || '').trim().toLowerCase();
+  const payload = {
+    organisation_id: _orgId,
+    name,
+    phone: String(row.phone || '').trim() || null,
+    street_address: String(row.street || '').trim() || null,
+    city: String(row.city || '').trim() || null,
+    region: supplierNormalizeState(row.region),
+    postal_code: String(row.postal || '').trim() || null,
+    country: supplierNormalizeCountry(row.country),
+    gln: String(row.gln || '').replace(/\s+/g, '') || null,
+    supplier_type: _SUPPLIER_TYPES[type] ? type : 'distributor',
+    active: true,
+  };
+  if (payload.gln && !/^\d{13}$/.test(payload.gln)) payload.gln = null;   // keep the row, drop a malformed GLN
+  const existing = _suppliers.find(s => String(s.name || '').toLowerCase() === name.toLowerCase());
+  if (existing) {
+    const patch = {};
+    ['phone', 'street_address', 'city', 'region', 'postal_code', 'gln'].forEach(k => { if (!existing[k] && payload[k]) patch[k] = payload[k]; });
+    if (_SUPPLIER_TYPES[type] && existing.supplier_type !== type) patch.supplier_type = type;
+    if (!Object.keys(patch).length) return {};
+    const { error } = await sb.from('suppliers').update(patch).eq('id', existing.id).eq('organisation_id', _orgId);
+    if (!error) Object.assign(existing, patch);
+    return { error: error?.message };
+  }
+  const { data, error } = await sb.from('suppliers').insert(payload).select(_SUPPLIER_COLS).single();
+  if (error) return { error: error.code === '23505' ? 'a supplier with this name already exists' : error.message };
+  if (data) _suppliers.push(data);
+  return {};
 }
 
 async function saveOrgSettings() {
