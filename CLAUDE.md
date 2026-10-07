@@ -116,7 +116,7 @@ Live application surfaces:
   the first design partner installs. The scanner's own dashboard
   buttons (4798, 4904, 5485) point at app.batchdapp.com/dashboard.html,
   which 301s to corporate.
-- dashboard.html (about 16,100 lines after Phase 3, 2026-10-03): corporate retailer
+- dashboard.html (about 16,700 lines after Phase 4, 2026-10-07): corporate retailer
   dashboard. Served at the root of corporate.batchdapp.com; requests
   for /dashboard.html on the scanner domains 301 to corporate.
 - join.html (626 lines, 2026-09-13): invitation acceptance. Reads the
@@ -546,6 +546,25 @@ migrations/CHECK_MIGRATIONS.sql; acceptance: docs/verify-022-026.sql
 Not in Phase 1: mock_recall_drills.scenario_text and
 stores.external_code (Phase 6 and 7; a small later migration, 028 or
 after, since 027 is John's code_patterns slot).
+LIVE DATABASE CHECK 2026-10-07 (PostgREST probes with the anon key, no
+login): every Phase 1 table answers PGRST205 "could not find the table
+in the schema cache" (suppliers, receiving_events, ftl_overrides,
+records_requests, traceability_plans), and Postgres itself answers 42703
+"column does not exist" for organisations.traceability_plan_contact_name,
+pricing_tier and focus_categories, for scans.receiving_event_id and for
+products.ftl_confirmed_source. John's artifacts from 020, 021 and 027
+(organisations.plan, organisation_api_keys, complaints.ip_hash,
+code_patterns) all exist. So migrations 022 to 026 are NOT applied on
+project lurxucdmrugikdlvvebc, even though the verify script reported
+12/12 PASS on 2026-10-03; the likeliest explanation is that the SQL ran
+against a different project or a preview branch. Until they are
+applied, the deployed Phase 2 receiving mode, the Phase 3 Suppliers card
+and the Phase 4 drill and plan cards show "table not in the database"
+messages (the Phase 4 code names the migration to run). Fix: in the
+Supabase SQL editor for lurxucdmrugikdlvvebc run CHECK_MIGRATIONS.sql,
+then 022, 023, 024, 025, 026 in order, then docs/verify-022-026.sql.
+products.is_ftl and ftl_category exist regardless: migration 004 added
+them, so a 200 on those two does not prove 025 ran.
 netlify.toml also gained forced 404s for /SMOKE.md and
 /CHECK_MIGRATIONS.sql on 2026-10-03; SMOKE.md was being served publicly.
 
@@ -674,6 +693,92 @@ the live database (needs a signed-in session).
 - Not in Phase 3: category-kit seeds (`seeded_from`, Phase 6). The
   "Suggested" tag already renders for inactive seeded rows, so Phase 6
   needs no table change.
+
+## Phase 4 of the FSMA 204 handoff: export, records request drill, plan (built 2026-10-07)
+dashboard.html and index.html. Verified: every inline script block passes
+node --check (dashboard 6, scanner 4); a Node test file drives the
+dashboard builder through a stubbed client (lot scope, date scope,
+missing-table and missing-column degradation, the recall path with no
+lot, plan generation) and checks the two header lists are identical; the
+two Compliance cards and the plan document render in a local preview.
+Not verified against the live database (see the Phase 1 live check:
+the tables are not there yet).
+- Shared export builder (dashboard `buildFsma204Records(scope)` and
+  `downloadFsma204Export`; scanner `fsmaExport` is the twin). Column list
+  `FSMA204_EXPORT_HEADERS` is identical in both files and follows the
+  handoff's Receiving sheet: TLC, product, GTIN, quantity, unit, six
+  immediate-previous-source columns plus country, six receiving-location
+  columns (business name is "org, store"), date and local time received,
+  TLC source type and reference, reference document type and number, FTL
+  category, record id, notes. Rows are receiving_events with status
+  received, plus receiving rows referenced by in-scope scans, plus gap
+  rows for shelf scans with no linked receiving record (Notes starts with
+  "Shelf placement only, no receiving record"). Date-range scopes with no
+  lot or product keep only FTL-flagged gap scans (`ftlOnlyGaps`); recall
+  and lot scopes keep every match. Cover block: drill banner, regulation
+  line, organization, contact (coordinator, else contact email), scope,
+  date range, generated at and by, counts, any degradation notes, and
+  `FSMA204_EXPORT_DISCLAIMER` ("Prepared with Batch'd. Batch'd supports
+  FSMA 204 record keeping; the responsibility for the records remains
+  with the business."). Never write "FSMA 204 compliant". CSV cells are
+  formula-safe (`_fsmaCsvCell` quotes a leading = or @, or a + or - that
+  starts a formula, and leaves plain numbers alone). Degrades on purpose:
+  PGRST205 on receiving_events or 42703 on scans.receiving_event_id
+  produce scan-only rows and a cover note naming migration 023.
+- `produceFsma204Records(recallEventId)` (Live Recall button) now calls
+  the builder with the recall's lot codes; an event with no lot falls
+  back to its product name instead of refusing. File names:
+  `FSMA-204-records_<DRILL-><8-char event id>_<date>.csv`,
+  `FSMA-204-records_drill_<date>.csv` for the drill, and in the scanner
+  `FSMA-204-records_<from>-<to>.csv`.
+- Records request drill (Compliance panel card, US orgs; module before
+  renderComplianceCategory). `renderRecordsRequestCard` fills
+  `#rr-card-body` after the panel renders. Start (`rrStart`, corp_admin;
+  any of lot, product, date range) inserts a records_requests row
+  (requested_at is the server default). The card then shows a live
+  mm:ss timer (`_rrTimer`, cleared when the element disappears) with
+  Produce records and Cancel drill. `rrProduce` runs the builder with the
+  saved scope, downloads, and updates produced_at, produced_by,
+  row_count and file_name; minutes_to_produce comes back from the stored
+  generated column and is shown as "Records produced in X minutes".
+  `rrCancel` closes the row with notes "Cancelled before records were
+  produced" and row_count 0; cancelled rows are excluded from Last,
+  Best and the history table. An open request survives navigation: the
+  card resumes the timer from requested_at. A zero-row production is a
+  valid result and is recorded as such.
+- Drill certificate (`generateDrillCertificate`) adds a "Records
+  produced in" detail row from the newest completed, non-cancelled
+  records request drill, or "No records request drill on file". The
+  query is a fourth member of the existing Promise.all and its errors
+  are ignored.
+- Traceability plan (Compliance panel card, US orgs).
+  `renderTraceabilityPlanCard` shows "Plan last generated {date}
+  (version N)" or the empty state, Generate or Regenerate (corp_admin),
+  View current plan (members), and the plan contact (name and phone).
+  Contact fields are organisations.traceability_plan_contact_name and
+  _phone from migration 024; when those columns are missing (42703) the
+  card falls back to the recall coordinator, makes the inputs read-only
+  and says migration 024 is needed (`_planHas024`). `planGenerate`
+  loads org, active stores with addresses, active suppliers (and how
+  many have a complete location), ftl_overrides count and receiving
+  rows in the last 90 days (each tolerant of a missing table), builds
+  `content_json` and `rendered_html` (`_planRenderHtml`: header with
+  version and citation, five numbered sections per 21 CFR 1.1315,
+  signature boxes, footer with the disclaimer and the compliance date),
+  inserts traceability_plans with version = max + 1, then sets
+  superseded_at on the previous current rows. Superseded rows are never
+  deleted. The document opens through `injectPrintButton` like the
+  certificate; `planView(id)` reopens the stored HTML.
+- Scanner (index.html): `fsmaExport` rebuilt on the same columns and
+  cover block; filters unchanged (date range required, store and FTL
+  category optional). Receiving rows come first, then gap rows for FTL
+  shelf scans (by flag or detectFtlCategory) with no linked receiving
+  record. The panel copy under the button now says so.
+- Not in Phase 4: the Shipping sheet for distribution centers (the
+  builder is a single sheet; `operates_distribution_center` is only read
+  by the plan), the readiness-score axis for records-request time (Phase
+  5), the Reports panel's older `fsma` report key (untouched, still
+  scan-based), and any NO branch (US-only decision).
 
 ## Recall counting rules (platform-wide)
 A recall requires action only when ALL THREE are true:

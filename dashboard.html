@@ -6652,169 +6652,231 @@ async function renderCommandCenter() {
 // Drills are flagged in the cover block ("MOCK DRILL — TEST EXPORT")
 // so an exported drill record can't accidentally be sent to a regulator
 // as a real submission.
+// ══════════════════════════════════════════════════════════════
+// FSMA 204 RECORDS EXPORT BUILDER. Phase 4 of the FSMA 204 handoff, 2026-10-07.
+// One builder for every "produce records" path in the dashboard: the Live Recall
+// button (produceFsma204Records below) and the timed records-request drill in the
+// Compliance panel. index.html carries a twin (fsmaExport) that uses the same
+// FSMA204_EXPORT_HEADERS; keep the two column lists identical.
+// Rows come from receiving_events first (21 CFR 1.1345 receiving KDEs). A shelf
+// scan with no linked receiving record becomes a row flagged in Notes, so the
+// store sees the gap instead of a false record. A cover block precedes the sheet.
+// Degrades on purpose: when the receiving_events table or scans.receiving_event_id
+// is missing (migration 023 not applied) the export still produces shelf-scan rows
+// and says so on the cover.
+// ══════════════════════════════════════════════════════════════
+const FSMA204_EXPORT_HEADERS = [
+  'Traceability Lot Code', 'Product Description', 'GTIN', 'Quantity', 'Unit of Measure',
+  'Immediate Previous Source: Business Name', 'Immediate Previous Source: Phone',
+  'Immediate Previous Source: Address', 'Immediate Previous Source: City',
+  'Immediate Previous Source: State', 'Immediate Previous Source: Zip', 'Immediate Previous Source: Country',
+  'Receiving Location: Business Name', 'Receiving Location: Phone', 'Receiving Location: Address',
+  'Receiving Location: City', 'Receiving Location: State', 'Receiving Location: Zip',
+  'Date Received', 'Time Received (local)', 'TLC Source Type', 'TLC Source Reference',
+  'Reference Document Type', 'Reference Document Number', 'FTL Category', 'Record ID', 'Notes',
+];
+const FSMA204_EXPORT_DISCLAIMER = "Prepared with Batch'd. Batch'd supports FSMA 204 record keeping; the responsibility for the records remains with the business.";
+const FSMA204_GAP_NOTE = 'Shelf placement only, no receiving record';
+
+function _fsmaCsvCell(v) {
+  const s = v == null ? '' : String(v);
+  const safe = /^[=@]|^[+\-]\s*[A-Za-z(]/.test(s) ? "'" + s : s;   // formula-injection guard, numbers untouched
+  return /[",\n\r]/.test(safe) ? '"' + safe.replace(/"/g, '""') + '"' : safe;
+}
+function _fsmaLocalDate(d) { const dt = new Date(d); const pad = n => String(n).padStart(2, '0'); return isNaN(dt) ? '' : `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`; }
+function _fsmaLocalTime(d) { const dt = new Date(d); const pad = n => String(n).padStart(2, '0'); return isNaN(dt) ? '' : `${pad(dt.getHours())}:${pad(dt.getMinutes())}`; }
+function _fsmaSanitizeFilter(s) { return String(s || '').replace(/[,()%]/g, ' ').trim(); }
+
+// Pure: turns loaded data into sheet rows. Tested in isolation.
+function _fsmaRowsFromData({ org, storesById, receiving, gapScans }) {
+  const orgName = org?.name || _orgName || '';
+  const loc = storeId => {
+    const st = storesById[storeId] || {};
+    return [
+      st.name ? `${orgName}, ${st.name}` : orgName,
+      st.phone || '',
+      st.street_address || st.address || '',
+      st.city || '', st.region || '', st.postal_code || '',
+    ];
+  };
+  const rows = [];
+  (receiving || []).forEach(r => {
+    const sup = r.suppliers || {};
+    const supName = r.supplier_name_snapshot || sup.name || '';
+    const notes = [];
+    if (!r.traceability_lot_code) notes.push(r.tlc_source_type === 'not_required_exempt_source' ? 'No lot code: exempt source (21 CFR 1.1305)' : 'No lot code recorded');
+    if (!supName) notes.push('No supplier recorded');
+    else if (!(sup.phone && sup.street_address && sup.city && sup.region && sup.postal_code)) notes.push('Supplier location description incomplete');
+    if (!r.reference_document_number) notes.push('No reference document');
+    rows.push([
+      r.traceability_lot_code || '', r.product_name || '', r.gtin || '',
+      r.quantity == null ? '' : String(r.quantity), r.unit_of_measure || '',
+      supName, sup.phone || '', sup.street_address || '', sup.city || '', sup.region || '', sup.postal_code || '', sup.country || (supName ? 'US' : ''),
+      ...loc(r.store_id),
+      _fsmaLocalDate(r.received_at), _fsmaLocalTime(r.received_at),
+      r.tlc_source_type || '', r.tlc_source_reference || '',
+      r.reference_document_type || '', r.reference_document_number || '',
+      r.ftl_category || '', r.id || '', notes.join('; '),
+    ]);
+  });
+  (gapScans || []).forEach(s => {
+    const notes = [FSMA204_GAP_NOTE];
+    if (!(s.lot_number || s.raw_capture)) notes.push('No lot code captured');
+    if (s.removed_from_shelf_at) notes.push('Removed from shelf ' + _fsmaLocalDate(s.removed_from_shelf_at));
+    rows.push([
+      s.lot_number || s.raw_capture || '', s.product_name || '', s.barcode_number || '',
+      s.quantity == null ? '' : String(s.quantity), '',
+      s.supplier_name || '', '', '', '', '', '', '',
+      ...loc(s.store_id),
+      _fsmaLocalDate(s.created_at), _fsmaLocalTime(s.created_at),
+      '', s.tlc_source || '',
+      '', s.reference_document || '',
+      s.ftl_category || '', s.id || '', notes.join('; '),
+    ]);
+  });
+  return rows;
+}
+
+// scope: { lots: string[], product: string, dateFrom: 'YYYY-MM-DD', dateTo: 'YYYY-MM-DD',
+//          storeId: uuid|null, title: string, drill: bool, recall: recall_events row|null,
+//          ftlOnlyGaps: bool }
+async function buildFsma204Records(scope) {
+  const lots = (scope.lots || []).map(_fsmaSanitizeFilter).filter(Boolean);
+  const product = _fsmaSanitizeFilter(scope.product);
+  const from = scope.dateFrom ? scope.dateFrom + 'T00:00:00' : null;
+  const to   = scope.dateTo   ? scope.dateTo   + 'T23:59:59.999' : null;
+  const notes = [];
+
+  const [orgRes, storesRes] = await Promise.all([
+    sb.from('organisations').select('name, contact_email, recall_coordinator_name, recall_coordinator_contact').eq('id', _orgId).single(),
+    sb.from('stores').select('id, name, store_code, phone, street_address, address, city, region, postal_code, country').eq('organisation_id', _orgId),
+  ]);
+  const org = orgRes.data || { name: _orgName };
+  const storesById = {}; (storesRes.data || []).forEach(s => { storesById[s.id] = s; });
+
+  // 1. Receiving records in scope
+  let receiving = [];
+  let receivingTableMissing = false;
+  {
+    let q = sb.from('receiving_events')
+      .select('id, store_id, supplier_id, supplier_name_snapshot, product_name, gtin, traceability_lot_code, tlc_source_type, tlc_source_reference, quantity, unit_of_measure, received_at, reference_document_type, reference_document_number, is_ftl, ftl_category, status, suppliers(name,phone,street_address,city,region,postal_code,country)')
+      .eq('organisation_id', _orgId).eq('status', 'received').order('received_at', { ascending: true }).limit(5000);
+    if (lots.length)    q = q.or(lots.map(l => `traceability_lot_code.ilike.%${l}%`).join(','));
+    if (product)        q = q.ilike('product_name', `%${product}%`);
+    if (from)           q = q.gte('received_at', from);
+    if (to)             q = q.lte('received_at', to);
+    if (scope.storeId)  q = q.eq('store_id', scope.storeId);
+    const res = await q;
+    if (res.error) {
+      if (res.error.code === 'PGRST205' || /schema cache/i.test(res.error.message || '')) { receivingTableMissing = true; notes.push('The receiving_events table is not in the database (migration 023 not applied). Rows below come from shelf scans only.'); }
+      else throw res.error;
+    } else receiving = res.data || [];
+  }
+
+  // 2. Shelf scans in scope; those without a receiving link become gap rows
+  const scanCols = 'id, lot_number, raw_capture, product_name, barcode_number, store_id, store_name, quantity, created_at, scanned_by, supplier_name, tlc_source, reference_document, is_ftl, ftl_category, removed_from_shelf_at';
+  const scanQuery = cols => {
+    let q = sb.from('scans').select(cols).eq('organisation_id', _orgId).order('created_at', { ascending: true }).limit(5000);
+    if (lots.length)    q = q.or(lots.map(l => `raw_capture.ilike.%${l}%,lot_number.ilike.%${l}%`).join(','));
+    if (product)        q = q.ilike('product_name', `%${product}%`);
+    if (from)           q = q.gte('created_at', from);
+    if (to)             q = q.lte('created_at', to);
+    if (scope.storeId)  q = q.eq('store_id', scope.storeId);
+    return q;
+  };
+  let scansRes = await scanQuery(scanCols + ', receiving_event_id');
+  let linkColumnMissing = false;
+  if (scansRes.error && scansRes.error.code === '42703') { linkColumnMissing = true; scansRes = await scanQuery(scanCols); }
+  if (scansRes.error) throw scansRes.error;
+  const scans = scansRes.data || [];
+  if (linkColumnMissing && !receivingTableMissing) notes.push('scans.receiving_event_id is missing (migration 023 not applied); shelf scans could not be matched to deliveries.');
+
+  // Receiving rows referenced by in-scope scans but not matched by the filters
+  const have = new Set(receiving.map(r => r.id));
+  const extraIds = [...new Set(scans.map(s => s.receiving_event_id).filter(id => id && !have.has(id)))];
+  if (extraIds.length && !receivingTableMissing) {
+    const { data } = await sb.from('receiving_events')
+      .select('id, store_id, supplier_id, supplier_name_snapshot, product_name, gtin, traceability_lot_code, tlc_source_type, tlc_source_reference, quantity, unit_of_measure, received_at, reference_document_type, reference_document_number, is_ftl, ftl_category, status, suppliers(name,phone,street_address,city,region,postal_code,country)')
+      .in('id', extraIds.slice(0, 500));
+    (data || []).forEach(r => { if (!have.has(r.id)) { have.add(r.id); receiving.push(r); } });
+    receiving.sort((a, b) => new Date(a.received_at) - new Date(b.received_at));
+  }
+  let gapScans = scans.filter(s => !s.receiving_event_id || !have.has(s.receiving_event_id));
+  if (scope.ftlOnlyGaps) gapScans = gapScans.filter(s => s.is_ftl || s.ftl_category);
+
+  const rows = _fsmaRowsFromData({ org, storesById, receiving, gapScans });
+
+  // 3. Cover block
+  const scopeParts = [];
+  if (lots.length) scopeParts.push('Lot code(s): ' + lots.join(', '));
+  if (product)     scopeParts.push('Product contains: ' + product);
+  if (scope.storeId) scopeParts.push('Store: ' + (storesById[scope.storeId]?.name || scope.storeId));
+  if (scope.recall) scopeParts.push('Recall: ' + (scope.recall.product_name || '') + ' (' + scope.recall.id + ')');
+  const dateRange = scope.dateFrom || scope.dateTo ? `${scope.dateFrom || 'start'} to ${scope.dateTo || 'today'}` : 'All dates on record';
+  const contact = org.recall_coordinator_name
+    ? `${org.recall_coordinator_name}${org.recall_coordinator_contact ? ', ' + org.recall_coordinator_contact : ''}`
+    : (org.contact_email || '');
+  const generatedAt = new Date();
+  const cover = [];
+  if (scope.drill) cover.push(['MOCK DRILL. Test export, not for regulatory submission.']);
+  cover.push(
+    ['FSMA 204 records', scope.title || 'Records request'],
+    ['Regulation', `${_CITATIONS.us.subpart}; receiving KDEs ${_CITATIONS.us.receivingKde}; availability ${_CITATIONS.us.availability}`],
+    ['Organization', org.name || _orgName || ''],
+    ['Contact', contact],
+    ['Scope', scopeParts.join('; ') || 'All records'],
+    ['Date range', dateRange],
+    ['Generated at', generatedAt.toISOString()],
+    ['Generated by', _userEmail || ''],
+    ['Receiving records', String(receiving.length)],
+    ['Shelf scans without a receiving record', String(gapScans.length)],
+  );
+  notes.forEach(n => cover.push(['Note', n]));
+  cover.push([FSMA204_EXPORT_DISCLAIMER]);
+
+  const lines = [
+    ...cover.map(r => r.map(_fsmaCsvCell).join(',')),
+    '',
+    FSMA204_EXPORT_HEADERS.map(_fsmaCsvCell).join(','),
+    ...rows.map(r => r.map(_fsmaCsvCell).join(',')),
+  ];
+  const csv = '﻿' + lines.join('\n');
+  const tag = scope.recall ? (scope.drill ? 'DRILL-' : '') + String(scope.recall.id).slice(0, 8)
+            : (scope.drill ? 'drill' : 'request');
+  const fileName = `FSMA-204-records_${tag}_${generatedAt.toISOString().slice(0, 10)}.csv`;
+  return { csv, fileName, rowCount: rows.length, receivingCount: receiving.length, gapCount: gapScans.length, notes, generatedAt };
+}
+
+function downloadFsma204Export(result) {
+  const blob = new Blob([result.csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = result.fileName;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 500);
+}
+
+// Live Recall button. Scope is the recall's lot code(s); if the event has no lot,
+// the product name is used instead of refusing (it used to refuse).
 async function produceFsma204Records(recallEventId) {
   const btn = document.getElementById('btn-produce-fsma204');
-  const setBusy = (busy) => {
-    if (!btn) return;
-    btn.disabled = busy;
-    btn.style.opacity = busy ? '0.6' : '1';
-    btn.style.cursor  = busy ? 'wait' : 'pointer';
-  };
-
+  const setBusy = (busy) => { if (!btn) return; btn.disabled = busy; btn.style.opacity = busy ? '0.6' : '1'; btn.style.cursor = busy ? 'wait' : 'pointer'; };
   setBusy(true);
-
   try {
-    // 1. Refetch the recall event so we always export against current state
     const { data: ev, error: evErr } = await sb.from('recall_events')
       .select('id, product_name, lot_number, severity, reason, is_drill, published_at, source_org_id, created_at')
-      .eq('id', recallEventId)
-      .single();
+      .eq('id', recallEventId).single();
     if (evErr || !ev) throw new Error('Could not load recall details');
-
-    const lotsRaw = (ev.lot_number || '').trim();
-    if (!lotsRaw) {
-      showToast('This recall has no lot number on file — cannot produce records.', 'warn', 4500);
-      return;
-    }
-
-    // 2. Split the lot field — handles multi-lot recalls like
-    //    "L24-2851, L24-2852, L24-2855" or "DRILL-2026-04-26 / DRILL-2026-04-27"
-    const lots = lotsRaw.split(/[,;|/]+/).map(s => s.trim()).filter(Boolean);
-    if (lots.length === 0) lots.push(lotsRaw);
-
-    // 3. Match scans against each lot via raw_capture or lot_number substring.
-    //    Multiple parallel queries — one per lot — then dedupe.
-    const lotQueries = lots.map(lot =>
-      sb.from('scans')
-        .select('id, lot_number, raw_capture, product_name, barcode_number, store_name, store_id, supplier_name, scanned_by, created_at, quantity, removed_from_shelf_at, removed_from_shelf_by, recall_resolved, recall_resolved_at, expiry_date')
-        .eq('organisation_id', _orgId)
-        .or(`raw_capture.ilike.%${lot}%,lot_number.ilike.%${lot}%`)
-    );
-    const results = await Promise.all(lotQueries);
-
-    const seen = new Set();
-    const scans = [];
-    results.forEach(({ data, error }) => {
-      if (error) { console.warn('[FSMA 204] lot query failed:', error.message); return; }
-      (data || []).forEach(s => {
-        if (!seen.has(s.id)) { seen.add(s.id); scans.push(s); }
-      });
+    const lots = (ev.lot_number || '').split(/[,;|/]+/).map(s => s.trim()).filter(Boolean);
+    if (!lots.length && !ev.product_name) { showToast('This recall has no lot number or product on file, so there is nothing to match.', 'warn', 4500); return; }
+    const result = await buildFsma204Records({
+      lots, product: lots.length ? '' : ev.product_name,
+      title: (ev.is_drill ? 'Mock drill: ' : 'Recall: ') + (ev.product_name || ev.id),
+      drill: !!ev.is_drill, recall: ev, ftlOnlyGaps: false,
     });
-
-    if (scans.length === 0) {
-      showToast("No scans on file match this recall's lot codes.", 'warn', 4500);
-      return;
-    }
-
-    // 4. Hydrate store info (address, region, country) for the rows
-    const storeIds = [...new Set(scans.map(s => s.store_id).filter(Boolean))];
-    const storesById = {};
-    if (storeIds.length > 0) {
-      const { data: storeRows } = await sb.from('stores')
-        .select('id, name, store_code, street_address, city, region, postal_code, country, address, phone')
-        .in('id', storeIds);
-      (storeRows || []).forEach(s => { storesById[s.id] = s; });
-    }
-
-    // 5. Build CSV
-    const escape = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
-    const generatedAt = new Date();
-    const recallLots = lots.join(' / ');
-    const orgName = _orgName || 'Organisation';
-
-    const coverBlock = [
-      ['# FSMA 204 — 24-Hour Records Production'],
-      ['# 21 CFR 1.1455 — Electronic Sortable Spreadsheet of Receiving KDEs'],
-      [],
-      ['Organisation',         orgName],
-      ['Recall ID',            ev.id],
-      ['Recall Product',       ev.product_name || ''],
-      ['Recall Lot Code(s)',   recallLots],
-      ['Recall Reason',        ev.reason || ''],
-      ['Recall Severity',      ev.severity || ''],
-      ['Recall Published',     ev.published_at ? new Date(ev.published_at).toISOString() : ''],
-      ['Generated At',         generatedAt.toISOString()],
-      ['Total Records',        String(scans.length)],
-    ];
-
-    if (ev.is_drill) {
-      coverBlock.unshift([]);
-      coverBlock.unshift(['# MOCK DRILL — TEST EXPORT — NOT FOR REGULATORY SUBMISSION']);
-    }
-
-    const dataHeaders = [
-      'Traceability Lot Code',
-      'Product Name',
-      'Barcode',
-      'Best-by / Expiry',
-      'Store Name',
-      'Store Code',
-      'Street Address',
-      'City',
-      'Region',
-      'Postal Code',
-      'Country',
-      'Date Received (placed on shelf)',
-      'Quantity',
-      'Staff Member',
-      'Supplier / Source',
-      'Status',
-      'Date Removed'
-    ];
-
-    const dataRows = scans
-      // Stable order: oldest first, matches an inspector's expected timeline
-      .sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0))
-      .map(s => {
-        const store = storesById[s.store_id] || {};
-        const status = s.removed_from_shelf_at ? 'Removed from shelf' : 'On shelf';
-        return [
-          s.lot_number || s.raw_capture || '',
-          s.product_name || '',
-          s.barcode_number || '',
-          s.expiry_date || '',
-          store.name || s.store_name || '',
-          store.store_code || '',
-          store.street_address || store.address || '',
-          store.city || '',
-          store.region || '',
-          store.postal_code || '',
-          store.country || '',
-          s.created_at ? new Date(s.created_at).toISOString() : '',
-          s.quantity != null ? String(s.quantity) : '',
-          s.scanned_by || '',
-          s.supplier_name || '',
-          status,
-          s.removed_from_shelf_at ? new Date(s.removed_from_shelf_at).toISOString() : ''
-        ];
-      });
-
-    const csvLines = [
-      ...coverBlock.map(row => row.map(escape).join(',')),
-      [],   // blank separator
-      dataHeaders.map(escape).join(','),
-      ...dataRows.map(row => row.map(escape).join(','))
-    ].map(l => Array.isArray(l) ? l : l).join('\n').replace(/\n+/g, '\n');
-
-    // BOM so Excel auto-detects UTF-8 (important for Norwegian chars)
-    const blob = new Blob(['﻿' + csvLines], { type: 'text/csv;charset=utf-8;' });
-
-    const dateStr = generatedAt.toISOString().slice(0, 10);
-    const shortId = ev.id.slice(0, 8);
-    const drillTag = ev.is_drill ? 'DRILL-' : '';
-    const filename = `FSMA-204-records_${drillTag}${shortId}_${dateStr}.csv`;
-
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-
-    showToast(`Exported ${scans.length} record${scans.length === 1 ? '' : 's'} — ${filename}`, 'ok', 5000);
-
+    if (result.rowCount === 0) { showToast("No receiving records or scans match this recall's lot codes.", 'warn', 4500); return; }
+    downloadFsma204Export(result);
+    showToast(`Exported ${result.receivingCount} receiving record${result.receivingCount === 1 ? '' : 's'}${result.gapCount ? ` and ${result.gapCount} shelf-only row${result.gapCount === 1 ? '' : 's'}` : ''}: ${result.fileName}`, 'ok', 6000);
   } catch (e) {
     console.error('[FSMA 204] export failed:', e);
     showToast('Could not produce FSMA 204 records: ' + (e.message || 'unknown error'), 'error', 5000);
@@ -9293,6 +9355,32 @@ function renderComplianceDashboard(el) {
         </div>
       </div>
 
+      ${isUS ? `
+      <!-- Phase 4 (2026-10-07): timed records request drill and traceability plan.
+           Both bodies fill asynchronously (renderRecordsRequestCard,
+           renderTraceabilityPlanCard) so a missing table never blanks the panel. -->
+      <div class="panel" style="margin:0 0 14px;" id="rr-card">
+        <div style="padding:13px 18px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+          <div>
+            <div style="font-size:12px;font-weight:700;color:var(--text);">Records request drill</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px;">When the FDA asks, you have 24 hours. See how long it takes you today.</div>
+          </div>
+          <div style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);">${_CITATIONS.us.availability}</div>
+        </div>
+        <div style="padding:14px 18px;" id="rr-card-body"><div style="display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12px;"><div class="spinner"></div> Loading…</div></div>
+      </div>
+      <div class="panel" style="margin:0 0 14px;" id="plan-card">
+        <div style="padding:13px 18px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+          <div>
+            <div style="font-size:12px;font-weight:700;color:var(--text);">Traceability plan</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px;">A written plan describing how you keep records, identify listed foods and handle lot codes, with a named contact and the stores covered.</div>
+          </div>
+          <div style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);">${_CITATIONS.us.plan}</div>
+        </div>
+        <div style="padding:14px 18px;" id="plan-card-body"><div style="display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12px;"><div class="spinner"></div> Loading…</div></div>
+      </div>
+      ` : ''}
+
       <!-- Actions row: full assessment + download report -->
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
         <button onclick="_complianceStep=1;renderCompliance()" style="font-family:'DM Mono',monospace;font-size:11px;padding:8px 16px;border-radius:8px;border:1px solid var(--glass-border);background:var(--surface2);color:var(--text);cursor:pointer;display:flex;align-items:center;gap:6px;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--glass-border)'">
@@ -9306,6 +9394,7 @@ function renderComplianceDashboard(el) {
         <div style="font-size:11px;color:var(--muted);margin-left:4px;">Data refreshes each time you open this page</div>
       </div>
     </div>`;
+  if (isUS) { renderRecordsRequestCard(); renderTraceabilityPlanCard(); }   // Phase 4
 }
 
 
@@ -9499,6 +9588,458 @@ function complianceCheck(pass, label, detail, action) {
         ${!pass && action ? `<div style="margin-top:6px;font-size:11px;color:var(--info);font-style:italic;">→ ${action}</div>` : ''}
       </div>
     </div>`;
+}
+
+// ══════════════════════════════════════════════════════════════
+// RECORDS REQUEST DRILL (Compliance card). Phase 4 of the FSMA 204 handoff, 2026-10-07.
+// Table records_requests (migration 026): corp_admin inserts and updates, members
+// read. Start inserts a row (requested_at = now() server side); Produce runs the
+// shared export builder, downloads the file and writes produced_at, row_count and
+// file_name; minutes_to_produce is a stored generated column.
+// ══════════════════════════════════════════════════════════════
+let _rrActive = null;      // the open request (produced_at null), if any
+let _rrTimer = null;
+let _rrHistory = [];
+
+function _dbMissingHint(e, table, migration) {
+  if (!e) return null;
+  if (e.code === 'PGRST205' || /schema cache/i.test(e.message || '')) return `The ${table} table is not in the database yet. Run migration ${migration} from the migrations folder in the Supabase SQL editor, then reload this page.`;
+  if (e.code === '42703') return `The database is missing a column this feature needs (${e.message}). Run migration ${migration}, then reload this page.`;
+  return null;
+}
+function _rrScopeText(r) {
+  const parts = [];
+  if (r.scope_lot) parts.push('Lot ' + r.scope_lot);
+  if (r.scope_product) parts.push('Product "' + r.scope_product + '"');
+  if (r.scope_date_from || r.scope_date_to) parts.push((r.scope_date_from || 'start') + ' to ' + (r.scope_date_to || 'today'));
+  return parts.join(', ') || 'All records';
+}
+function _rrMinutes(r) {
+  if (r.minutes_to_produce != null) return Number(r.minutes_to_produce);
+  if (r.produced_at && r.requested_at) return (new Date(r.produced_at) - new Date(r.requested_at)) / 60000;
+  return null;
+}
+function _rrFmtMinutes(m) {
+  if (m == null || isNaN(m)) return '';
+  if (m < 1) return 'under a minute';
+  if (m < 60) return m.toFixed(1) + ' minutes';
+  const h = Math.floor(m / 60), mm = Math.round(m % 60);
+  return `${h} h ${mm} min`;
+}
+function _rrElapsedText(startIso) {
+  const sec = Math.max(0, Math.floor((Date.now() - new Date(startIso)) / 1000));
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  const pad = n => String(n).padStart(2, '0');
+  return h ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+}
+
+async function renderRecordsRequestCard() {
+  const el = document.getElementById('rr-card-body'); if (!el || !_orgId) return;
+  if (_rrTimer) { clearInterval(_rrTimer); _rrTimer = null; }
+  const { data, error } = await sb.from('records_requests')
+    .select('id, is_drill, requested_at, requested_by, scope_lot, scope_product, scope_date_from, scope_date_to, produced_at, produced_by, row_count, minutes_to_produce, file_name, notes')
+    .eq('organisation_id', _orgId).order('requested_at', { ascending: false }).limit(10);
+  if (error) {
+    el.innerHTML = `<div style="font-size:12px;color:var(--warn);line-height:1.6;">${esc(_dbMissingHint(error, 'records_requests', '026') || 'Could not load records requests: ' + error.message)}</div>`;
+    return;
+  }
+  _rrHistory = data || [];
+  _rrActive = _rrHistory.find(r => !r.produced_at) || null;
+  const isAdmin = _userRole === 'corp_admin';
+  const done = _rrHistory.filter(r => r.produced_at && !/cancel/i.test(r.notes || ''));
+  const last = done[0] || null;
+  const best = done.length ? Math.min(...done.map(r => _rrMinutes(r)).filter(m => m != null)) : null;
+
+  const history = done.length ? `
+    <div style="margin-top:14px;">
+      <div style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);margin-bottom:6px;">Previous drills</div>
+      <table class="store-table" style="width:100%;table-layout:auto;">
+        <thead><tr><th>Produced</th><th>Scope</th><th>Rows</th><th>Time to produce</th><th>File</th></tr></thead>
+        <tbody>${done.slice(0, 5).map(r => `<tr>
+          <td style="font-family:'DM Mono',monospace;font-size:10.5px;">${esc(fmtDashDT(r.produced_at))}</td>
+          <td style="white-space:normal;font-size:11px;">${esc(_rrScopeText(r))}</td>
+          <td style="font-family:'DM Mono',monospace;font-size:11px;">${r.row_count == null ? '' : esc(String(r.row_count))}</td>
+          <td style="font-family:'DM Mono',monospace;font-size:11px;color:${(_rrMinutes(r) || 0) <= 60 ? 'var(--accent)' : 'var(--warn)'};">${esc(_rrFmtMinutes(_rrMinutes(r)))}</td>
+          <td style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);">${esc(r.file_name || '')}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>` : '';
+
+  if (_rrActive) {
+    el.innerHTML = `
+      <div style="display:grid;grid-template-columns:auto 1fr;gap:16px;align-items:center;flex-wrap:wrap;">
+        <div style="background:var(--surface2);border:1px solid rgba(var(--warn-rgb),0.35);border-radius:12px;padding:14px 20px;text-align:center;min-width:150px;">
+          <div style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--warn);">Clock running</div>
+          <div id="rr-timer" style="font-family:'DM Mono',monospace;font-size:28px;font-weight:700;color:var(--text);letter-spacing:0.02em;margin-top:4px;">${_rrElapsedText(_rrActive.requested_at)}</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:2px;">of 24 hours</div>
+        </div>
+        <div style="font-size:12px;color:var(--text);line-height:1.7;">
+          Request started <strong>${esc(fmtDashDT(_rrActive.requested_at))}</strong>${_rrActive.requested_by ? ' by ' + esc(_rrActive.requested_by) : ''}.<br>
+          Scope: <strong>${esc(_rrScopeText(_rrActive))}</strong>.<br>
+          <span style="color:var(--muted);">Producing the file stops the clock and records the time to produce.</span>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+            <button class="btn-primary" id="rr-produce-btn" onclick="rrProduce()" ${isAdmin ? '' : 'disabled style="opacity:0.5;cursor:not-allowed;"'}>Produce records</button>
+            <button class="btn-ghost" onclick="rrCancel()" ${isAdmin ? '' : 'disabled'}>Cancel drill</button>
+            ${isAdmin ? '' : '<span style="font-size:11px;color:var(--muted);align-self:center;">Corp admin only</span>'}
+          </div>
+        </div>
+      </div>${history}`;
+    _rrTimer = setInterval(() => {
+      const t = document.getElementById('rr-timer');
+      if (!t || !_rrActive) { clearInterval(_rrTimer); _rrTimer = null; return; }
+      t.textContent = _rrElapsedText(_rrActive.requested_at);
+    }, 1000);
+    return;
+  }
+
+  el.innerHTML = `
+    ${last ? `<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:14px;">
+      <div style="background:var(--surface2);border-radius:10px;padding:10px 16px;">
+        <div style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);">Last drill</div>
+        <div style="font-size:18px;font-weight:800;color:${(_rrMinutes(last) || 0) <= 60 ? 'var(--accent)' : 'var(--warn)'};font-family:'Figtree',sans-serif;letter-spacing:-0.02em;">${esc(_rrFmtMinutes(_rrMinutes(last)))}</div>
+        <div style="font-size:10px;color:var(--muted);">${esc(String(last.row_count ?? 0))} rows on ${esc(fmtDash(last.produced_at))}</div>
+      </div>
+      ${best != null && done.length > 1 ? `<div style="background:var(--surface2);border-radius:10px;padding:10px 16px;">
+        <div style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);">Best</div>
+        <div style="font-size:18px;font-weight:800;color:var(--text);font-family:'Figtree',sans-serif;letter-spacing:-0.02em;">${esc(_rrFmtMinutes(best))}</div>
+        <div style="font-size:10px;color:var(--muted);">${done.length} drills</div>
+      </div>` : ''}
+    </div>` : `<div style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6;">No records request drill yet. Pick a scope below, start the clock, then produce the file the way you would for an FDA request.</div>`}
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:10px;">
+      <div class="field" style="margin:0;"><label>Lot code</label><input id="rr-lot" type="text" placeholder="e.g. RM240928" /></div>
+      <div class="field" style="margin:0;"><label>Product contains</label><input id="rr-product" type="text" placeholder="e.g. romaine" /></div>
+      <div class="field" style="margin:0;"><label>Received from</label><input id="rr-from" type="date" /></div>
+      <div class="field" style="margin:0;"><label>Received to</label><input id="rr-to" type="date" /></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <button class="btn-primary" id="rr-start-btn" onclick="rrStart()" ${isAdmin ? '' : 'disabled style="opacity:0.5;cursor:not-allowed;"'}>Start the clock</button>
+      <div style="font-size:11px;color:var(--muted);">${isAdmin ? 'Any one field is enough. Starting records a timestamped request; the file you produce is the same export an FDA request would get.' : 'Corp admin only.'}</div>
+    </div>${history}`;
+}
+
+async function rrStart() {
+  if (_userRole !== 'corp_admin') { showToast('Only corp admins can start a records request drill.', 'error', 4000); return; }
+  const v = id => (document.getElementById(id)?.value || '').trim();
+  const lot = v('rr-lot'), product = v('rr-product'), from = v('rr-from'), to = v('rr-to');
+  if (!lot && !product && !from && !to) { showToast('Enter a lot code, a product, or a date range first.', 'warn', 3500); return; }
+  if (from && to && from > to) { showToast('The "from" date is after the "to" date.', 'warn', 3500); return; }
+  const btn = document.getElementById('rr-start-btn'); if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
+  const { data, error } = await sb.from('records_requests').insert({
+    organisation_id: _orgId, is_drill: true, requested_by: _userEmail || null,
+    scope_lot: lot || null, scope_product: product || null, scope_date_from: from || null, scope_date_to: to || null,
+  }).select('id, is_drill, requested_at, requested_by, scope_lot, scope_product, scope_date_from, scope_date_to, produced_at, produced_by, row_count, minutes_to_produce, file_name, notes').single();
+  if (error) {
+    showToast(_dbMissingHint(error, 'records_requests', '026') || 'Could not start: ' + error.message, 'error', 6000);
+    if (btn) { btn.disabled = false; btn.textContent = 'Start the clock'; }
+    return;
+  }
+  _rrActive = data;
+  showToast('Clock started. Produce the records when you have them.', 'ok', 3000);
+  renderRecordsRequestCard();
+}
+
+async function rrProduce() {
+  if (_userRole !== 'corp_admin' || !_rrActive) return;
+  const btn = document.getElementById('rr-produce-btn'); if (btn) { btn.disabled = true; btn.textContent = 'Producing…'; }
+  try {
+    const r = _rrActive;
+    const result = await buildFsma204Records({
+      lots: r.scope_lot ? r.scope_lot.split(/[,;|/]+/).map(s => s.trim()).filter(Boolean) : [],
+      product: r.scope_product || '', dateFrom: r.scope_date_from || null, dateTo: r.scope_date_to || null,
+      title: 'Records request drill', drill: true, recall: null,
+      ftlOnlyGaps: !r.scope_lot && !r.scope_product,
+    });
+    downloadFsma204Export(result);
+    const producedAt = new Date().toISOString();
+    const { data, error } = await sb.from('records_requests')
+      .update({ produced_at: producedAt, produced_by: _userEmail || null, row_count: result.rowCount, file_name: result.fileName })
+      .eq('id', r.id).eq('organisation_id', _orgId)
+      .select('id, requested_at, produced_at, row_count, minutes_to_produce, file_name').single();
+    if (error) throw error;
+    const minutes = _rrMinutes(data);
+    _rrActive = null;
+    showToast(`Records produced in ${_rrFmtMinutes(minutes)}: ${result.rowCount} row${result.rowCount === 1 ? '' : 's'}.`, 'ok', 6000);
+    renderRecordsRequestCard();
+  } catch (e) {
+    showToast('Could not finish the drill: ' + (e.message || 'unknown error'), 'error', 6000);
+    if (btn) { btn.disabled = false; btn.textContent = 'Produce records'; }
+  }
+}
+
+async function rrCancel() {
+  if (_userRole !== 'corp_admin' || !_rrActive) return;
+  if (!confirm('Cancel this drill? It is kept in the history as cancelled and does not count as a result.')) return;
+  const { error } = await sb.from('records_requests')
+    .update({ produced_at: new Date().toISOString(), produced_by: _userEmail || null, row_count: 0, notes: 'Cancelled before records were produced' })
+    .eq('id', _rrActive.id).eq('organisation_id', _orgId);
+  if (error) { showToast('Could not cancel: ' + error.message, 'error', 4000); return; }
+  _rrActive = null;
+  renderRecordsRequestCard();
+}
+
+// ══════════════════════════════════════════════════════════════
+// TRACEABILITY PLAN (Compliance card). Phase 4 of the FSMA 204 handoff, 2026-10-07.
+// 21 CFR 1.1315. Generates a printable plan from live data, stores it in
+// traceability_plans (migration 026) with an incremented version and marks the
+// previous current version superseded. Superseded versions are never deleted
+// (the rule asks for two years of retention after a plan is superseded).
+// The contact fields live on organisations (migration 024); when those columns
+// are missing the card falls back to the recall coordinator and says so.
+// ══════════════════════════════════════════════════════════════
+const _PLAN_ORG_COLS_BASE = 'name, contact_email, recall_coordinator_name, recall_coordinator_contact, recall_lookback_days';
+const _PLAN_ORG_COLS_024  = 'traceability_plan_contact_name, traceability_plan_contact_phone, operates_distribution_center, focus_categories';
+let _planOrg = null;
+let _planHas024 = true;
+
+async function _planLoadOrg() {
+  let res = await sb.from('organisations').select(_PLAN_ORG_COLS_BASE + ', ' + _PLAN_ORG_COLS_024).eq('id', _orgId).single();
+  if (res.error && res.error.code === '42703') { _planHas024 = false; res = await sb.from('organisations').select(_PLAN_ORG_COLS_BASE).eq('id', _orgId).single(); }
+  if (res.error) throw res.error;
+  _planOrg = res.data || {};
+  return _planOrg;
+}
+function _planContact(org) {
+  return {
+    name:  org?.traceability_plan_contact_name  || org?.recall_coordinator_name    || '',
+    phone: org?.traceability_plan_contact_phone || org?.recall_coordinator_contact || '',
+    fromCoordinator: !(org?.traceability_plan_contact_name),
+  };
+}
+
+async function renderTraceabilityPlanCard() {
+  const el = document.getElementById('plan-card-body'); if (!el || !_orgId) return;
+  const isAdmin = _userRole === 'corp_admin';
+  let current = null, org = null, loadErr = null;
+  try {
+    const [planRes, orgData] = await Promise.all([
+      sb.from('traceability_plans').select('id, version, generated_at, generated_by').eq('organisation_id', _orgId).is('superseded_at', null).order('version', { ascending: false }).limit(1),
+      _planLoadOrg(),
+    ]);
+    if (planRes.error) loadErr = planRes.error; else current = (planRes.data || [])[0] || null;
+    org = orgData;
+  } catch (e) { loadErr = e; }
+  if (loadErr) {
+    el.innerHTML = `<div style="font-size:12px;color:var(--warn);line-height:1.6;">${esc(_dbMissingHint(loadErr, 'traceability_plans', '026') || 'Could not load the plan: ' + loadErr.message)}</div>`;
+    return;
+  }
+  const c = _planContact(org);
+  el.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;">
+      <div>
+        ${current
+          ? `<div style="font-size:12px;color:var(--text);line-height:1.7;">Plan last generated <strong>${esc(fmtDash(current.generated_at))}</strong> (version ${esc(String(current.version))}${current.generated_by ? ', by ' + esc(current.generated_by) : ''}).<br><span style="color:var(--muted);">Regenerate after changing stores, suppliers or the contact.</span></div>`
+          : `<div style="font-size:12px;color:var(--muted);line-height:1.7;">No plan generated yet. ${esc(_CITATIONS.us.plan)} asks for a written plan covering record keeping, how you identify listed foods, how lot codes are handled, a point of contact and the locations covered. Batch'd writes it from your live data.</div>`}
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+          <button class="btn-primary" id="plan-generate-btn" onclick="planGenerate()" ${isAdmin ? '' : 'disabled style="opacity:0.5;cursor:not-allowed;"'}>${current ? 'Regenerate plan' : 'Generate plan'}</button>
+          ${current ? `<button class="btn-ghost" onclick="planView('${current.id}')">View current plan</button>` : ''}
+          ${isAdmin ? '' : '<span style="font-size:11px;color:var(--muted);align-self:center;">Corp admin only</span>'}
+        </div>
+      </div>
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;">
+        <div style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;">Point of contact for the plan</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <div class="field" style="margin:0;"><label>Name</label><input id="plan-contact-name" type="text" value="${esc(c.name)}" placeholder="Full name and title" ${isAdmin && _planHas024 ? '' : 'readonly'} /></div>
+          <div class="field" style="margin:0;"><label>Phone</label><input id="plan-contact-phone" type="text" value="${esc(c.phone)}" placeholder="+1 555 010 0100" inputmode="tel" ${isAdmin && _planHas024 ? '' : 'readonly'} /></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap;">
+          ${isAdmin && _planHas024 ? '<button class="btn-ghost" onclick="planSaveContact()">Save contact</button>' : ''}
+          <div style="font-size:10.5px;color:var(--muted);line-height:1.5;">${!_planHas024
+            ? 'Using the recall coordinator. A separate plan contact needs migration 024 in the database.'
+            : (c.fromCoordinator ? 'Defaults to the recall coordinator until you save a separate contact.' : 'Saved on the organization.')}</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function planSaveContact() {
+  if (_userRole !== 'corp_admin' || !_planHas024) return;
+  const name = (document.getElementById('plan-contact-name')?.value || '').trim();
+  const phone = (document.getElementById('plan-contact-phone')?.value || '').trim();
+  const { error } = await sb.from('organisations').update({ traceability_plan_contact_name: name || null, traceability_plan_contact_phone: phone || null }).eq('id', _orgId);
+  if (error) { showToast('Could not save the contact: ' + error.message, 'error', 4000); return; }
+  showToast('Plan contact saved.', 'ok', 2500);
+  renderTraceabilityPlanCard();
+}
+
+async function planView(id) {
+  const { data, error } = await sb.from('traceability_plans').select('rendered_html, version').eq('id', id).eq('organisation_id', _orgId).single();
+  if (error || !data?.rendered_html) { showToast('Could not open the plan: ' + (error?.message || 'no stored document'), 'error', 4000); return; }
+  const win = window.open('', '_blank');
+  win.document.write(injectPrintButton(data.rendered_html));
+  win.document.close();
+}
+
+async function planGenerate() {
+  if (_userRole !== 'corp_admin') { showToast('Only corp admins can generate the traceability plan.', 'error', 4000); return; }
+  const btn = document.getElementById('plan-generate-btn'); if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+  try {
+    const org = await _planLoadOrg();
+    const since90 = new Date(Date.now() - 90 * 86400000).toISOString();
+    const safe = p => p.then(r => r, e => ({ data: null, error: e }));
+    const [storesRes, supRes, ovrRes, rcvRes, verRes] = await Promise.all([
+      sb.from('stores').select('id, name, store_code, phone, street_address, address, city, region, postal_code').eq('organisation_id', _orgId).eq('active', true).order('name'),
+      safe(sb.from('suppliers').select('id, name, phone, street_address, city, region, postal_code, is_exempt_entity').eq('organisation_id', _orgId).eq('active', true).order('name')),
+      safe(sb.from('ftl_overrides').select('id', { count: 'exact', head: true }).eq('organisation_id', _orgId)),
+      safe(sb.from('receiving_events').select('id', { count: 'exact', head: true }).eq('organisation_id', _orgId).gte('received_at', since90)),
+      sb.from('traceability_plans').select('version, generated_at').eq('organisation_id', _orgId).order('version', { ascending: false }).limit(1),
+    ]);
+    if (storesRes.error) throw storesRes.error;
+    if (verRes.error) throw verRes.error;
+    const stores = storesRes.data || [];
+    const suppliers = supRes.error ? null : (supRes.data || []);
+    const supIncomplete = suppliers ? suppliers.filter(s => !(s.phone && s.street_address && s.city && s.region && s.postal_code)).length : null;
+    const overrideCount = ovrRes.error ? null : (ovrRes.count ?? 0);
+    const receiving90 = rcvRes.error ? null : (rcvRes.count ?? 0);
+    const prev = (verRes.data || [])[0] || null;
+    const version = (prev?.version || 0) + 1;
+    const contact = _planContact(org);
+    const generatedAt = new Date();
+    const focus = Array.isArray(org.focus_categories) && org.focus_categories.length ? org.focus_categories : null;
+    const dc = org.operates_distribution_center === true;
+
+    const content = {
+      version, generated_at: generatedAt.toISOString(), generated_by: _userEmail || null,
+      citation: _CITATIONS.us.plan,
+      organization: { name: org.name || _orgName, contact_email: org.contact_email || null },
+      contact: { name: contact.name || null, phone: contact.phone || null, from_recall_coordinator: contact.fromCoordinator },
+      retention: { rule: _CITATIONS.us.retention, minimum_years: 2 },
+      ftl_identification: { focus_categories: focus, override_count: overrideCount, active_suppliers: suppliers ? suppliers.length : null, suppliers_incomplete: supIncomplete },
+      tlc_handling: { assigns_lot_codes: dc, operates_distribution_center: dc },
+      activity: { receiving_records_last_90_days: receiving90 },
+      stores: stores.map(s => ({ id: s.id, name: s.name, code: s.store_code || null, phone: s.phone || null, address: s.street_address || s.address || null, city: s.city || null, state: s.region || null, zip: s.postal_code || null })),
+      superseded_version: prev?.version || null,
+    };
+    const html = _planRenderHtml(content, org);
+
+    const ins = await sb.from('traceability_plans').insert({ organisation_id: _orgId, version, content_json: content, rendered_html: html, generated_by: _userEmail || null }).select('id').single();
+    if (ins.error) throw ins.error;
+    if (prev) {
+      const sup = await sb.from('traceability_plans').update({ superseded_at: generatedAt.toISOString() })
+        .eq('organisation_id', _orgId).is('superseded_at', null).lt('version', version);
+      if (sup.error) console.warn('[plan] could not mark previous versions superseded:', sup.error.message);
+    }
+    const win = window.open('', '_blank');
+    win.document.write(injectPrintButton(html));
+    win.document.close();
+    showToast(`Traceability plan version ${version} generated and saved.`, 'ok', 4000);
+    renderTraceabilityPlanCard();
+  } catch (e) {
+    showToast(_dbMissingHint(e, 'traceability_plans', '026') || 'Could not generate the plan: ' + (e.message || 'unknown error'), 'error', 6000);
+    if (btn) { btn.disabled = false; btn.textContent = 'Generate plan'; }
+  }
+}
+
+// Printable plan. Light, print-first styling in the drill certificate's family.
+function _planRenderHtml(c, org) {
+  const fmtD = d => d ? new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : '';
+  const n = v => v == null ? 'not available' : String(v);
+  const focusText = c.ftl_identification.focus_categories
+    ? c.ftl_identification.focus_categories.map(k => (typeof _SUPPLIER_CATEGORIES === 'object' && _SUPPLIER_CATEGORIES[k]) || k).join(', ')
+    : 'bagged leafy greens and nut butters (the default focus; no categories saved on the organization yet)';
+  const storeRows = c.stores.length ? c.stores.map(s => `<tr>
+      <td>${esc(s.name || '')}${s.code ? ` <span class="code">${esc(s.code)}</span>` : ''}</td>
+      <td>${esc([s.address, s.city, [s.state, s.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ') || 'No address on record')}</td>
+      <td>${esc(s.phone || '')}</td>
+    </tr>`).join('') : `<tr><td colspan="3" class="muted">No active stores on record.</td></tr>`;
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Traceability Plan, ${esc(c.organization.name || '')}, version ${c.version}</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Figtree', 'Helvetica Neue', Arial, sans-serif; background: #fff; color: #111; font-size: 12.5px; line-height: 1.6; }
+  @media print { @page { margin: 14mm; size: Letter; } .no-print { display: none !important; } }
+  .page { max-width: 760px; margin: 0 auto; padding: 36px 48px 48px; }
+  .head { background: #080f12; color: #edfdf8; padding: 26px 32px; border-radius: 12px; display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; }
+  .brand { font-weight: 800; font-size: 16px; color: #34d399; letter-spacing: -0.02em; margin-bottom: 8px; }
+  .eyebrow { font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: #6aaf9e; margin-bottom: 6px; }
+  .org { font-size: 22px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.1; }
+  .meta { font-family: 'DM Mono', monospace; font-size: 11px; color: #6aaf9e; margin-top: 8px; line-height: 1.7; }
+  .pill { font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; padding: 6px 10px; border: 1px solid rgba(52,211,153,0.4); border-radius: 6px; color: #34d399; white-space: nowrap; }
+  h2 { font-size: 13px; font-weight: 800; letter-spacing: 0.02em; margin: 26px 0 8px; display: flex; align-items: center; gap: 10px; }
+  h2 .num { font-family: 'DM Mono', monospace; font-size: 11px; color: #065f46; background: #d1fae5; border-radius: 6px; padding: 2px 8px; }
+  p { margin: 0 0 8px; color: #1f2937; }
+  ul { margin: 0 0 8px 18px; color: #1f2937; }
+  li { margin-bottom: 4px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+  th { text-align: left; font-family: 'DM Mono', monospace; font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; color: #6b7280; padding: 7px 10px; background: #f3f4f6; border-bottom: 1px solid #e5e7eb; }
+  td { padding: 8px 10px; border-bottom: 1px solid #f0f0f0; font-size: 12px; vertical-align: top; }
+  .code { font-family: 'DM Mono', monospace; font-size: 10px; color: #6b7280; }
+  .muted { color: #9ca3af; font-style: italic; }
+  .facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 10px 0 4px; }
+  .fact { background: #f8fffe; border: 1px solid #e0f2ed; border-radius: 8px; padding: 10px 12px; }
+  .fact .v { font-size: 18px; font-weight: 800; color: #065f46; letter-spacing: -0.02em; }
+  .fact .k { font-family: 'DM Mono', monospace; font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; color: #6b7280; margin-top: 2px; }
+  .contact { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 16px; display: flex; gap: 24px; flex-wrap: wrap; }
+  .contact .name { font-size: 15px; font-weight: 700; }
+  .contact .phone { font-family: 'DM Mono', monospace; font-size: 12px; color: #374151; }
+  .foot { margin-top: 28px; padding-top: 14px; border-top: 1px solid #e5e7eb; font-size: 10.5px; color: #6b7280; line-height: 1.7; }
+  .sig { margin-top: 22px; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .sig div { border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px 16px; min-height: 86px; font-size: 10px; color: #9ca3af; display: flex; flex-direction: column; justify-content: flex-end; }
+  .sig span { border-top: 1px solid #d1d5db; padding-top: 6px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="head">
+    <div>
+      <div class="brand">Batch'd</div>
+      <div class="eyebrow">Traceability plan, ${esc(c.citation)}</div>
+      <div class="org">${esc(c.organization.name || '')}</div>
+      <div class="meta">Version ${c.version} · generated ${esc(fmtD(c.generated_at))}${c.generated_by ? ' by ' + esc(c.generated_by) : ''}${c.superseded_version ? `<br>Supersedes version ${c.superseded_version}` : ''}</div>
+    </div>
+    <div class="pill">${esc(_CITATIONS.us.subpart)}</div>
+  </div>
+
+  <h2><span class="num">1</span>Record-keeping procedures</h2>
+  <p>Records required by ${esc(_CITATIONS.us.subpart)} are kept electronically in Batch'd. Store staff record the receipt of Food Traceability List foods in the Batch'd scanner's Receiving mode at the time of delivery, capturing the traceability lot code, product description and GTIN, quantity and unit of measure, the immediate previous source, the reference document type and number, and the date received (${esc(_CITATIONS.us.receivingKde)}). Shelf placement is recorded in the scanner's Shelf mode and linked to the receiving record when the lot code matches.</p>
+  <p>Records are exportable as an electronic sortable spreadsheet (CSV) from the corporate dashboard, from the Compliance panel (records request) and from a live recall (Produce records), so a request under ${esc(_CITATIONS.us.availability)} can be met inside 24 hours. The organization rehearses this with timed records request drills.</p>
+  <p>Receiving records carry a retention date two years after receipt (${esc(c.retention.rule)}) and are not deleted before it. Superseded versions of this plan are kept for two years after they are replaced.</p>
+  <div class="facts">
+    <div class="fact"><div class="v">${esc(n(c.activity.receiving_records_last_90_days))}</div><div class="k">Receiving records, last 90 days</div></div>
+    <div class="fact"><div class="v">${esc(String(c.stores.length))}</div><div class="k">Active stores covered</div></div>
+    <div class="fact"><div class="v">${esc(n(c.ftl_identification.active_suppliers))}</div><div class="k">Active suppliers on file</div></div>
+  </div>
+
+  <h2><span class="num">2</span>How Food Traceability List foods are identified</h2>
+  <p>Products are flagged as listed foods at three levels: a GTIN-level flag on the shared product catalog, organization-level overrides set by managers or confirmed by staff at receiving, and a name-based category detector as the fallback. Staff confirm or reject the detected category on each receipt; a rejection is stored as an override for this organization so the same product is not flagged again.</p>
+  <ul>
+    <li>Focus categories: ${esc(focusText)}.</li>
+    <li>Organization overrides on file: ${esc(n(c.ftl_identification.override_count))}.</li>
+    <li>Suppliers with a complete location description: ${c.ftl_identification.active_suppliers == null ? 'not available' : esc(String(c.ftl_identification.active_suppliers - (c.ftl_identification.suppliers_incomplete || 0)) + ' of ' + String(c.ftl_identification.active_suppliers))}.</li>
+  </ul>
+
+  <h2><span class="num">3</span>How traceability lot codes are handled</h2>
+  <p>Traceability lot codes are taken from the supplier's case label (GS1-128 application identifier 10, with the GTIN from application identifier 01) or from the shipping document, and recorded exactly as received. The store does not alter a supplier's lot code. Receipts from exempt sources (${esc(_CITATIONS.us.exemptions)}) are recorded without a lot code and marked as such, with the source's name and location still captured.</p>
+  <p>${c.tlc_handling.assigns_lot_codes
+    ? 'This organization operates a distribution center and may assign traceability lot codes when it initially packs, transforms or repacks listed foods. Those assignment procedures are documented separately and referenced from this plan.'
+    : 'Assignment of new traceability lot codes: not applicable. This organization does not initially pack, transform or repack listed foods and does not assign traceability lot codes.'}</p>
+
+  <h2><span class="num">4</span>Point of contact</h2>
+  <div class="contact">
+    <div><div class="name">${esc(c.contact.name || 'Not yet named')}</div><div class="phone">${esc(c.contact.phone || '')}</div></div>
+    <div style="font-size:11.5px;color:#4b5563;max-width:360px;">Answers questions about this plan and about the organization's traceability records on request from the FDA.${c.contact.from_recall_coordinator ? ' (The recall coordinator, until a separate plan contact is named.)' : ''}</div>
+  </div>
+
+  <h2><span class="num">5</span>Locations covered</h2>
+  <table>
+    <thead><tr><th>Store</th><th>Address</th><th>Phone</th></tr></thead>
+    <tbody>${storeRows}</tbody>
+  </table>
+
+  <div class="sig">
+    <div><span>Reviewed by (name, title, date)</span></div>
+    <div><span>Approved by (name, title, date)</span></div>
+  </div>
+
+  <div class="foot">
+    ${esc(FSMA204_EXPORT_DISCLAIMER)} This plan was generated from live Batch'd data on ${esc(fmtD(c.generated_at))}. Review it when stores, suppliers, procedures or the point of contact change, and regenerate so the stored version matches practice. Compliance date for the rule: ${esc(_CITATIONS.us.complianceDate)}.
+  </div>
+</div>
+</body>
+</html>`;
 }
 
 function renderComplianceCategory(el, step) {
@@ -14765,14 +15306,17 @@ async function generateDrillCertificate(recallEventId) {
     // arbitrary user's coordinator instead of the org's. The org-level
     // coordinator lives on organisations.recall_coordinator_name/contact —
     // matches the loadComplianceData query pattern at line ~4527.
-    const [evRes, acksRes, orgRes] = await Promise.all([
+    const [evRes, acksRes, orgRes, rrRes] = await Promise.all([
       sb.from('recall_events').select('*').eq('id', recallEventId).single(),
       sb.from('recall_acknowledgements')
         .select('id, status, acknowledged_at, created_at, stores(name)')
         .eq('recall_event_id', recallEventId)
         .eq('organisation_id', _orgId),
       sb.from('organisations').select('name, contact_email, region, recall_coordinator_name, recall_coordinator_contact').eq('id', _orgId).single(),
+      // Phase 4: latest completed records request drill (table may be missing; errors are ignored)
+      sb.from('records_requests').select('produced_at, row_count, minutes_to_produce, notes').eq('organisation_id', _orgId).eq('is_drill', true).not('produced_at', 'is', null).order('produced_at', { ascending: false }).limit(5),
     ]);
+    const rrDone = (rrRes?.data || []).find(r => !/cancel/i.test(r.notes || '')) || null;
     const coordRes = { data: [orgRes.data || {}] };  // shim — keeps downstream coord shape consistent
 
     const ev     = evRes.data;
@@ -15256,6 +15800,7 @@ const fmtDT      = d => d ? new Date(d).toLocaleString(_dashLocale(), {day:'nume
         { k: 'Drill initiated',    v: fmtDT(ev.published_at || ev.created_at) },
         { k: 'Last store response',v: lastConfirm ? fmtDT(lastConfirm) : '—' },
         { k: 'Regulatory basis',   v: regRef },
+        { k: 'Records produced in', v: rrDone ? `${_rrFmtMinutes(Number(rrDone.minutes_to_produce))} (${rrDone.row_count ?? 0} rows, records request drill ${fmtDate(rrDone.produced_at)})` : 'No records request drill on file' },
         { k: 'Certificate ref',    v: certRef },
       ].map(d => `<div class="detail-row">
         <span class="detail-key">${d.k}</span>

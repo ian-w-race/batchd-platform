@@ -48,10 +48,14 @@ not repeated here.
     supplier and PO, see the row in the manager Receiving tab.
 11. Same org: shelf-scan a unit with the same lot, see the "Linked to
     delivery" chip.
-12. Same org: run a records-request drill, produce the file, confirm
-    every column in the Phase 4 table is present and populated.
-13. Same org: generate the traceability plan, confirm contact and
-    stores are correct.
+12. Same org, dashboard, Compliance, Records request drill: enter a lot
+    or a date range, Start the clock, then Produce records. The CSV has
+    the cover block and the 27 Phase 4 columns, the card shows the
+    minutes, and the next drill certificate carries a "Records produced
+    in" line.
+13. Same org, Compliance, Traceability plan: save a contact, Generate
+    plan, confirm the contact and every active store appear, then
+    Regenerate and confirm the card shows version 2.
 14. Signup: pick the two starter categories, confirm suggested
     suppliers appear inactive in Settings and the two drill templates
     appear in the launcher.

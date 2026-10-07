@@ -4771,7 +4771,7 @@
         <div style="font-size:11px;color:var(--muted);margin-top:10px;line-height:1.6;">
           Exports a CSV matching the FDA's official FSMA 204 (USA) Receiving CTE electronic sortable spreadsheet format.
           Includes all required Key Data Elements: TLC, TLC source, product description, quantity, receiving location, date received, immediate previous source, and reference document number.
-          Only scans of FTL-flagged products are included.
+          Receiving records in the range are the rows; shelf scans of FTL products with no receiving record are listed as gaps in the Notes column.
         </div>
       </div>
     </div>
@@ -12976,125 +12976,147 @@ function printAuditReport() {
 // ── FSMA 204 (USA) EXPORT ──────────────────────────────────────────
 // Generates FDA-format electronic sortable spreadsheet for Receiving CTE
 // Per 21 CFR Part 1 Subpart S — FSMA Food Traceability Rule
+// Phase 4 of the FSMA 204 handoff (2026-10-07): the FDA-shaped Receiving sheet.
+// Twin of buildFsma204Records in dashboard.html; FSMA204_EXPORT_HEADERS must stay
+// identical in both files. Rows come from receiving_events first; shelf scans of
+// FTL products with no linked receiving record are listed as gap rows so the
+// store sees what is missing. Degrades to scan rows when migration 023 is absent.
+const FSMA204_EXPORT_HEADERS = [
+  'Traceability Lot Code', 'Product Description', 'GTIN', 'Quantity', 'Unit of Measure',
+  'Immediate Previous Source: Business Name', 'Immediate Previous Source: Phone',
+  'Immediate Previous Source: Address', 'Immediate Previous Source: City',
+  'Immediate Previous Source: State', 'Immediate Previous Source: Zip', 'Immediate Previous Source: Country',
+  'Receiving Location: Business Name', 'Receiving Location: Phone', 'Receiving Location: Address',
+  'Receiving Location: City', 'Receiving Location: State', 'Receiving Location: Zip',
+  'Date Received', 'Time Received (local)', 'TLC Source Type', 'TLC Source Reference',
+  'Reference Document Type', 'Reference Document Number', 'FTL Category', 'Record ID', 'Notes',
+];
+const FSMA204_EXPORT_DISCLAIMER = "Prepared with Batch'd. Batch'd supports FSMA 204 record keeping; the responsibility for the records remains with the business.";
+function _fsmaCsvCell(v) {
+  const s = v == null ? '' : String(v);
+  const safe = /^[=@]|^[+\-]\s*[A-Za-z(]/.test(s) ? "'" + s : s;
+  return /[",\n\r]/.test(safe) ? '"' + safe.replace(/"/g, '""') + '"' : safe;
+}
+function _fsmaLocalDate(d) { const dt = new Date(d); const pad = n => String(n).padStart(2, '0'); return isNaN(dt) ? '' : `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`; }
+function _fsmaLocalTime(d) { const dt = new Date(d); const pad = n => String(n).padStart(2, '0'); return isNaN(dt) ? '' : `${pad(dt.getHours())}:${pad(dt.getMinutes())}`; }
+
 async function fsmaExport() {
-  const fromVal    = document.getElementById('fsma-export-from')?.value;
-  const toVal      = document.getElementById('fsma-export-to')?.value;
-  const storeVal   = document.getElementById('fsma-export-store')?.value;
-  const catVal     = document.getElementById('fsma-export-category')?.value;
-  const msgEl      = document.getElementById('fsma-export-msg');
+  const fromVal  = document.getElementById('fsma-export-from')?.value;
+  const toVal    = document.getElementById('fsma-export-to')?.value;
+  const storeVal = document.getElementById('fsma-export-store')?.value;
+  const catVal   = document.getElementById('fsma-export-category')?.value;
+  const msgEl    = document.getElementById('fsma-export-msg');
+  const say = (text, color) => { if (msgEl) { msgEl.style.color = color || 'var(--muted)'; msgEl.textContent = text; } };
 
-  if (!fromVal || !toVal) {
-    msgEl.style.color = 'var(--warn)';
-    msgEl.textContent = 'Please select a date range.';
-    return;
-  }
-
-  msgEl.style.color = 'var(--muted)';
-  msgEl.textContent = currentLang==='no'?'Henter oppføringer…':'Fetching records…';
+  if (!fromVal || !toVal) { say('Please select a date range.', 'var(--warn)'); return; }
+  if (fromVal > toVal) { say('The "from" date is after the "to" date.', 'var(--warn)'); return; }
+  say('Fetching records…');
 
   try {
-    // Fetch all scans in range — filter FTL-flagged ones
-    let query = sb.from('scans')
-      .select('*')
-      .eq('organisation_id', _currentOrgId)
-      .gte('created_at', fromVal + 'T00:00:00')
-      .lte('created_at', toVal + 'T23:59:59')
-      .order('created_at', { ascending: true });
+    const storeUUID = storeVal ? (window._storeIdMap?.[storeVal] || null) : null;
+    const from = fromVal + 'T00:00:00', to = toVal + 'T23:59:59.999';
+    const notes = [];
 
-    if (storeVal) {
-      const storeUUID = window._storeIdMap?.[storeVal] || null;
-      query = storeUUID ? query.eq('store_id', storeUUID) : query.eq('store_name', storeVal);
+    const [orgRes, storesRes] = await Promise.all([
+      sb.from('organisations').select('name, contact_email, recall_coordinator_name, recall_coordinator_contact').eq('id', _currentOrgId).single(),
+      sb.from('stores').select('id, name, phone, street_address, address, city, region, postal_code').eq('organisation_id', _currentOrgId),
+    ]);
+    const org = orgRes.data || {};
+    const storesById = {}; (storesRes.data || []).forEach(s => { storesById[s.id] = s; });
+    const loc = (storeId, fallbackName) => {
+      const st = storesById[storeId] || {};
+      const name = st.name || fallbackName || '';
+      return [name ? `${org.name || ''}${org.name && name ? ', ' : ''}${name}` : (org.name || ''), st.phone || '', st.street_address || st.address || '', st.city || '', st.region || '', st.postal_code || ''];
+    };
+
+    // 1. Receiving records in the range
+    let receiving = [];
+    let receivingMissing = false;
+    {
+      let q = sb.from('receiving_events')
+        .select('id, store_id, supplier_name_snapshot, product_name, gtin, traceability_lot_code, tlc_source_type, tlc_source_reference, quantity, unit_of_measure, received_at, reference_document_type, reference_document_number, is_ftl, ftl_category, suppliers(name,phone,street_address,city,region,postal_code,country)')
+        .eq('organisation_id', _currentOrgId).eq('status', 'received').gte('received_at', from).lte('received_at', to).order('received_at', { ascending: true }).limit(5000);
+      if (storeUUID) q = q.eq('store_id', storeUUID);
+      if (catVal) q = q.eq('ftl_category', catVal);
+      const res = await q;
+      if (res.error) {
+        if (res.error.code === 'PGRST205' || /schema cache/i.test(res.error.message || '')) { receivingMissing = true; notes.push('The receiving_events table is not in the database (migration 023 not applied). Rows below come from shelf scans only.'); }
+        else throw res.error;
+      } else receiving = res.data || [];
     }
+    const have = new Set(receiving.map(r => r.id));
 
+    // 2. Shelf scans of FTL products in the range; unlinked ones are gap rows
+    let query = sb.from('scans').select('*').eq('organisation_id', _currentOrgId).gte('created_at', from).lte('created_at', to).order('created_at', { ascending: true }).limit(5000);
+    if (storeVal) query = storeUUID ? query.eq('store_id', storeUUID) : query.eq('store_name', storeVal);
     const { data: scans, error } = await query;
     if (error) throw error;
-
-    // Filter to FTL products — either already flagged or detectable from name
-    const ftlScans = (scans || []).filter(r => {
-      if (r.is_ftl) return true;
-      if (catVal) return false; // if filtering by cat, only show pre-flagged
-      const d = detectFtlCategory(r.product_name || '');
-      return d.isFtl;
-    }).filter(r => {
-      if (!catVal) return true;
+    const gapScans = (scans || []).filter(r => {
+      if (r.receiving_event_id && have.has(r.receiving_event_id)) return false;
       const cat = r.ftl_category || detectFtlCategory(r.product_name || '').category;
-      return cat === catVal;
+      const isFtl = r.is_ftl || !!cat;
+      if (!isFtl) return false;
+      if (catVal && cat !== catVal) return false;
+      r._cat = cat;
+      return true;
     });
 
-    if (ftlScans.length === 0) {
-      msgEl.style.color = 'var(--warn)';
-      msgEl.textContent = 'No FTL-flagged products found in this date range.';
-      return;
-    }
+    const rows = [];
+    receiving.forEach(r => {
+      const sup = r.suppliers || {};
+      const supName = r.supplier_name_snapshot || sup.name || '';
+      const rn = [];
+      if (!r.traceability_lot_code) rn.push(r.tlc_source_type === 'not_required_exempt_source' ? 'No lot code: exempt source (21 CFR 1.1305)' : 'No lot code recorded');
+      if (!supName) rn.push('No supplier recorded');
+      else if (!(sup.phone && sup.street_address && sup.city && sup.region && sup.postal_code)) rn.push('Supplier location description incomplete');
+      if (!r.reference_document_number) rn.push('No reference document');
+      rows.push([r.traceability_lot_code || '', r.product_name || '', r.gtin || '', r.quantity == null ? '' : String(r.quantity), r.unit_of_measure || '',
+        supName, sup.phone || '', sup.street_address || '', sup.city || '', sup.region || '', sup.postal_code || '', sup.country || (supName ? 'US' : ''),
+        ...loc(r.store_id), _fsmaLocalDate(r.received_at), _fsmaLocalTime(r.received_at),
+        r.tlc_source_type || '', r.tlc_source_reference || '', r.reference_document_type || '', r.reference_document_number || '',
+        r.ftl_category || '', r.id, rn.join('; ')]);
+    });
+    gapScans.forEach(s => {
+      const gn = ['Shelf placement only, no receiving record'];
+      if (!(s.lot_number || s.raw_capture)) gn.push('No lot code captured');
+      rows.push([s.lot_number || s.raw_capture || '', s.product_name || '', s.barcode_number || '', s.quantity == null ? '' : String(s.quantity), '',
+        s.supplier_name || '', '', '', '', '', '', '',
+        ...loc(s.store_id, s.store_name), _fsmaLocalDate(s.created_at), _fsmaLocalTime(s.created_at),
+        '', s.tlc_source || '', '', s.reference_document || '',
+        s._cat || '', s.id || '', gn.join('; ')]);
+    });
 
-    // Build FDA-format Receiving CTE spreadsheet
-    // Columns match FDA Electronic Sortable Spreadsheet Template (Receiving CTE tab)
-    const headers = [
-      'Traceability Lot Code (TLC)',
-      'TLC Source (Entity Name)',
-      'TLC Source Reference',
-      'Product Description',
-      'FTL Category',
-      'Quantity Received',
-      'Unit of Measure',
-      'Receiving Location Name',
-      'Receiving Location Address',
-      'Date Received',
-      'Immediate Previous Source (Supplier)',
-      'Reference Document Type',
-      'Reference Document Number',
-      'Scanned By',
-      'Record ID',
+    if (!rows.length) { say('No receiving records or FTL shelf scans in this date range.', 'var(--warn)'); return; }
+
+    const generatedAt = new Date();
+    const contact = org.recall_coordinator_name ? `${org.recall_coordinator_name}${org.recall_coordinator_contact ? ', ' + org.recall_coordinator_contact : ''}` : (org.contact_email || '');
+    const cover = [
+      ['FSMA 204 records', 'Receiving records export'],
+      ['Regulation', `${window._CITATIONS.us.subpart}; receiving KDEs ${window._CITATIONS.us.receivingKde}; availability ${window._CITATIONS.us.availability}`],
+      ['Organization', org.name || ''],
+      ['Contact', contact],
+      ['Scope', [storeVal ? 'Store: ' + storeVal : 'All stores', catVal ? 'Category: ' + (FTL_CATEGORIES[catVal]?.label || catVal) : 'All categories'].join('; ')],
+      ['Date range', `${fromVal} to ${toVal}`],
+      ['Generated at', generatedAt.toISOString()],
+      ['Generated by', currentUser?.email || ''],
+      ['Receiving records', String(receiving.length)],
+      ['Shelf scans without a receiving record', String(gapScans.length)],
     ];
+    notes.forEach(n => cover.push(['Note', n]));
+    cover.push([FSMA204_EXPORT_DISCLAIMER]);
 
-    const storeAddr = _mgrAllScans?.[0]?.store_name || currentUser?.email || 'Store';
-    const pad = n => String(n).padStart(2, '0');
-    const fmtDate = d => { const dt = new Date(d); return `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}`; };
-
-    const rows = ftlScans.map(r => {
-      const ftl = r.ftl_category
-        ? { label: FTL_CATEGORIES[r.ftl_category]?.label || r.ftl_category }
-        : detectFtlCategory(r.product_name || '');
-      return [
-        r.lot_number              || '',                          // TLC
-        r.tlc_source              || '',                          // TLC Source entity
-        '',                                                       // TLC Source Reference (URL — optional)
-        r.product_name            || '',                          // Product Description
-        ftl.label                 || '',                          // FTL Category
-        r.quantity                || 1,                           // Quantity
-        'units',                                                  // Unit of Measure
-        r.store_name              || storeAddr,                   // Receiving Location Name
-        r.store_name              || '',                          // Receiving Location Address
-        fmtDate(r.created_at),                                    // Date Received
-        r.supplier_name           || '',                          // Immediate Previous Source
-        r.reference_document ? 'Purchase Order / BOL' : '',      // Reference Doc Type
-        r.reference_document      || '',                          // Reference Doc Number
-        (r.scanned_by || '').split('@')[0],                       // Scanned By
-        r.id                      || '',                          // Record ID
-      ];
-    });
-
-    // Build CSV
-    const csvEsc = v => { if (typeof v !== 'string') return v; return (v.includes(',') || v.includes('"') || v.includes('\n')) ? '"' + v.replace(/"/g, '""') + '"' : v; };
-        const csv = [headers, ...rows].map(row => row.map(csvEsc).join(',')).join(String.fromCharCode(13,10));
-    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    const csv = '﻿' + [...cover.map(r => r.map(_fsmaCsvCell).join(',')), '', FSMA204_EXPORT_HEADERS.map(_fsmaCsvCell).join(','), ...rows.map(r => r.map(_fsmaCsvCell).join(','))].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement('a');
-    const dateStamp = fromVal.replace(/-/g, '') + '-' + toVal.replace(/-/g, '');
-    a.href     = url;
-    a.download = `batched_fsma204_receiving_${dateStamp}.csv`;
+    a.href = url; a.download = `FSMA-204-records_${fromVal.replace(/-/g, '')}-${toVal.replace(/-/g, '')}.csv`;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 500);
 
-    const coverageGaps = ftlScans.filter(r => !r.lot_number || !r.supplier_name || !r.reference_document).length;
-    msgEl.style.color = coverageGaps > 0 ? 'var(--warn)' : 'var(--accent)';
-    msgEl.textContent = coverageGaps > 0
-      ? `✓ Exported ${ftlScans.length} records — ${coverageGaps} with incomplete KDEs (see CSV)`
-      : `✓ Exported ${ftlScans.length} FTL records — all KDEs present`;
-
-  } catch(e) {
-    msgEl.style.color = 'var(--danger)';
-    msgEl.textContent = '✗ Export failed: ' + e.message;
+    const incomplete = rows.filter(r => r[r.length - 1]).length;
+    say(`Exported ${receiving.length} receiving record${receiving.length === 1 ? '' : 's'}${gapScans.length ? ` and ${gapScans.length} shelf-only row${gapScans.length === 1 ? '' : 's'}` : ''}${incomplete ? ` (${incomplete} with notes, see the last column)` : ''}.`, incomplete ? 'var(--warn)' : 'var(--accent)');
+  } catch (e) {
+    say('Export failed: ' + e.message, 'var(--danger)');
   }
 }
 
