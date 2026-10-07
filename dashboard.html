@@ -1284,6 +1284,13 @@ function _missingColumnFrom(error) {
 // hints wait for photographed labels; nothing is invented here.
 // ══════════════════════════════════════════════════════════════
 const _PRICING_TIER_LABELS = { pilot: 'Pilot', starter: 'Starter', essential: 'Essential', professional: 'Professional', readiness: 'Readiness' };
+// Phase 8 (2026-10-07): network benchmarks opt-in (organisations.network_benchmarks_opt_in,
+// migration 024). Default off. Nothing reads the flag yet: aggregation, the
+// network_benchmarks table and any client read are later work (handoff Phase 8).
+// The handoff requires Elliott to review this copy before it appears in Settings;
+// flip _NETWORK_OPTIN_REVIEWED to true once that review is done.
+const _NETWORK_OPTIN_REVIEWED = false;
+const _NETWORK_OPTIN_COPY = "Share anonymized, aggregated recall-response times with the Batch'd network and see how your stores compare. No store, product, supplier or volume data leaves your organization. You can turn this off at any time.";
 const _FOCUS_ORDER = ['leafy_greens', 'nut_butters'];
 function _kitRows(d, key) { return (d.receiving || []).filter(r => r.ftl_category === key); }
 const CATEGORY_KITS = {
@@ -13162,6 +13169,11 @@ async function renderSettings() {
               <div style="font-size:10.5px;color:var(--muted);margin-bottom:8px;line-height:1.5;">Focus categories drive the suggested suppliers, the drill scripts, the Compliance checklist and the focus badge on feed recalls.</div>
               ${_focusPickerHtml(org?.focus_categories || [], isAdmin, 'org')}
             </div>
+            ${_NETWORK_OPTIN_REVIEWED ? `
+            <!-- Phase 8 (2026-10-07): network benchmarks opt-in. Default off. -->
+            <div class="field">
+              <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:12px;color:var(--text);margin:0;"><input type="checkbox" id="org-network-optin" ${org?.network_benchmarks_opt_in ? 'checked' : ''} ${isAdmin ? '' : 'disabled'} style="width:auto;height:auto;flex:0 0 auto;padding:0;margin:2px 0 0;appearance:auto;accent-color:var(--accent);"><span><strong>Network benchmarks</strong><br><span style="color:var(--muted);font-size:11px;line-height:1.55;">${esc(_NETWORK_OPTIN_COPY)}</span></span></label>
+            </div>` : ''}
             <div class="field"><label>Pricing tier</label>
               <input type="text" value="${esc(_PRICING_TIER_LABELS[org?.pricing_tier] || 'Not set')}" readonly style="opacity:0.7;" />
               <div style="font-size:10px;color:var(--muted);margin-top:4px;line-height:1.5;">Recorded by Batch'd for the pilot. Informational only; nothing is gated by it.</div>
@@ -14111,6 +14123,8 @@ async function saveOrgSettings() {
   }
   const focusEl = document.getElementById('org-focus-chips');   // Phase 6
   if (focusEl) payload.focus_categories = _focusPickerValues('org');
+  const netEl = document.getElementById('org-network-optin');   // Phase 8
+  if (netEl) payload.network_benchmarks_opt_in = !!netEl.checked;
   // Columns from later migrations may be missing on an older database. Drop the
   // column the error names and retry so the rest still saves (recall_source needs
   // migration 012; the applicability columns need 024).

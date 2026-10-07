@@ -1040,6 +1040,54 @@ EDI 856 (handoff 7.3) is out of scope, as the handoff says.
   per-supplier column mappings beyond the remembered-mappings list;
   an offline queue for confirmations.
 
+## Phase 8 of the FSMA 204 handoff: network foundations (built 2026-10-07)
+dashboard.html only. The handoff's Phase 8 deliverable is one Settings
+toggle for organisations.network_benchmarks_opt_in (migration 024), default
+off, with its exact copy, and an explicit instruction not to build reads,
+aggregation or the network_benchmarks table yet. That is what shipped:
+- `_NETWORK_OPTIN_COPY` holds the handoff's sentence verbatim and
+  `_NETWORK_OPTIN_REVIEWED` (false) hides the toggle until Elliott has
+  reviewed the copy, which the handoff's section 10 requires before it
+  appears in Settings. Flip the constant to true after the review; the
+  toggle then renders in the Organisation card below "Where you start",
+  and saveOrgSettings writes the flag (corp_admin only, with the usual
+  missing-column retry).
+- Nothing reads the flag. When aggregation comes it must run in a
+  scheduled Netlify function with the service key, write only
+  pre-aggregated rows (metric, period, n_orgs, p25, p50, p75) to a
+  network_benchmarks table, suppress cells with fewer than 10
+  contributing organizations, and the client may read only that table.
+  The precondition the handoff set (open policies closed on scans,
+  stores, organisations, recall_distributions, recall_acknowledgements)
+  was met by John's migration 021 on 2026-09-22.
+
+## FSMA 204 handoff: state at the end of the build (2026-10-07)
+Phases 0 to 8 are built. Phases 0 to 7 are on GitHub main and deployed;
+migrations 022 to 028 are applied on production (verified by probe);
+029 is Ian's to run. Phase 8 awaits upload. Still owed by Ian, from the
+handoff's section 10 and from the phase notes above:
+- Three photographed case labels (romaine case, nut butter case, one
+  non-GS1 label) to test the GS1 parser against reality (Phase 2).
+- The current inflation-adjusted dollar thresholds for 21 CFR 1.1305
+  and 1.1455(c)(3), to correct `_FSMA_APPLICABILITY` (one constant) and
+  the copies in signup.html and index.html (Phase 5).
+- Brand ownership of the suggested supplier seeds, and photographed lot
+  code formats for the five brands before any lot hints are added
+  (Phase 6).
+- One sample delivery file from a real wholesaler, with permission, to
+  exercise the import against real headers (Phase 7).
+- Elliott's review of the network opt-in copy, then flip
+  `_NETWORK_OPTIN_REVIEWED` (Phase 8).
+- The live smoke checks: SMOKE.md 10 to 13 and 17 to 20 have not been
+  run on the deployed apps by anyone. Everything in Phases 2 to 7 was
+  verified only by syntax checks, Node tests with stubbed clients and
+  local previews.
+Known follow-ups outside the handoff, noted in the phase sections: the
+scanner's manager FSMA readiness score still reads legacy scan fields;
+the sign-in error branches reference ids that do not exist; the
+British-to-American sweep of older UI labels; the invite email's "as a
+staff" wording.
+
 ## Recall counting rules (platform-wide)
 A recall requires action only when ALL THREE are true:
 1. The recall is active (active = true)
