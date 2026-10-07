@@ -83,3 +83,11 @@ not repeated here.
     butters; Suppliers lists the suggested seeds as inactive; the drill
     launcher offers the two scripts first and the certificate names the
     scenario once migration 028 is applied.
+20. Dashboard, Receiving, Import a delivery file: download the
+    template, change the store column to one of your store names or
+    wholesaler codes, upload it. Two expected lines appear. Phone,
+    Receiving mode: the chip says 2 expected deliveries; type the lot
+    RM240928; the banner shows the expected quantity; Confirm delivery.
+    The line moves to Received with source File, and the dashboard
+    export carries "From wholesaler delivery file" in Notes. Needs
+    migration 029 for a floor-staff account.

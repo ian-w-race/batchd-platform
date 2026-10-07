@@ -3599,6 +3599,10 @@
       <div class="rcv-panel" id="receiving-panel">
         <div class="rcv-title">Receiving</div>
         <div class="rcv-sub">Scan the case label to record what arrived, from whom and when. This is the record FSMA 204 asks a store to keep.</div>
+        <div id="rcv-expected-wrap" style="display:none;margin:0 0 10px;">
+          <button type="button" class="rcv-chip on" id="rcv-expected-toggle" onclick="rcvToggleExpectedList()">0 expected deliveries</button>
+          <div id="rcv-expected-list" style="display:none;margin-top:8px;display:none;"></div>
+        </div>
         <div class="rcv-cam" id="rcv-cam" style="display:none;">
           <video id="rcv-video" autoplay playsinline muted></video>
           <div class="rcv-cam-hint">Point at the GS1-128 or DataMatrix on the case label</div>
@@ -3615,8 +3619,16 @@
         </div>
         <div class="rcv-ftl-row" id="rcv-ftl-row"></div>
         <div class="rcv-grid2">
-          <div class="field"><label>Lot code (TLC)</label><input type="text" id="rcv-lot" placeholder="AI(10) or as printed" autocorrect="off" autocapitalize="characters" /></div>
+          <div class="field"><label>Lot code (TLC)</label><input type="text" id="rcv-lot" placeholder="AI(10) or as printed" autocorrect="off" autocapitalize="characters" onchange="rcvCheckExpected()" /></div>
           <div class="field"><label>Best by</label><input type="date" id="rcv-best-by" /></div>
+        </div>
+        <!-- Phase 7 (2026-10-07): expected deliveries from wholesaler files -->
+        <div id="rcv-expected-banner" style="display:none;margin:0 0 12px;padding:10px 12px;border-radius:10px;background:rgba(var(--info-rgb),0.08);border:1px solid rgba(var(--info-rgb),0.3);">
+          <div id="rcv-expected-text" style="font-size:12.5px;color:var(--text);line-height:1.5;margin-bottom:8px;"></div>
+          <div class="rcv-inline">
+            <button type="button" class="btn btn-primary" onclick="rcvConfirmExpected()" style="white-space:nowrap;">Confirm delivery</button>
+            <button type="button" class="btn btn-ghost" onclick="rcvClearExpected()" style="white-space:nowrap;">Not this one</button>
+          </div>
         </div>
         <div class="rcv-grid2">
           <div class="field"><label>Quantity</label><input type="number" id="rcv-qty" min="0" step="1" value="1" inputmode="numeric" /></div>
@@ -13121,7 +13133,7 @@ async function fsmaExport() {
     let receivingMissing = false;
     {
       let q = sb.from('receiving_events')
-        .select('id, store_id, supplier_name_snapshot, product_name, gtin, traceability_lot_code, tlc_source_type, tlc_source_reference, quantity, unit_of_measure, received_at, reference_document_type, reference_document_number, is_ftl, ftl_category, suppliers(name,phone,street_address,city,region,postal_code,country)')
+        .select('id, store_id, supplier_name_snapshot, product_name, gtin, traceability_lot_code, tlc_source_type, tlc_source_reference, quantity, unit_of_measure, received_at, reference_document_type, reference_document_number, is_ftl, ftl_category, source, suppliers(name,phone,street_address,city,region,postal_code,country)')
         .eq('organisation_id', _currentOrgId).eq('status', 'received').gte('received_at', from).lte('received_at', to).order('received_at', { ascending: true }).limit(5000);
       if (storeUUID) q = q.eq('store_id', storeUUID);
       if (catVal) q = q.eq('ftl_category', catVal);
@@ -13157,6 +13169,7 @@ async function fsmaExport() {
       if (!supName) rn.push('No supplier recorded');
       else if (!(sup.phone && sup.street_address && sup.city && sup.region && sup.postal_code)) rn.push('Supplier location description incomplete');
       if (!r.reference_document_number) rn.push('No reference document');
+      if (r.source === 'wholesaler_import') rn.push('From wholesaler delivery file');
       rows.push([r.traceability_lot_code || '', r.product_name || '', r.gtin || '', r.quantity == null ? '' : String(r.quantity), r.unit_of_measure || '',
         supName, sup.phone || '', sup.street_address || '', sup.city || '', sup.region || '', sup.postal_code || '', sup.country || (supName ? 'US' : ''),
         ...loc(r.store_id), _fsmaLocalDate(r.received_at), _fsmaLocalTime(r.received_at),
@@ -16970,7 +16983,7 @@ function applyScanMode() {
   if (stepper) stepper.style.display = rcv ? 'none' : '';
   document.querySelectorAll('#view-scan .flow-phase').forEach(ph => { ph.style.display = rcv ? 'none' : ''; });
   _rcvEl('receiving-panel').classList.toggle('active', rcv);
-  if (rcv) { stopZXing(); rcvInitForm(); if (Date.now() - _suppliersLoadedAt > 300000) loadSuppliersCache(); } else { rcvStopScanner(); }
+  if (rcv) { stopZXing(); rcvInitForm(); if (Date.now() - _suppliersLoadedAt > 300000) loadSuppliersCache(); rcvLoadExpected(); } else { rcvStopScanner(); }
 }
 function rcvInitForm() {
   const at = _rcvEl('rcv-received-at'); if (at && !at.value) at.value = _rcvLocalDateTimeValue(new Date());
@@ -17102,6 +17115,7 @@ function rcvApplyParsed(gs1, rawText) {
   if (Number.isInteger(gs1.quantity) && gs1.quantity > 0) { _rcvEl('rcv-qty').value = gs1.quantity; }
   else if (gs1.netWeightLb) { _rcvEl('rcv-qty').value = gs1.netWeightLb; rcvSetUnit('lb'); }
   if (gs1.gtin) rcvOnGtinChange(); else rcvResolveFtl();
+  rcvCheckExpected();   // Phase 7: a wholesaler file may already expect this lot
   const ok = !!(gs1.lot || gs1.gtin);
   _rcvMsg(ok ? 'Label read. Check the fields and pick the supplier.' : 'No GS1 data found in that string. Type the lot code.', ok ? 'ok' : 'warn');
 }
@@ -17274,6 +17288,8 @@ async function rcvSave() {
   const exempt = !!supplier?.is_exempt_entity;
   if (!lot && !exempt) { _rcvMsg('Lot code is required unless the supplier is an exempt source.', 'warn'); return; }
   if (!_currentOrgId) { _rcvMsg('Organization not loaded yet.', 'warn'); return; }
+  // Phase 7: when the lot on the form is an expected delivery, confirm that row instead of inserting a second one.
+  if (_rcvExpected && _rcvLotsEqual(_rcvExpected.traceability_lot_code, lot)) { return rcvConfirmExpected(); }
   const receivedAt = receivedAtRaw ? new Date(receivedAtRaw).toISOString() : new Date().toISOString();
   const payload = {
     organisation_id: _currentOrgId,
@@ -17347,6 +17363,111 @@ function rcvAfterSave(payload, queued) {
   const ret = _rcvEl('rcv-retained'); if (ret) ret.textContent = docNum ? `Same delivery: ${_rcvDocType} ${docNum} kept for the next line.` : '';
   rcvRenderSupplierOptions();
 }
+// ── Expected deliveries (Phase 7 of the FSMA 204 handoff, 2026-10-07) ─────────
+// Rows imported from a wholesaler delivery file in the dashboard arrive as
+// status 'expected'. When staff scan or type a lot that matches one for this
+// store, the banner offers Confirm delivery, which flips the row to 'received'
+// with the real time, the person and the quantity actually received (migration
+// 029 lets floor staff make that update). Confirming needs a connection.
+let _rcvExpectedRows = [];
+let _rcvExpected = null;
+let _rcvExpectedLoadedAt = 0;
+function _rcvDocLabel(r) { const n = r.reference_document_number || ''; const ty = r.reference_document_type || ''; return (ty && !new RegExp('^' + ty, 'i').test(n)) ? `${ty} ${n}` : n; }
+function _rcvLotsEqual(a, b) { return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase() && !!String(a || '').trim(); }
+function _rcvGtinsEqual(a, b) { const na = String(a || '').replace(/\D/g, '').replace(/^0+/, ''); const nb = String(b || '').replace(/\D/g, '').replace(/^0+/, ''); return !na || !nb || na === nb; }
+async function rcvLoadExpected(force) {
+  if (!_currentOrgId || !navigator.onLine) return;
+  if (!force && Date.now() - _rcvExpectedLoadedAt < 120000) { rcvRenderExpectedList(); return; }
+  try {
+    let q = sb.from('receiving_events')
+      .select('id, store_id, supplier_id, supplier_name_snapshot, product_name, gtin, traceability_lot_code, quantity, unit_of_measure, received_at, reference_document_type, reference_document_number, notes')
+      .eq('organisation_id', _currentOrgId).eq('status', 'expected').order('received_at', { ascending: true }).limit(300);
+    if (_currentStoreId) q = q.or(`store_id.eq.${_currentStoreId},store_id.is.null`);
+    const { data, error } = await q;
+    if (error) throw error;
+    _rcvExpectedRows = data || [];
+    _rcvExpectedLoadedAt = Date.now();
+  } catch (e) { console.warn('[receiving] expected load failed:', e.message); }
+  rcvRenderExpectedList();
+}
+function rcvRenderExpectedList() {
+  const wrap = _rcvEl('rcv-expected-wrap'); const list = _rcvEl('rcv-expected-list'); const toggle = _rcvEl('rcv-expected-toggle');
+  if (!wrap || !list || !toggle) return;
+  const n = _rcvExpectedRows.length;
+  wrap.style.display = n ? '' : 'none';
+  toggle.textContent = `${n} expected deliver${n === 1 ? 'y' : 'ies'}${_currentStoreId ? ' for this store' : ''}`;
+  list.innerHTML = _rcvExpectedRows.map(r => `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;">
+    <div style="min-width:0;"><div style="font-weight:600;color:var(--text);">${esc(r.product_name)}</div>
+      <div style="color:var(--muted);font-size:11px;">Lot ${esc(r.traceability_lot_code || '')} · ${esc(String(r.quantity))} ${esc(r.unit_of_measure)}${r.supplier_name_snapshot ? ' · from ' + esc(r.supplier_name_snapshot) : ''}${r.reference_document_number ? ' · ' + esc(_rcvDocLabel(r)) : ''}</div></div>
+    <button type="button" class="rcv-chip" onclick="rcvUseExpected('${r.id}')" style="cursor:pointer;flex:0 0 auto;">Use</button>
+  </div>`).join('');
+}
+function rcvToggleExpectedList() { const list = _rcvEl('rcv-expected-list'); if (list) list.style.display = list.style.display === 'none' ? '' : 'none'; }
+function rcvUseExpected(id) {
+  const r = _rcvExpectedRows.find(x => x.id === id); if (!r) return;
+  _rcvEl('rcv-lot').value = r.traceability_lot_code || '';
+  if (r.gtin) _rcvEl('rcv-gtin').value = r.gtin;
+  rcvCheckExpected();
+  const list = _rcvEl('rcv-expected-list'); if (list) list.style.display = 'none';
+  _rcvEl('rcv-qty')?.focus();
+}
+function rcvCheckExpected() {
+  const lot = _rcvEl('rcv-lot')?.value.trim() || '';
+  const gtin = _rcvEl('rcv-gtin')?.value.trim() || '';
+  const match = lot ? _rcvExpectedRows.find(r => _rcvLotsEqual(r.traceability_lot_code, lot) && _rcvGtinsEqual(r.gtin, gtin)) : null;
+  const banner = _rcvEl('rcv-expected-banner'); const text = _rcvEl('rcv-expected-text');
+  if (!match) { _rcvExpected = null; if (banner) banner.style.display = 'none'; return; }
+  _rcvExpected = match;
+  const prod = _rcvEl('rcv-product'); if (prod && !prod.value.trim()) prod.value = match.product_name || '';
+  const g = _rcvEl('rcv-gtin'); if (g && !g.value.trim() && match.gtin) g.value = match.gtin;
+  const qty = _rcvEl('rcv-qty'); if (qty && (qty.value === '' || qty.value === '1')) qty.value = String(match.quantity);
+  if (_RCV_UNITS.includes(match.unit_of_measure)) rcvSetUnit(match.unit_of_measure);
+  const sel = _rcvEl('rcv-supplier'); if (sel && match.supplier_id && _suppliers.some(s => s.id === match.supplier_id)) { sel.value = match.supplier_id; rcvOnSupplierChange(); }
+  if (match.reference_document_number) { const dn = _rcvEl('rcv-doc-number'); if (dn && !dn.value.trim()) { dn.value = match.reference_document_number; if (_RCV_DOCS.includes(match.reference_document_type)) rcvSetDocType(match.reference_document_type); } }
+  if (text) text.innerHTML = `Expected from <strong>${esc(match.supplier_name_snapshot || 'your wholesaler')}</strong>: ${esc(String(match.quantity))} ${esc(match.unit_of_measure)} of ${esc(match.product_name)}${match.reference_document_number ? ' (' + esc(_rcvDocLabel(match)) + ')' : ''}. Adjust the quantity if the delivery is short, then confirm.`;
+  if (banner) banner.style.display = '';
+  if (!prod?.value || !_rcvFtl.source) rcvResolveFtl();
+}
+function rcvClearExpected() { _rcvExpected = null; const b = _rcvEl('rcv-expected-banner'); if (b) b.style.display = 'none'; }
+async function rcvConfirmExpected() {
+  const row = _rcvExpected; if (!row) return;
+  if (!navigator.onLine) { _rcvMsg('Confirming a delivery needs a connection. Record it as a new receipt instead, or try again when you are back online.', 'warn'); return; }
+  const qty = Number(_rcvEl('rcv-qty').value);
+  if (!(Number.isFinite(qty) && qty >= 0)) { _rcvMsg('Quantity must be a number.', 'warn'); return; }
+  const btn = _rcvEl('rcv-btn-save'); if (btn) { btn.disabled = true; btn.textContent = 'Confirming…'; }
+  try {
+    let labelUrl = null;
+    if (_rcvLabelBlob) {
+      const path = `orgs/${String(_currentOrgId).slice(0, 8)}/receiving/${Date.now()}_label.jpg`;
+      const up = await sb.storage.from('scan-photos').upload(path, _rcvLabelBlob, { contentType: _rcvLabelBlob.type || 'image/jpeg', upsert: true });
+      if (!up.error) labelUrl = sb.storage.from('scan-photos').getPublicUrl(path).data.publicUrl;
+    }
+    const changed = Number(row.quantity) !== qty || row.unit_of_measure !== _rcvUnit;
+    const upd = {
+      status: 'received', received_at: new Date().toISOString(), received_by: currentUser?.email || null,
+      quantity: qty, unit_of_measure: _rcvUnit, retain_until: null,
+      is_ftl: !!_rcvFtl.isFtl, ftl_category: _rcvFtl.isFtl ? (_rcvFtl.category || null) : null, ftl_confirmed_by_staff: _rcvFtl.confirmed !== null,
+      notes: [row.notes || '', changed ? `Expected ${row.quantity} ${row.unit_of_measure}; received ${qty} ${_rcvUnit}.` : '', 'Confirmed by staff at receiving.'].filter(Boolean).join(' '),
+    };
+    const best = _rcvEl('rcv-best-by')?.value; if (best) upd.best_by = best;
+    const gtinTyped = _rcvEl('rcv-gtin')?.value.trim(); if (!row.gtin && gtinTyped) upd.gtin = normalizeBarcode(gtinTyped);
+    if (_currentStoreId && !row.store_id) upd.store_id = _currentStoreId;
+    if (labelUrl) upd.label_photo_url = labelUrl;
+    if (_rcvRawCapture) upd.raw_label_capture = _rcvRawCapture;
+    const { data, error } = await sb.from('receiving_events').update(upd).eq('id', row.id).eq('organisation_id', _currentOrgId).select('id').maybeSingle();
+    if (error) throw error;
+    if (!data) throw new Error('The expected row could not be updated. Your account may need migration 029, or the line was already confirmed.');
+    _rcvExpectedRows = _rcvExpectedRows.filter(x => x.id !== row.id);
+    const payload = { ...row, ...upd, organisation_id: _currentOrgId, store_id: row.store_id || _currentStoreId || null, supplier_id: row.supplier_id };
+    rcvClearExpected();
+    rcvRenderExpectedList();
+    rcvAfterSave(payload, false);
+    showToast('Delivery confirmed.', 'ok', 2500);
+    rcvCheckRecallForReceipt(payload);
+  } catch (e) { _rcvMsg('Could not confirm: ' + esc(e.message || 'unknown error'), 'error'); }
+  if (btn) { btn.disabled = false; btn.textContent = 'Record receipt'; }
+}
+
 function rcvDoneDelivery() {
   ['rcv-doc-number', 'rcv-notes'].forEach(id => { const el = _rcvEl(id); if (el) el.value = ''; });
   const sel = _rcvEl('rcv-supplier'); if (sel) { sel.value = ''; rcvOnSupplierChange(); }

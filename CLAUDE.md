@@ -104,7 +104,7 @@ the file's modification time, not a commit date. Files dated
 2026-04-30 22:48 have not changed since the repo was downloaded.
 
 Live application surfaces:
-- index.html (about 22,950 lines after Phase 6, 2026-10-07): staff scanning app (PWA).
+- index.html (about 23,100 lines after Phase 7, 2026-10-07): staff scanning app (PWA).
   Canonical URL is https://batchd-app.netlify.app/ (confirmed by Ian
   2026-09-13): every scanner link in dashboard.html points there, the
   installed PWAs were added from there, and the manifest start_url is
@@ -116,7 +116,7 @@ Live application surfaces:
   the first design partner installs. The scanner's own dashboard
   buttons (4798, 4904, 5485) point at app.batchdapp.com/dashboard.html,
   which 301s to corporate.
-- dashboard.html (about 17,200 lines after Phase 6, 2026-10-07): corporate retailer
+- dashboard.html (about 17,500 lines after Phase 7, 2026-10-07): corporate retailer
   dashboard. Served at the root of corporate.batchdapp.com; requests
   for /dashboard.html on the scanner domains 301 to corporate.
 - join.html (626 lines, 2026-09-13): invitation acceptance. Reads the
@@ -177,7 +177,7 @@ Retired stubs (80 lines each, 2026-05-05):
 
 Not application files: README.md (2 lines), SCHEMA.md, SECRETS.md,
 ROADMAP-2026-08.md, CLAUDE_DESIGN_BRIEF.md, .ui-polish-checklist.md,
-docs/ARCHITECTURE.md, migrations/ (28 SQL files, 001 to 028 with 020a and
+docs/ARCHITECTURE.md, migrations/ (29 SQL files, 001 to 029 with 020a and
 without 027, plus CHECK_MIGRATIONS.sql), assets/, fonts/, netlify/functions/ (18
 functions), netlify.toml, package.json (pins @supabase/supabase-js
 2.112.1 for the functions).
@@ -964,6 +964,82 @@ render in a local preview. Not verified against the live database.
 - Not in Phase 6: NO variants (US-only decision); lot-code hints for
   the brands (need photographed labels); any tier gating.
 
+## Phase 7 of the FSMA 204 handoff: wholesaler delivery files (built 2026-10-07)
+dashboard.html, index.html, migration 029. Verified: every inline script
+block passes node --check (dashboard 6, scanner 4); Node tests drive the
+import helpers (GTIN normalizing, document-type guess, store matching by
+wholesaler code then store code then name, supplier match by GLN then name
+with creation, duplicate detection against existing expected rows and
+within one file, remembered column mappings, header aliases) and the
+scanner's expected-delivery matching and prefill; the Receiving panel
+renders in a local preview. Not verified against the live database.
+EDI 856 (handoff 7.3) is out of scope, as the handoff says.
+- New dashboard panel "Receiving" (`renderReceiving`; `receiving` in
+  `panels` and `fns`; sidebar item after Scan History; store managers
+  allowed). Two tables: expected deliveries (status 'expected', all time)
+  and received rows for the last 7, 30 or 90 days with a Source tag (File,
+  Scan, Manual). Actions: "Import a delivery file" (corp_admin and
+  store_manager), "Export last N days" through the Phase 4 builder, and a
+  per-row Cancel on expected lines that sets status 'rejected' with a
+  note (managers; no client DELETE exists on this table).
+- Import (`rcvImportOpen`) reuses openCSVImport with the handoff's
+  columns: ship date, ship-to store (code or name), GTIN, product
+  description, lot, quantity, unit, reference document, supplier (GLN or
+  name); store, product, lot and quantity are required. `autoMapFn`
+  first tries the mappings remembered in localStorage
+  (`batchd_rcv_import_maps_<org>`, newest first, used when every
+  remembered column is present in the file), then header aliases. The
+  engine now stores the file name on the modal (`modal._csvFileName`).
+  `_rcvImportRow` builds its context on the first row (stores,
+  suppliers, the org's existing expected rows, one `import_batch_id` per
+  file): store by stores.external_code, then store_code, then name
+  (exact, then contains); supplier by 13-digit GLN, then name, else a
+  minimal active supplier is created and counted in the completion
+  toast; GTIN digits-only with the scanner's 12-to-13 rule; quantity
+  parsed; unit lowercased with default 'case'; ship date becomes
+  received_at (the confirm sets the real time); reference document type
+  guessed from the value (PO, invoice, BOL, ASN, other). Rows insert
+  with status 'expected', source 'wholesaler_import', tlc_source_type
+  'shipping_document', tlc_source_reference = the file name, is_ftl
+  false (the scanner's confirm sets it). A row that matches an existing
+  expected line (store, lot, GTIN) is reported as a duplicate, so
+  importing the same file twice adds nothing. `_rcvImportDone` saves
+  the mapping and re-renders.
+- Store Network form: "Wholesaler ship-to code" (`sf-external-code`,
+  stores.external_code from migration 028) with a retry that drops the
+  column on an older database.
+- Scanner (index.html): `rcvLoadExpected` loads the org's expected rows
+  for the session store (or with no store) when Receiving mode opens,
+  cached two minutes; a chip above the form says "N expected deliveries"
+  and expands to a list with a Use button that fills lot and GTIN.
+  `rcvCheckExpected` runs after a label parse, when the lot field
+  changes, and on Use: a match is lot-equal (case-insensitive) and
+  GTIN-compatible (equal ignoring leading zeros, or either side blank).
+  It prefills product, GTIN, quantity (when still default), unit,
+  supplier and document, and shows a banner "Expected from {supplier}:
+  {qty} {unit} of {product}" with Confirm delivery and Not this one.
+  `rcvConfirmExpected` updates the row to status 'received' with
+  received_at now, received_by, the quantity and unit on the form
+  (recording "Expected X; received Y" in notes when they differ),
+  retain_until null so the trigger recomputes it, the FTL decision, a
+  typed best-by or GTIN, the label photo and raw capture, then runs the
+  usual post-save reset and the back-door recall check. Record receipt
+  with a matching expected lot routes to the confirm instead of
+  inserting a second row. Confirming needs a connection (no offline
+  queue for updates).
+- Migration 029 (`029_receiving_confirm_policy.sql`, not yet applied):
+  policy b29_receiving_member_confirm_expected lets any active member
+  UPDATE a receiving row while status = 'expected'; without it floor
+  staff get "could not be updated" on confirm (managers still can).
+  CHECK_MIGRATIONS has a 029 row; SCHEMA.md documents the policy and the
+  import conventions.
+- Export builders (both files) select `source` and add the note "From
+  wholesaler delivery file" on imported rows, which is how the handoff's
+  acceptance check reads the source in the export.
+- Not in Phase 7: EDI 856 and the org_integrations token table (7.3);
+  per-supplier column mappings beyond the remembered-mappings list;
+  an offline queue for confirmations.
+
 ## Recall counting rules (platform-wide)
 A recall requires action only when ALL THREE are true:
 1. The recall is active (active = true)
@@ -1408,7 +1484,8 @@ incremental per feature.
   for example sidebar "Store Network" gives topbar "Store Network",
   not "Stores". Current mapping: overview "Dashboard", onboarding
   "Getting started", recalls "Recalls", stores "Store Network",
-  traceability "Scan History", staff "Staff Activity", compliance
+  traceability "Scan History", receiving "Receiving" (2026-10-07), staff
+  "Staff Activity", compliance
   "Compliance", reports "Reports and Exports", settings "Settings",
   triage "Complaint Triage", consumer-notify "Consumer Notify",
   investigations "Investigations", terminology "Terminology & Help",

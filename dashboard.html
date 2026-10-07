@@ -1109,6 +1109,11 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
         Scan History
       </button>
+      <!-- Phase 7 (2026-10-07): deliveries, expected rows from wholesaler files -->
+      <button class="nav-item" onclick="showPanel('receiving')" id="nav-receiving">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></svg>
+        Receiving
+      </button>
       <div class="nav-section" id="nav-section-compliance">Compliance</div>
       <button class="nav-item" onclick="showPanel('compliance')" id="nav-compliance">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
@@ -2364,7 +2369,7 @@ function showPanel(name) {
     document.getElementById('mobile-overlay')?.classList.remove('active');
   }
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-  const panels = { overview:'Dashboard', onboarding:'Getting started', recalls:'Recalls', stores:'Store Network', traceability:'Scan History', staff:'Staff Activity', compliance:'Compliance', reports:'Reports and Exports', settings:'Settings', triage:'Complaint Triage', 'consumer-notify':'Consumer Notify', investigations:'Investigations', terminology:'Terminology & Help', lotcheck:'Lot Lookup', 'recall-detail':'Live Recall', 'recall-composer':'Compose recall' };
+  const panels = { overview:'Dashboard', onboarding:'Getting started', recalls:'Recalls', stores:'Store Network', traceability:'Scan History', receiving:'Receiving', staff:'Staff Activity', compliance:'Compliance', reports:'Reports and Exports', settings:'Settings', triage:'Complaint Triage', 'consumer-notify':'Consumer Notify', investigations:'Investigations', terminology:'Terminology & Help', lotcheck:'Lot Lookup', 'recall-detail':'Live Recall', 'recall-composer':'Compose recall' };
   document.getElementById('topbar-title').textContent = panels[name] || name;
   document.querySelectorAll('.nav-item').forEach(el => {
     if (el.getAttribute('onclick')?.includes(`'${name}'`)) el.classList.add('active');
@@ -2377,7 +2382,7 @@ function showPanel(name) {
   // recall-detail → renderRecallDetail. Reached only via deep link
   // (?panel=recall-detail&id=X) or by clicking a recall card on the
   // Command Center right rail; no sidebar entry on purpose.
-  const fns = { overview: renderCommandCenter, onboarding: renderOnboarding, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, triage: renderDashboardTriage, investigations: renderDashInvestigations, 'consumer-notify': renderConsumerNotification, terminology: renderTerminology, lotcheck: renderLotCheck, 'recall-detail': renderRecallDetail, 'recall-composer': renderRecallComposer };
+  const fns = { overview: renderCommandCenter, onboarding: renderOnboarding, recalls: renderRecalls, stores: renderStores, traceability: renderTraceability, receiving: renderReceiving, staff: renderStaff, compliance: renderCompliance, reports: renderReports, settings: renderSettings, triage: renderDashboardTriage, investigations: renderDashInvestigations, 'consumer-notify': renderConsumerNotification, terminology: renderTerminology, lotcheck: renderLotCheck, 'recall-detail': renderRecallDetail, 'recall-composer': renderRecallComposer };
   (fns[name] || renderComingSoon)(name);
 }
 
@@ -6976,6 +6981,7 @@ function _fsmaRowsFromData({ org, storesById, receiving, gapScans }) {
     if (!supName) notes.push('No supplier recorded');
     else if (!(sup.phone && sup.street_address && sup.city && sup.region && sup.postal_code)) notes.push('Supplier location description incomplete');
     if (!r.reference_document_number) notes.push('No reference document');
+    if (r.source === 'wholesaler_import') notes.push('From wholesaler delivery file');
     rows.push([
       r.traceability_lot_code || '', r.product_name || '', r.gtin || '',
       r.quantity == null ? '' : String(r.quantity), r.unit_of_measure || '',
@@ -7027,7 +7033,7 @@ async function buildFsma204Records(scope) {
   let receivingTableMissing = false;
   {
     let q = sb.from('receiving_events')
-      .select('id, store_id, supplier_id, supplier_name_snapshot, product_name, gtin, traceability_lot_code, tlc_source_type, tlc_source_reference, quantity, unit_of_measure, received_at, reference_document_type, reference_document_number, is_ftl, ftl_category, status, suppliers(name,phone,street_address,city,region,postal_code,country)')
+      .select('id, store_id, supplier_id, supplier_name_snapshot, product_name, gtin, traceability_lot_code, tlc_source_type, tlc_source_reference, quantity, unit_of_measure, received_at, reference_document_type, reference_document_number, is_ftl, ftl_category, status, source, suppliers(name,phone,street_address,city,region,postal_code,country)')
       .eq('organisation_id', _orgId).eq('status', 'received').order('received_at', { ascending: true }).limit(5000);
     if (lots.length)    q = q.or(lots.map(l => `traceability_lot_code.ilike.%${l}%`).join(','));
     if (product)        q = q.ilike('product_name', `%${product}%`);
@@ -7064,7 +7070,7 @@ async function buildFsma204Records(scope) {
   const extraIds = [...new Set(scans.map(s => s.receiving_event_id).filter(id => id && !have.has(id)))];
   if (extraIds.length && !receivingTableMissing) {
     const { data } = await sb.from('receiving_events')
-      .select('id, store_id, supplier_id, supplier_name_snapshot, product_name, gtin, traceability_lot_code, tlc_source_type, tlc_source_reference, quantity, unit_of_measure, received_at, reference_document_type, reference_document_number, is_ftl, ftl_category, status, suppliers(name,phone,street_address,city,region,postal_code,country)')
+      .select('id, store_id, supplier_id, supplier_name_snapshot, product_name, gtin, traceability_lot_code, tlc_source_type, tlc_source_reference, quantity, unit_of_measure, received_at, reference_document_type, reference_document_number, is_ftl, ftl_category, status, source, suppliers(name,phone,street_address,city,region,postal_code,country)')
       .in('id', extraIds.slice(0, 500));
     (data || []).forEach(r => { if (!have.has(r.id)) { have.add(r.id); receiving.push(r); } });
     receiving.sort((a, b) => new Date(a.received_at) - new Date(b.received_at));
@@ -8049,6 +8055,293 @@ async function renderRecallDetail() {
 }
 
 // ── Stores panel ──────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════
+// RECEIVING PANEL. Phase 7 of the FSMA 204 handoff, 2026-10-07.
+// Expected deliveries from wholesaler delivery files, received rows, and the
+// import flow. Rows are receiving_events (migration 023). An import inserts
+// status 'expected', source 'wholesaler_import', one import_batch_id per file;
+// the scanner's receiving mode confirms a row (status 'received') when the lot
+// is scanned, and migration 029 lets floor staff make that update.
+// ══════════════════════════════════════════════════════════════
+let _rcvPanelDays = 30;
+let _rcvPanelExpected = [];
+const _RCV_PANEL_COLS = 'id, store_id, supplier_id, supplier_name_snapshot, product_name, gtin, traceability_lot_code, quantity, unit_of_measure, received_at, reference_document_type, reference_document_number, source, status, import_batch_id, received_by, notes, created_at, stores(name), suppliers(name)';
+
+async function _rcvLoadStores() {
+  let r = await sb.from('stores').select('id, name, store_code, external_code, active').eq('organisation_id', _orgId).order('name');
+  if (r.error && _missingColumnFrom(r.error) === 'external_code') r = await sb.from('stores').select('id, name, store_code, active').eq('organisation_id', _orgId).order('name');
+  return r.data || [];
+}
+
+async function renderReceiving() {
+  const _errEl = document.getElementById('main-content');
+  try {
+  const el = document.getElementById('main-content');
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading deliveries…</div>`;
+  const since = new Date(Date.now() - _rcvPanelDays * 86400000).toISOString();
+  const [expRes, recRes, stores] = await Promise.all([
+    sb.from('receiving_events').select(_RCV_PANEL_COLS).eq('organisation_id', _orgId).eq('status', 'expected').order('received_at', { ascending: true }).limit(1000),
+    sb.from('receiving_events').select(_RCV_PANEL_COLS).eq('organisation_id', _orgId).eq('status', 'received').gte('received_at', since).order('received_at', { ascending: false }).limit(500),
+    _rcvLoadStores(),
+  ]);
+  if (expRes.error) {
+    el.innerHTML = `<div style="max-width:720px;font-size:12px;color:var(--warn);line-height:1.6;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:10px;">${esc(_dbMissingHint(expRes.error, 'receiving_events', '023') || 'Could not load deliveries: ' + expRes.error.message)}</div>`;
+    return;
+  }
+  const expected = expRes.data || [];
+  const received = recRes.data || [];
+  _rcvPanelExpected = expected;
+  const canEdit = ['corp_admin', 'store_manager'].includes(_userRole);
+  const storeName = r => r.stores?.name || (stores.find(s => s.id === r.store_id) || {}).name || 'Store not set';
+  const supplierName = r => r.supplier_name_snapshot || r.suppliers?.name || '';
+  const docText = r => { const n = r.reference_document_number; const ty = r.reference_document_type || ''; if (!n) return ''; return (ty && !new RegExp('^' + ty, 'i').test(n)) ? `${ty} ${n}` : n; };
+  const batches = {};
+  expected.forEach(r => { const k = r.import_batch_id || 'manual'; (batches[k] = batches[k] || []).push(r); });
+  const batchCount = Object.keys(batches).filter(k => k !== 'manual').length;
+  const sourceTag = r => r.source === 'wholesaler_import'
+    ? `<span style="font-family:'DM Mono',monospace;font-size:9.5px;letter-spacing:0.06em;text-transform:uppercase;padding:2px 6px;border-radius:4px;background:rgba(var(--info-rgb),0.12);color:var(--info);">File</span>`
+    : (r.source === 'manual_entry' ? `<span style="font-family:'DM Mono',monospace;font-size:9.5px;letter-spacing:0.06em;text-transform:uppercase;padding:2px 6px;border-radius:4px;background:var(--surface2);color:var(--muted);">Manual</span>`
+      : `<span style="font-family:'DM Mono',monospace;font-size:9.5px;letter-spacing:0.06em;text-transform:uppercase;padding:2px 6px;border-radius:4px;background:var(--surface2);color:var(--muted);">Scan</span>`);
+
+  el.innerHTML = `
+    <div style="max-width:980px;">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px;">
+        <div style="font-size:12px;color:var(--muted);line-height:1.6;max-width:560px;">Receiving records are the FSMA 204 record a store keeps (${_CITATIONS.us.receivingKde}). Staff create them in the scanner's Receiving mode. A delivery file from your wholesaler can pre-fill them, so the store's receiving record matches the shipper's shipping record by construction.</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn-ghost" onclick="rcvPanelExport()">Export last ${_rcvPanelDays} days</button>
+          <button class="btn-primary" onclick="rcvImportOpen()" ${canEdit ? '' : 'disabled style="opacity:0.5;cursor:not-allowed;"'}>Import a delivery file</button>
+        </div>
+      </div>
+
+      <div class="panel" style="margin:0 0 16px;">
+        <div class="panel-header" style="flex-wrap:wrap;gap:10px;">
+          <div>
+            <div class="panel-title">Expected deliveries</div>
+            <div class="panel-sub">${expected.length ? `${expected.length} line${expected.length !== 1 ? 's' : ''} from ${batchCount} file${batchCount !== 1 ? 's' : ''}, waiting to be confirmed at the back door. Staff scan the case lot in Receiving mode and tap Confirm delivery.` : 'Nothing expected. Import a delivery file and the lines appear here until staff confirm them in the scanner.'}</div>
+          </div>
+        </div>
+        ${expected.length ? `<div class="panel-body" style="padding:0;overflow-x:auto;">
+          <table class="store-table" style="width:100%;table-layout:auto;">
+            <thead><tr><th>Store</th><th>Supplier</th><th>Product</th><th>Lot</th><th>Qty</th><th>Ship date</th><th>Document</th><th>Imported</th><th></th></tr></thead>
+            <tbody>${expected.map(r => `<tr>
+              <td style="white-space:normal;">${esc(storeName(r))}</td>
+              <td style="white-space:normal;">${esc(supplierName(r)) || '<span style="color:var(--warn);">Not recorded</span>'}</td>
+              <td style="white-space:normal;">${esc(r.product_name)}${r.gtin ? `<div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);">${esc(r.gtin)}</div>` : ''}</td>
+              <td style="font-family:'DM Mono',monospace;font-size:11px;">${esc(r.traceability_lot_code || '')}</td>
+              <td style="font-family:'DM Mono',monospace;font-size:11px;">${esc(String(r.quantity))} ${esc(r.unit_of_measure)}</td>
+              <td style="font-family:'DM Mono',monospace;font-size:10.5px;color:var(--muted);">${esc(fmtDash(r.received_at))}</td>
+              <td style="font-family:'DM Mono',monospace;font-size:10.5px;">${esc(docText(r))}</td>
+              <td style="font-family:'DM Mono',monospace;font-size:10.5px;color:var(--muted);">${esc(fmtDash(r.created_at))}</td>
+              <td style="text-align:right;">${canEdit ? `<button class="btn-ghost" style="padding:5px 10px;" onclick="rcvPanelCancel('${r.id}')">Cancel</button>` : ''}</td>
+            </tr>`).join('')}</tbody>
+          </table>
+        </div>` : ''}
+      </div>
+
+      <div class="panel" style="margin:0;">
+        <div class="panel-header" style="flex-wrap:wrap;gap:10px;">
+          <div>
+            <div class="panel-title">Received</div>
+            <div class="panel-sub">${received.length} receipt${received.length !== 1 ? 's' : ''} in the last ${_rcvPanelDays} days${received.length >= 500 ? ' (showing the newest 500)' : ''}.</div>
+          </div>
+          <div style="display:flex;gap:6px;">
+            ${[7, 30, 90].map(n => `<button class="btn-ghost" style="padding:5px 10px;${n === _rcvPanelDays ? 'border-color:var(--accent);color:var(--accent);' : ''}" onclick="_rcvPanelDays=${n};renderReceiving()">${n} days</button>`).join('')}
+          </div>
+        </div>
+        ${received.length ? `<div class="panel-body" style="padding:0;overflow-x:auto;">
+          <table class="store-table" style="width:100%;table-layout:auto;">
+            <thead><tr><th>Received</th><th>Store</th><th>Supplier</th><th>Product</th><th>Lot</th><th>Qty</th><th>Document</th><th>Source</th><th>By</th></tr></thead>
+            <tbody>${received.map(r => `<tr>
+              <td style="font-family:'DM Mono',monospace;font-size:10.5px;">${esc(fmtDashDT(r.received_at))}</td>
+              <td style="white-space:normal;">${esc(storeName(r))}</td>
+              <td style="white-space:normal;">${esc(supplierName(r)) || '<span style="color:var(--warn);">Not recorded</span>'}</td>
+              <td style="white-space:normal;">${esc(r.product_name)}</td>
+              <td style="font-family:'DM Mono',monospace;font-size:11px;">${r.traceability_lot_code ? esc(r.traceability_lot_code) : '<span style="color:var(--muted);">none</span>'}</td>
+              <td style="font-family:'DM Mono',monospace;font-size:11px;">${esc(String(r.quantity))} ${esc(r.unit_of_measure)}</td>
+              <td style="font-family:'DM Mono',monospace;font-size:10.5px;">${esc(docText(r))}</td>
+              <td>${sourceTag(r)}</td>
+              <td style="font-size:11px;color:var(--muted);">${esc(String(r.received_by || '').split('@')[0])}</td>
+            </tr>`).join('')}</tbody>
+          </table>
+        </div>` : `<div class="panel-body"><div style="font-size:12px;color:var(--muted);line-height:1.6;">No receipts in this period. Staff record deliveries in the scanner under Scan, Receiving.</div></div>`}
+      </div>
+    </div>`;
+  } catch(_renderErr) {
+    console.error('[renderReceiving]', _renderErr);
+    if (_errEl) _errEl.innerHTML += `<div style="margin:20px 0;padding:16px;background:rgba(var(--danger-rgb),0.08);border:1px solid rgba(var(--danger-rgb),0.2);border-radius:10px;font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;"><strong style="color:var(--danger);">Error loading Receiving</strong><br>${_renderErr.message}</div>`;
+  }
+}
+
+async function rcvPanelExport() {
+  try {
+    const to = new Date(); const from = new Date(Date.now() - _rcvPanelDays * 86400000);
+    const iso = x => x.toISOString().slice(0, 10);
+    const result = await buildFsma204Records({ lots: [], product: '', dateFrom: iso(from), dateTo: iso(to), title: `Receiving records, last ${_rcvPanelDays} days`, drill: false, recall: null, ftlOnlyGaps: true });
+    if (!result.rowCount) { showToast('Nothing to export for this period.', 'warn', 3500); return; }
+    downloadFsma204Export(result);
+    showToast(`Exported ${result.rowCount} row${result.rowCount === 1 ? '' : 's'}: ${result.fileName}`, 'ok', 5000);
+  } catch (e) { showToast('Export failed: ' + (e.message || 'unknown error'), 'error', 5000); }
+}
+
+async function rcvPanelCancel(id) {
+  if (!['corp_admin', 'store_manager'].includes(_userRole)) return;
+  const row = _rcvPanelExpected.find(r => r.id === id); if (!row) return;
+  if (!confirm(`Cancel the expected line for ${row.product_name}${row.traceability_lot_code ? ', lot ' + row.traceability_lot_code : ''}? It is kept as rejected.`)) return;
+  const { error } = await sb.from('receiving_events').update({ status: 'rejected', notes: ((row.notes || '') + ' Cancelled in the dashboard before delivery.').trim() }).eq('id', id).eq('organisation_id', _orgId);
+  if (error) { showToast('Could not cancel: ' + error.message, 'error', 4000); return; }
+  renderReceiving();
+}
+
+// ── Delivery-file import (handoff 7.1) through the shared CSV engine ────────
+const _RCV_IMPORT_FIELDS = [
+  { key: 'ship_date', label: 'Ship date',                         required: false, type: 'mono' },
+  { key: 'store',     label: 'Ship-to store (code or name)',      required: true,  type: 'text' },
+  { key: 'gtin',      label: 'GTIN',                              required: false, type: 'mono' },
+  { key: 'product',   label: 'Product description',               required: true,  type: 'text' },
+  { key: 'lot',       label: 'Lot code',                          required: true,  type: 'mono' },
+  { key: 'quantity',  label: 'Quantity',                          required: true,  type: 'mono' },
+  { key: 'unit',      label: 'Unit',                              required: false, type: 'text' },
+  { key: 'reference', label: 'Reference document (PO or invoice)', required: false, type: 'mono' },
+  { key: 'supplier',  label: 'Supplier (GLN or name)',            required: false, type: 'text' },
+];
+const _RCV_IMPORT_ALIASES = {
+  ship_date: ['ship date', 'shipdate', 'ship_date', 'date shipped', 'shipped', 'delivery date', 'ship dt', 'date'],
+  store:     ['store', 'ship to', 'ship-to', 'ship_to', 'store code', 'store name', 'location', 'customer', 'destination', 'dest', 'ship to store'],
+  gtin:      ['gtin', 'gtin14', 'gtin-14', 'upc', 'barcode', 'item code', 'case upc', 'case gtin'],
+  product:   ['product', 'description', 'item', 'item description', 'product description', 'product name'],
+  lot:       ['lot', 'lot code', 'lot number', 'lot#', 'batch', 'batch number', 'tlc', 'traceability lot code'],
+  quantity:  ['qty', 'quantity', 'cases', 'units', 'count', 'qty shipped', 'ship qty'],
+  unit:      ['unit', 'uom', 'unit of measure', 'pack', 'pack type'],
+  reference: ['po', 'po number', 'po#', 'purchase order', 'invoice', 'invoice number', 'reference', 'bol', 'bol number', 'document', 'ref'],
+  supplier:  ['supplier', 'vendor', 'shipper', 'gln', 'supplier gln', 'from', 'ship from', 'distributor'],
+};
+function _rcvImportMapsKey() { return 'batchd_rcv_import_maps_' + _orgId; }
+function _rcvImportLoadMaps() { try { return JSON.parse(localStorage.getItem(_rcvImportMapsKey()) || '[]'); } catch (_) { return []; } }
+let _rcvImportCtx = null;
+
+function rcvImportOpen() {
+  if (!['corp_admin', 'store_manager'].includes(_userRole)) { showToast('Only corp admins and store managers can import delivery files.', 'error', 4000); return; }
+  _rcvImportCtx = null;
+  openCSVImport({
+    title: 'Import delivery file',
+    description: 'One line per lot per store. Lines become expected deliveries that staff confirm in the scanner when the cases arrive.',
+    fields: _RCV_IMPORT_FIELDS,
+    templateExample: [
+      ['2026-10-06', 'ATX-01', '00812345678905', 'Romaine hearts 3 ct', 'RM240928', '12', 'case', 'PO-1042', 'Example Produce Co'],
+      ['2026-10-06', 'ATX-01', '00812345678912', 'Spring mix 5 oz', 'SM241001', '8', 'case', 'PO-1042', 'Example Produce Co'],
+    ],
+    autoMapFn: headers => {
+      const norm = h => String(h).toLowerCase().replace(/[^a-z0-9]/g, '');
+      const have = new Set(headers.map(norm));
+      // 1. A remembered mapping whose columns are all present (most recent first).
+      for (const saved of _rcvImportLoadMaps()) {
+        const vals = Object.values(saved.map || {});
+        if (vals.length && vals.every(v => have.has(norm(v)))) {
+          const map = {}; Object.entries(saved.map).forEach(([k, v]) => { const hit = headers.find(h => norm(h) === norm(v)); if (hit) map[k] = hit; });
+          return map;
+        }
+      }
+      // 2. Header aliases.
+      const map = {};
+      Object.entries(_RCV_IMPORT_ALIASES).forEach(([key, list]) => {
+        const wanted = list.map(norm);
+        const hit = headers.find(h => wanted.includes(norm(h)));
+        if (hit) map[key] = hit;
+      });
+      return map;
+    },
+    insertRow: async (row) => _rcvImportRow(row),
+    onComplete: '_rcvImportDone()',
+  });
+}
+
+async function _rcvImportCtxInit() {
+  const modal = document.getElementById('csv-import-modal');
+  const [stores, supRes, expRes] = await Promise.all([
+    _rcvLoadStores(),
+    sb.from('suppliers').select('id, name, gln, active').eq('organisation_id', _orgId),
+    sb.from('receiving_events').select('store_id, traceability_lot_code, gtin, reference_document_number').eq('organisation_id', _orgId).eq('status', 'expected').limit(2000),
+  ]);
+  const existing = new Set((expRes.data || []).map(r => `${r.store_id}|${String(r.traceability_lot_code || '').toLowerCase()}|${String(r.gtin || '').replace(/^0+/, '')}`));
+  _rcvImportCtx = {
+    batchId: (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : null,
+    fileName: modal?._csvFileName || 'delivery file',
+    mapping: (typeof csvGetCurrentMapping === 'function') ? csvGetCurrentMapping() : {},
+    stores, suppliers: supRes.data || [], existing,
+    createdSuppliers: 0, inserted: 0, supplierNames: new Set(),
+  };
+}
+function _rcvNormGtin(v) { const digits = String(v || '').replace(/\D/g, ''); if (!digits) return null; return digits.length === 12 ? '0' + digits : digits; }
+function _rcvDocTypeFor(ref) { const s = String(ref || '').trim(); if (!s) return null; if (/^po\b|^po[-\s#]/i.test(s)) return 'PO'; if (/^inv/i.test(s)) return 'invoice'; if (/^bol|^b\/l/i.test(s)) return 'BOL'; if (/^asn/i.test(s)) return 'ASN'; return 'other'; }
+function _rcvFindStore(stores, value) {
+  const v = String(value || '').trim().toLowerCase(); if (!v) return null;
+  return stores.find(s => String(s.external_code || '').toLowerCase() === v)
+      || stores.find(s => String(s.store_code || '').toLowerCase() === v)
+      || stores.find(s => String(s.name || '').toLowerCase() === v)
+      || stores.find(s => String(s.name || '').toLowerCase().includes(v) || v.includes(String(s.name || '').toLowerCase()))
+      || null;
+}
+async function _rcvFindOrCreateSupplier(ctx, value) {
+  const v = String(value || '').trim(); if (!v) return null;
+  const digits = v.replace(/\D/g, '');
+  let s = (digits.length === 13 && digits === v.replace(/\s/g, '')) ? ctx.suppliers.find(x => x.gln === digits) : null;
+  if (!s) s = ctx.suppliers.find(x => String(x.name || '').toLowerCase() === v.toLowerCase());
+  if (s) return s;
+  const { data, error } = await sb.from('suppliers').insert({ organisation_id: _orgId, name: v, supplier_type: 'distributor', gln: digits.length === 13 ? digits : null, active: true }).select('id, name, gln, active').single();
+  if (error) {
+    if (error.code === '23505') { const again = ctx.suppliers.find(x => String(x.name || '').toLowerCase() === v.toLowerCase()); if (again) return again; }
+    return null;
+  }
+  ctx.suppliers.push(data); ctx.createdSuppliers++;
+  return data;
+}
+async function _rcvImportRow(row) {
+  if (!_rcvImportCtx) await _rcvImportCtxInit();
+  const ctx = _rcvImportCtx;
+  const store = _rcvFindStore(ctx.stores, row.store);
+  if (!store) return { error: `store "${row.store}" not found; add the store or its wholesaler code in Store Network` };
+  const lot = String(row.lot || '').trim(); if (!lot) return { error: 'lot code is empty' };
+  const product = String(row.product || '').trim(); if (!product) return { error: 'product description is empty' };
+  const qty = parseFloat(String(row.quantity || '').replace(/[^0-9.\-]/g, ''));
+  if (!Number.isFinite(qty) || qty < 0) return { error: `quantity "${row.quantity}" is not a number` };
+  const gtin = _rcvNormGtin(row.gtin);
+  const key = `${store.id}|${lot.toLowerCase()}|${String(gtin || '').replace(/^0+/, '')}`;
+  if (ctx.existing.has(key)) return { error: `already expected: ${product}, lot ${lot}, ${store.name}` };
+  const supplier = await _rcvFindOrCreateSupplier(ctx, row.supplier);
+  if (supplier) ctx.supplierNames.add(supplier.name);
+  const shipDate = row.ship_date ? new Date(row.ship_date) : null;
+  const receivedAt = shipDate && !isNaN(shipDate) ? shipDate.toISOString() : new Date().toISOString();
+  const unit = String(row.unit || '').trim().toLowerCase() || 'case';
+  const ref = String(row.reference || '').trim() || null;
+  const { error } = await sb.from('receiving_events').insert({
+    organisation_id: _orgId, store_id: store.id,
+    supplier_id: supplier?.id || null, supplier_name_snapshot: supplier?.name || (String(row.supplier || '').trim() || null),
+    product_name: product, gtin, traceability_lot_code: lot,
+    tlc_source_type: 'shipping_document', tlc_source_reference: ctx.fileName,
+    quantity: qty, unit_of_measure: unit, received_at: receivedAt,
+    reference_document_type: _rcvDocTypeFor(ref), reference_document_number: ref,
+    is_ftl: false, ftl_category: null,
+    source: 'wholesaler_import', status: 'expected', import_batch_id: ctx.batchId,
+    notes: `Imported from ${ctx.fileName} on ${new Date().toISOString().slice(0, 10)}.`,
+  });
+  if (error) return { error: error.message };
+  ctx.existing.add(key); ctx.inserted++;
+  return {};
+}
+function _rcvImportDone() {
+  const ctx = _rcvImportCtx;
+  if (ctx) {
+    try {
+      const maps = _rcvImportLoadMaps().filter(m => JSON.stringify(m.map) !== JSON.stringify(ctx.mapping));
+      maps.unshift({ name: [...ctx.supplierNames].join(', ') || ctx.fileName, map: ctx.mapping, used_at: new Date().toISOString() });
+      localStorage.setItem(_rcvImportMapsKey(), JSON.stringify(maps.slice(0, 8)));
+    } catch (_) {}
+    if (ctx.createdSuppliers) showToast(`${ctx.createdSuppliers} new supplier${ctx.createdSuppliers === 1 ? '' : 's'} created from the file. Complete the address in Settings, Suppliers.`, 'info', 6000);
+  }
+  _rcvImportCtx = null;
+  renderReceiving();
+}
+
 async function renderStores() {
   const _errEl = document.getElementById('main-content');
   try {
@@ -8138,6 +8431,9 @@ async function renderStores() {
         <div class="field" style="margin:0;"><label>Store name *</label><input id="sf-name" type="text" placeholder="e.g. Greenfield Sunset" /></div>
         <div class="field" style="margin:0;"><label>Store code</label><input id="sf-code" type="text" placeholder="e.g. GM-SUN-01" /></div>
       </div>
+      <!-- Phase 7 (2026-10-07): the wholesaler's ship-to code (stores.external_code, migration 028) -->
+      <div class="field" style="margin:0 0 12px;"><label>Wholesaler ship-to code</label><input id="sf-external-code" type="text" placeholder="The code your distributor prints for this store, e.g. 4471" />
+        <div style="font-size:10px;color:var(--muted);margin-top:4px;line-height:1.5;">Optional. Delivery-file imports match this first, then the store code, then the name.</div></div>
 
       <!-- Row 2: street -->
       <div class="field" style="margin:0 0 12px;"><label>Street address *</label><input id="sf-street" type="text" placeholder="e.g. 1234 Sunset Blvd" /></div>
@@ -8303,6 +8599,7 @@ function openStoreForm(store) {
   document.getElementById('store-form-label').textContent = store.id ? 'Edit store' : 'Add new store';
   document.getElementById('sf-name').value     = store.name           || '';
   document.getElementById('sf-code').value     = store.store_code     || '';
+  const _sfExt = document.getElementById('sf-external-code'); if (_sfExt) _sfExt.value = store.external_code || '';   // Phase 7
   document.getElementById('sf-street').value   = store.street_address || '';
   document.getElementById('sf-city').value     = store.city           || '';
   document.getElementById('sf-region').value   = store.region         || '';
@@ -8398,6 +8695,7 @@ async function saveStore() {
 
   const name        = document.getElementById('sf-name').value.trim();
   const code        = document.getElementById('sf-code').value.trim();
+  const extCode     = (document.getElementById('sf-external-code')?.value || '').trim();   // Phase 7
   const street      = document.getElementById('sf-street').value.trim();
   const city        = document.getElementById('sf-city').value.trim();
   const region      = document.getElementById('sf-region').value.trim();
@@ -8460,6 +8758,7 @@ async function saveStore() {
   const payload = {
     name,
     store_code:       code || null,
+    external_code:    extCode || null,
     address:          composedAddress,
     street_address:   street,
     city,
@@ -8488,9 +8787,12 @@ async function saveStore() {
   // UPDATE branch scopes by org_id so a forged _editingStoreId can't rewrite
   // another org's store row (which would also overwrite that store's
   // organisation_id with this user's, since payload includes organisation_id).
-  const { error } = _editingStoreId
-    ? await sb.from('stores').update(payload).eq('id', _editingStoreId).eq('organisation_id', _orgId)
-    : await sb.from('stores').insert(payload);
+  const _storeWrite = () => _editingStoreId
+    ? sb.from('stores').update(payload).eq('id', _editingStoreId).eq('organisation_id', _orgId)
+    : sb.from('stores').insert(payload);
+  let { error } = await _storeWrite();
+  // Phase 7: external_code needs migration 028; on an older database drop it and retry.
+  if (error && _missingColumnFrom(error) === 'external_code') { delete payload.external_code; ({ error } = await _storeWrite()); }
 
   if (error) {
     msgEl.textContent = error.message || 'Could not save store.';
@@ -14904,6 +15206,7 @@ function csvParseText(text) {
 async function csvParseAndPreview(text, filename) {
   const modal  = document.getElementById('csv-import-modal');
   const config = modal._csvConfig;
+  modal._csvFileName = filename;   // Phase 7: the delivery-file import records it on each row
   const { headers, rows } = csvParseText(text);
   modal._csvRows    = rows;
   modal._csvHeaders = headers;

@@ -539,7 +539,12 @@ links a shelf scan to its delivery.
 Indexes: (organisation_id, traceability_lot_code); (organisation_id,
 store_id, received_at desc); (organisation_id, store_id, status).
 Policies: members SELECT; active members INSERT; corp_admin or manager
-UPDATE; no client DELETE; platform admin ALL.
+UPDATE; no client DELETE; platform admin ALL. Migration 029 (2026-10-07)
+adds b29_receiving_member_confirm_expected: any active member may UPDATE a
+row while status = 'expected', so floor staff can confirm a delivery that a
+wholesaler file pre-filled. Import rows: source 'wholesaler_import', status
+'expected', one import_batch_id per file, tlc_source_type
+'shipping_document', tlc_source_reference = the file name.
 
 ### organisations, new columns (024)
 annual_food_sales_band (CHECK: under_250k, 250k_to_1m, 1m_to_10m,
