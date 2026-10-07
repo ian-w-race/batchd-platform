@@ -5715,7 +5715,20 @@ window._CITATIONS = {
     recallEnd:      '21 CFR 7.55',
     complianceDate: 'July 20, 2028',
     rfrRetail: 'Retail stores do not file with the FDA Reportable Food Registry; that duty belongs to registered facilities. For a recall in progress, the recalling firm notifies the FDA district recall coordinator (21 CFR 7.46). Your job is to pull, hold and document.',
+    // Phase 5 (2026-10-07): shown instead when the organization operates a registered facility.
+    rfrFacility: 'Your organization operates a registered facility, so the Reportable Food Registry applies to it: a registered facility reports within 24 hours of determining that a food is a reportable food (FD&C Act section 417). Your job in the store is still to pull, hold and document; for a recall in progress the recalling firm notifies the FDA district recall coordinator (21 CFR 7.46).',
   },
+};
+// Phase 5 (2026-10-07): applicability copy, same text as dashboard.html's _FSMA_APPLICABILITY.
+window._FSMA_APPLICABILITY_COPY = {
+  labels: { exempt: 'Likely exempt', covered_no_spreadsheet: 'Covered, no spreadsheet duty', covered: 'Covered', unknown: 'Not yet answered' },
+  copy: {
+    exempt: "Based on your sales band, your store is likely exempt from the FSMA 204 record-keeping requirements. Lot-level receiving records still cut recall time and protect you if a supplier's records are wrong, which is why Batch'd keeps them anyway.",
+    covered_no_spreadsheet: "Your store is covered by FSMA 204 and must keep receiving records and a traceability plan, but is not required to produce the electronic sortable spreadsheet. Batch'd produces it anyway so an FDA request is a one-click answer.",
+    covered: "Your store is covered by FSMA 204. Receiving records, a traceability plan and the ability to produce a sortable spreadsheet within 24 hours are required from July 20, 2028.",
+    unknown: "Your corporate admin has not yet answered the FSMA 204 applicability questions in the dashboard's Settings.",
+  },
+  closing: "Batch'd supports FSMA 204 record keeping. It does not by itself constitute compliance.",
 };
 // ── STATE ───────────────────────────────────────────────────
 let productStream = null;
@@ -5944,6 +5957,16 @@ async function showApp(user) {
         window._orgAiEnabled = ['pov', 'active'].includes(_planRow?.plan);
       } catch (_) { window._orgAiEnabled = false; }
       loadSuppliersCache();   // Phase 2 (2026-10-03): supplier picker for the receiving form
+      // Phase 5 (2026-10-07): applicability answers (migration 024). Tolerates an older database.
+      try {
+        const { data: _appRow, error: _appErr } = await sb.from('organisations').select('fsma_applicability, operates_registered_facility').eq('id', _currentOrgId).maybeSingle();
+        window._orgApplicability      = _appErr ? null : (_appRow?.fsma_applicability || 'unknown');
+        window._orgRegisteredFacility = !_appErr && _appRow?.operates_registered_facility === true;
+      } catch (_) { window._orgApplicability = null; window._orgRegisteredFacility = false; }
+      if (window._orgRegisteredFacility) {
+        const _fdaText = document.getElementById('recall-fda-text');
+        if (_fdaText) _fdaText.textContent = window._CITATIONS.us.rfrFacility;
+      }
       if (member.store_id) {
         window._managerStoreId   = member.store_id;
         window._managerStoreName = null;
@@ -18731,6 +18754,18 @@ function updateMgrSubtitle() {
 }
 
 // ── FSMA 204 (USA) READINESS SCORE ─────────────────────────────────
+// Phase 5 (2026-10-07): one sentence at the top of the FSMA tab saying what the rule
+// asks of this organization, from the sales band the corporate admin answered.
+function _fsmaApplicabilityBanner() {
+  const el = document.getElementById('fsma-readiness-content');
+  const c = window._FSMA_APPLICABILITY_COPY; const app = window._orgApplicability;
+  if (!el || !c || !app || document.getElementById('fsma-applicability-banner')) return;
+  el.insertAdjacentHTML('afterbegin', `<div id="fsma-applicability-banner" style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:14px;">
+    <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);margin-bottom:4px;">What applies to you: ${esc(c.labels[app] || c.labels.unknown)}</div>
+    <div style="font-size:12.5px;color:var(--text);line-height:1.6;">${esc((c.copy[app] || c.copy.unknown) + ' ' + c.closing)}</div>
+  </div>`);
+}
+
 function renderFsmaReadiness() {
   const el = document.getElementById('fsma-readiness-content');
   if (!el) return;
@@ -19138,7 +19173,7 @@ function switchMgrTab(tab) {
   });
   if (tab === 'recalls' && _mgrLoaded) { loadMgrRecalls(); loadMgrSchemas(); loadCoordinator(); }
   if (tab === 'audit') { populateFsmaExportStores(); populateMgrAuditStores(); }
-  if (tab === 'fsma') { renderFsmaReadiness(); renderRegQuickRef(); }
+  if (tab === 'fsma') { renderFsmaReadiness(); _fsmaApplicabilityBanner(); renderRegQuickRef(); }
   if (tab === 'storemgmt') loadStoreMgmt();
   if (tab === 'receiving') loadMgrReceiving();
   if (tab === 'patterns') loadMgrPatterns();

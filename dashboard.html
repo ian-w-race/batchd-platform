@@ -1221,8 +1221,51 @@ const _CITATIONS = {
     // Registry filing. This sentence replaces every "file with the RFR"
     // instruction the product used to show retailers.
     rfrRetail: 'Retail stores do not file with the FDA Reportable Food Registry; that duty belongs to registered facilities. For a recall in progress, the recalling firm notifies the FDA district recall coordinator (21 CFR 7.46). Your job is to pull, hold and document.',
+    // Phase 5 (2026-10-07): shown instead of rfrRetail when the organization says it
+    // operates a registered facility (organisations.operates_registered_facility).
+    rfrFacility: 'Your organization operates a registered facility, so the Reportable Food Registry applies to it: a registered facility reports within 24 hours of determining that a food is a reportable food (FD&C Act section 417). Your stores still pull, hold and document, and for a recall in progress the recalling firm notifies the FDA district recall coordinator (21 CFR 7.46).',
   },
 };
+
+// Phase 5 (2026-10-07): FSMA 204 applicability for retail food establishments.
+// Thresholds come from the retail food establishment exemption in 21 CFR 1.1305
+// and the sortable-spreadsheet exemption in 21 CFR 1.1455(c)(3). The FDA adjusts
+// both for inflation; the dollar figures below are the handoff's values and must
+// be checked against eCFR before this copy ships to a paying customer. One
+// constant, so a change is a one-line edit. signup.html carries a copy of the
+// bands; keep the two in step.
+const _FSMA_APPLICABILITY = {
+  bands: [
+    { key: 'under_250k',  label: 'Under $250,000',             applicability: 'exempt' },
+    { key: '250k_to_1m',  label: '$250,000 to $1 million',      applicability: 'covered_no_spreadsheet' },
+    { key: '1m_to_10m',   label: '$1 million to $10 million',   applicability: 'covered' },
+    { key: 'over_10m',    label: 'Over $10 million',            applicability: 'covered' },
+    { key: 'undisclosed', label: 'Prefer not to say',           applicability: 'unknown' },
+  ],
+  labels: { exempt: 'Likely exempt', covered_no_spreadsheet: 'Covered, no spreadsheet duty', covered: 'Covered', unknown: 'Not yet answered' },
+  copy: {
+    exempt: "Based on your sales band, your store is likely exempt from the FSMA 204 record-keeping requirements. Lot-level receiving records still cut recall time and protect you if a supplier's records are wrong, which is why Batch'd keeps them anyway.",
+    covered_no_spreadsheet: "Your store is covered by FSMA 204 and must keep receiving records and a traceability plan, but is not required to produce the electronic sortable spreadsheet. Batch'd produces it anyway so an FDA request is a one-click answer.",
+    covered: "Your store is covered by FSMA 204. Receiving records, a traceability plan and the ability to produce a sortable spreadsheet within 24 hours are required from July 20, 2028.",
+    unknown: "Tell Batch'd your annual food sales band in Settings and it will say which FSMA 204 requirements apply to your stores.",
+  },
+  closing: "Batch'd supports FSMA 204 record keeping. It does not by itself constitute compliance.",
+  thresholdNote: 'Thresholds follow 21 CFR 1.1305 and 1.1455(c)(3) and are adjusted for inflation by the FDA; verify the current dollar values on eCFR.',
+};
+function fsmaApplicabilityFor(band) { return (_FSMA_APPLICABILITY.bands.find(b => b.key === band) || {}).applicability || 'unknown'; }
+function fsmaApplicabilityCopy(app) { return (_FSMA_APPLICABILITY.copy[app] || _FSMA_APPLICABILITY.copy.unknown) + ' ' + _FSMA_APPLICABILITY.closing; }
+// Reportable Food Registry guidance, gated on the registered-facility answer.
+function rfrCopy() { return _orgRegisteredFacility ? _CITATIONS.us.rfrFacility : _CITATIONS.us.rfrRetail; }
+// Loaded at sign-in from organisations (migration 024); defaults hold on an older database.
+let _orgApplicability = 'unknown', _orgSalesBand = null, _orgRegisteredFacility = false, _orgDistributionCenter = false;
+// The column a write or read failed on, from a PostgREST PGRST204 or Postgres 42703 message; else null.
+function _missingColumnFrom(error) {
+  if (!error) return null;
+  const msg = error.message || '';
+  let m = /Could not find the '([A-Za-z0-9_]+)' column/.exec(msg);
+  if (!m) m = /column (?:[a-z_]+\.)?"?([A-Za-z0-9_]+)"? does not exist/.exec(msg);
+  return m ? m[1] : null;
+}
 // user_id -> display label, filled by renderStaff so deactivateMember can show
 // a name in its confirm dialog without carrying one through an onclick.
 let _staffLabelByUserId = {};
@@ -1962,7 +2005,11 @@ async function initDashboard(user) {
     return res;
   })();
   const [orgRes, storeRes, userSettRes] = await Promise.all([
-    sb.from('organisations').select('name, region').eq('id', _orgId).single(),
+    (async () => {   // Phase 5: applicability columns (migration 024) with a fallback for an older database
+      let r = await sb.from('organisations').select('name, region, annual_food_sales_band, operates_registered_facility, operates_distribution_center, fsma_applicability').eq('id', _orgId).single();
+      if (r.error && _missingColumnFrom(r.error)) r = await sb.from('organisations').select('name, region').eq('id', _orgId).single();
+      return r;
+    })(),
     _storeId
       ? sb.from('stores').select('name').eq('id', _storeId).single()
       : Promise.resolve({ data: null }),
@@ -1981,6 +2028,11 @@ async function initDashboard(user) {
   // "Jurisdiction precedence" for the rule.
   _orgDefaultRegion = org?.region || 'us';
   _orgRegion        = userReg || _orgDefaultRegion;
+  // Phase 5 (2026-10-07): applicability answers drive the compliance copy and the RFR gate.
+  _orgSalesBand          = org?.annual_food_sales_band || null;
+  _orgApplicability      = org?.fsma_applicability || fsmaApplicabilityFor(_orgSalesBand);
+  _orgRegisteredFacility = org?.operates_registered_facility === true;
+  _orgDistributionCenter = org?.operates_distribution_center === true;
   if (_storeId) {
     _storeName = storeRes.data?.name || 'My Store';
   }
@@ -2498,10 +2550,12 @@ async function checkOnboardingStatus() {
   try {
     // Getting-started fix (2026-09-05). The retired manufacturer-partner
     // step was still counted here, so the badge could never pass 4/5 and
-    // nagged every org forever. Four real steps now: stores, first scan,
-    // first drill, coordinator.
-    const [storesRes, scansRes, drillsRes, settingsRes, orgCoordRes] = await Promise.all([
+    // nagged every org forever. Six real steps since Phase 5 (2026-10-07):
+    // stores, first supplier, first delivery, first scan, first drill, coordinator.
+    const [storesRes, suppliersRes, receivingRes, scansRes, drillsRes, settingsRes, orgCoordRes] = await Promise.all([
       sb.from('stores').select('id').eq('organisation_id', _orgId).limit(1),
+      sb.from('suppliers').select('id').eq('organisation_id', _orgId).eq('active', true).limit(1),
+      sb.from('receiving_events').select('id').eq('organisation_id', _orgId).limit(1),
       sb.from('scans').select('id').eq('organisation_id', _orgId).limit(1),
       sb.from('mock_recall_drills').select('id').eq('initiated_by_org', _orgId).limit(1),
       sb.from('user_settings').select('recall_coordinator_name').eq('user_id', (await sb.auth.getUser()).data?.user?.id).single(),
@@ -2511,6 +2565,8 @@ async function checkOnboardingStatus() {
     ]);
     const steps = [
       !!(storesRes.data?.length),
+      !!(suppliersRes.data?.length),
+      !!(receivingRes.data?.length),
       !!(scansRes.data?.length),
       !!(drillsRes.data?.length),
       !!(orgCoordRes.data?.recall_coordinator_name || settingsRes.data?.recall_coordinator_name),
@@ -2529,7 +2585,7 @@ async function checkOnboardingStatus() {
     }
     return steps;
   } catch(e) {
-    return [false, false, false, false, false];
+    return [false, false, false, false, false, false];
   }
 }
 
@@ -2541,9 +2597,11 @@ async function renderOnboarding() {
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading setup status…</div>`;
 
   try {
-    const [storesRes, partnersRes, scansRes, drillsRes, settingsRes, orgRes] = await Promise.all([
+    const [storesRes, suppliersRes, receivingRes, scansRes, drillsRes, settingsRes, orgRes] = await Promise.all([
       sb.from('stores').select('id, name').eq('organisation_id', _orgId).limit(5),
-      sb.from('trading_partners').select('id, organisations!trading_partners_manufacturer_id_fkey(name)').eq('retailer_id', _orgId).eq('status', 'active').limit(3),
+      // Phase 5 (2026-10-07): the retired partners step is replaced by suppliers and first delivery.
+      sb.from('suppliers').select('id, name').eq('organisation_id', _orgId).eq('active', true).limit(3),
+      sb.from('receiving_events').select('id, received_at, supplier_name_snapshot').eq('organisation_id', _orgId).order('received_at', { ascending: false }).limit(1),
       sb.from('scans').select('id').eq('organisation_id', _orgId).limit(1),
       sb.from('mock_recall_drills').select('id, started_at').eq('initiated_by_org', _orgId).order('started_at', {ascending:false}).limit(1),
       sb.from('user_settings').select('recall_coordinator_name, recall_coordinator_contact').eq('user_id', (await sb.auth.getUser()).data?.user?.id).single(),
@@ -2551,7 +2609,8 @@ async function renderOnboarding() {
     ]);
 
     const hasStores      = !!(storesRes.data?.length);
-    const hasPartners    = !!(partnersRes.data?.length);
+    const hasSuppliers   = !!(suppliersRes.data?.length);
+    const hasReceiving   = !!(receivingRes.data?.length);
     const hasScans       = !!(scansRes.data?.length);
     const hasDrill       = !!(drillsRes.data?.length);
     // Split-brain fix (2026-08-05): org row first, user_settings fallback.
@@ -2573,11 +2632,30 @@ async function renderOnboarding() {
         cta: 'Add stores →', action: `showPanel('stores')`,
         reg: 'Required for all regulatory frameworks',
       },
-      // "Connect a manufacturer partner" step (was n: 2) retired in chunk 6B
-      // partners cleanup. Subsequent steps renumbered 2/3/4 to keep the
-      // displayed sequence consecutive.
+      // "Connect a manufacturer partner" (the old step 2) retired in chunk 6B.
+      // Phase 5 (2026-10-07) put two FSMA 204 steps in its place.
       {
-        n: 2, done: hasScans,
+        n: 2, done: hasSuppliers,
+        title: 'Add your first supplier',
+        desc: "List the distributors, manufacturers and farms you receive from, with phone and address. Every receiving record must carry the supplier's full location description.",
+        detail: hasSuppliers
+          ? `${suppliersRes.data.length}${suppliersRes.data.length === 3 ? '+' : ''} supplier${suppliersRes.data.length !== 1 ? 's' : ''} on file: ${suppliersRes.data.map(s => esc(s.name)).join(', ')}`
+          : 'No suppliers yet. Staff can also add one by name from the scanner.',
+        cta: 'Add suppliers →', action: `showPanel('settings')`,
+        reg: isUS ? `${_CITATIONS.us.receivingKde}: immediate previous source` : 'One step back traceability',
+      },
+      {
+        n: 3, done: hasReceiving,
+        title: 'Record your first delivery',
+        desc: 'In the scanner, switch to Receiving and scan a case label at the back door. That creates the receiving record the rule asks for, with lot code, quantity, supplier and document.',
+        detail: hasReceiving
+          ? `Last delivery recorded ${new Date(receivingRes.data[0].received_at).toLocaleDateString(_dashLocale(), {day:'numeric',month:'long',year:'numeric'})}${receivingRes.data[0].supplier_name_snapshot ? ' from ' + esc(receivingRes.data[0].supplier_name_snapshot) : ''}`
+          : 'No deliveries recorded yet.',
+        cta: 'Open scanning app ↗', action: `window.open('https://batchd-app.netlify.app','_blank')`,
+        reg: isUS ? `${_CITATIONS.us.rule}: receiving critical tracking event` : 'Receiving record',
+      },
+      {
+        n: 4, done: hasScans,
         title: 'Complete your first scan',
         desc: "Open the scanning app on any phone and scan a product onto a shelf. This creates your first traceability record and lot code capture.",
         detail: hasScans ? 'Scanning activity recorded ✓' : 'No scans recorded yet — open the scanning app to start.',
@@ -2585,7 +2663,7 @@ async function renderOnboarding() {
         reg: 'Core traceability requirement',
       },
       {
-        n: 3, done: hasDrill,
+        n: 5, done: hasDrill,
         title: 'Run your first mock recall drill',
         desc: `Simulate a recall to test your team's response procedures. ${isUS ? 'FDA recommends annual drills.' : 'Required annually by Mattilsynet best practice.'} Generates a compliance report you can share with auditors.`,
         detail: hasDrill
@@ -2595,7 +2673,7 @@ async function renderOnboarding() {
         reg: isUS ? 'FDA annual drill recommendation' : 'Mattilsynet best practice',
       },
       {
-        n: 4, done: hasCoordinator,
+        n: 6, done: hasCoordinator,
         title: 'Designate a recall coordinator',
         // Jurisdiction rule: name one regulator, the caller's own. The
         // sibling `reg` field below already gates; this line did not.
@@ -2759,7 +2837,7 @@ async function _renderOverviewLegacy() {
 
     const [
       storesRes, scansRes, partnersRes, shipmentsRes, acksRes, distRes, srmRes, onShelfRes,
-      ownRecallsRes, scans90Res, drillsRecentRes, recentComplaintsRes,
+      ownRecallsRes, scans90Res, drillsRecentRes, recentComplaintsRes, rcvLinkRes, rcv90Res,
     ] = await Promise.all([
       sb.from('stores').select('id, name, active').eq('organisation_id', _orgId),
       sb.from('scans').select('id, created_at, store_name, store_id, product_name, lot_number, barcode_number, removed_from_shelf_at, scanned_by, recall_resolved').eq('organisation_id', _orgId).gte('created_at', days30).order('created_at', {ascending:false}).limit(500),
@@ -2795,6 +2873,11 @@ async function _renderOverviewLegacy() {
       sb.from('mock_recall_drills').select('id, started_at').eq('initiated_by_org', _orgId).gte('started_at', days365Iso).limit(1),
       // Perf fix #6: recentComplaints — was sequential (line ~2389)
       sb.from('complaints').select('id, product_name, triage_level, created_at').eq('receiving_org_id', _orgId).gte('created_at', days7Iso).not('status', 'in', '("closed","resolved")'),
+      // Phase 5 (2026-10-07): receivingScore inputs. On an older database (no
+      // receiving_event_id column, no receiving_events table) these resolve with an
+      // error and empty data, and the score falls to 0 instead of throwing.
+      sb.from('scans').select('id, is_ftl, ftl_category, receiving_event_id').eq('organisation_id', _orgId).gte('created_at', days90Iso).is('removed_from_shelf_at', null).limit(5000),
+      sb.from('receiving_events').select('id', { count: 'exact', head: true }).eq('organisation_id', _orgId).gte('received_at', days90Iso),
     ]);
 
     const stores    = storesRes.data    || [];
@@ -2976,15 +3059,19 @@ async function _renderOverviewLegacy() {
     // partnerScore dropped in chunk 6C-b — Batch'd is retailer-only
     // and "manufacturer partners connected" is no longer a meaningful
     // axis for the dashboard's at-a-glance readiness number. Average
-    // is now 3-way: response rate + shipments-on-file + lot-code
-    // coverage. (renderCompliance still surfaces partner state in
-    // its more detailed scoring — that's a separate pass.)
-    const hasShipments = shipments.length > 0;
-    const hasScans     = scans.length > 0;
-    const ackScore     = responseRate;
-    const shipScore    = hasShipments ? 100 : 0;
-    const scanScore    = hasScans     ? Math.min(100, scans.filter(s => s.lot_number).length / Math.max(scans.length,1) * 100) : 0;
-    const readiness    = Math.round((ackScore + shipScore + scanScore) / 3);
+    // is now 3-way: response rate + deliveries recorded + lot-code coverage.
+    // Phase 5 (2026-10-07): shipScore retired. Nothing writes shipments any more,
+    // so it pinned readiness at 67 percent. receivingScore is the share of
+    // on-shelf FTL scans in the last 90 days that link to a receiving record;
+    // with no FTL shelf scans yet, deliveries recorded in the period count as 100.
+    const hasScans       = scans.length > 0;
+    const ackScore       = responseRate;
+    const ftlOnShelf90   = (rcvLinkRes?.data || []).filter(s => s.is_ftl || s.ftl_category);
+    const ftlLinked90    = ftlOnShelf90.filter(s => s.receiving_event_id).length;
+    const receiving90    = rcv90Res?.count || 0;
+    const receivingScore = ftlOnShelf90.length ? Math.round(ftlLinked90 / ftlOnShelf90.length * 100) : (receiving90 > 0 ? 100 : 0);
+    const scanScore      = hasScans ? Math.min(100, scans.filter(s => s.lot_number).length / Math.max(scans.length,1) * 100) : 0;
+    const readiness      = Math.round((ackScore + receivingScore + scanScore) / 3);
 
     // ── Recent activity feed ──────────────────────────────────
     const recentActivity = scans.slice(0, 8).map(s => ({
@@ -3342,7 +3429,7 @@ el.innerHTML = `
                 <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.6;">
                   ${[
                     {label:'Recall response',   val:ackScore,    ok:ackScore>=80},
-                    {label:'Shipments logged',  val:shipScore,   ok:shipScore===100},
+                    {label:'Deliveries recorded', val:receivingScore, ok:receivingScore>=80},
                     {label:'Lot code coverage', val:Math.round(scanScore),ok:scanScore>=80},
                   ].map(c=>`<div style="display:flex;justify-content:space-between;gap:12px;margin-bottom:2px;">
                     <span>${c.ok?'✓':'·'} ${c.label}</span>
@@ -9145,9 +9232,13 @@ function renderComplianceDashboard(el) {
   const gaps = [];
   if (d.scans.length === 0)                                              gaps.push({ cat:'Record keeping',    msg:'No scan records — open the scanning app and start scanning products', link:"showPanel('traceability')" });
   else if (d.lotScans/Math.max(d.scans.length,1) < 0.7)                 gaps.push({ cat:'Record keeping',    msg:`Lot code coverage is ${Math.round(d.lotScans/Math.max(d.scans.length,1)*100)}% — target 100% to meet ${isUS?'FSMA 204':'EU 178/2002'} requirements`, link:null });
-  if (d.supplierScans === 0 && d.scans.length > 0)                      gaps.push({ cat:'Traceability',       msg:`Supplier names not recorded on any scans — ask staff to enter supplier during scanning`, link:null });
-  if (isUS && (d.tlcSourceScans||0) === 0 && d.scans.length > 0)        gaps.push({ cat:'Traceability',       msg:`TLC source not recorded on any scans . Required KDE under ${_CITATIONS.us.receivingKde}`, link:null });
-  if (isUS && (d.refDocScans||0) === 0 && d.scans.length > 0)           gaps.push({ cat:'Traceability',       msg:`Reference document not recorded on any scans . Required KDE under ${_CITATIONS.us.receivingKde}`, link:null });
+  // Phase 5 (2026-10-07): US gaps point at the receiving mode and the supplier directory.
+  if (isUS && d.receiving.length === 0)                                  gaps.push({ cat:'Traceability',       msg:'No receiving records yet. Staff record deliveries in the scanner under Scan, Receiving', link:null });
+  if (isUS && d.receiving.length > 0 && d.rcvSupplierOk < d.receiving.length) gaps.push({ cat:'Traceability',  msg:`${d.receiving.length - d.rcvSupplierOk} receiving record${d.receiving.length - d.rcvSupplierOk !== 1 ? 's' : ''} missing the supplier's full location. Complete addresses in Settings, Suppliers (${_CITATIONS.us.receivingKde})`, link:"showPanel('settings')" });
+  if (isUS && d.receiving.length > 0 && d.rcvTlcOk < d.receiving.length) gaps.push({ cat:'Traceability',       msg:`${d.receiving.length - d.rcvTlcOk} receiving record${d.receiving.length - d.rcvTlcOk !== 1 ? 's' : ''} without a lot code from a non-exempt source`, link:null });
+  if (isUS && d.receiving.length > 0 && d.rcvRefOk < d.receiving.length) gaps.push({ cat:'Traceability',       msg:`${d.receiving.length - d.rcvRefOk} receiving record${d.receiving.length - d.rcvRefOk !== 1 ? 's' : ''} without a reference document (PO, BOL or invoice)`, link:null });
+  if (isUS && d.requestScore == null)                                    gaps.push({ cat:'Records request',    msg:'No timed records request drill yet. Start the clock below and see how long producing the records takes today', link:null });
+  if (!isUS && d.supplierScans === 0 && d.scans.length > 0)             gaps.push({ cat:'Traceability',       msg:`Supplier names not recorded on any scans. Ask staff to enter supplier during scanning`, link:null });
   if (!d.drillInYear)                                                    gaps.push({ cat:'Recall readiness',   msg:'No mock recall drill in the last 12 months — run one now to test your response chain', link:"showPanel('recalls')" });
   if (!d.coordinator)                                                      gaps.push({ cat:'Recall readiness',   msg:`No recall coordinator assigned — required by ${isUS?'FDA 21 CFR 7.49':'Mattilsynet guidance'}`, link:"showPanel('settings')" });
   if (d.acks.length > 0 && d.acksProgressed === 0)                       gaps.push({ cat:'Recall readiness',   msg:'Recalls received but none acknowledged — open the Recalls panel and progress your response', link:"showPanel('recalls')" });
@@ -9158,9 +9249,9 @@ function renderComplianceDashboard(el) {
     { label:'Record keeping',     score:sc.docScore,       icon:'📄', reg:isUS?`${_CITATIONS.us.rule}, ${_CITATIONS.us.receivingKde}`:'EU 178/2002 Art. 17',
       stats:`${d.scans.length} records · ${Math.round(d.lotScans/Math.max(d.scans.length,1)*100)}% lot code coverage`,
       step:1 },
-    { label:'Traceability chain', score:sc.traceScore,     icon:'🔗', reg:isUS?'FSMA 204 KDEs / CTEs':'EU 178/2002 Art. 18',
+    { label:'Traceability chain', score:sc.traceScore,     icon:'🔗', reg:isUS?`${_CITATIONS.us.receivingKde} receiving KDEs`:'EU 178/2002 Art. 18',
       stats: isUS
-        ? `${Math.round((d.tlcSourceScans||0)/Math.max(d.scans.length,1)*100)}% TLC source · ${Math.round((d.refDocScans||0)/Math.max(d.scans.length,1)*100)}% ref doc · ${Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)}% supplier`
+        ? `${d.receiving.length} receiving record${d.receiving.length!==1?'s':''} · ${d.rcvComplete} complete · ${Math.round(d.rcvSupplierOk/Math.max(d.receiving.length,1)*100)}% supplier location`
         : `${Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)}% supplier coverage on scans`,
       step:2 },
     { label:'Recall readiness',   score:sc.recallScore,    icon:'🚨', reg:isUS?`FDA ${_CITATIONS.us.recallNotify} · recalling firm notifies the FDA`:'Mattilsynet §16 · Immediate notification',
@@ -9169,11 +9260,18 @@ function renderComplianceDashboard(el) {
     { label:'Store coverage',     score:sc.coverageScore,  icon:'🏪', reg:isUS?'FSMA 204 — records per location':'EU 178/2002 Art. 3 — all stages',
       stats:`${d.storesActiveRecent}/${d.activeStores.length} stores active · ${d.recentScans.length} scans (30 days)`,
       step:4 },
+    // Phase 5 (2026-10-07): fifth axis, US only. Not clickable into a detail step; it scrolls to the drill card.
+    ...(isUS ? [{ label:'Records request time', score: sc.requestScore == null ? 0 : sc.requestScore,
+      scoreText: sc.requestScore == null ? 'Not run' : sc.requestScore + '%',
+      icon:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg>',
+      reg:`${_CITATIONS.us.availability} · 24 hours`,
+      stats: d.rrDone ? `Last drill ${_rrFmtMinutes(Number(d.rrDone.minutes_to_produce))} · ${d.rrDone.row_count ?? 0} rows` : 'Start the clock in the drill card below',
+      step:null }] : []),
   ];
 
   // Authority contacts
   const authority = isUS ? [
-    { name:'FDA', detail:_CITATIONS.us.rfrRetail, url:'https://www.fda.gov/safety/recalls-market-withdrawals-safety-alerts', phone:'1-888-INFO-FDA (1-888-463-6332)', color:'var(--info)' },
+    { name:'FDA', detail:rfrCopy(), url:'https://www.fda.gov/safety/recalls-market-withdrawals-safety-alerts', phone:'1-888-INFO-FDA (1-888-463-6332)', color:'var(--info)' },
     { name:'USDA FSIS', detail:'Meat, poultry, and eggs: mandatory recall authority', url:'https://www.fsis.usda.gov/recalls', phone:'1-888-674-6854', color:'var(--warn)' },
   ] : [
     { name:'Mattilsynet', detail:'Varsle umiddelbart ved fare for forbruker (Matloven §16)', url:'https://www.mattilsynet.no/skjemaer/meldeskjema-for-virksomhetene', phone:'22 40 00 00 · Alarmtelefon: 03008', color:'var(--accent)' },
@@ -9194,10 +9292,20 @@ function renderComplianceDashboard(el) {
           </div>
           <div>
             <div style="font-size:14px;font-weight:700;color:${scoreColor(sc.overallScore)};">${scoreLabel(sc.overallScore)}</div>
-            <div style="font-size:11px;color:var(--muted);">${gaps.length} gap${gaps.length!==1?'s':''} · ${4 - gaps.filter((g,i,a)=>a.findIndex(x=>x.cat===g.cat)===i).length} of 4 categories passing</div>
+            <div style="font-size:11px;color:var(--muted);">${gaps.length} gap${gaps.length!==1?'s':''} · ${catCards.length - gaps.filter((g,i,a)=>a.findIndex(x=>x.cat===g.cat)===i).length} of ${catCards.length} categories passing</div>
           </div>
         </div>
       </div>
+
+      <!-- Phase 5 (2026-10-07): what the rule asks of this organization, from its sales band -->
+      ${isUS ? `
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 18px;margin-bottom:16px;display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;">
+        <div style="flex:1;min-width:240px;">
+          <div style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);margin-bottom:4px;">What applies to you · ${esc(_FSMA_APPLICABILITY.labels[_orgApplicability] || _FSMA_APPLICABILITY.labels.unknown)}</div>
+          <div style="font-size:12px;color:var(--text);line-height:1.65;">${esc(fsmaApplicabilityCopy(_orgApplicability))}</div>
+        </div>
+        <button class="btn-ghost" onclick="showPanel('settings')">${_orgSalesBand ? 'Edit in Settings' : 'Answer in Settings'}</button>
+      </div>` : ''}
 
       <!-- Priority gaps -->
       ${gaps.length > 0 ? `
@@ -9220,10 +9328,10 @@ function renderComplianceDashboard(el) {
       <!-- Category score cards -->
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(185px,1fr));gap:10px;margin-bottom:16px;">
         ${catCards.map(c => `
-          <div onclick="_complianceStep=${c.step};renderCompliance()" style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;cursor:pointer;transition:all 0.15s;" onmouseover="this.style.borderColor='rgba(var(--accent-rgb),0.3)'" onmouseout="this.style.borderColor='var(--border)'">
+          <div onclick="${c.step ? `_complianceStep=${c.step};renderCompliance()` : `document.getElementById('rr-card')?.scrollIntoView({behavior:'smooth',block:'start'})`}" style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;cursor:pointer;transition:all 0.15s;" onmouseover="this.style.borderColor='rgba(var(--accent-rgb),0.3)'" onmouseout="this.style.borderColor='var(--border)'">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-              <div style="font-size:16px;">${c.icon}</div>
-              <div style="font-size:15px;font-weight:800;color:${scoreColor(c.score)};">${c.score}%</div>
+              <div style="font-size:16px;color:var(--muted);display:flex;align-items:center;">${c.icon}</div>
+              <div style="font-size:15px;font-weight:800;color:${c.scoreText && c.scoreText.indexOf('%') < 0 ? 'var(--muted)' : scoreColor(c.score)};">${c.scoreText || (c.score + '%')}</div>
             </div>
             <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:3px;">${c.label}</div>
             <div style="font-size:10px;color:var(--muted);line-height:1.5;margin-bottom:6px;">${c.stats}</div>
@@ -9254,13 +9362,16 @@ function renderComplianceDashboard(el) {
               <span style="font-size:11px;font-weight:700;color:${scoreColor(sc.traceScore)};">${sc.traceScore}%</span>
             </div>
             <div style="padding:0 16px;">
-              ${complianceCheck(d.supplierScans > 0, isUS ? 'Supplier / previous source documented' : 'Supplier name documented (one-step back)', d.supplierScans > 0 ? Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)+'% of scans include supplier' : 'No supplier data on scans', 'Staff should enter supplier during scanning')}
-              ${isUS
-                ? complianceCheck((d.tlcSourceScans||0) > 0, 'TLC source documented (FSMA 204 KDE)', (d.tlcSourceScans||0) > 0 ? Math.round((d.tlcSourceScans||0)/Math.max(d.scans.length,1)*100)+'% of scans include TLC source' : 'No TLC source on any scans — required KDE', 'Enter TLC source (lot assigning document) during scanning')
-                : complianceCheck(d.supplierScans/Math.max(d.scans.length,1) > 0.5, 'Traceability coverage >50%', Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)+'% of records have supplier data', 'Target 100% for all received goods')}
-              ${isUS
-                ? complianceCheck((d.refDocScans||0) > 0, 'Reference document recorded (FSMA 204 KDE)', (d.refDocScans||0) > 0 ? Math.round((d.refDocScans||0)/Math.max(d.scans.length,1)*100)+'% of scans include reference document' : 'No reference documents on any scans — required KDE', 'Enter PO/invoice number during scanning')
-                : complianceCheck(d.supplierScans > 0 && d.lotScans > 0, 'One-step-back chain established', d.supplierScans > 0 && d.lotScans > 0 ? 'Supplier names and lot codes present on scans' : 'Requires supplier names + lot codes on scans', 'Staff should enter both supplier and lot during scanning')}
+              ${isUS ? `
+              ${complianceCheck(d.receiving.length > 0, 'Deliveries recorded at receiving', d.receiving.length > 0 ? d.receiving.length + ' receiving record' + (d.receiving.length !== 1 ? 's' : '') + ' in the last 12 months' : 'No receiving records yet', 'Staff switch the scanner to Receiving and scan the case label at the back door')}
+              ${complianceCheck(d.receiving.length > 0 && d.rcvSupplierOk === d.receiving.length, 'Supplier location complete on every receipt', d.receiving.length > 0 ? d.rcvSupplierOk + ' of ' + d.receiving.length + ' with name, phone, street, city, state and ZIP' : 'Nothing to check yet', 'Complete supplier addresses in Settings, Suppliers')}
+              ${complianceCheck(d.receiving.length > 0 && d.rcvTlcOk === d.receiving.length, 'Lot code on every receipt (or exempt source)', d.receiving.length > 0 ? d.rcvTlcOk + ' of ' + d.receiving.length + ' with a traceability lot code or an exempt source' : 'Nothing to check yet', 'Scan the GS1-128 label or type the lot; mark exempt suppliers in Settings')}
+              ${complianceCheck(d.receiving.length > 0 && d.rcvRefOk === d.receiving.length, 'Reference document on every receipt', d.receiving.length > 0 ? d.rcvRefOk + ' of ' + d.receiving.length + ' with a PO, BOL or invoice number' : 'Nothing to check yet', 'Enter the document number once per delivery; the scanner remembers it for 30 minutes')}
+              ` : `
+              ${complianceCheck(d.supplierScans > 0, 'Supplier name documented (one-step back)', d.supplierScans > 0 ? Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)+'% of scans include supplier' : 'No supplier data on scans', 'Staff should enter supplier during scanning')}
+              ${complianceCheck(d.supplierScans/Math.max(d.scans.length,1) > 0.5, 'Traceability coverage >50%', Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)+'% of records have supplier data', 'Target 100% for all received goods')}
+              ${complianceCheck(d.supplierScans > 0 && d.lotScans > 0, 'One-step-back chain established', d.supplierScans > 0 && d.lotScans > 0 ? 'Supplier names and lot codes present on scans' : 'Requires supplier names + lot codes on scans', 'Staff should enter both supplier and lot during scanning')}
+              `}
             </div>
           </div>
         </div>
@@ -9452,7 +9563,7 @@ async function loadComplianceData(el) {
   const days365 = new Date(now - 365 * 86400000).toISOString();
   const isUS = _orgRegion === 'us';
 
-  const [scansRes, storesRes, acksRes, drillsRes, orgRes] = await Promise.all([
+  const [scansRes, storesRes, acksRes, drillsRes, orgRes, receivingRes, rrRes] = await Promise.all([
     // 365-day lookback + cap: prevents unbounded query on large orgs.
     // Columns include FSMA 204 KDEs (tlc_source, reference_document) for US scoring.
     sb.from('scans')
@@ -9465,9 +9576,19 @@ async function loadComplianceData(el) {
     sb.from('recall_acknowledgements').select('status, acknowledged_at, created_at, recall_event_id').eq('organisation_id', _orgId),
     sb.from('mock_recall_drills').select('id, started_at, recall_event_id').eq('initiated_by_org', _orgId).gte('started_at', days365).order('started_at', {ascending:false}),
     sb.from('organisations').select('recall_coordinator_name, recall_coordinator_contact, recall_lookback_days').eq('id', _orgId).single(),
+    // Phase 5 (2026-10-07): receiving records drive the US traceability score, and the
+    // newest completed records request drill is the fifth axis. Both tolerate a
+    // missing table (older database) by resolving with empty data.
+    sb.from('receiving_events')
+      .select('id, supplier_id, supplier_name_snapshot, traceability_lot_code, tlc_source_type, quantity, unit_of_measure, reference_document_number, received_at, suppliers(phone,street_address,city,region,postal_code)')
+      .eq('organisation_id', _orgId).eq('status', 'received').gte('received_at', days365).order('received_at', { ascending: false }).limit(2000),
+    sb.from('records_requests').select('minutes_to_produce, produced_at, row_count, notes').eq('organisation_id', _orgId).eq('is_drill', true)
+      .not('produced_at', 'is', null).order('produced_at', { ascending: false }).limit(5),
   ]);
 
   const scans   = scansRes.data   || [];
+  const receiving = receivingRes.data || [];
+  const rrDone  = (rrRes.data || []).find(r => !/cancel/i.test(r.notes || '')) || null;
   const stores  = storesRes.data  || [];
   const acks    = acksRes.data    || [];
   const drills  = drillsRes.data  || [];
@@ -9520,9 +9641,29 @@ async function loadComplianceData(el) {
   //       These three are the "manually-entered" required KDEs beyond lot number.
   //       Average of three coverage rates so each gap is equally penalised.
   //   EU  (178/2002): One-step-back — supplier name is the primary traceability field.
-  const traceScore = scans.length === 0 ? 0 : isUS
-    ? Math.round(((tlcSourceScans + refDocScans + supplierScans) / (3 * scans.length)) * 100)
-    : Math.round((supplierScans / scans.length) * 100);
+  // Phase 5 (2026-10-07), US: traceScore reads receiving_events. A record is
+  // complete when the supplier's location description is complete (name, phone,
+  // street, city, state, zip), it has a lot code or comes from an exempt source,
+  // it has a quantity and unit, and it names a reference document. NO orgs keep
+  // the frozen scan-based formula.
+  const rcvSupplierOk = receiving.filter(r => { const s = r.suppliers || {}; return !!(r.supplier_name_snapshot || r.supplier_id) && !!(s.phone && s.street_address && s.city && s.region && s.postal_code); }).length;
+  const rcvTlcOk      = receiving.filter(r => !!r.traceability_lot_code || r.tlc_source_type === 'not_required_exempt_source').length;
+  const rcvQtyOk      = receiving.filter(r => r.quantity != null && !!r.unit_of_measure).length;
+  const rcvRefOk      = receiving.filter(r => !!r.reference_document_number).length;
+  const rcvComplete   = receiving.filter(r => {
+    const s = r.suppliers || {};
+    return !!(r.supplier_name_snapshot || r.supplier_id) && !!(s.phone && s.street_address && s.city && s.region && s.postal_code)
+      && (!!r.traceability_lot_code || r.tlc_source_type === 'not_required_exempt_source')
+      && r.quantity != null && !!r.unit_of_measure && !!r.reference_document_number;
+  }).length;
+  const traceScore = isUS
+    ? (receiving.length === 0 ? 0 : Math.round((rcvComplete / receiving.length) * 100))
+    : (scans.length === 0 ? 0 : Math.round((supplierScans / scans.length) * 100));
+  // Fifth axis: time to produce records in the newest completed drill. 100 at or
+  // under 60 minutes, falling to 0 at 24 hours; null (left out) when never run.
+  const rrMinutes    = rrDone ? Number(rrDone.minutes_to_produce) : null;
+  const requestScore = rrMinutes == null || isNaN(rrMinutes) ? null
+    : (rrMinutes <= 60 ? 100 : Math.max(0, Math.round(100 * (1 - (rrMinutes - 60) / (1440 - 60)))));
 
   // Coordinator adds to recall readiness score.
   // Reweight after chunk 6C (retailer-only): the +20 that used to be
@@ -9538,7 +9679,8 @@ async function loadComplianceData(el) {
   if (hasCoordinator)         recallScore += 10;
   recallScore = Math.min(100, recallScore);
   const coverageScore = activeStores.length === 0 ? 0 : Math.round((storesActiveRecent / activeStores.length) * 100);
-  const overallScore  = Math.round((docScore + traceScore + recallScore + coverageScore) / 4);
+  const axes          = [docScore, traceScore, recallScore, coverageScore].concat(requestScore == null ? [] : [requestScore]);
+  const overallScore  = Math.round(axes.reduce((a, b) => a + b, 0) / axes.length);
 
   _complianceData = {
     scans, stores,
@@ -9550,12 +9692,13 @@ async function loadComplianceData(el) {
     acks: realAcks, allAcks: acks,
     drills, activeStores,
     recentScans, lotScans, supplierScans, ftlScans,
-    tlcSourceScans, refDocScans,        // FSMA 204 KDE fields
+    tlcSourceScans, refDocScans,        // FSMA 204 KDE fields (legacy scan columns)
+    receiving, rcvComplete, rcvSupplierOk, rcvTlcOk, rcvQtyOk, rcvRefOk, rrDone, requestScore,   // Phase 5
     acksProgressed, acksConfirmed,
     drillInYear, storesActiveRecent, isUS,
     coordinator: org.recall_coordinator_name ? { name: org.recall_coordinator_name, contact: org.recall_coordinator_contact } : null,
     lookbackDays: org.recall_lookback_days || 365,
-    scores: { docScore, traceScore, recallScore, coverageScore, overallScore },
+    scores: { docScore, traceScore, recallScore, coverageScore, requestScore, overallScore },
     assessedAt: new Date().toISOString(),
   };
 }
@@ -10084,53 +10227,58 @@ function renderComplianceCategory(el, step) {
       reg: isUS ? `${_CITATIONS.us.rule}: Traceability Lot Code source, one step forward / one step back` : 'EU Reg. 178/2002 Art. 18 — One step back, one step forward traceability at all stages',
       score: sc.traceScore,
       checks: [
-        {
-          pass: d.supplierScans > 0,
-          label: isUS ? 'Supplier / previous source documented' : 'Supplier name documented (one step back)',
-          detail: d.supplierScans > 0 ? `${d.supplierScans} of ${d.scans.length} records include supplier name (${Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)}%)` : 'No supplier names on record',
-          action: 'Ensure staff enter the supplier or delivery company name during the scan flow',
-        },
-        // US-specific: FSMA 204 KDE — TLC Source
-        ...(isUS ? [{
-          pass: (d.tlcSourceScans||0) > 0,
-          label: 'TLC source documented (FSMA 204 KDE)',
-          detail: (d.tlcSourceScans||0) > 0
-            ? `${d.tlcSourceScans} of ${d.scans.length} records include TLC source (${Math.round((d.tlcSourceScans||0)/Math.max(d.scans.length,1)*100)}%)`
-            : `No TLC source recorded. Required key data element under ${_CITATIONS.us.receivingKde}`,
-          action: 'Staff should enter the TLC source field when scanning products — this is the document or system that assigned the lot code',
-        }] : []),
-        // US-specific: FSMA 204 KDE — Reference document
-        ...(isUS ? [{
-          pass: (d.refDocScans||0) > 0,
-          label: 'Reference document recorded (FSMA 204 KDE)',
-          detail: (d.refDocScans||0) > 0
-            ? `${d.refDocScans} of ${d.scans.length} records include a reference document (${Math.round((d.refDocScans||0)/Math.max(d.scans.length,1)*100)}%)`
-            : `No reference documents on record. Required key data element under ${_CITATIONS.us.receivingKde}`,
-          action: 'Staff should enter the purchase order, invoice, or delivery note number when scanning received goods',
-        }] : []),
-        // EU-specific: coverage threshold check
-        ...(!isUS ? [{
-          pass: d.supplierScans / Math.max(d.scans.length, 1) > 0.5,
-          label: 'Traceability chain coverage above 50%',
-          detail: `${Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)}% of records have supplier data`,
-          action: 'Increase supplier name capture — target 100% for all received goods',
-        }] : []),
-        {
-          pass: isUS
-            ? (d.tlcSourceScans||0) > 0 && (d.refDocScans||0) > 0 && d.supplierScans > 0
-            : d.supplierScans > 0 && d.lotScans > 0,
-          label: isUS ? 'Full FSMA 204 KDE chain established' : 'Full one-step-back chain established',
-          detail: isUS
-            ? ((d.tlcSourceScans||0) > 0 && (d.refDocScans||0) > 0 && d.supplierScans > 0
-                ? 'TLC source, reference documents, and supplier names all present on scans'
-                : 'Requires TLC source + reference documents + supplier names on scans')
-            : (d.supplierScans > 0 && d.lotScans > 0
-                ? 'Both supplier names and lot codes are recorded on scans'
-                : 'Requires both supplier names and lot codes on scans'),
-          action: isUS
-            ? 'Ensure staff complete all KDE fields (supplier, TLC source, reference doc) when scanning'
-            : 'Ensure supplier names and lot codes are recorded on all scans',
-        },
+        // Phase 5 (2026-10-07): US checks read receiving records; NO keeps the frozen scan checks.
+        ...(isUS ? [
+          {
+            pass: d.receiving.length > 0,
+            label: 'Deliveries recorded at receiving',
+            detail: d.receiving.length > 0 ? `${d.receiving.length} receiving record${d.receiving.length !== 1 ? 's' : ''} in the last 12 months, ${d.rcvComplete} with every key data element` : 'No receiving records yet',
+            action: 'Staff switch the scanner to Receiving and scan the case label as the delivery arrives',
+          },
+          {
+            pass: d.receiving.length > 0 && d.rcvSupplierOk === d.receiving.length,
+            label: `Immediate previous source documented (${_CITATIONS.us.receivingKde})`,
+            detail: d.receiving.length > 0 ? `${d.rcvSupplierOk} of ${d.receiving.length} receipts carry the supplier's name, phone, street, city, state and ZIP (${Math.round(d.rcvSupplierOk/d.receiving.length*100)}%)` : 'Nothing to check yet',
+            action: 'Complete supplier addresses in Settings, Suppliers; the amber dot marks the ones still missing fields',
+          },
+          {
+            pass: d.receiving.length > 0 && d.rcvTlcOk === d.receiving.length,
+            label: 'Traceability lot code on every receipt',
+            detail: d.receiving.length > 0 ? `${d.rcvTlcOk} of ${d.receiving.length} receipts have a lot code or come from an exempt source (${Math.round(d.rcvTlcOk/d.receiving.length*100)}%)` : 'Nothing to check yet',
+            action: `Scan the GS1-128 case label or type the lot. Suppliers exempt under ${_CITATIONS.us.exemptions} are marked in Settings so their receipts pass without one`,
+          },
+          {
+            pass: d.receiving.length > 0 && d.rcvRefOk === d.receiving.length,
+            label: 'Reference document on every receipt',
+            detail: d.receiving.length > 0 ? `${d.rcvRefOk} of ${d.receiving.length} receipts name a PO, BOL or invoice (${Math.round(d.rcvRefOk/d.receiving.length*100)}%)` : 'Nothing to check yet',
+            action: 'Enter the document number once per delivery; the scanner keeps it for the next lines',
+          },
+          {
+            pass: d.receiving.length > 0 && d.rcvQtyOk === d.receiving.length,
+            label: 'Quantity and unit on every receipt',
+            detail: d.receiving.length > 0 ? `${d.rcvQtyOk} of ${d.receiving.length} receipts have both` : 'Nothing to check yet',
+            action: 'The receiving form requires both; this fails only for imported rows',
+          },
+        ] : [
+          {
+            pass: d.supplierScans > 0,
+            label: 'Supplier name documented (one step back)',
+            detail: d.supplierScans > 0 ? `${d.supplierScans} of ${d.scans.length} records include supplier name (${Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)}%)` : 'No supplier names on record',
+            action: 'Ensure staff enter the supplier or delivery company name during the scan flow',
+          },
+          {
+            pass: d.supplierScans / Math.max(d.scans.length, 1) > 0.5,
+            label: 'Traceability chain coverage above 50%',
+            detail: `${Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)}% of records have supplier data`,
+            action: 'Increase supplier name capture; target 100% for all received goods',
+          },
+          {
+            pass: d.supplierScans > 0 && d.lotScans > 0,
+            label: 'Full one-step-back chain established',
+            detail: d.supplierScans > 0 && d.lotScans > 0 ? 'Both supplier names and lot codes are recorded on scans' : 'Requires both supplier names and lot codes on scans',
+            action: 'Ensure supplier names and lot codes are recorded on all scans',
+          },
+        ]),
       ],
     },
     {
@@ -10264,13 +10412,15 @@ function renderComplianceResults(el) {
     { label:'Traceability chain',score:sc.traceScore,    icon:'🔗' },
     { label:'Recall readiness',  score:sc.recallScore,   icon:'🚨' },
     { label:'Operational coverage',score:sc.coverageScore, icon:'🏪' },
+    // Phase 5 (2026-10-07): fifth axis when a records request drill has been run
+    ...(sc.requestScore == null ? [] : [{ label:'Records request time', score:sc.requestScore, icon:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg>' }]),
   ];
 
   // Priority actions — worst category first
   const sortedCats = [...catScores].sort((a,b) => a.score - b.score);
   const totalGaps = d.scans.length === 0 ? 4 : [
     d.lotScans/Math.max(d.scans.length,1) < 0.7,
-    d.supplierScans === 0,
+    isUS ? d.rcvComplete < d.receiving.length || d.receiving.length === 0 : d.supplierScans === 0,
     !d.drillInYear,
     d.activeStores.length > 0 && d.storesActiveRecent/d.activeStores.length < 0.8,
   ].filter(Boolean).length;
@@ -10319,7 +10469,9 @@ function renderComplianceResults(el) {
         <div style="padding:0 18px;">
           ${[
             !d.drillInYear       && { step:3, label:'Run a mock recall drill', detail:'Required annually for recall readiness certification', urgency:'high' },
-            d.supplierScans===0  && { step:2, label:'Start recording supplier names on scans', detail:'Required for one step back traceability under EU 178/2002 and FSMA 204', urgency:'med' },
+            (isUS ? d.receiving.length===0 : d.supplierScans===0) && { step:2, label: isUS ? 'Record deliveries in the scanner\'s Receiving mode' : 'Start recording supplier names on scans', detail: isUS ? `Receiving records carry the key data elements in ${_CITATIONS.us.receivingKde}` : 'Required for one step back traceability under EU 178/2002', urgency:'med' },
+            isUS && d.receiving.length>0 && d.rcvComplete<d.receiving.length && { step:2, label:'Complete the key data elements on receipts', detail:`${d.receiving.length - d.rcvComplete} of ${d.receiving.length} receipts are missing supplier location, lot code, unit or reference document`, urgency:'med' },
+            isUS && d.requestScore==null && { step:3, label:'Run a timed records request drill', detail:`See how long producing the records takes today (${_CITATIONS.us.availability}: 24 hours)`, urgency:'med' },
             d.lotScans===0       && { step:1, label:'Capture lot codes on all scans', detail:'Key Data Element required for FSMA 204 compliance', urgency:'med' },
             d.activeStores.length>0 && d.storesActiveRecent<d.activeStores.length && { step:4, label:'Investigate dark stores', detail:`${d.activeStores.length-d.storesActiveRecent} store${d.activeStores.length-d.storesActiveRecent!==1?'s':''} with no recent scanning activity`, urgency:'low' },
           ].filter(Boolean).map(a => `
@@ -10768,7 +10920,7 @@ ${timelineRows.map(row => `
   <tbody>
     <tr><td style="font-weight:600;width:220px;">Framework</td><td>${refReg}</td></tr>
     <tr><td style="font-weight:600;">Record retention required</td><td>${isUS ? `Minimum 2 years, FDA ${_CITATIONS.us.retention}` : 'Shelf life + 6 months minimum — EU Reg. 178/2002 Art. 17'}</td></tr>
-    <tr><td style="font-weight:600;">Notification obligation</td><td>${isUS ? `None for a retail store. The recalling firm notifies the FDA (${_CITATIONS.us.recallNotify}). Pull, hold and document.` : 'Mattilsynet — immediate notification required (umiddelbart)'}</td></tr>
+    <tr><td style="font-weight:600;">Notification obligation</td><td>${isUS ? (_orgRegisteredFacility ? `Your registered facility reports to the Reportable Food Registry within 24 hours of determining that a food is reportable (FD&C Act section 417). Stores pull, hold and document; the recalling firm notifies the FDA (${_CITATIONS.us.recallNotify}).` : `None for a retail store. The recalling firm notifies the FDA (${_CITATIONS.us.recallNotify}). Pull, hold and document.`) : 'Mattilsynet: immediate notification required (umiddelbart)'}</td></tr>
     <tr><td style="font-weight:600;">Response chain verified</td><td>${allDone ? '✓ All stores confirmed — complete' : `${confirmed.length} of ${acks.length} stores confirmed`}</td></tr>
     <tr><td style="font-weight:600;">Document reference</td><td style="font-family:monospace;">${docRef}</td></tr>
   </tbody>
@@ -10898,9 +11050,11 @@ async function generateComplianceReport() {
     const today = new Date().toLocaleDateString(_dashLocale(),{day:'numeric',month:'long',year:'numeric'});
     const catScores = [
       { label:'Record keeping',    score:sc.docScore,      detail:`${d.lotScans}/${d.scans.length} scans with lot codes` },
-      { label:'Traceability chain',score:sc.traceScore,    detail:`${d.supplierScans}/${d.scans.length} scans with supplier data` },
+      { label:'Traceability chain',score:sc.traceScore,    detail: isUS ? `${d.rcvComplete}/${d.receiving.length} receiving records with every key data element` : `${d.supplierScans}/${d.scans.length} scans with supplier data` },
       { label:'Recall readiness',  score:sc.recallScore,   detail:`${d.drills.length} drill${d.drills.length!==1?'s':''} · ${d.acksConfirmed} confirmed responses` },
       { label:'Operational coverage',score:sc.coverageScore, detail:`${d.storesActiveRecent}/${d.activeStores.length} stores active (30 days)` },
+      // Phase 5 (2026-10-07): fifth axis when a records request drill exists
+      ...(sc.requestScore == null ? [] : [{ label:'Records request time', score:sc.requestScore, detail:`${_rrFmtMinutes(Number(d.rrDone.minutes_to_produce))} to produce ${d.rrDone.row_count ?? 0} rows` }]),
     ];
 
     const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Compliance Report — ${esc(org?.name||_orgName)}</title>
@@ -10944,7 +11098,14 @@ async function generateComplianceReport() {
     <div class="check"><div class="check-icon ${d.scans.length>0?'pass':'fail'}">${d.scans.length>0?'✓':'✗'}</div><div><strong>Scan records on file</strong><br><span style="color:#666;">${d.scans.length} product records</span></div></div>
     <div class="check"><div class="check-icon ${d.lotScans>0?'pass':'fail'}">${d.lotScans>0?'✓':'✗'}</div><div><strong>Lot codes captured</strong><br><span style="color:#666;">${d.lotScans} of ${d.scans.length} scans (${Math.round(d.lotScans/Math.max(d.scans.length,1)*100)}%)</span></div></div>
     <h2>Traceability chain</h2>
+    ${isUS ? `
+    <div class="check"><div class="check-icon ${d.receiving.length>0?'pass':'fail'}">${d.receiving.length>0?'✓':'✗'}</div><div><strong>Deliveries recorded at receiving</strong><br><span style="color:#666;">${d.receiving.length} receiving record${d.receiving.length!==1?'s':''} in 12 months</span></div></div>
+    <div class="check"><div class="check-icon ${d.receiving.length>0&&d.rcvSupplierOk===d.receiving.length?'pass':'fail'}">${d.receiving.length>0&&d.rcvSupplierOk===d.receiving.length?'✓':'✗'}</div><div><strong>Immediate previous source location complete</strong><br><span style="color:#666;">${d.rcvSupplierOk} of ${d.receiving.length} receipts (${_CITATIONS.us.receivingKde})</span></div></div>
+    <div class="check"><div class="check-icon ${d.receiving.length>0&&d.rcvTlcOk===d.receiving.length?'pass':'fail'}">${d.receiving.length>0&&d.rcvTlcOk===d.receiving.length?'✓':'✗'}</div><div><strong>Traceability lot code or exempt source on every receipt</strong><br><span style="color:#666;">${d.rcvTlcOk} of ${d.receiving.length} receipts</span></div></div>
+    <div class="check"><div class="check-icon ${d.receiving.length>0&&d.rcvRefOk===d.receiving.length?'pass':'fail'}">${d.receiving.length>0&&d.rcvRefOk===d.receiving.length?'✓':'✗'}</div><div><strong>Reference document on every receipt</strong><br><span style="color:#666;">${d.rcvRefOk} of ${d.receiving.length} receipts</span></div></div>
+    ` : `
     <div class="check"><div class="check-icon ${d.supplierScans>0?'pass':'fail'}">${d.supplierScans>0?'✓':'✗'}</div><div><strong>Supplier names documented</strong><br><span style="color:#666;">${d.supplierScans} of ${d.scans.length} records (${Math.round(d.supplierScans/Math.max(d.scans.length,1)*100)}%)</span></div></div>
+    `}
     <h2>Recall readiness</h2>
     <div class="check"><div class="check-icon ${d.drillInYear?'pass':'fail'}">${d.drillInYear?'✓':'✗'}</div><div><strong>Mock recall drill (12 months)</strong><br><span style="color:#666;">${d.drills.length} drill${d.drills.length!==1?'s':''} on record</span></div></div>
     <div class="check"><div class="check-icon ${d.acksProgressed>0?'pass':'fail'}">${d.acksProgressed>0?'✓':'✗'}</div><div><strong>Recall response documented</strong><br><span style="color:#666;">${d.acksProgressed} responses progressed</span></div></div>
@@ -12477,6 +12638,21 @@ async function renderSettings() {
               <input id="org-name-input" type="text" value="${esc(org?.name||_orgName)}" /></div>
             <div class="field"><label>Contact email</label>
               <input id="org-email-input" type="email" value="${esc(org?.contact_email||'')}" placeholder="e.g. safety@yourcompany.com" /></div>
+            ${_orgRegion === 'us' ? `
+            <!-- Phase 5 (2026-10-07): FSMA 204 applicability. Three answers stored on
+                 organisations (migration 024); fsma_applicability is computed on save. -->
+            <div class="field"><label>FSMA 204 applicability</label>
+              <select id="org-sales-band" ${isAdmin ? '' : 'disabled'} onchange="_orgApplicabilityPreview()">
+                <option value="">Annual food sales, all stores: not answered</option>
+                ${_FSMA_APPLICABILITY.bands.map(b => `<option value="${b.key}" ${(org?.annual_food_sales_band || '') === b.key ? 'selected' : ''}>Annual food sales: ${b.label}</option>`).join('')}
+              </select>
+              <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">
+                <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:12px;color:var(--text);margin:0;"><input type="checkbox" id="org-registered-facility" ${org?.operates_registered_facility ? 'checked' : ''} ${isAdmin ? '' : 'disabled'} style="width:auto;height:auto;flex:0 0 auto;padding:0;margin:2px 0 0;appearance:auto;accent-color:var(--accent);"><span>We operate a registered warehouse, distribution center or central kitchen</span></label>
+                <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:12px;color:var(--text);margin:0;"><input type="checkbox" id="org-distribution-center" ${org?.operates_distribution_center ? 'checked' : ''} ${isAdmin ? '' : 'disabled'} style="width:auto;height:auto;flex:0 0 auto;padding:0;margin:2px 0 0;appearance:auto;accent-color:var(--accent);"><span>We ship listed foods from our own distribution center to our stores</span></label>
+              </div>
+              <div id="org-applicability-copy" style="font-size:11px;color:var(--text);margin-top:8px;line-height:1.6;padding:9px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;">${esc(fsmaApplicabilityCopy(fsmaApplicabilityFor(org?.annual_food_sales_band)))}</div>
+              <div style="font-size:10px;color:var(--muted);margin-top:6px;line-height:1.5;">${esc(_FSMA_APPLICABILITY.thresholdNote)}</div>
+            </div>` : ''}
             <!-- The org region dropdown was removed 2026-09-29 (US-only decision).
                  organisations.region stays as a column and keeps its stored
                  value; saveOrgSettings() writes it back unchanged. -->
@@ -13335,6 +13511,12 @@ async function _supplierImportRow(row) {
   return {};
 }
 
+// Phase 5: live preview of the applicability sentence under the Settings select.
+function _orgApplicabilityPreview() {
+  const el = document.getElementById('org-applicability-copy'); const sel = document.getElementById('org-sales-band');
+  if (el && sel) el.textContent = fsmaApplicabilityCopy(fsmaApplicabilityFor(sel.value));
+}
+
 async function saveOrgSettings() {
   if (_userRole !== 'corp_admin') return;  // safety guard — UI is also disabled
   const name   = document.getElementById('org-name-input').value.trim();
@@ -13353,25 +13535,31 @@ async function saveOrgSettings() {
   btn.disabled = true;
   btn.innerHTML = '<div class="spinner" style="border-top-color:var(--accent-on-primary);"></div> Saving…';
 
-  // Try full update including recall_source. If 012 hasn't been run yet,
-  // retry without it so the other fields still save cleanly.
-  let { error } = await sb.from('organisations').update({
-    name,
-    contact_email: email || null,
-    region,
-    recall_source: recallSource,
-  }).eq('id', _orgId);
-
-  let recallSourcePending = false;
-  if (error && /column .*recall_source.* does not exist/i.test(error.message || '')) {
-    recallSourcePending = true;
-    const retry = await sb.from('organisations').update({
-      name,
-      contact_email: email || null,
-      region,
-    }).eq('id', _orgId);
-    error = retry.error;
+  // Phase 5 (2026-10-07): the applicability answers ride along (migration 024).
+  const bandEl = document.getElementById('org-sales-band');
+  const facEl  = document.getElementById('org-registered-facility');
+  const dcEl   = document.getElementById('org-distribution-center');
+  const payload = { name, contact_email: email || null, region, recall_source: recallSource };
+  if (bandEl) {
+    payload.annual_food_sales_band        = bandEl.value || null;
+    payload.fsma_applicability            = bandEl.value ? fsmaApplicabilityFor(bandEl.value) : null;
+    payload.operates_registered_facility  = !!facEl?.checked;
+    payload.operates_distribution_center  = !!dcEl?.checked;
   }
+  // Columns from later migrations may be missing on an older database. Drop the
+  // column the error names and retry so the rest still saves (recall_source needs
+  // migration 012; the applicability columns need 024).
+  let error = null;
+  const pending = [];
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const res = await sb.from('organisations').update(payload).eq('id', _orgId);
+    error = res.error;
+    const col = _missingColumnFrom(error);
+    if (!col || !(col in payload)) break;
+    delete payload[col]; pending.push(col);
+  }
+  const recallSourcePending   = pending.includes('recall_source');
+  const applicabilityPending  = pending.some(c => c !== 'recall_source');
 
   if (error) {
     msgEl.textContent = error.message || 'Could not save settings.';
@@ -13407,8 +13595,15 @@ async function saveOrgSettings() {
   _orgRegion = region;
   _refreshTopbarSub();
 
-  msgEl.textContent = recallSourcePending
-    ? '✓ Saved (recall feeds need migration 012; the rest is live now).'
+  if (bandEl && !applicabilityPending) {
+    _orgSalesBand          = bandEl.value || null;
+    _orgApplicability      = fsmaApplicabilityFor(_orgSalesBand);
+    _orgRegisteredFacility = !!facEl?.checked;
+    _orgDistributionCenter = !!dcEl?.checked;
+  }
+  const pendingNotes = [recallSourcePending && 'recall feeds need migration 012', applicabilityPending && 'applicability needs migration 024'].filter(Boolean);
+  msgEl.textContent = pendingNotes.length
+    ? '✓ Saved (' + pendingNotes.join('; ') + '; the rest is live now).'
     : '✓ Settings saved.';
   msgEl.style.cssText = 'display:block;background:rgba(var(--accent-rgb),0.1);border:1px solid rgba(var(--accent-rgb),0.3);color:var(--accent);font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;';
   btn.disabled = false;

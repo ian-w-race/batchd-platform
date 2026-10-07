@@ -116,7 +116,7 @@ Live application surfaces:
   the first design partner installs. The scanner's own dashboard
   buttons (4798, 4904, 5485) point at app.batchdapp.com/dashboard.html,
   which 301s to corporate.
-- dashboard.html (about 16,700 lines after Phase 4, 2026-10-07): corporate retailer
+- dashboard.html (about 16,900 lines after Phase 5, 2026-10-07): corporate retailer
   dashboard. Served at the root of corporate.batchdapp.com; requests
   for /dashboard.html on the scanner domains 301 to corporate.
 - join.html (626 lines, 2026-09-13): invitation acceptance. Reads the
@@ -134,7 +134,7 @@ Live application surfaces:
   needs uploading. Known polish items on this page: the prefilled block
   should render read-only when the inviter supplied the details, and the
   phone placeholder is a hardcoded +47 (jurisdiction rule).
-- signup.html (1,018 lines, 2026-09-09): self-serve signup. See
+- signup.html (about 1,080 lines after Phase 5, 2026-10-07): self-serve signup. See
   "Self-serve signup" below. Reachable at /signup.
 - admin.html (942 lines, 2026-09-09): internal Batch'd platform admin.
   Gated on organisation_members.is_batched_admin. Lists organisations,
@@ -565,6 +565,13 @@ Supabase SQL editor for lurxucdmrugikdlvvebc run CHECK_MIGRATIONS.sql,
 then 022, 023, 024, 025, 026 in order, then docs/verify-022-026.sql.
 products.is_ftl and ftl_category exist regardless: migration 004 added
 them, so a 200 on those two does not prove 025 ran.
+RESOLVED 2026-10-07: Ian ran 022 to 026 on lurxucdmrugikdlvvebc and
+docs/verify-022-026.sql returned PASS on every row. An outside probe the
+same day confirms it: all five tables now answer 42501 "permission denied
+for table" to the anon key (exists, locked), the 023, 024 and 025 columns
+resolve, and the receiving_events to suppliers embed parses. Phases 2 to
+4 are therefore live against a database that has their tables; the
+smoke checks (SMOKE.md 10 to 13 and 17) are still owed.
 netlify.toml also gained forced 404s for /SMOKE.md and
 /CHECK_MIGRATIONS.sql on 2026-10-03; SMOKE.md was being served publicly.
 
@@ -779,6 +786,88 @@ the tables are not there yet).
   by the plan), the readiness-score axis for records-request time (Phase
   5), the Reports panel's older `fsma` report key (untouched, still
   scan-based), and any NO branch (US-only decision).
+
+## Phase 5 of the FSMA 204 handoff: applicability, exemption copy, readiness (built 2026-10-07)
+dashboard.html, index.html and signup.html. Verified: every inline script
+block passes node --check (dashboard 6, scanner 4, signup 2); a Node test
+file drives loadComplianceData through a stubbed client (receiving-based
+trace score, the five-axis mean, the records-request scaling at 30 min,
+12 h, 24 h and never, cancelled drills ignored, missing table, NO
+fallback) and checks the applicability helpers and the missing-column
+parser; the Compliance panel and the Settings card render in a local
+preview. Not verified against the live database.
+- Applicability constant `_FSMA_APPLICABILITY` (dashboard, right after
+  `_CITATIONS`): five sales bands (under_250k exempt; 250k_to_1m
+  covered_no_spreadsheet; 1m_to_10m and over_10m covered; undisclosed
+  unknown), labels, the four copy variants from the handoff, the closing
+  sentence "Batch'd supports FSMA 204 record keeping. It does not by
+  itself constitute compliance.", and `thresholdNote`. The dollar figures
+  are the handoff's and must be checked against eCFR (21 CFR 1.1305 and
+  1.1455(c)(3) are inflation-adjusted) before a paying customer sees
+  them; they live in this one constant. signup.html carries `_FSMA_BANDS`
+  and `_FSMA_COPY` with the same values; index.html carries
+  `window._FSMA_APPLICABILITY_COPY`. Keep the three in step.
+- Sign-in loads annual_food_sales_band, operates_registered_facility,
+  operates_distribution_center and fsma_applicability into
+  `_orgSalesBand`, `_orgRegisteredFacility`, `_orgDistributionCenter`
+  and `_orgApplicability` (dashboard) and `window._orgApplicability`,
+  `window._orgRegisteredFacility` (scanner), with a fallback select when
+  the 024 columns are missing. `_missingColumnFrom(error)` reads the
+  column name out of a PostgREST PGRST204 (write payload) or a Postgres
+  42703 (select) message; saveOrgSettings uses it to drop missing columns
+  and retry, which also replaced the old recall_source-only retry.
+- Settings, Organisation card (US orgs): "FSMA 204 applicability" field
+  with the sales-band select, two checkboxes (registered facility,
+  distribution center), a live copy preview (`_orgApplicabilityPreview`)
+  and the threshold note. saveOrgSettings writes the three answers plus
+  the computed fsma_applicability and updates the globals.
+- signup.html step 3 (retailers): the same three questions in
+  `#applicability-section`; submitFinal writes them best-effort after the
+  coordinator update.
+- Reportable Food Registry gate: `rfrCopy()` returns
+  `_CITATIONS.us.rfrFacility` (a registered facility reports within 24
+  hours of determining a food is reportable, FD&C Act section 417) when
+  the org operates a registered facility, else the Phase 0 retail
+  sentence. Used by the Compliance authority card and the compliance
+  report's "Notification obligation" row. The scanner swaps the Take
+  Action sheet text (`#recall-fda-text`) at sign-in for the same reason.
+  The other "recalling firm notifies the FDA" sentences stay as they are;
+  they are true either way.
+- Overview readiness (`_renderOverviewLegacy`): `shipScore` retired.
+  `receivingScore` = share of on-shelf FTL scans in the last 90 days that
+  link to a receiving record; with no FTL shelf scans in the window,
+  deliveries recorded in the window count as 100, otherwise 0. Readiness
+  = mean(ackScore, receivingScore, scanScore); the ring row reads
+  "Deliveries recorded". The 67 percent cap is gone. The shipments and
+  trading_partners queries in that function remain for the exposure
+  tiles; nothing else changed there.
+- Getting started: six steps (stores, first supplier, first delivery,
+  first scan, first drill, coordinator) in both renderOnboarding and
+  checkOnboardingStatus. The two new steps query suppliers and
+  receiving_events.
+- Compliance panel (`loadComplianceData`): US traceScore is the share of
+  receiving records in the last 365 days that are complete (supplier
+  location description complete, lot code or exempt source, quantity
+  and unit, reference document); the per-field counts `rcvSupplierOk`,
+  `rcvTlcOk`, `rcvQtyOk`, `rcvRefOk` and `receiving` are exposed on
+  `_complianceData`. NO orgs keep the frozen scan formula. Fifth axis
+  `requestScore` from the newest completed, non-cancelled records request
+  drill: 100 at or under 60 minutes, linear to 0 at 24 hours, null when
+  never run (then the overall mean uses four axes). The dashboard shows
+  an applicability banner ("What applies to you"), receiving-based gaps
+  that point at Receiving mode and Settings, Suppliers, a fifth
+  "Records request time" card (scrolls to the drill card; "Not run"
+  until a drill exists), and receiving-based live checks. The detail
+  step 2, the results page and the printable compliance report read the
+  same fields. The old scan-column KDE checks (tlc_source,
+  reference_document on scans) are gone from US views.
+- Scanner FSMA tab: `_fsmaApplicabilityBanner()` prepends the
+  applicability sentence when the org has answered; the tab's own score
+  (`renderFsmaReadiness`) still reads legacy scan fields and is left for
+  a later pass.
+- Not in Phase 5: moving the scanner's FSMA readiness score to receiving
+  data; a Shipping sheet or CTE for distribution centers (the answer is
+  stored and read only by the plan generator).
 
 ## Recall counting rules (platform-wide)
 A recall requires action only when ALL THREE are true:

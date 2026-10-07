@@ -69,3 +69,9 @@ not repeated here.
     incomplete)". Manager Receiving tab, Export CSV: the supplier_phone,
     supplier_street, supplier_city, supplier_state and supplier_zip
     columns are filled for a receipt from that supplier.
+18. Dashboard, Settings, Organization card: set annual food sales to
+    "Under $250,000" and save. Compliance shows "Likely exempt" and the
+    exempt sentence; the Overview readiness ring reads "Deliveries
+    recorded" and can reach 100 percent. Tick the registered-facility
+    box and save: the FDA authority card on Compliance now names the
+    Reportable Food Registry duty of a registered facility.

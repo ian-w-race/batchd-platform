@@ -510,6 +510,27 @@
           </div>
         </div>
 
+        <!-- Phase 5 (2026-10-07): FSMA 204 applicability. Stored on organisations
+             (migration 024); fsma_applicability is computed from the sales band. -->
+        <div id="applicability-section">
+          <div class="field">
+            <label>Annual food sales, all stores <span style="color:var(--muted);font-size:9px;font-weight:400;margin-left:4px;">decides which FSMA 204 duties apply</span></label>
+            <select id="sales-band" onchange="updateApplicabilityCopy()">
+              <option value="">Select a band</option>
+              <option value="under_250k">Under $250,000</option>
+              <option value="250k_to_1m">$250,000 to $1 million</option>
+              <option value="1m_to_10m">$1 million to $10 million</option>
+              <option value="over_10m">Over $10 million</option>
+              <option value="undisclosed">Prefer not to say</option>
+            </select>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;">
+            <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:12px;color:var(--text);text-transform:none;letter-spacing:0;"><input type="checkbox" id="registered-facility" style="margin-top:2px;"><span>We operate a registered warehouse, distribution center or central kitchen</span></label>
+            <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:12px;color:var(--text);text-transform:none;letter-spacing:0;"><input type="checkbox" id="distribution-center" style="margin-top:2px;"><span>We ship listed foods from our own distribution center to our stores</span></label>
+          </div>
+          <div id="applicability-copy" style="display:none;font-size:11px;color:var(--text);line-height:1.6;padding:9px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;margin-bottom:12px;"></div>
+        </div>
+
         <!-- Manufacturer type -->
         <div id="mfr-type-section" style="display:none;">
           <div class="field">
@@ -600,6 +621,7 @@ function selectType(type) {
   document.getElementById('final-sub').textContent = 'Last couple of details.';
   document.getElementById('role-section').style.display = 'block';
   document.getElementById('coordinator-section').style.display = 'block';
+  document.getElementById('applicability-section').style.display = 'block';
   document.getElementById('mfr-type-section').style.display = 'none';
 }
 
@@ -797,6 +819,25 @@ async function submitOrg() {
   goToStep('final');
 }
 
+// Phase 5 (2026-10-07): FSMA 204 applicability from the sales band. Same bands and
+// copy as dashboard.html's _FSMA_APPLICABILITY; keep the two in step. Thresholds
+// follow 21 CFR 1.1305 and 1.1455(c)(3) and are inflation-adjusted by the FDA.
+const _FSMA_BANDS = { under_250k: 'exempt', '250k_to_1m': 'covered_no_spreadsheet', '1m_to_10m': 'covered', over_10m: 'covered', undisclosed: 'unknown' };
+const _FSMA_COPY = {
+  exempt: "Based on your sales band, your store is likely exempt from the FSMA 204 record-keeping requirements. Lot-level receiving records still cut recall time and protect you if a supplier's records are wrong, which is why Batch'd keeps them anyway.",
+  covered_no_spreadsheet: "Your store is covered by FSMA 204 and must keep receiving records and a traceability plan, but is not required to produce the electronic sortable spreadsheet. Batch'd produces it anyway so an FDA request is a one-click answer.",
+  covered: "Your store is covered by FSMA 204. Receiving records, a traceability plan and the ability to produce a sortable spreadsheet within 24 hours are required from July 20, 2028.",
+  unknown: "You can answer this later in Settings; Batch'd will then say which FSMA 204 requirements apply to your stores.",
+};
+const _FSMA_CLOSING = "Batch'd supports FSMA 204 record keeping. It does not by itself constitute compliance.";
+function updateApplicabilityCopy() {
+  const band = document.getElementById('sales-band')?.value || '';
+  const el = document.getElementById('applicability-copy'); if (!el) return;
+  if (!band) { el.style.display = 'none'; return; }
+  el.textContent = (_FSMA_COPY[_FSMA_BANDS[band] || 'unknown']) + ' ' + _FSMA_CLOSING;
+  el.style.display = 'block';
+}
+
 // ── Step 3: Final details ──────────────────────────────────────
 async function submitFinal() {
   clearMsg('final');
@@ -820,6 +861,18 @@ async function submitFinal() {
         recall_coordinator_contact: coordContact,
       }).eq('id', _orgId);
     }
+
+    // Phase 5 (2026-10-07): applicability answers. Best effort; an older database
+    // without migration 024 answers with a missing-column error that is ignored.
+    const band = document.getElementById('sales-band')?.value || null;
+    try {
+      await sb.from('organisations').update({
+        annual_food_sales_band:       band,
+        fsma_applicability:           band ? (_FSMA_BANDS[band] || 'unknown') : null,
+        operates_registered_facility: !!document.getElementById('registered-facility')?.checked,
+        operates_distribution_center: !!document.getElementById('distribution-center')?.checked,
+      }).eq('id', _orgId);
+    } catch (_) { /* best effort */ }
 
     // Update membership role if store_manager was chosen
     if (role !== 'corp_admin') {
