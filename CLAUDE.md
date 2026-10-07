@@ -1045,13 +1045,12 @@ dashboard.html only. The handoff's Phase 8 deliverable is one Settings
 toggle for organisations.network_benchmarks_opt_in (migration 024), default
 off, with its exact copy, and an explicit instruction not to build reads,
 aggregation or the network_benchmarks table yet. That is what shipped:
-- `_NETWORK_OPTIN_COPY` holds the handoff's sentence verbatim and
-  `_NETWORK_OPTIN_REVIEWED` (false) hides the toggle until Elliott has
-  reviewed the copy, which the handoff's section 10 requires before it
-  appears in Settings. Flip the constant to true after the review; the
-  toggle then renders in the Organisation card below "Where you start",
-  and saveOrgSettings writes the flag (corp_admin only, with the usual
-  missing-column retry).
+- `_NETWORK_OPTIN_COPY` holds the handoff's sentence verbatim.
+  `_NETWORK_OPTIN_REVIEWED` gated the toggle until Elliott had reviewed
+  the copy, which the handoff's section 10 requires; Elliott approved it
+  on 2026-10-07 and the constant is true, so the toggle renders in the
+  Organisation card below "Where you start" and saveOrgSettings writes
+  the flag (corp_admin only, with the usual missing-column retry).
 - Nothing reads the flag. When aggregation comes it must run in a
   scheduled Netlify function with the service key, write only
   pre-aggregated rows (metric, period, n_orgs, p25, p50, p75) to a
@@ -1076,8 +1075,6 @@ handoff's section 10 and from the phase notes above:
   (Phase 6).
 - One sample delivery file from a real wholesaler, with permission, to
   exercise the import against real headers (Phase 7).
-- Elliott's review of the network opt-in copy, then flip
-  `_NETWORK_OPTIN_REVIEWED` (Phase 8).
 - The live smoke checks: SMOKE.md 10 to 13 and 17 to 20 have not been
   run on the deployed apps by anyone. Everything in Phases 2 to 7 was
   verified only by syntax checks, Node tests with stubbed clients and

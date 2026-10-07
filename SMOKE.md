@@ -91,7 +91,6 @@ not repeated here.
     The line moves to Received with source File, and the dashboard
     export carries "From wholesaler delivery file" in Notes. Needs
     migration 029 for a floor-staff account.
-21. After Elliott reviews the network opt-in copy and
-    _NETWORK_OPTIN_REVIEWED is set to true: Settings, Organization card
-    shows "Network benchmarks" unchecked; tick it, save, reload; it is
+21. Settings, Organization card shows "Network benchmarks" unchecked
+    (Elliott approved the copy 2026-10-07); tick it, save, reload; it is
     still ticked. Untick, save; it is off. Nothing else changes anywhere.
