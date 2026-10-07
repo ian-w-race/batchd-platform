@@ -101,6 +101,11 @@ WITH checks AS (
   UNION ALL SELECT '026 records requests + traceability plans',
          EXISTS (SELECT 1 FROM information_schema.tables
                  WHERE table_schema='public' AND table_name='traceability_plans')
+  UNION ALL SELECT '028 drill scenario text + store external codes',
+         EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_schema='public' AND table_name='mock_recall_drills' AND column_name='scenario_text')
+         AND EXISTS (SELECT 1 FROM information_schema.columns
+                     WHERE table_schema='public' AND table_name='stores' AND column_name='external_code')
 )
 SELECT
   migration,
@@ -129,7 +134,8 @@ ORDER BY migration;
 -- ══════════════════════════════════════════════════════════════════════
 -- SAFE to re-run: 002, 003, 006, 007, 008, 009, 010, 011, 012, 013,
 --                 014, 015, 016, 017, 018, 019, 020, 020a, 021,
---                 022, 023, 024, 025, 026 (Phase 1 of the FSMA 204 handoff)
+--                 022, 023, 024, 025, 026 (Phase 1 of the FSMA 204 handoff),
+--                 028 (Phases 6 and 7: two columns)
 --   (idempotent: ADD COLUMN IF NOT EXISTS, CREATE OR REPLACE FUNCTION,
 --    DROP ... IF EXISTS before each CREATE POLICY / CREATE TRIGGER;
 --    020, 020a and 021 each run inside one BEGIN/COMMIT)
