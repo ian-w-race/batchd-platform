@@ -104,7 +104,7 @@ the file's modification time, not a commit date. Files dated
 2026-04-30 22:48 have not changed since the repo was downloaded.
 
 Live application surfaces:
-- index.html (about 22,800 lines after Phase 2, 2026-10-03): staff scanning app (PWA).
+- index.html (about 22,950 lines after Phase 6, 2026-10-07): staff scanning app (PWA).
   Canonical URL is https://batchd-app.netlify.app/ (confirmed by Ian
   2026-09-13): every scanner link in dashboard.html points there, the
   installed PWAs were added from there, and the manifest start_url is
@@ -116,7 +116,7 @@ Live application surfaces:
   the first design partner installs. The scanner's own dashboard
   buttons (4798, 4904, 5485) point at app.batchdapp.com/dashboard.html,
   which 301s to corporate.
-- dashboard.html (about 16,900 lines after Phase 5, 2026-10-07): corporate retailer
+- dashboard.html (about 17,200 lines after Phase 6, 2026-10-07): corporate retailer
   dashboard. Served at the root of corporate.batchdapp.com; requests
   for /dashboard.html on the scanner domains 301 to corporate.
 - join.html (626 lines, 2026-09-13): invitation acceptance. Reads the
@@ -177,8 +177,8 @@ Retired stubs (80 lines each, 2026-05-05):
 
 Not application files: README.md (2 lines), SCHEMA.md, SECRETS.md,
 ROADMAP-2026-08.md, CLAUDE_DESIGN_BRIEF.md, .ui-polish-checklist.md,
-docs/ARCHITECTURE.md, migrations/ (27 SQL files, 001 to 026 with 020a, plus
-CHECK_MIGRATIONS.sql), assets/, fonts/, netlify/functions/ (18
+docs/ARCHITECTURE.md, migrations/ (28 SQL files, 001 to 028 with 020a and
+without 027, plus CHECK_MIGRATIONS.sql), assets/, fonts/, netlify/functions/ (18
 functions), netlify.toml, package.json (pins @supabase/supabase-js
 2.112.1 for the functions).
 
@@ -868,6 +868,101 @@ preview. Not verified against the live database.
 - Not in Phase 5: moving the scanner's FSMA readiness score to receiving
   data; a Shipping sheet or CTE for distribution centers (the answer is
   stored and read only by the plan generator).
+
+## Phase 6 of the FSMA 204 handoff: the category wedge (built 2026-10-07)
+dashboard.html, index.html, signup.html, migration 028. Verified: every
+inline script block passes node --check (dashboard 6, scanner 4, signup
+2); a Node test file checks the kits, focus matching, drill templates,
+checklist tests and supplier seeding with stubs; another drives the
+repaired FTL detector through 29 product names including the known
+misfires; the Compliance panel, the Settings card and the drill launcher
+render in a local preview. Not verified against the live database.
+- FOUND AND FIXED on the way: every pattern in the scanner's
+  FTL_CATEGORIES table contained literal backspace characters (0x08)
+  where `\b` word boundaries were meant (55 of them across all 17
+  categories), so alternatives that started with one could never match;
+  peppers and shell eggs matched nothing at all. The block is repaired
+  to real `\b` escapes. If you ever see `^H` in a regex in this repo,
+  that is the same defect.
+- Regex misfires (handoff 6.4): FTL_CATEGORIES entries may carry an
+  `exclude` regex that detectFtlCategory tests before the pattern.
+  peppers excludes dr pepper, pepperoni, peppermint, peppercorn, pepper
+  jack, peppered, pepper spray, pepper steak, pepper sauce and salt and
+  pepper, and its pattern now lists jalapeno, habanero, poblano and
+  serrano; shell_eggs uses word boundaries and excludes eggplant,
+  eggnog, liquid egg, egg beaters, egg salad, egg roll and egg white
+  (egg salad then falls through to deli_salads).
+- Category kits: `CATEGORY_KITS` in dashboard.html (after the
+  applicability constants) with full kits for leafy_greens and
+  nut_butters: label, description, suggested_suppliers (the handoff's
+  name-only seeds; Ian confirms brand ownership before a paying
+  customer sees them), one drill_template each (romaine E. coli O157:H7
+  Class I; peanut butter Salmonella Class I) with product, lot pattern
+  with `<date>`, severity, reason and scenario paragraph,
+  readiness_checklist items with `test(d)` returning true, false or
+  null (no data), `detail(d)` and `action`, and feed_filter keywords.
+  `kitFor(key)` returns a minimal kit (label, a generic Class II
+  template, the label as feed keyword) for every other FTL key. Lot
+  code hints were not added: the handoff says to wait for photographed
+  labels.
+- Focus categories: `_orgFocusCategories` loads at sign-in
+  (organisations.focus_categories, migration 024). Pickers:
+  `_focusPickerHtml(selected, editable, prefix)` renders chips (the two
+  wedge categories first, marked recommended) and `_focusPickerValues`
+  reads them. Settings, Organisation card "Where you start" saves
+  through saveOrgSettings; Getting started has a "Where do you want to
+  start?" card saved by `saveFocusCategories('ob')`; signup step 3 has
+  the same two preselected chips plus an "Add another category" select
+  and writes focus_categories with the applicability answers. Settings
+  also shows the informational pricing tier read-only
+  (`_PRICING_TIER_LABELS`; nothing is gated by it).
+- Seeds: `ensureCategoryKitSeeds(keys)` inserts each focus kit's
+  suggested suppliers that the org lacks (case-insensitive name match),
+  inactive, with seeded_from 'category_kit:<key>' and the key as the
+  category hint. It runs after a focus save and once per session from
+  renderSuppliersCard when a focus kit has no seeded rows yet
+  (`_kitSeedsChecked`). The Suppliers card shows inactive rows by
+  default while suggested seeds exist (until the user toggles,
+  `_supplierToggleTouched`) and counts them in the summary.
+- Drill scripts: showDrillLauncher gains a "Drill script" select
+  (`_drillTemplateOptions`, focus categories first) that fills the form
+  (`_applyDrillTemplate`) and a Scenario textarea; launchDrill writes
+  scenario_text to mock_recall_drills and retries without it when
+  migration 028 is missing. The launcher's manufacturer-partner sentence
+  is gone. generateDrillCertificate reads scenario_text (fifth query,
+  errors ignored) and prints a "Drill scenario" paragraph.
+- Compliance panel: a "Focus categories" card under the applicability
+  banner renders each focus kit's checklist through complianceCheck
+  (null results render as guidance), with a "Run a category drill"
+  button. loadComplianceData now selects gtin, best_by and ftl_category
+  on receiving rows, ftl_category on scans, and active suppliers
+  (`d.suppliers`) for the checklist tests.
+- Recalls panel, Feed tab: `_recallInFocus(r)` matches the kits'
+  feed_filter words against product name and description; in-focus
+  alerts sort first, carry an "In your focus categories" badge, and the
+  header counts them. Nothing is hidden.
+- Shelf flow FTL chip (index.html): updateFtlBadge now keeps `_p3Ftl`
+  (regex first, then `_resolveP3FtlOverride` checks ftl_overrides by
+  GTIN from field-barcode, by normalized name, then products_public),
+  renders the badge plus a chip in `#p3-ftl-chip` ("Not a listed food"
+  on a detected item, "Listed food? Yes" on an undetected one, or the
+  confirmed state). `p3ConfirmFtl(yes)` writes an org override for
+  corp_admin and store_manager through the new shared
+  `writeFtlOverride(norm, key, yes, category)` (rcvConfirmFtl uses it
+  too); staff decisions apply to this scan only. saveRecord takes
+  is_ftl and ftl_category from `_p3Ftl`; resetForm clears it. The badge
+  text lost its em dash.
+- Settings "Listed foods" card (`renderFtlOverridesCard`,
+  `ftlOverrideDelete`): the org's ftl_overrides rows with product (GTIN
+  or normalized name), listed yes/no, category, who, when; corp_admin
+  can delete, which returns the product to automatic detection.
+- Migration 028 (`028_drill_scenarios_and_store_codes.sql`, not yet
+  applied): mock_recall_drills.scenario_text and stores.external_code
+  (Phase 7 store mapping) with a partial index; CHECK_MIGRATIONS has a
+  028 row; SCHEMA.md documents both columns. Everything in Phase 6
+  works without it except storing the scenario.
+- Not in Phase 6: NO variants (US-only decision); lot-code hints for
+  the brands (need photographed labels); any tier gating.
 
 ## Recall counting rules (platform-wide)
 A recall requires action only when ALL THREE are true:

@@ -245,6 +245,7 @@ drill-specific metadata.
 | completed_at | timestamp tz | YES | When the drill was marked complete |
 | results | jsonb | YES | Free-form result payload |
 | created_at | timestamp tz | NO | Row creation time. Both `started_at` and `created_at` exist; use `started_at` everywhere except DB audit queries. |
+| scenario_text | text | YES | Drill script paragraph from the launcher template (category kits). Shown on the drill certificate. Migration 028, 2026-10-07. |
 
 ---
 
@@ -589,3 +590,9 @@ Written on 2026-10-03; applied status is reported by
 021 to 025 because migrations 020, 020a and 021 (security hardening,
 applied 2026-09-22) already exist. Migration 027 is reserved for the
 code_patterns ownership fix noted in docs/WALKTHROUGH.md.
+
+### stores.external_code (028, 2026-10-07)
+text, nullable, with a partial index on (organisation_id, external_code).
+The wholesaler's ship-to code for a store. The Phase 7 delivery-file import
+matches rows on it before falling back to stores.name. Nothing writes it
+yet; the Store Network panel is the intended home for editing it.

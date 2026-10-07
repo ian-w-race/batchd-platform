@@ -75,3 +75,11 @@ not repeated here.
     recorded" and can reach 100 percent. Tick the registered-facility
     box and save: the FDA authority card on Compliance now names the
     Reportable Food Registry duty of a registered facility.
+19. Scanner, Shelf mode, as a manager: type "Pepperoni pizza" as the
+    product and see no FTL badge; "Eggplant" none; "Bell peppers" shows
+    Peppers. On a detected item tap "Not a listed food"; the badge
+    clears and Dashboard, Settings, Listed foods shows the decision.
+    Settings, Organization: the focus chips show Leafy greens and Nut
+    butters; Suppliers lists the suggested seeds as inactive; the drill
+    launcher offers the two scripts first and the certificate names the
+    scenario once migration 028 is applied.

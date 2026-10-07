@@ -1258,6 +1258,7 @@ function fsmaApplicabilityCopy(app) { return (_FSMA_APPLICABILITY.copy[app] || _
 function rfrCopy() { return _orgRegisteredFacility ? _CITATIONS.us.rfrFacility : _CITATIONS.us.rfrRetail; }
 // Loaded at sign-in from organisations (migration 024); defaults hold on an older database.
 let _orgApplicability = 'unknown', _orgSalesBand = null, _orgRegisteredFacility = false, _orgDistributionCenter = false;
+let _orgFocusCategories = [];   // Phase 6 (2026-10-07): FTL category keys in focus (organisations.focus_categories)
 // The column a write or read failed on, from a PostgREST PGRST204 or Postgres 42703 message; else null.
 function _missingColumnFrom(error) {
   if (!error) return null;
@@ -1265,6 +1266,164 @@ function _missingColumnFrom(error) {
   let m = /Could not find the '([A-Za-z0-9_]+)' column/.exec(msg);
   if (!m) m = /column (?:[a-z_]+\.)?"?([A-Za-z0-9_]+)"? does not exist/.exec(msg);
   return m ? m[1] : null;
+}
+
+// ══════════════════════════════════════════════════════════════
+// CATEGORY KITS. Phase 6 of the FSMA 204 handoff, 2026-10-07. US only.
+// Keyed by FTL category key (the same keys as FTL_CATEGORIES in index.html and
+// _SUPPLIER_CATEGORIES below). leafy_greens and nut_butters ship full kits; every
+// other key gets a minimal kit from kitFor(). Suggested suppliers are name-only
+// seeds (no addresses; the admin completes them) inserted inactive with
+// seeded_from = 'category_kit:<key>' by ensureCategoryKitSeeds(). Brand ownership
+// changes: Ian confirms these names before a paying customer sees them. Lot-code
+// hints wait for photographed labels; nothing is invented here.
+// ══════════════════════════════════════════════════════════════
+const _PRICING_TIER_LABELS = { pilot: 'Pilot', starter: 'Starter', essential: 'Essential', professional: 'Professional', readiness: 'Readiness' };
+const _FOCUS_ORDER = ['leafy_greens', 'nut_butters'];
+function _kitRows(d, key) { return (d.receiving || []).filter(r => r.ftl_category === key); }
+const CATEGORY_KITS = {
+  leafy_greens: {
+    label: 'Leafy greens',
+    description: 'Bagged salads, romaine, spinach and spring mix. Case labels follow the PTI format: GTIN and lot in a GS1-128 barcode.',
+    suggested_suppliers: [
+      { name: 'Taylor Farms', type: 'manufacturer' },
+      { name: 'Fresh Express', type: 'manufacturer' },
+      { name: 'Dole Fresh Vegetables', type: 'manufacturer' },
+      { name: 'Bonduelle Fresh Americas (Ready Pac)', type: 'manufacturer' },
+      { name: 'Earthbound Farm', type: 'farm' },
+      { name: 'Your wholesaler', type: 'distributor' },
+    ],
+    drill_templates: [{
+      key: 'romaine_ecoli', title: 'Bagged romaine, E. coli O157:H7, Class I',
+      product: 'Romaine salad kit (drill)', lot: 'DRILL-RM-<date>', severity: 'class_i',
+      reason: 'Pathogen contamination reported by supplier; pull all lots received in the last 14 days',
+      scenario: 'The supplier reports E. coli O157:H7 in a romaine lot shipped to your stores. Expected actions: hold any cases still at receiving, pull bagged romaine from the produce wall, dispose of the pulled product as the notice directs, and confirm each step in the scanner. Use the receiving records from the last 14 days to find every affected lot.',
+    }],
+    readiness_checklist: [
+      { text: 'Every case receipt scanned from the PTI label',
+        test: d => { const r = _kitRows(d, 'leafy_greens'); return r.length ? r.every(x => x.gtin && x.traceability_lot_code) : null; },
+        detail: d => { const r = _kitRows(d, 'leafy_greens'); return r.length ? `${r.filter(x => x.gtin && x.traceability_lot_code).length} of ${r.length} leafy greens receipts carry GTIN and lot from the case label` : 'No leafy greens receipts yet'; },
+        action: 'Scan the PTI case label in Receiving mode instead of typing the lot' },
+      { text: 'Best-by captured on receipt',
+        test: d => { const r = _kitRows(d, 'leafy_greens'); return r.length ? r.every(x => x.best_by) : null; },
+        detail: d => { const r = _kitRows(d, 'leafy_greens'); return r.length ? `${r.filter(x => x.best_by).length} of ${r.length} leafy greens receipts have a best-by date` : 'No leafy greens receipts yet'; },
+        action: 'The GS1-128 label carries the best-by in AI 15 or 17; scan it or type it' },
+      { text: 'Two-week lookback covers current stock',
+        test: d => (d.lookbackDays || 365) >= 14,
+        detail: d => `Scan history lookback is ${d.lookbackDays || 365} days`,
+        action: 'Set the lookback window to at least 14 days in Settings' },
+    ],
+    feed_filter: ['romaine', 'lettuce', 'spinach', 'leafy', 'salad', 'spring mix', 'kale', 'arugula', 'greens'],
+  },
+  nut_butters: {
+    label: 'Nut butters',
+    description: 'Peanut, almond and other nut butters. Lot codes are printed on the jar; most come through a wholesaler.',
+    suggested_suppliers: [
+      { name: 'The J.M. Smucker Company (Jif)', type: 'manufacturer' },
+      { name: 'Hormel Foods (Skippy)', type: 'manufacturer' },
+      { name: 'Post Consumer Brands (Peter Pan)', type: 'manufacturer' },
+      { name: "Justin's", type: 'manufacturer' },
+      { name: 'Store brand supplier', type: 'manufacturer' },
+    ],
+    drill_templates: [{
+      key: 'peanut_salmonella', title: 'Peanut butter, Salmonella, Class I',
+      product: 'Creamy peanut butter 16 oz (drill)', lot: 'DRILL-PB-<date>', severity: 'class_i',
+      reason: 'Salmonella detected at manufacturing plant; pull listed lot range',
+      scenario: 'The manufacturer reports Salmonella at the plant and names a lot range. Expected actions: pull every jar in the range from the shelf, hold it in the back room, and confirm each step in the scanner. Check shelf scans and receiving records for the listed lots.',
+    }],
+    readiness_checklist: [
+      { text: 'Lot code captured from jar at shelf placement',
+        test: d => { const r = (d.scans || []).filter(s => s.ftl_category === 'nut_butters'); return r.length ? r.every(s => s.lot_number) : null; },
+        detail: d => { const r = (d.scans || []).filter(s => s.ftl_category === 'nut_butters'); return r.length ? `${r.filter(s => s.lot_number).length} of ${r.length} nut butter shelf scans have a lot code` : 'No nut butter shelf scans yet'; },
+        action: 'Photograph the jar lot code in Shelf mode, phase 2' },
+      { text: '180-day lookback covers shelf life',
+        test: d => (d.lookbackDays || 365) >= 180,
+        detail: d => `Scan history lookback is ${d.lookbackDays || 365} days`,
+        action: 'Set the lookback window to 180 days or more in Settings' },
+      { text: 'Store-brand supplier recorded',
+        test: d => { const s = d.suppliers || []; return s.length ? s.some(x => (x.category_hints || []).includes('nut_butters') || /store brand|private label/i.test(x.name || '')) : null; },
+        detail: d => { const s = d.suppliers || []; const hit = s.find(x => (x.category_hints || []).includes('nut_butters') || /store brand|private label/i.test(x.name || '')); return hit ? `${hit.name} is on file` : (s.length ? 'No supplier tagged Nut butters or named as a store brand' : 'No active suppliers yet'); },
+        action: 'Add your store-brand nut butter supplier in Settings, Suppliers, and tag it Nut butters' },
+    ],
+    feed_filter: ['peanut butter', 'almond butter', 'cashew butter', 'nut butter', 'sunflower butter', 'tahini', 'peanut spread'],
+  },
+};
+function kitFor(key) {
+  if (CATEGORY_KITS[key]) return CATEGORY_KITS[key];
+  const label = (typeof _SUPPLIER_CATEGORIES === 'object' && _SUPPLIER_CATEGORIES[key]) || key;
+  return {
+    label, description: '', suggested_suppliers: [], readiness_checklist: [],
+    drill_templates: [{ key: key + '_generic', title: `${label}, recall drill, Class II`, product: `${label} (drill)`, lot: 'DRILL-<date>', severity: 'class_ii',
+      reason: `Recall readiness drill for ${label.toLowerCase()}; no real product affected`, scenario: '' }],
+    feed_filter: [String(label).toLowerCase()],
+  };
+}
+// True when a feed recall's product or description mentions a focus category.
+function _recallInFocus(r) {
+  if (!_orgFocusCategories.length) return false;
+  const hay = `${r.product_name || ''} ${r.description || ''}`.toLowerCase();
+  return _orgFocusCategories.some(k => (kitFor(k).feed_filter || []).some(w => hay.includes(w)));
+}
+// Chip picker shared by Settings and Getting started. Reuses _supHintToggle (suppliers module).
+function _focusPickerHtml(selected, editable, prefix) {
+  const sel = new Set(selected || []);
+  const keys = Object.keys(_SUPPLIER_CATEGORIES);
+  const ordered = _FOCUS_ORDER.concat(keys.filter(k => !_FOCUS_ORDER.includes(k)));
+  return `<div id="${prefix}-focus-chips" style="display:flex;flex-wrap:wrap;gap:6px;">${ordered.map(k => {
+    const on = sel.has(k);
+    return `<button type="button" data-key="${k}" data-on="${on ? '1' : '0'}" ${editable ? 'onclick="_supHintToggle(this)"' : 'disabled'} style="font-family:'DM Mono',monospace;font-size:10.5px;padding:5px 10px;border-radius:999px;cursor:${editable ? 'pointer' : 'default'};border:1.5px solid ${on ? 'var(--accent)' : 'var(--border)'};background:${on ? 'rgba(var(--accent-rgb),0.1)' : 'var(--surface2)'};color:${on ? 'var(--accent)' : 'var(--muted)'};">${_SUPPLIER_CATEGORIES[k] || k}${_FOCUS_ORDER.includes(k) ? ' · recommended' : ''}</button>`;
+  }).join('')}</div>`;
+}
+function _focusPickerValues(prefix) { return [...document.querySelectorAll(`#${prefix}-focus-chips button[data-on="1"]`)].map(b => b.dataset.key); }
+async function saveFocusCategories(prefix) {
+  if (_userRole !== 'corp_admin') { showToast('Only corp admins can set the focus categories.', 'error', 4000); return; }
+  const keys = _focusPickerValues(prefix);
+  const { error } = await sb.from('organisations').update({ focus_categories: keys }).eq('id', _orgId);
+  if (error) { showToast(_missingColumnFrom(error) ? 'Focus categories need migration 024 in the database.' : 'Could not save: ' + error.message, 'error', 5000); return; }
+  _orgFocusCategories = keys;
+  const seeded = await ensureCategoryKitSeeds(keys);
+  showToast(keys.length ? `Focus saved${seeded ? `; ${seeded} suggested supplier${seeded === 1 ? '' : 's'} added to Settings, Suppliers` : ''}.` : 'Focus cleared.', 'ok', 5000);
+  const msg = document.getElementById(prefix + '-focus-msg');
+  if (msg) msg.textContent = keys.length ? 'Saved on the organization. Suggested suppliers are waiting in Settings, Suppliers.' : 'No focus categories.';
+  if (prefix === 'ob') checkOnboardingStatus();
+}
+// Inserts each focus kit's suggested suppliers that the org does not have yet, inactive.
+let _kitSeedsChecked = false;
+async function ensureCategoryKitSeeds(keys) {
+  if (!['corp_admin', 'store_manager'].includes(_userRole) || !_orgId) return 0;
+  const wanted = [];
+  (keys || []).forEach(k => (kitFor(k).suggested_suppliers || []).forEach(s => wanted.push({ ...s, key: k })));
+  if (!wanted.length) return 0;
+  const { data: existing, error } = await sb.from('suppliers').select('name').eq('organisation_id', _orgId);
+  if (error) return 0;
+  const have = new Set((existing || []).map(s => String(s.name || '').toLowerCase()));
+  let added = 0;
+  for (const s of wanted) {
+    if (have.has(s.name.toLowerCase())) continue;
+    const { error: insErr } = await sb.from('suppliers').insert({ organisation_id: _orgId, name: s.name, supplier_type: s.type || 'distributor', category_hints: [s.key], seeded_from: 'category_kit:' + s.key, active: false });
+    if (!insErr) { added++; have.add(s.name.toLowerCase()); }
+    else if (insErr.code !== '23505') console.warn('[kits] seed failed:', s.name, insErr.message);
+  }
+  return added;
+}
+// Drill scripts: focus categories first, then the other kits.
+function _drillTemplates() {
+  const focus = _orgFocusCategories || [];
+  const keys = focus.concat(Object.keys(CATEGORY_KITS).filter(k => !focus.includes(k)));
+  const out = [];
+  keys.forEach(k => (kitFor(k).drill_templates || []).forEach(t => out.push({ ...t, category: k, inFocus: focus.includes(k) })));
+  return out;
+}
+function _drillTemplateOptions() {
+  return _drillTemplates().map(t => `<option value="${esc(t.key)}">${esc(t.title)}${t.inFocus ? ' (focus)' : ''}</option>`).join('');
+}
+function _applyDrillTemplate(key) {
+  const t = _drillTemplates().find(x => x.key === key);
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  if (!t) { set('drill-scenario', ''); return; }
+  const today = new Date().toISOString().split('T')[0];
+  set('drill-product', t.product); set('drill-lot', (t.lot || 'DRILL-<date>').replace('<date>', today));
+  set('drill-reason', t.reason); set('drill-severity', t.severity || 'class_ii'); set('drill-scenario', t.scenario || '');
 }
 // user_id -> display label, filled by renderStaff so deactivateMember can show
 // a name in its confirm dialog without carrying one through an onclick.
@@ -2006,7 +2165,7 @@ async function initDashboard(user) {
   })();
   const [orgRes, storeRes, userSettRes] = await Promise.all([
     (async () => {   // Phase 5: applicability columns (migration 024) with a fallback for an older database
-      let r = await sb.from('organisations').select('name, region, annual_food_sales_band, operates_registered_facility, operates_distribution_center, fsma_applicability').eq('id', _orgId).single();
+      let r = await sb.from('organisations').select('name, region, annual_food_sales_band, operates_registered_facility, operates_distribution_center, fsma_applicability, focus_categories').eq('id', _orgId).single();
       if (r.error && _missingColumnFrom(r.error)) r = await sb.from('organisations').select('name, region').eq('id', _orgId).single();
       return r;
     })(),
@@ -2033,6 +2192,7 @@ async function initDashboard(user) {
   _orgApplicability      = org?.fsma_applicability || fsmaApplicabilityFor(_orgSalesBand);
   _orgRegisteredFacility = org?.operates_registered_facility === true;
   _orgDistributionCenter = org?.operates_distribution_center === true;
+  _orgFocusCategories    = Array.isArray(org?.focus_categories) ? org.focus_categories : [];   // Phase 6
   if (_storeId) {
     _storeName = storeRes.data?.name || 'My Store';
   }
@@ -2709,6 +2869,18 @@ async function renderOnboarding() {
           </div>
           <div style="font-size:11px;color:var(--muted);">${pctMsg}</div>
         </div>
+
+        ${isUS ? `
+        <!-- Phase 6 (2026-10-07): starter scope -->
+        <div style="background:var(--surface);border:1px solid var(--glass-border);border-radius:12px;padding:18px 20px;margin-bottom:20px;">
+          <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:4px;">Where do you want to start?</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.6;">Pick the Food Traceability List categories to focus on first. Batch'd seeds suggested suppliers, a drill script and a checklist for each. Leafy greens and nut butters are the recommended starting pair.</div>
+          ${_focusPickerHtml(_orgFocusCategories.length ? _orgFocusCategories : ['leafy_greens', 'nut_butters'], _userRole === 'corp_admin', 'ob')}
+          <div style="display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap;">
+            <button class="btn-primary" onclick="saveFocusCategories('ob')" ${_userRole === 'corp_admin' ? '' : 'disabled style="opacity:0.5;cursor:not-allowed;"'}>${_orgFocusCategories.length ? 'Save focus' : 'Start here'}</button>
+            <div id="ob-focus-msg" style="font-size:11px;color:var(--muted);">${_orgFocusCategories.length ? 'Saved on the organization. Suggested suppliers are waiting in Settings, Suppliers.' : 'Not saved yet.'}</div>
+          </div>
+        </div>` : ''}
 
         <!-- Steps -->
         <div style="position:relative;padding-left:0;">
@@ -4012,7 +4184,7 @@ async function renderRecalls() {
     const isUS = _orgRegion === 'us';
     el.innerHTML = `
       <div style="margin-bottom:16px;">
-        <div style="font-size:11px;color:var(--muted);">${feedRecalls.length} ${isUS?'FDA':'Mattilsynet'} alerts imported · ${feedRecalls.filter(r=>matchedIds.has(r.id)).length} match your scan history</div>
+        <div style="font-size:11px;color:var(--muted);">${feedRecalls.length} ${isUS?'FDA':'Mattilsynet'} alerts imported · ${feedRecalls.filter(r=>matchedIds.has(r.id)).length} match your scan history${_orgFocusCategories.length ? ` · ${feedRecalls.filter(_recallInFocus).length} in your focus categories` : ''}</div>
       </div>
       ${tabBar('feed')}
       <div style="background:rgba(var(--info-light-rgb),0.05);border:1px solid rgba(var(--info-light-rgb),0.2);border-radius:10px;padding:13px 16px;margin-bottom:16px;font-size:12px;color:var(--muted);line-height:1.6;">
@@ -4020,8 +4192,9 @@ async function renderRecalls() {
       </div>
       ${feedRecalls.length === 0 ? `<div class="empty" style="padding:40px 24px;text-align:center;">No feed alerts yet — the daily import runs at 06:00 UTC.</div>` : ''}
       <div style="display:flex;flex-direction:column;gap:8px;">
-        ${feedRecalls.map(r => {
+        ${[...feedRecalls].sort((a, b) => (_recallInFocus(b) ? 1 : 0) - (_recallInFocus(a) ? 1 : 0)).map(r => {
           const matched = matchedIds.has(r.id);
+          const inFocus = _recallInFocus(r);   // Phase 6: focus categories first, badged
           // XSS sweep 2026-05-27 — FDA / Mattilsynet feed strings are
           // ingested from third-party APIs and rendered verbatim, so
           // every field gets esc(). description is truncated to 120
@@ -4035,7 +4208,7 @@ async function renderRecalls() {
                 : `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(var(--accent-muted-rgb),0.1);color:var(--muted);">No match</span>`}
             </div>
             <div style="flex:1;min-width:0;">
-              <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:2px;">${esc(r.product_name||'—')}</div>
+              <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:2px;">${esc(r.product_name||'—')}${inFocus ? ` <span style="font-size:9.5px;font-family:'DM Mono',monospace;letter-spacing:0.06em;text-transform:uppercase;padding:2px 6px;border-radius:4px;background:rgba(var(--info-rgb),0.12);color:var(--info);margin-left:6px;vertical-align:middle;">In your focus categories</span>` : ''}</div>
               <div style="font-size:11px;color:var(--muted);">${regionTerm('lot_short')}: <span style="font-family:'DM Mono',monospace;">${esc(r.lot_number||'—')}</span> · Source: ${esc(r.source||'')} · ${r.created_at?fmtDash(r.created_at):''}</div>
               ${r.description?`<div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5;">${esc(_desc120)}</div>`:''}
             </div>
@@ -4123,6 +4296,13 @@ function showDrillLauncher() {
       </div>
       <div style="padding:22px 26px;">
         <div id="drill-msg" style="display:none;"></div>
+        <!-- Phase 6 (2026-10-07): drill scripts from the category kits -->
+        <div class="field"><label>Drill script</label>
+          <select id="drill-template" onchange="_applyDrillTemplate(this.value)">
+            <option value="">Blank drill (fill in the fields yourself)</option>
+            ${_drillTemplateOptions()}
+          </select>
+          <div style="font-size:10.5px;color:var(--muted);margin-top:6px;line-height:1.5;">Scripts for your focus categories come first. Picking one fills the form and adds a scenario the certificate names.</div></div>
         <div class="field"><label>Product name (test product)</label>
           <input id="drill-product" type="text" placeholder="e.g. Test Product — Allergen Drill" value="Recall Readiness Drill" /></div>
         <div class="field"><label>Lot number</label>
@@ -4135,8 +4315,10 @@ function showDrillLauncher() {
             <option value="class_ii" selected>Class II — moderate risk (standard drill)</option>
             <option value="class_iii">Class III — low risk (basic traceability drill)</option>
           </select></div>
+        <div class="field"><label>Scenario (shown on the drill certificate)</label>
+          <textarea id="drill-scenario" rows="3" placeholder="Optional. What the drill simulates and what stores are expected to do." style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:10px 12px;font-size:12px;font-family:inherit;line-height:1.5;resize:vertical;"></textarea></div>
         <div style="background:rgba(var(--warn-rgb),0.06);border:1px solid rgba(var(--warn-rgb),0.2);border-radius:8px;padding:12px 14px;font-size:11px;color:var(--muted);line-height:1.7;margin-bottom:16px;">
-          This drill will be pushed to all connected manufacturer partners as a <strong style="color:var(--warn);">MOCK DRILL</strong> event. All stores will receive an alert and must complete the 5-step response chain. Results are tracked separately from real recalls and generate a drill certificate on completion.
+          This drill is flagged as a <strong style="color:var(--warn);">MOCK DRILL</strong>. Every active store receives the alert and works the five-step response chain. Results stay separate from real recalls and produce a drill certificate on completion.
         </div>
         <div style="display:flex;gap:10px;">
           <button onclick="launchDrill()" style="background:var(--warn);color:var(--background-base);border:none;border-radius:var(--r-md);padding:10px 22px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">Launch drill →</button>
@@ -4151,6 +4333,7 @@ async function launchDrill() {
   const product = document.getElementById('drill-product')?.value?.trim();
   const lot     = document.getElementById('drill-lot')?.value?.trim();
   const reason  = document.getElementById('drill-reason')?.value?.trim();
+  const scenario = document.getElementById('drill-scenario')?.value?.trim() || null;   // Phase 6
   const msgEl   = document.getElementById('drill-msg');
   const setMsg  = (t, ok) => { if (msgEl) { msgEl.textContent=t; msgEl.style.cssText='display:block;padding:9px 12px;border-radius:6px;margin-bottom:12px;font-size:12px;background:'+(ok?'rgba(var(--accent-rgb),0.1)':'rgba(var(--danger-rgb),0.1)')+';color:'+(ok?'var(--accent)':'var(--danger)'); } };
   if (!product) { setMsg('Product name required', false); return; }
@@ -4180,12 +4363,10 @@ async function launchDrill() {
     // Log in mock_recall_drills FIRST (right after recall_event). If a later
     // step fails, downstream "is this a drill?" detection that reads
     // mock_recall_drills still works correctly.
-    const { error: drillErr } = await sb.from('mock_recall_drills').insert({
-      recall_event_id: ev.id,
-      initiated_by_org: _orgId,
-      target_retailer_id: _orgId,
-      started_at: new Date().toISOString(),
-    });
+    // Phase 6 (2026-10-07): scenario_text needs migration 028; retry without it on an older database.
+    const drillRow = { recall_event_id: ev.id, initiated_by_org: _orgId, target_retailer_id: _orgId, started_at: new Date().toISOString(), scenario_text: scenario };
+    let { error: drillErr } = await sb.from('mock_recall_drills').insert(drillRow);
+    if (drillErr && _missingColumnFrom(drillErr) === 'scenario_text') { delete drillRow.scenario_text; ({ error: drillErr } = await sb.from('mock_recall_drills').insert(drillRow)); }
     if (drillErr) throw drillErr;
 
     // Distribute to this retailer org
@@ -9307,6 +9488,23 @@ function renderComplianceDashboard(el) {
         <button class="btn-ghost" onclick="showPanel('settings')">${_orgSalesBand ? 'Edit in Settings' : 'Answer in Settings'}</button>
       </div>` : ''}
 
+      ${isUS && _orgFocusCategories.some(k => kitFor(k).readiness_checklist.length) ? `
+      <!-- Phase 6 (2026-10-07): category-specific checks for the focus categories -->
+      <div class="panel" style="margin:0 0 16px;">
+        <div style="padding:13px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+          <div>
+            <div style="font-size:12px;font-weight:700;color:var(--text);">Focus categories</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px;">${esc(_orgFocusCategories.map(k => kitFor(k).label).join(', '))}. Change the focus in Settings.</div>
+          </div>
+          <button class="btn-ghost" onclick="showDrillLauncher()">Run a category drill</button>
+        </div>
+        <div style="padding:4px 18px 10px;">
+          ${_orgFocusCategories.filter(k => kitFor(k).readiness_checklist.length).map(k => { const kit = kitFor(k); return `
+            <div style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);margin:12px 0 2px;">${esc(kit.label)}</div>
+            ${kit.readiness_checklist.map(item => { const r = item.test(d); return complianceCheck(r !== false, item.text, r === null ? item.detail(d) + '. Guidance until there is data to check' : item.detail(d), r === false ? item.action : null); }).join('')}`; }).join('')}
+        </div>
+      </div>` : ''}
+
       <!-- Priority gaps -->
       ${gaps.length > 0 ? `
       <div style="background:rgba(var(--warn-rgb),0.05);border:1px solid rgba(var(--warn-rgb),0.2);border-radius:12px;padding:16px 18px;margin-bottom:16px;">
@@ -9563,11 +9761,11 @@ async function loadComplianceData(el) {
   const days365 = new Date(now - 365 * 86400000).toISOString();
   const isUS = _orgRegion === 'us';
 
-  const [scansRes, storesRes, acksRes, drillsRes, orgRes, receivingRes, rrRes] = await Promise.all([
+  const [scansRes, storesRes, acksRes, drillsRes, orgRes, receivingRes, rrRes, suppliersRes] = await Promise.all([
     // 365-day lookback + cap: prevents unbounded query on large orgs.
     // Columns include FSMA 204 KDEs (tlc_source, reference_document) for US scoring.
     sb.from('scans')
-      .select('lot_number, supplier_name, is_ftl, tlc_source, reference_document, created_at, store_id, store_name')
+      .select('lot_number, supplier_name, is_ftl, ftl_category, tlc_source, reference_document, created_at, store_id, store_name')
       .eq('organisation_id', _orgId)
       .gte('created_at', days365)
       .order('created_at', { ascending: false })
@@ -9580,13 +9778,16 @@ async function loadComplianceData(el) {
     // newest completed records request drill is the fifth axis. Both tolerate a
     // missing table (older database) by resolving with empty data.
     sb.from('receiving_events')
-      .select('id, supplier_id, supplier_name_snapshot, traceability_lot_code, tlc_source_type, quantity, unit_of_measure, reference_document_number, received_at, suppliers(phone,street_address,city,region,postal_code)')
+      .select('id, supplier_id, supplier_name_snapshot, traceability_lot_code, tlc_source_type, quantity, unit_of_measure, reference_document_number, received_at, gtin, best_by, ftl_category, suppliers(phone,street_address,city,region,postal_code)')
       .eq('organisation_id', _orgId).eq('status', 'received').gte('received_at', days365).order('received_at', { ascending: false }).limit(2000),
     sb.from('records_requests').select('minutes_to_produce, produced_at, row_count, notes').eq('organisation_id', _orgId).eq('is_drill', true)
       .not('produced_at', 'is', null).order('produced_at', { ascending: false }).limit(5),
+    // Phase 6 (2026-10-07): active suppliers for the category checklist (tolerates a missing table).
+    sb.from('suppliers').select('name, category_hints').eq('organisation_id', _orgId).eq('active', true).limit(500),
   ]);
 
   const scans   = scansRes.data   || [];
+  const suppliers = suppliersRes.data || [];
   const receiving = receivingRes.data || [];
   const rrDone  = (rrRes.data || []).find(r => !/cancel/i.test(r.notes || '')) || null;
   const stores  = storesRes.data  || [];
@@ -9694,6 +9895,7 @@ async function loadComplianceData(el) {
     recentScans, lotScans, supplierScans, ftlScans,
     tlcSourceScans, refDocScans,        // FSMA 204 KDE fields (legacy scan columns)
     receiving, rcvComplete, rcvSupplierOk, rcvTlcOk, rcvQtyOk, rcvRefOk, rrDone, requestScore,   // Phase 5
+    suppliers,                                                                                     // Phase 6
     acksProgressed, acksConfirmed,
     drillInYear, storesActiveRecent, isUS,
     coordinator: org.recall_coordinator_name ? { name: org.recall_coordinator_name, contact: org.recall_coordinator_contact } : null,
@@ -12652,6 +12854,15 @@ async function renderSettings() {
               </div>
               <div id="org-applicability-copy" style="font-size:11px;color:var(--text);margin-top:8px;line-height:1.6;padding:9px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;">${esc(fsmaApplicabilityCopy(fsmaApplicabilityFor(org?.annual_food_sales_band)))}</div>
               <div style="font-size:10px;color:var(--muted);margin-top:6px;line-height:1.5;">${esc(_FSMA_APPLICABILITY.thresholdNote)}</div>
+            </div>
+            <!-- Phase 6 (2026-10-07): starter scope and the informational pricing tier. -->
+            <div class="field"><label>Where you start</label>
+              <div style="font-size:10.5px;color:var(--muted);margin-bottom:8px;line-height:1.5;">Focus categories drive the suggested suppliers, the drill scripts, the Compliance checklist and the focus badge on feed recalls.</div>
+              ${_focusPickerHtml(org?.focus_categories || [], isAdmin, 'org')}
+            </div>
+            <div class="field"><label>Pricing tier</label>
+              <input type="text" value="${esc(_PRICING_TIER_LABELS[org?.pricing_tier] || 'Not set')}" readonly style="opacity:0.7;" />
+              <div style="font-size:10px;color:var(--muted);margin-top:4px;line-height:1.5;">Recorded by Batch'd for the pilot. Informational only; nothing is gated by it.</div>
             </div>` : ''}
             <!-- The org region dropdown was removed 2026-09-29 (US-only decision).
                  organisations.region stays as a column and keeps its stored
@@ -12737,6 +12948,18 @@ async function renderSettings() {
         <div class="panel-body" id="suppliers-body">
           <div style="display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12px;"><div class="spinner"></div> Loading suppliers…</div>
         </div>
+      </div>
+
+      <!-- Phase 6 (2026-10-07): review of the organization's Food Traceability List
+           decisions (ftl_overrides, migration 025). Body fills asynchronously. -->
+      <div class="panel" style="margin:0;" id="ftl-overrides-panel">
+        <div class="panel-header" style="flex-wrap:wrap;gap:10px;">
+          <div>
+            <div class="panel-title">Listed foods</div>
+            <div class="panel-sub">Decisions your managers made at receiving or on the shelf about whether a product is on the Food Traceability List. Deleting one returns the product to automatic detection.</div>
+          </div>
+        </div>
+        <div class="panel-body" id="ftl-overrides-body"><div style="display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12px;"><div class="spinner"></div> Loading…</div></div>
       </div>
 
       <!-- Row 2: Your preferences — per-user settings (theme, language, feeds) -->
@@ -12903,6 +13126,7 @@ async function renderSettings() {
 
     </div>`;
   renderSuppliersCard();   // Phase 3: fills #suppliers-body after the shell renders
+  renderFtlOverridesCard(); // Phase 6: fills #ftl-overrides-body
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading settings: ${e.message}</div>`;
   }
@@ -13205,6 +13429,7 @@ const _SUPPLIER_COMPLETE_TIP = 'FSMA 204 requires the full location description 
 let _suppliers = [];            // rows for this org, last load
 let _supplierLastUsed = {};     // supplier id -> newest received_at
 let _supplierShowInactive = false;
+let _supplierToggleTouched = false;   // Phase 6: suggested seeds show until the user toggles
 
 function supplierIsComplete(s) { return !!(s && s.name && s.phone && s.street_address && s.city && s.region && s.postal_code); }
 function supplierCanEdit() { return _userRole === 'corp_admin' || _userRole === 'store_manager'; }
@@ -13235,6 +13460,13 @@ async function renderSuppliersCard() {
     ]);
     if (supRes.error) throw supRes.error;
     _suppliers = supRes.data || [];
+    // Phase 6 (2026-10-07): seed the focus kits' suggested suppliers once per session when missing.
+    if (!_kitSeedsChecked && _orgFocusCategories.length && ['corp_admin', 'store_manager'].includes(_userRole)) {
+      _kitSeedsChecked = true;
+      const missing = _orgFocusCategories.some(k => (kitFor(k).suggested_suppliers || []).length && !_suppliers.some(s => s.seeded_from === 'category_kit:' + k));
+      if (missing) { const n = await ensureCategoryKitSeeds(_orgFocusCategories); if (n) return renderSuppliersCard(); }
+    }
+    if (!_supplierToggleTouched && _suppliers.some(s => !s.active && s.seeded_from)) _supplierShowInactive = true;
     _supplierLastUsed = {};
     (rcvRes.data || []).forEach(r => { if (!_supplierLastUsed[r.supplier_id]) _supplierLastUsed[r.supplier_id] = r.received_at; });
     el.innerHTML = _supplierTableHtml();
@@ -13247,6 +13479,7 @@ function _supplierTableHtml() {
   const canEdit = supplierCanEdit();
   const active = _suppliers.filter(s => s.active);
   const inactive = _suppliers.filter(s => !s.active);
+  const suggested = inactive.filter(s => s.seeded_from).length;   // Phase 6
   const incomplete = active.filter(s => !supplierIsComplete(s)).length;
   const rows = _supplierShowInactive ? _suppliers : active;
   if (!_suppliers.length) {
@@ -13269,9 +13502,9 @@ function _supplierTableHtml() {
     <div style="font-size:12px;color:var(--muted);">
       <strong style="color:var(--text);">${active.length}</strong> active${incomplete
         ? ` · <span style="color:var(--warn);" title="${esc(_SUPPLIER_COMPLETE_TIP)}">${incomplete} still need${incomplete === 1 ? 's' : ''} a full address</span>`
-        : ' · all addresses complete'}${inactive.length ? ` · ${inactive.length} inactive` : ''}
+        : ' · all addresses complete'}${inactive.length ? ` · ${inactive.length} inactive${suggested ? ` (${suggested} suggested from your focus categories; activate the ones you buy from)` : ''}` : ''}
     </div>
-    ${inactive.length ? `<label style="display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);cursor:pointer;"><input type="checkbox" ${_supplierShowInactive ? 'checked' : ''} onchange="_supplierShowInactive=this.checked;document.getElementById('suppliers-body').innerHTML=_supplierTableHtml();"> Show inactive</label>` : ''}
+    ${inactive.length ? `<label style="display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);cursor:pointer;"><input type="checkbox" ${_supplierShowInactive ? 'checked' : ''} onchange="_supplierShowInactive=this.checked;_supplierToggleTouched=true;document.getElementById('suppliers-body').innerHTML=_supplierTableHtml();"> Show inactive</label>` : ''}
   </div>`;
   const body = rows.map(s => `<tr style="${s.active ? '' : 'opacity:0.6;'}">
     <td style="width:26px;text-align:center;">${dot(s)}</td>
@@ -13511,6 +13744,34 @@ async function _supplierImportRow(row) {
   return {};
 }
 
+// ── Listed foods (Settings card). Phase 6 of the FSMA 204 handoff, 2026-10-07. ──
+async function renderFtlOverridesCard() {
+  const el = document.getElementById('ftl-overrides-body'); if (!el || !_orgId) return;
+  const { data, error } = await sb.from('ftl_overrides').select('id, gtin, product_name_normalized, is_ftl, ftl_category, set_by, created_at')
+    .eq('organisation_id', _orgId).order('created_at', { ascending: false }).limit(300);
+  if (error) { el.innerHTML = `<div style="font-size:12px;color:var(--warn);line-height:1.6;">${esc(_dbMissingHint(error, 'ftl_overrides', '025') || 'Could not load: ' + error.message)}</div>`; return; }
+  const rows = data || [];
+  if (!rows.length) { el.innerHTML = `<div style="font-size:12px;color:var(--muted);line-height:1.6;">No decisions yet. When a manager taps "Not a listed food" or "Listed food? Yes" in the scanner, the decision lands here and applies to the whole organization.</div>`; return; }
+  const isAdmin = _userRole === 'corp_admin';
+  el.innerHTML = `<div style="overflow-x:auto;"><table class="store-table" style="width:100%;table-layout:auto;">
+    <thead><tr><th>Product</th><th>Listed</th><th>Category</th><th>Set by</th><th>When</th><th></th></tr></thead>
+    <tbody>${rows.map(r => `<tr>
+      <td style="white-space:normal;">${r.gtin ? `<span style="font-family:'DM Mono',monospace;font-size:11px;">GTIN ${esc(r.gtin)}</span>` : esc(r.product_name_normalized || '')}</td>
+      <td>${r.is_ftl ? '<span style="color:var(--accent);font-weight:600;">Yes</span>' : '<span style="color:var(--muted);">No</span>'}</td>
+      <td style="font-size:11px;">${esc(_SUPPLIER_CATEGORIES[r.ftl_category] || r.ftl_category || '')}</td>
+      <td style="font-size:11px;color:var(--muted);">${esc(String(r.set_by || '').split('@')[0])}</td>
+      <td style="font-family:'DM Mono',monospace;font-size:10.5px;color:var(--muted);">${esc(fmtDash(r.created_at))}</td>
+      <td style="text-align:right;">${isAdmin ? `<button class="btn-ghost" style="padding:5px 10px;" onclick="ftlOverrideDelete('${r.id}')">Delete</button>` : ''}</td>
+    </tr>`).join('')}</tbody></table></div>`;
+}
+async function ftlOverrideDelete(id) {
+  if (_userRole !== 'corp_admin') return;
+  if (!confirm('Delete this decision? The product goes back to automatic detection.')) return;
+  const { error } = await sb.from('ftl_overrides').delete().eq('id', id).eq('organisation_id', _orgId);
+  if (error) { showToast('Could not delete: ' + error.message, 'error', 4000); return; }
+  renderFtlOverridesCard();
+}
+
 // Phase 5: live preview of the applicability sentence under the Settings select.
 function _orgApplicabilityPreview() {
   const el = document.getElementById('org-applicability-copy'); const sel = document.getElementById('org-sales-band');
@@ -13546,6 +13807,8 @@ async function saveOrgSettings() {
     payload.operates_registered_facility  = !!facEl?.checked;
     payload.operates_distribution_center  = !!dcEl?.checked;
   }
+  const focusEl = document.getElementById('org-focus-chips');   // Phase 6
+  if (focusEl) payload.focus_categories = _focusPickerValues('org');
   // Columns from later migrations may be missing on an older database. Drop the
   // column the error names and retry so the rest still saves (recall_source needs
   // migration 012; the applicability columns need 024).
@@ -13600,6 +13863,10 @@ async function saveOrgSettings() {
     _orgApplicability      = fsmaApplicabilityFor(_orgSalesBand);
     _orgRegisteredFacility = !!facEl?.checked;
     _orgDistributionCenter = !!dcEl?.checked;
+  }
+  if (focusEl && !pending.includes('focus_categories')) {
+    _orgFocusCategories = payload.focus_categories || [];
+    ensureCategoryKitSeeds(_orgFocusCategories).then(n => { if (n) { showToast(`${n} suggested supplier${n === 1 ? '' : 's'} added (inactive) to the Suppliers card.`, 'ok', 5000); renderSuppliersCard(); } });
   }
   const pendingNotes = [recallSourcePending && 'recall feeds need migration 012', applicabilityPending && 'applicability needs migration 024'].filter(Boolean);
   msgEl.textContent = pendingNotes.length
@@ -15501,7 +15768,7 @@ async function generateDrillCertificate(recallEventId) {
     // arbitrary user's coordinator instead of the org's. The org-level
     // coordinator lives on organisations.recall_coordinator_name/contact —
     // matches the loadComplianceData query pattern at line ~4527.
-    const [evRes, acksRes, orgRes, rrRes] = await Promise.all([
+    const [evRes, acksRes, orgRes, rrRes, drillRes] = await Promise.all([
       sb.from('recall_events').select('*').eq('id', recallEventId).single(),
       sb.from('recall_acknowledgements')
         .select('id, status, acknowledged_at, created_at, stores(name)')
@@ -15510,8 +15777,11 @@ async function generateDrillCertificate(recallEventId) {
       sb.from('organisations').select('name, contact_email, region, recall_coordinator_name, recall_coordinator_contact').eq('id', _orgId).single(),
       // Phase 4: latest completed records request drill (table may be missing; errors are ignored)
       sb.from('records_requests').select('produced_at, row_count, minutes_to_produce, notes').eq('organisation_id', _orgId).eq('is_drill', true).not('produced_at', 'is', null).order('produced_at', { ascending: false }).limit(5),
+      // Phase 6: the drill script (scenario_text needs migration 028; an error here is ignored)
+      sb.from('mock_recall_drills').select('scenario_text').eq('recall_event_id', recallEventId).limit(1),
     ]);
     const rrDone = (rrRes?.data || []).find(r => !/cancel/i.test(r.notes || '')) || null;
+    const scenarioText = drillRes?.data?.[0]?.scenario_text || null;
     const coordRes = { data: [orgRes.data || {}] };  // shim — keeps downstream coord shape consistent
 
     const ev     = evRes.data;
@@ -15984,6 +16254,8 @@ const fmtDT      = d => d ? new Date(d).toLocaleString(_dashLocale(), {day:'nume
         : `<br><br>The organisation <strong>did not meet the minimum completion threshold</strong> of 80% store confirmation.
            Targeted follow-up and retraining are recommended before the next drill.`}
     </div>
+
+    ${scenarioText ? `<div class="declaration" style="border-top:1px solid #f0f0f0;"><strong>Drill scenario.</strong> ${esc(scenarioText)}</div>` : ''}
 
     <!-- Drill details -->
     <div class="drill-details">

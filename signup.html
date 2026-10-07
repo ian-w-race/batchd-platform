@@ -194,6 +194,9 @@
       box-shadow: 0 0 0 3px rgba(52,211,153,0.1);
     }
     .field input.error { border-color: rgba(255,92,92,0.5); }
+    /* Phase 6 (2026-10-07): starter scope chips */
+    .focus-chip { font-family: 'DM Mono', monospace; font-size: 11px; padding: 6px 11px; border-radius: 999px; cursor: pointer; border: 1.5px solid var(--border); background: var(--surface2); color: var(--muted); }
+    .focus-chip.on { border-color: var(--accent); background: rgba(var(--accent-rgb),0.1); color: var(--accent); }
     .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
     /* ── Password strength ── */
@@ -531,6 +534,36 @@
           <div id="applicability-copy" style="display:none;font-size:11px;color:var(--text);line-height:1.6;padding:9px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;margin-bottom:12px;"></div>
         </div>
 
+        <!-- Phase 6 (2026-10-07): starter scope. Writes organisations.focus_categories;
+             the dashboard seeds suggested suppliers and drill scripts from it. -->
+        <div id="focus-section">
+          <div class="field">
+            <label>Where do you want to start? <span style="color:var(--muted);font-size:9px;font-weight:400;margin-left:4px;">leafy greens and nut butters are the recommended pair</span></label>
+            <div id="focus-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px;">
+              <button type="button" class="focus-chip on" data-key="leafy_greens" onclick="toggleFocusChip(this)">Leafy greens</button>
+              <button type="button" class="focus-chip on" data-key="nut_butters" onclick="toggleFocusChip(this)">Nut butters</button>
+            </div>
+            <select id="focus-add" onchange="addFocusCategory(this)">
+              <option value="">Add another category</option>
+              <option value="fresh_cut_produce">Fresh-cut produce</option>
+              <option value="tomatoes">Tomatoes</option>
+              <option value="peppers">Peppers</option>
+              <option value="cucumbers">Cucumbers</option>
+              <option value="melons">Melons</option>
+              <option value="sprouts">Sprouts</option>
+              <option value="herbs">Fresh herbs</option>
+              <option value="tropical_fruits">Tropical tree fruits</option>
+              <option value="soft_cheese">Soft cheese</option>
+              <option value="shell_eggs">Shell eggs</option>
+              <option value="finfish">Finfish</option>
+              <option value="smoked_finfish">Smoked finfish</option>
+              <option value="crustaceans">Crustaceans</option>
+              <option value="bivalves">Bivalve mollusks</option>
+              <option value="deli_salads">Deli salads</option>
+            </select>
+          </div>
+        </div>
+
         <!-- Manufacturer type -->
         <div id="mfr-type-section" style="display:none;">
           <div class="field">
@@ -622,6 +655,7 @@ function selectType(type) {
   document.getElementById('role-section').style.display = 'block';
   document.getElementById('coordinator-section').style.display = 'block';
   document.getElementById('applicability-section').style.display = 'block';
+  document.getElementById('focus-section').style.display = 'block';
   document.getElementById('mfr-type-section').style.display = 'none';
 }
 
@@ -838,6 +872,21 @@ function updateApplicabilityCopy() {
   el.style.display = 'block';
 }
 
+// Phase 6 (2026-10-07): starter scope chips.
+const _FOCUS_LABELS = { leafy_greens: 'Leafy greens', nut_butters: 'Nut butters', fresh_cut_produce: 'Fresh-cut produce', tomatoes: 'Tomatoes', peppers: 'Peppers', cucumbers: 'Cucumbers', melons: 'Melons', sprouts: 'Sprouts', herbs: 'Fresh herbs', tropical_fruits: 'Tropical tree fruits', soft_cheese: 'Soft cheese', shell_eggs: 'Shell eggs', finfish: 'Finfish', smoked_finfish: 'Smoked finfish', crustaceans: 'Crustaceans', bivalves: 'Bivalve mollusks', deli_salads: 'Deli salads' };
+function toggleFocusChip(btn) { btn.classList.toggle('on'); }
+function addFocusCategory(sel) {
+  const key = sel.value; if (!key) return;
+  const wrap = document.getElementById('focus-chips');
+  let chip = wrap.querySelector(`[data-key="${key}"]`);
+  if (!chip) {
+    chip = document.createElement('button'); chip.type = 'button'; chip.className = 'focus-chip'; chip.dataset.key = key;
+    chip.textContent = _FOCUS_LABELS[key] || key; chip.onclick = () => toggleFocusChip(chip); wrap.appendChild(chip);
+  }
+  chip.classList.add('on'); sel.value = '';
+}
+function getFocusCategories() { return [...document.querySelectorAll('#focus-chips .focus-chip.on')].map(b => b.dataset.key); }
+
 // ── Step 3: Final details ──────────────────────────────────────
 async function submitFinal() {
   clearMsg('final');
@@ -871,6 +920,7 @@ async function submitFinal() {
         fsma_applicability:           band ? (_FSMA_BANDS[band] || 'unknown') : null,
         operates_registered_facility: !!document.getElementById('registered-facility')?.checked,
         operates_distribution_center: !!document.getElementById('distribution-center')?.checked,
+        focus_categories:             getFocusCategories(),   // Phase 6
       }).eq('id', _orgId);
     } catch (_) { /* best effort */ }
 
@@ -895,6 +945,7 @@ async function submitFinal() {
   const items = [
     '✓  Organization created',
     `✓  ${stores.length} store${stores.length !== 1 ? 's' : ''} added`,
+    ...(getFocusCategories().length ? [`✓  Focus: ${getFocusCategories().map(k => _FOCUS_LABELS[k] || k).join(', ')}`] : []),
     '✓  Scanning app ready. Share with your team',
     '→  Next: invite staff and run your first scan',
   ];

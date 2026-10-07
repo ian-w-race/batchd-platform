@@ -3949,6 +3949,7 @@
             <div class="flow-phase-title" data-i18n="p3.title">Confirm & Place on Shelf</div>
             <div class="flow-phase-sub" data-i18n="p3.sub">Review details — then confirm placement to create the traceability record</div>
             <span id="p3-ftl-badge" style="display:none;align-items:center;gap:5px;margin-top:6px;font-size:10px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.06em;color:var(--info);background:rgba(var(--info-rgb),0.1);border:1px solid rgba(var(--info-rgb),0.3);border-radius:5px;padding:3px 8px;"></span>
+            <span id="p3-ftl-chip" style="display:inline-flex;align-items:center;gap:6px;margin-top:6px;margin-left:6px;"></span>
           </div>
           <button onclick="cancelScan()" class="cancel-scan-btn" title="Cancel and start over">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg>
@@ -6941,20 +6942,82 @@ function onProductNameInput() {
   document.getElementById('btn-next-1').disabled = !filled;
 }
 
+// Phase 6 (2026-10-07): the shelf flow resolves the Food Traceability List status the
+// same way receiving does (org override by GTIN, then by name, then the product
+// catalog, then the name detector) and offers a one-tap confirm chip. Managers and
+// corp admins write an org override (migration 025 policies); a staff decision
+// applies to this scan only. saveRecord reads _p3Ftl.
+let _p3Ftl = null;
+let _p3FtlSeq = 0;
 function updateFtlBadge(name) {
-  const ftl       = detectFtlCategory(name || '');
+  const ftl = detectFtlCategory(name || '');
+  _p3Ftl = { isFtl: ftl.isFtl, category: ftl.category, label: ftl.label, source: 'regex' };
+  _renderP3Ftl();
+  _resolveP3FtlOverride(name || '');
+}
+async function _resolveP3FtlOverride(name) {
+  const seq = ++_p3FtlSeq;
+  if (!_currentOrgId) return;
+  const barcodeRaw = document.getElementById('field-barcode')?.value.trim();
+  const norm = barcodeRaw ? normalizeBarcode(barcodeRaw) : null;
+  const key = name ? normaliseProductKey(name) : null;
+  const labelFor = cat => cat ? (FTL_CATEGORIES[cat]?.label || cat) : null;
+  let res = null;
+  try {
+    if (norm) {
+      const { data } = await sb.from('ftl_overrides').select('is_ftl,ftl_category').eq('organisation_id', _currentOrgId).eq('gtin', norm).limit(1);
+      if (data && data[0]) res = { isFtl: !!data[0].is_ftl, category: data[0].ftl_category, label: labelFor(data[0].ftl_category), source: 'override' };
+    }
+    if (!res && key) {
+      const { data } = await sb.from('ftl_overrides').select('is_ftl,ftl_category').eq('organisation_id', _currentOrgId).is('gtin', null).eq('product_name_normalized', key).limit(1);
+      if (data && data[0]) res = { isFtl: !!data[0].is_ftl, category: data[0].ftl_category, label: labelFor(data[0].ftl_category), source: 'override' };
+    }
+    if (!res && norm) {
+      const { data } = await sb.from('products_public').select('is_ftl,ftl_category').eq('barcode_normalized', norm).limit(1);
+      const pr = data && data[0];
+      if (pr && pr.is_ftl !== null && pr.is_ftl !== undefined) res = { isFtl: !!pr.is_ftl, category: pr.ftl_category, label: labelFor(pr.ftl_category), source: 'product' };
+    }
+  } catch (_) {}
+  if (seq !== _p3FtlSeq || !res) return;
+  _p3Ftl = res;
+  _renderP3Ftl();
+}
+function _renderP3Ftl() {
   const badge      = document.getElementById('p3-ftl-badge');
+  const chip       = document.getElementById('p3-ftl-chip');
   const kdeSection = document.getElementById('p3-fsma-kde');
   if (!badge) return;
+  const f = _p3Ftl || { isFtl: false, source: 'regex' };
   const isUS = typeof _userRegion !== 'undefined' && _userRegion === 'us';
-  if (ftl.isFtl) {
+  if (f.isFtl) {
     badge.style.display = 'inline-flex';
-    badge.textContent   = 'FSMA 204 (USA) — ' + ftl.label;
+    badge.textContent   = 'FSMA 204 (USA): ' + (f.label || f.category || 'listed food');
     if (kdeSection) kdeSection.style.display = isUS ? 'block' : 'none';
   } else {
     badge.style.display = 'none';
     if (kdeSection) kdeSection.style.display = 'none';
   }
+  if (!chip) return;
+  if (!isUS) { chip.innerHTML = ''; return; }
+  if (f.source === 'override') { chip.innerHTML = `<span class="rcv-chip">${f.isFtl ? 'Listed food, confirmed for your organization' : 'Not a listed food, confirmed for your organization'}</span>`; return; }
+  chip.innerHTML = f.isFtl
+    ? `<button type="button" class="rcv-chip" onclick="p3ConfirmFtl(false)">Not a listed food</button>`
+    : `<button type="button" class="rcv-chip" onclick="p3ConfirmFtl(true)">Listed food? Yes</button>`;
+}
+async function p3ConfirmFtl(yes) {
+  const name = document.getElementById('field-product-name')?.value.trim() || '';
+  const det = detectFtlCategory(name);
+  _p3Ftl = { isFtl: yes, category: yes ? det.category : null, label: yes ? det.label : null, source: 'staff' };
+  if (['corp_admin', 'store_manager'].includes(_currentUserRole)) {
+    const barcodeRaw = document.getElementById('field-barcode')?.value.trim();
+    const norm = barcodeRaw ? normalizeBarcode(barcodeRaw) : null;
+    const key = normaliseProductKey(name);
+    if (await writeFtlOverride(norm, key, yes, _p3Ftl.category)) { _p3Ftl.source = 'override'; showToast(yes ? 'Marked as a listed food for your organization.' : 'Marked as not a listed food for your organization.', 'ok'); }
+    else showToast('Applied to this scan only; the organization-wide decision could not be saved.', 'warn');
+  } else {
+    showToast('Applied to this scan. A manager can make it permanent from their account.', 'info');
+  }
+  _renderP3Ftl();
 }
 
 // ── DATE FORMATTING UTILITIES ──────────────────────────────
@@ -9570,8 +9633,8 @@ async function saveRecord() {
     // these resolve to null cleanly post-chunk-3 when the bridge inputs go.
     reference_document: (document.getElementById('field-reference-doc')?.value.trim()) || null,
     tlc_source:         (document.getElementById('field-tlc-source')?.value.trim()) || null,
-    is_ftl:             _ftlResult.isFtl || false,
-    ftl_category:       _ftlResult.category || null,
+    is_ftl:             (_p3Ftl ? _p3Ftl.isFtl : _ftlResult.isFtl) || false,          // Phase 6: the org or staff decision wins over the name detector
+    ftl_category:       (_p3Ftl ? _p3Ftl.category : _ftlResult.category) || null,
     // Expiry date — best-effort ISO date pulled out of raw_capture by
     // extractBestBefore() at confirm time. Null when no date was detectable.
     expiry_date:        expiryVal || null,
@@ -10021,6 +10084,7 @@ function setMsg(text, type) {
 }
 
 function resetForm() {
+  _p3Ftl = null;   // Phase 6: clear the shelf-flow FTL decision
   // Clear any pending quick-rescan state
   // Clear Phase 1 barcode state
   stopP1BarcodeScanner();
@@ -15368,83 +15432,89 @@ const FTL_CATEGORIES = {
   // Fresh produce
   leafy_greens: {
     label: 'Leafy Greens',
-    patterns: /(lettuce|romaine|spinach|kale|arugula|chard|collard|mustard green|watercress|endive|escarole|radicchio|iceberg|butterhead|mixed green|salad green|baby green|mesclun|rucola|rocket)/i
+    patterns: /\b(lettuce|romaine|spinach|kale|arugula|chard|collard|mustard green|watercress|endive|escarole|radicchio|iceberg|butterhead|mixed green|salad green|baby green|mesclun|rucola|rocket)\b/i
   },
   fresh_cut_produce: {
     label: 'Fresh-Cut Produce',
-    patterns: /fresh.?cut|pre.?cut|ready.?to.?eat (fruit|veg|salad)/i
+    patterns: /\bfresh.?cut\b|\bpre.?cut\b|\bready.?to.?eat (fruit|veg|salad)\b/i
   },
   tomatoes: {
     label: 'Tomatoes',
-    patterns: /tomato|tomatoes|tomat/i
+    patterns: /\btomato|\btomatoes\b|\btomat/i
   },
   peppers: {
     label: 'Peppers',
-    patterns: /bell pepper|sweet pepper|chili pepper|capsicum|pepper(?!corn)/i
+    patterns: /\bbell pepper|\bsweet pepper|\bchili pepper|\bchile pepper|\bcapsicum|\bjalapeno|\bjalapeño|\bhabanero|\bpoblano|\bserrano|\bpeppers?\b/i,
+    // Phase 6 (2026-10-07): known misfires. Checked before the pattern.
+    exclude: /dr\.?\s*pepper|pepperoni|peppermint|peppercorn|pepper jack|peppered|pepper spray|pepper steak|pepper sauce|salt (and|&) pepper/i
   },
   cucumbers: {
     label: 'Cucumbers',
-    patterns: /cucumber|gurk/i
+    patterns: /\bcucumber|\bgurk/i
   },
   melons: {
     label: 'Melons',
-    patterns: /melon|cantaloupe|honeydew|watermelon/i
+    patterns: /\bmelon\b|\bcantaloupe\b|\bhoneydew\b|\bwatermelon\b/i
   },
   sprouts: {
     label: 'Sprouts',
-    patterns: /sprout|alfalfa sprout|bean sprout|broccoli sprout/i
+    patterns: /\bsprout\b|\balfalfa sprout|\bbean sprout|\bbroccoli sprout/i
   },
   herbs: {
     label: 'Fresh Herbs',
-    patterns: /(fresh |cut )?(basil|cilantro|coriander|parsley|dill|mint|chive|tarragon|thyme|rosemary|sage|oregano)/i
+    patterns: /\b(fresh |cut )?(basil|cilantro|coriander|parsley|dill|mint|chive|tarragon|thyme|rosemary|sage|oregano)\b/i
   },
   tropical_fruits: {
     label: 'Tropical Tree Fruits',
-    patterns: /(mango|papaya|guava|pineapple|passion fruit|starfruit|carambola|lychee|rambutan|jackfruit|durian|cherimoya)/i
+    patterns: /\b(mango|papaya|guava|pineapple|passion fruit|starfruit|carambola|lychee|rambutan|jackfruit|durian|cherimoya)\b/i
   },
   // Dairy
   soft_cheese: {
     label: 'Soft/Semi-Soft Cheese',
-    patterns: /(ricotta|feta|mozzarella|brie|camembert|blue cheese|gorgonzola|roquefort|havarti|fontina|gouda|manchego|gruyere|raclette|taleggio|limburger|munster|queso fresco|paneer|halloumi|chevre|fromage)/i
+    patterns: /\b(ricotta|feta|mozzarella|brie|camembert|blue cheese|gorgonzola|roquefort|havarti|fontina|gouda|manchego|gruyere|raclette|taleggio|limburger|munster|queso fresco|paneer|halloumi|chevre|fromage)\b/i
   },
   // Eggs
   shell_eggs: {
     label: 'Shell Eggs',
-    patterns: /(egg|eggs)(?! noodle| pasta| powder| substitute| replacement)/i
+    // Phase 6 (2026-10-07): word boundary so eggplant and eggnog do not match.
+    patterns: /\b(egg|eggs)\b(?! noodle| pasta| powder| substitute| replacement| salad| roll| white| whites)/i,
+    exclude: /eggplant|eggnog|liquid egg|egg beaters|egg salad|egg roll|egg white/i
   },
   // Seafood
-  finfish: {
-    label: 'Finfish',
-    patterns: /(tuna|salmon|cod|tilapia|halibut|snapper|mahi|grouper|flounder|sole|bass|trout|catfish|pollock|haddock|sardine|mackerel|herring|anchov|swordfish|sea bass|branzino|laks|torsk|sei|ørret|skrei)/i
-  },
+  // Phase 6 (2026-10-07): smoked finfish must be tested before finfish, or 'smoked salmon' lands in finfish.
   smoked_finfish: {
     label: 'Smoked Finfish',
-    patterns: /smoked.{0,10}(salmon|trout|mackerel|herring|eel|fish)|(salmon|trout|fish).{0,10}smoked/i
+    patterns: /\bsmoked.{0,10}(salmon|trout|mackerel|herring|eel|fish)\b|\b(salmon|trout|fish).{0,10}smoked\b/i
+  },
+  finfish: {
+    label: 'Finfish',
+    patterns: /\b(tuna|salmon|cod|tilapia|halibut|snapper|mahi|grouper|flounder|sole|bass|trout|catfish|pollock|haddock|sardine|mackerel|herring|anchov|swordfish|sea bass|branzino|laks|torsk|sei|ørret|skrei)\b/i
   },
   crustaceans: {
     label: 'Crustaceans',
-    patterns: /(shrimp|prawn|crab|lobster|crayfish|langoustine|scampi|reke)/i
+    patterns: /\b(shrimp|prawn|crab|lobster|crayfish|langoustine|scampi|reke)\b/i
   },
   bivalves: {
     label: 'Bivalve Molluscs',
-    patterns: /(oyster|clam|mussel|scallop|cockle|abalone)/i
+    patterns: /\b(oyster|clam|mussel|scallop|cockle|abalone)\b/i
   },
   // Nut products
   nut_butters: {
     label: 'Nut Butters',
-    patterns: /(peanut butter|almond butter|cashew butter|sunflower butter|tahini|nut butter|peanut spread)/i
+    patterns: /\b(peanut butter|almond butter|cashew butter|sunflower butter|tahini|nut butter|peanut spread)\b/i
   },
   // Deli salads
   deli_salads: {
     label: 'Deli Salads',
-    patterns: /(pasta salad|potato salad|coleslaw|egg salad|tuna salad|chicken salad|macaroni salad|deli salad|prepared salad)/i
+    patterns: /\b(pasta salad|potato salad|coleslaw|egg salad|tuna salad|chicken salad|macaroni salad|deli salad|prepared salad)\b/i
   }
 };
 
 // Returns { isFtl: bool, category: string|null, label: string|null }
 function detectFtlCategory(productName) {
   if (!productName) return { isFtl: false, category: null, label: null };
-  for (const [key, { label, patterns }] of Object.entries(FTL_CATEGORIES)) {
+  for (const [key, { label, patterns, exclude }] of Object.entries(FTL_CATEGORIES)) {
+    if (exclude && exclude.test(productName)) continue;   // Phase 6: per-category misfire list
     if (patterns.test(productName)) {
       return { isFtl: true, category: key, label };
     }
@@ -17141,22 +17211,28 @@ async function rcvConfirmFtl(yes) {
     const gtinRaw = _rcvEl('rcv-gtin')?.value.trim();
     const norm = gtinRaw ? normalizeBarcode(gtinRaw) : null;
     const key = normaliseProductKey(_rcvEl('rcv-product')?.value || '');
-    if (norm || key) {
-      try {
-        let q = sb.from('ftl_overrides').select('id').eq('organisation_id', _currentOrgId);
-        q = norm ? q.eq('gtin', norm) : q.is('gtin', null).eq('product_name_normalized', key);
-        const { data: existing } = await q.limit(1);
-        const row = { is_ftl: yes, ftl_category: yes ? _rcvFtl.category : null, set_by: currentUser?.email || null };
-        if (existing && existing[0]) {
-          const { error } = await sb.from('ftl_overrides').update(row).eq('id', existing[0].id); if (error) throw error;
-        } else {
-          const { error } = await sb.from('ftl_overrides').insert({ organisation_id: _currentOrgId, gtin: norm || null, product_name_normalized: norm ? null : key, ...row }); if (error) throw error;
-        }
-        _rcvFtl.source = 'override';
-      } catch (e) { console.warn('[receiving] FTL override write failed:', e.message); }
-    }
+    if (await writeFtlOverride(norm, key, yes, _rcvFtl.category)) _rcvFtl.source = 'override';
   }
   rcvRenderFtl();
+}
+
+// Phase 6 (2026-10-07): shared override writer for the receiving form and the shelf
+// flow. Select then insert or update, because the unique indexes are partial and
+// PostgREST's on_conflict cannot target them. Returns true when a row was written.
+async function writeFtlOverride(norm, key, yes, category) {
+  if (!_currentOrgId || !(norm || key)) return false;
+  try {
+    let q = sb.from('ftl_overrides').select('id').eq('organisation_id', _currentOrgId);
+    q = norm ? q.eq('gtin', norm) : q.is('gtin', null).eq('product_name_normalized', key);
+    const { data: existing } = await q.limit(1);
+    const row = { is_ftl: yes, ftl_category: yes ? (category || null) : null, set_by: currentUser?.email || null };
+    if (existing && existing[0]) {
+      const { error } = await sb.from('ftl_overrides').update(row).eq('id', existing[0].id); if (error) throw error;
+    } else {
+      const { error } = await sb.from('ftl_overrides').insert({ organisation_id: _currentOrgId, gtin: norm || null, product_name_normalized: norm ? null : key, ...row }); if (error) throw error;
+    }
+    return true;
+  } catch (e) { console.warn('[ftl] override write failed:', e.message); return false; }
 }
 
 // ── Delivery memory (same document for the next line, 30 minutes) ──────
