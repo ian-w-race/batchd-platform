@@ -65,7 +65,7 @@ function buildReminderHtml({ store, retailerName, product, lot, severity, coord,
           </a>
         </div>
         <p style="font-size:11px;color:#999;border-top:1px solid #eee;padding-top:12px;">
-          Sent from your organisation's Batch'd dashboard by your recall team.
+          Sent from your organization's Batch'd dashboard by your recall team.
         </p>
       </div>
       <div style="background:#f9f9f9;padding:12px 24px;text-align:center;font-size:11px;color:#aaa;">

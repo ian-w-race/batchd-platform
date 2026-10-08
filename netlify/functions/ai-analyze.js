@@ -55,7 +55,7 @@ exports.handler = async (event) => {
 
   let prompt = '';
   let maxTokens = 800;
-  let systemPrompt = "You are Batch'd, an AI assistant specialising in food traceability, recall management, and supply chain intelligence. Be precise, actionable, and concise. Write in plain English — no markdown headers, no bullet lists unless specifically requested.";
+  let systemPrompt = "You are Batch'd, an AI assistant specializing in food traceability, recall management, and supply chain intelligence. Be precise, actionable, and concise. Write in plain English, with no markdown headers, no bullet lists unless specifically requested.";
 
   if (task === 'synthesize_investigation') {
     const { investigation, responses } = data;
@@ -71,7 +71,7 @@ exports.handler = async (event) => {
       `${r.store_name||'Unknown store'}: ${r.issue_description||'No issue found'}`
     ).join('\n');
 
-    prompt = `You are analysing a field investigation for a food product issue.
+    prompt = `You are analyzing a field investigation for a food product issue.
 
 INVESTIGATION DETAILS:
 Product: ${investigation.product_name || 'Unknown'}

@@ -64,7 +64,7 @@ exports.handler = async (event) => {
   // to; the org name, role and inviter shown in the email come from the
   // invitation row and the session, never from the request body.
   const trusted = await authoriseStaffInvite(event, body);
-  if (!trusted) return { statusCode: 403, body: JSON.stringify({ error: 'Not authorised to send this invitation.' }) };
+  if (!trusted) return { statusCode: 403, body: JSON.stringify({ error: 'Not authorized to send this invitation.' }) };
   return handleStaffInvite({ to: String(body.to).trim(), inviteUrl: body.inviteUrl, ...trusted });
 };
 
@@ -87,8 +87,9 @@ async function authoriseStaffInvite(event, { to, inviteUrl }) {
   const mem = await sbGet(`organisation_members?user_id=eq.${user.id}&organisation_id=eq.${inv.organisation_id}&role=eq.corp_admin&active=not.is.false&select=user_id&limit=1`);
   if (!mem.length && !(await isPlatformAdmin(user.id))) return null;
   const org = (await sbGet(`organisations?id=eq.${inv.organisation_id}&select=name&limit=1`))[0];
-  const roleLabel = { corp_admin: 'Corporate admin', store_manager: 'Store manager', staff: 'Staff' }[inv.role] || inv.role;
-  return { orgName: org?.name || 'your organisation', role: roleLabel, inviterEmail: user.email || '' };
+  // Phrase with its article so the email reads "as a staff member", not "as a Staff" (fixed 2026-10-07).
+  const roleLabel = { corp_admin: 'a corporate admin', store_manager: 'a store manager', staff: 'a staff member' }[inv.role] || ('a ' + inv.role);
+  return { orgName: org?.name || 'your organization', role: roleLabel, inviterEmail: user.email || '' };
 }
 
 // ── Staff invitation email ─────────────────────────────────
@@ -121,7 +122,7 @@ async function handleStaffInvite({ to, orgName, inviterEmail, role, inviteUrl })
             <div style="font-size:16px;font-weight:600;margin-bottom:12px;">You've been invited</div>
             <p style="font-size:13px;color:#6aaf9e;line-height:1.7;margin-bottom:24px;">
               <strong style="color:#edfdf8;">${esc(inviterEmail)}</strong> has invited you to join
-              <strong style="color:#edfdf8;">${esc(orgName)}</strong> on Batch'd as a
+              <strong style="color:#edfdf8;">${esc(orgName)}</strong> on Batch'd as
               <strong style="color:#edfdf8;">${esc(role)}</strong>.
             </p>
             <a href="${esc(inviteUrl)}" style="display:inline-block;background:#34d399;color:#080f12;font-weight:700;font-size:14px;padding:14px 28px;border-radius:8px;text-decoration:none;margin-bottom:24px;">

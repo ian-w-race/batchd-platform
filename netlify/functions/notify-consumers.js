@@ -270,7 +270,7 @@ function buildNoticeHtml({ customerName, orgName, productName, lotNumber, reason
           </div>`).join('')}
 
         <p style="margin:20px 0 8px;font-size:13px;color:#333;line-height:1.6;">
-          We sincerely apologise for any inconvenience this may cause. The safety and wellbeing of our customers is our highest priority.
+          We sincerely apologize for any inconvenience this may cause. The safety and wellbeing of our customers is our highest priority.
         </p>
 
         <p style="margin:8px 0 24px;font-size:13px;color:#333;line-height:1.6;">

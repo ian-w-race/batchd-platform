@@ -185,7 +185,7 @@ function tmplRecallPushed(p, orgName) {
   const subject = `Recall pushed — ${p.product_name || 'Unnamed product'} (${orgName})`;
   const html = `<!DOCTYPE html><html><body style="font-family:Helvetica,Arial,sans-serif;max-width:560px;margin:0 auto;padding:20px;color:#1a201d;line-height:1.6;">
   <div style="font-weight:800;font-size:20px;color:#077A55;letter-spacing:-0.01em;">Batch'd</div>
-  <h2 style="font-size:17px;margin-top:24px;">A recall was just pushed in your organisation</h2>
+  <h2 style="font-size:17px;margin-top:24px;">A recall was just pushed in your organization</h2>
   <p>A recall has been initiated by <strong>${esc(orgName)}</strong> and is now live across the affected stores.</p>
   <div style="background:#fff3f3;border:1px solid #fbcaca;border-radius:8px;padding:14px 16px;margin:18px 0;">
     <div><strong>Product:</strong> ${esc(p.product_name || '—')}</div>
@@ -333,7 +333,7 @@ exports.handler = async (event) => {
   }
 
   // Look up org name for the email subject lines.
-  let orgName = 'your organisation';
+  let orgName = 'your organization';
   try {
     const orgs = await sbQuery('organisations', { select: 'name', id: `eq.${org_id}` });
     if (orgs?.[0]?.name) orgName = orgs[0].name;
