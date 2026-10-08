@@ -110,6 +110,9 @@ WITH checks AS (
          EXISTS (SELECT 1 FROM pg_policies
                  WHERE schemaname='public' AND tablename='receiving_events'
                    AND policyname='b29_receiving_member_confirm_expected')
+  UNION ALL SELECT '030 products_public exposes the FTL columns',
+         EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_schema='public' AND table_name='products_public' AND column_name='is_ftl')
 )
 SELECT
   migration,
@@ -139,7 +142,8 @@ ORDER BY migration;
 -- SAFE to re-run: 002, 003, 006, 007, 008, 009, 010, 011, 012, 013,
 --                 014, 015, 016, 017, 018, 019, 020, 020a, 021,
 --                 022, 023, 024, 025, 026 (Phase 1 of the FSMA 204 handoff),
---                 028 (Phases 6 and 7: two columns), 029 (Phase 7: one policy)
+--                 028 (Phases 6 and 7: two columns), 029 (Phase 7: one policy),
+--                 030 (CREATE OR REPLACE VIEW products_public, appends three columns)
 --   (idempotent: ADD COLUMN IF NOT EXISTS, CREATE OR REPLACE FUNCTION,
 --    DROP ... IF EXISTS before each CREATE POLICY / CREATE TRIGGER;
 --    020, 020a and 021 each run inside one BEGIN/COMMIT)
