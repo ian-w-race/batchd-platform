@@ -151,3 +151,11 @@ not repeated here.
     records" area and empty states have no color emoji anywhere. The US
     flag on the FSMA card stays. After a drill certificate downloads, the
     button reads "Download certificate" with a medal icon.
+
+## Function source blocked (netlify.toml, 2026-10-08)
+
+31. In a private window open
+    https://app.batchdapp.com/netlify/functions/send-invite.js and
+    https://corporate.batchdapp.com/netlify/lib/auth.js: both return the
+    404 page, not JavaScript. Then send a staff invite from the dashboard:
+    the email still arrives (the function itself is unaffected).

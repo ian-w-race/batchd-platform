@@ -54,8 +54,9 @@ files. Never partial diffs or code snippets to manually insert.
 - Routing: host-scoped rules in netlify.toml are the authority for the
   domain split. There is no _redirects file. netlify.toml also carries
   the security headers, the forced 404s that keep CLAUDE.md, SECRETS.md,
-  SCHEMA.md, migrations/ and docs/ off the public site, and
-  `node_bundler = "esbuild"` for netlify/lib/auth.js (all 2026-09-20). The JS hostname snippet at
+  SCHEMA.md, migrations/ and docs/ off the public site (2026-09-20) and,
+  since 2026-10-08, netlify/ as well (function source was being served as
+  static files), and `node_bundler = "esbuild"` for netlify/lib/auth.js. The JS hostname snippet at
   the top of index.html is a fallback that only redirects the retired
   manufacturer, admin and supplier subdomains. See "Domains and
   routing" below.
@@ -1243,6 +1244,24 @@ no console errors. Not verified against the live database.
   SVGs from `_ico(name, size)`. Two `textContent` assignments became
   `innerHTML` so the icon renders. Flag glyphs stay. Not swept: the text
   dingbats ✓ ✗ ⚠ ● ★ and index.html.
+- netlify.toml: forced 404 for `/netlify/*` (2026-10-08). While verifying
+  the upload, probes showed `/netlify/functions/send-invite.js` and
+  `/netlify/lib/auth.js` answering HTTP 200 with the source on all three
+  domains; the publish directory is the repo root and nothing blocked the
+  folder. No secrets live in those files (environment variables only), but
+  it is server code. Function invocation goes through
+  `/.netlify/functions/<name>`, a different prefix, so the rule does not
+  touch it. Found at the same time: the 2026-10-08 functions upload landed
+  in `netlify/` instead of `netlify/functions/` (GitHub's uploader puts
+  files where you stand), leaving six stray copies to delete and the old
+  functions still deployed until the re-upload.
+- Live check 2026-10-08 after the root upload: corporate.batchdapp.com
+  served dashboard.html byte for byte; batchd-app.netlify.app served
+  index.html with one 23-byte difference, Netlify's Pretty URLs
+  post-processing rewriting `dashboard.html?panel=recalls` to
+  `dashboard?panel=recalls` (the netlify.toml rule from 2026-09-13 301s
+  that path to corporate with the query string intact). Expect that
+  difference whenever comparing the live scanner to the file.
 
 ## Recall counting rules (platform-wide)
 A recall requires action only when ALL THREE are true:
