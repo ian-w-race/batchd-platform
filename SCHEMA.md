@@ -533,7 +533,7 @@ links a shelf scan to its delivery.
 | received_by | text | staff email |
 | notes | text | |
 | client_uuid | uuid UNIQUE | offline replay idempotency |
-| retain_until | timestamptz | trigger sets received_at + 2 years when null (21 CFR 1.1455(a)) |
+| retain_until | timestamptz | trigger sets received_at + 2 years when null (21 CFR 1.1455(d); the inline comment in migration 023 still says (a)) |
 | created_at | timestamptz NOT NULL DEFAULT now() | |
 
 Indexes: (organisation_id, traceability_lot_code); (organisation_id,
@@ -569,8 +569,9 @@ product_name_normalized is present. Unique per org on gtin (where not
 null) and on product_name_normalized (where gtin is null). Policies:
 members SELECT; corp_admin or manager INSERT and UPDATE; corp_admin
 DELETE; platform admin ALL. Resolution order in code: org override by
-GTIN, org override by normalized name, products.is_ftl by GTIN, then the
-scanner's name regex.
+GTIN, org override by normalized name, products.is_ftl by GTIN (through
+the products_public view, which exposes the columns only from migration
+030), then the scanner's name regex.
 
 ### records_requests and traceability_plans (026)
 records_requests: id, organisation_id FK, is_drill DEFAULT true,
@@ -595,6 +596,15 @@ Written on 2026-10-03; applied status is reported by
 021 to 025 because migrations 020, 020a and 021 (security hardening,
 applied 2026-09-22) already exist. Migration 027 is reserved for the
 code_patterns ownership fix noted in docs/WALKTHROUGH.md.
+
+### products_public view (030, 2026-10-08)
+Migration 001 defined the view with id, barcode_normalized, product_name
+(products.name) and source, filtered to published rows with a normalized
+barcode, security_invoker false, SELECT granted to authenticated and anon.
+Migration 030 re-creates it with is_ftl, ftl_category and
+ftl_confirmed_source appended, so the scanner's GTIN-level FTL lookup
+(the third step of the resolution order) answers instead of returning 400.
+Until 030 runs, that step fails quietly and the name regex decides.
 
 ### stores.external_code (028, 2026-10-07)
 text, nullable, with a partial index on (organisation_id, external_code).

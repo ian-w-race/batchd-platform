@@ -71,6 +71,9 @@
     }
     .field input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(52,211,153,0.08); }
     .field input:disabled { opacity: 0.5; cursor: not-allowed; }
+    /* 2026-10-07: details the inviter supplied render locked. */
+    .field input[readonly] { opacity: 0.8; cursor: default; border-style: dashed; }
+    .ro-note { font-size: 11px; color: var(--muted); line-height: 1.5; margin: -4px 0 12px; }
 
     .pw-strength { display: flex; gap: 3px; margin-top: 8px; align-items: center; }
     .pw-bars { display: flex; gap: 3px; flex: 1; }
@@ -279,6 +282,12 @@ function showForm(inv) {
     ? inv._managerStoreNames.map(n => `<span class="invite-chip store"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-1px;margin-right:4px;"><path d="M12 22s7-6.5 7-12a7 7 0 1 0-14 0c0 5.5 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></svg>${esc(n)}</span>`).join('')
     : '';
 
+  // 2026-10-07: details the administrator entered on the invite form render
+  // read-only so they reach the member record unchanged; blank fields stay
+  // editable. The submit path is unchanged (it reads the same inputs).
+  const _ro = v => v ? ' readonly' : '';
+  const _suppliedCount = ['phone_number', 'store_role', 'employee_id', 'hire_date'].filter(k => inv[k]).length;
+
   document.getElementById('card-content').innerHTML = `
     <div class="title">You're invited</div>
     <div class="sub">Set up your Batch'd account to join <strong style="color:var(--text);">${esc(orgName)}</strong>.</div>
@@ -302,29 +311,29 @@ function showForm(inv) {
       <input id="f-name" type="text" placeholder="e.g. Alex Johnson" autocomplete="name" value="${esc(inv.full_name || '')}" />
     </div>
 
-    <!-- Optional pre-fillable profile details. If the inviter pre-filled
-         any of these on the dashboard form, they show pre-populated;
-         invitee can edit or leave blank. -->
+    <!-- Profile details. Fields the inviter filled on the dashboard form
+         render read-only (2026-10-07); blank ones the invitee may fill. -->
     <div style="margin-top:6px;padding-top:14px;border-top:1px solid var(--border);">
       <div style="font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:10px;">
-        Profile details · optional
+        ${_suppliedCount ? 'Profile details · entered by your administrator' : 'Profile details · optional'}
       </div>
       <div class="field">
         <label>Phone number</label>
-        <input id="f-phone" type="tel" placeholder="+1 ..." value="${esc(inv.phone_number || '')}" autocomplete="tel" />
+        <input id="f-phone" type="tel" placeholder="${inv.phone_number ? '' : '+1 ...'}" value="${esc(inv.phone_number || '')}" autocomplete="tel"${_ro(inv.phone_number)} />
       </div>
       <div class="field">
         <label>Store role</label>
-        <input id="f-store-role" type="text" placeholder="cashier · stocker · deli ..." value="${esc(inv.store_role || '')}" />
+        <input id="f-store-role" type="text" placeholder="${inv.store_role ? '' : 'cashier · stocker · deli ...'}" value="${esc(inv.store_role || '')}"${_ro(inv.store_role)} />
       </div>
       <div class="field">
         <label>Employee / badge ID</label>
-        <input id="f-employee-id" type="text" placeholder="" value="${esc(inv.employee_id || '')}" />
+        <input id="f-employee-id" type="text" placeholder="" value="${esc(inv.employee_id || '')}"${_ro(inv.employee_id)} />
       </div>
       <div class="field">
         <label>Hire date</label>
-        <input id="f-hire-date" type="date" value="${esc(inv.hire_date || '')}" />
+        <input id="f-hire-date" type="date" value="${esc(inv.hire_date || '')}"${_ro(inv.hire_date)} />
       </div>
+      ${_suppliedCount ? `<div class="ro-note">Your administrator filled in ${_suppliedCount === 4 ? 'these details' : 'the locked fields'}. If something is wrong, ask them to correct it after you join.</div>` : ''}
     </div>
 
     <div class="field" style="margin-top:6px;padding-top:14px;border-top:1px solid var(--border);">

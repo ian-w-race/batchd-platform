@@ -17,7 +17,7 @@ US grocery retail under FSMA 204. The US/NO region system described in
   DONE 2026-09-29 (Phase 0): signup.html hardcodes region 'us', sets
   organisations.recall_source to 'fda' right after the RPC creates the
   row, and writes user_settings.recall_source 'fda'; the region picker
-  is gone from signup, from the Settings Organisation card
+  is gone from signup, from the Settings Organization card
   (saveOrgSettings writes the stored value back unchanged) and from the
   staff invite form (invitations.region stays NULL, so invitees inherit
   the org default). Columns stay. To move an existing org to US, run
@@ -104,7 +104,7 @@ the file's modification time, not a commit date. Files dated
 2026-04-30 22:48 have not changed since the repo was downloaded.
 
 Live application surfaces:
-- index.html (about 23,100 lines after Phase 7, 2026-10-07): staff scanning app (PWA).
+- index.html (about 22,900 lines after the 2026-10-07 follow-ups): staff scanning app (PWA).
   Canonical URL is https://batchd-app.netlify.app/ (confirmed by Ian
   2026-09-13): every scanner link in dashboard.html points there, the
   installed PWAs were added from there, and the manifest start_url is
@@ -131,9 +131,10 @@ Live application surfaces:
   the invitation row; join.html maps them. Both must ship together: the
   edited 018 needs a re-run (it DROPs the old function signature, which
   triggers the editor's destructive-operations warning) and join.html
-  needs uploading. Known polish items on this page: the prefilled block
-  should render read-only when the inviter supplied the details, and the
-  phone placeholder is a hardcoded +47 (jurisdiction rule).
+  needs uploading. Both polish items on this page are done: the phone
+  placeholder became +1 in Phase 0, and since 2026-10-07 the profile
+  fields the inviter supplied render read-only (see "Follow-ups shipped
+  2026-10-07").
 - signup.html (about 1,080 lines after Phase 5, 2026-10-07): self-serve signup. See
   "Self-serve signup" below. Reachable at /signup.
 - admin.html (942 lines, 2026-09-09): internal Batch'd platform admin.
@@ -177,7 +178,7 @@ Retired stubs (80 lines each, 2026-05-05):
 
 Not application files: README.md (2 lines), SCHEMA.md, SECRETS.md,
 ROADMAP-2026-08.md, CLAUDE_DESIGN_BRIEF.md, .ui-polish-checklist.md,
-docs/ARCHITECTURE.md, migrations/ (29 SQL files, 001 to 029 with 020a and
+docs/ARCHITECTURE.md, migrations/ (30 SQL files, 001 to 030 with 020a and
 without 027, plus CHECK_MIGRATIONS.sql), assets/, fonts/, netlify/functions/ (18
 functions), netlify.toml, package.json (pins @supabase/supabase-js
 2.112.1 for the functions).
@@ -485,12 +486,14 @@ Phase 0, adjusted for the US-only decision (the Norwegian half, the
 - Citation table. `_CITATIONS.us` (const in dashboard.html after the
   state declaration; `window._CITATIONS` in index.html after the
   Supabase client) holds rule, subpart, plan 1.1315, receivingKde
-  1.1345, availability 1.1455, retention 1.1455(a), exemptions 1.1305,
+  1.1345, availability 1.1455(c), retention 1.1455(d), exemptions 1.1305,
   recallNotify 7.46, recallComms 7.49, recallEnd 7.55, complianceDate.
   Two wrong citations were corrected on the way: receiving KDEs were
   cited as §1.1330 (that section is initial packing) and retention was
   cited as §1.1345 in one place and "21 CFR 1.337" in another. Both now
-  read through the table. Remaining hand-typed US literals in code
+  read through the table. Phase 0 set retention to 1.1455(a), which is
+  the general records paragraph; the 2-year retention is 1.1455(d) and
+  the table was corrected on 2026-10-07 (see "Follow-ups shipped"). Remaining hand-typed US literals in code
   comments and in static HTML were left; migrate them when the line is
   next touched.
 - Region pickers removed and US defaults set (see the decision section
@@ -503,10 +506,11 @@ Phase 0, adjusted for the US-only decision (the Norwegian half, the
   card replaced with an inline SVG, em dashes removed from copy.
 - SMOKE.md created at the repo root with the Phase 0 checks and the
   handoff's later-phase checks.
-Not done in Phase 0: a British-to-American sweep of existing UI copy
-("Organisation" panel titles and labels remain), the read-only render of
-prefilled join details, and the invite email's "as a staff" wording
-(that string lives in send-invite.js).
+Not done in Phase 0: a British-to-American sweep of existing UI copy, the
+read-only render of prefilled join details, and the invite email's "as a
+staff" wording (send-invite.js). The sweep and the invite wording shipped
+on 2026-10-07 (see "Follow-ups shipped 2026-10-07"); the read-only render
+of prefilled join details is still open.
 
 ## Phase 1 of the FSMA 204 handoff (migrations written 2026-10-03)
 Five migrations, numbered 022 to 026 because John's 020, 020a and 021
@@ -538,8 +542,9 @@ migrations/CHECK_MIGRATIONS.sql; acceptance: docs/verify-022-026.sql
   ftl_confirmed_at) and ftl_overrides (per-org, by GTIN or normalized
   name, unique per org on each). products keeps its existing policies.
   Phase 2 note: the scanner reads products through the products_public
-  view, which is not defined in any migration; if the view does not
-  expose the new columns the client falls through to the name regex.
+  view (migration 001). Until migration 030 runs the view does not
+  expose the new columns and the client falls through to the name regex;
+  confirmed by probe on 2026-10-08 and fixed by 030 (see "Follow-ups").
 - 026 records_requests (minutes_to_produce is a stored generated
   column) and traceability_plans (unique per org on version). corp_admin
   writes, members read.
@@ -637,7 +642,9 @@ against the live database (needs a signed-in session).
 - Pre-existing, noticed, not fixed: the deactivated-member and
   no-membership branches at sign-in write to `auth-view` and `main-app`,
   ids that do not exist in the page (the login overlay is
-  `login-screen`), so those branches would throw. Separate fix.
+  `login-screen`), so those branches would throw. FIXED 2026-10-07: both
+  branches render into `login-screen` (see "Follow-ups shipped
+  2026-10-07").
 - Local preview for the scanner: `.claude/launch.json` runs
   `.claude/serve.js` (Node static server on 127.0.0.1:8787). Neither
   file is uploaded.
@@ -649,7 +656,7 @@ the module's pure functions pass a Node test file, and the card and its
 form render in a local preview with sample rows. Not yet verified against
 the live database (needs a signed-in session).
 - Settings card "Suppliers", visible to corp_admin and store_manager,
-  between the Organisation/Account row and "Your preferences". It loads
+  between the Organization/Account row and "Your preferences". It loads
   asynchronously: `renderSuppliersCard()` fills `#suppliers-body` after
   the Settings shell renders, so a slow query never blocks Settings.
   Table columns: completeness dot, name with type, GLN and tags (Exempt
@@ -784,8 +791,10 @@ the tables are not there yet).
 - Not in Phase 4: the Shipping sheet for distribution centers (the
   builder is a single sheet; `operates_distribution_center` is only read
   by the plan), the readiness-score axis for records-request time (Phase
-  5), the Reports panel's older `fsma` report key (untouched, still
-  scan-based), and any NO branch (US-only decision).
+  5), and any NO branch (US-only decision). The Reports panel's older
+  `fsma` report key stayed scan-based until 2026-10-07, when the US
+  branch moved to receiving records and the shared builder (see
+  "Follow-ups shipped 2026-10-07").
 
 ## Phase 5 of the FSMA 204 handoff: applicability, exemption copy, readiness (built 2026-10-07)
 dashboard.html, index.html and signup.html. Verified: every inline script
@@ -816,7 +825,7 @@ preview. Not verified against the live database.
   column name out of a PostgREST PGRST204 (write payload) or a Postgres
   42703 (select) message; saveOrgSettings uses it to drop missing columns
   and retry, which also replaced the old recall_source-only retry.
-- Settings, Organisation card (US orgs): "FSMA 204 applicability" field
+- Settings, Organization card (US orgs): "FSMA 204 applicability" field
   with the sales-band select, two checkboxes (registered facility,
   distribution center), a live copy preview (`_orgApplicabilityPreview`)
   and the threshold note. saveOrgSettings writes the three answers plus
@@ -863,11 +872,12 @@ preview. Not verified against the live database.
   reference_document on scans) are gone from US views.
 - Scanner FSMA tab: `_fsmaApplicabilityBanner()` prepends the
   applicability sentence when the org has answered; the tab's own score
-  (`renderFsmaReadiness`) still reads legacy scan fields and is left for
-  a later pass.
-- Not in Phase 5: moving the scanner's FSMA readiness score to receiving
-  data; a Shipping sheet or CTE for distribution centers (the answer is
-  stored and read only by the plan generator).
+  (`renderFsmaReadiness`) read legacy scan fields until 2026-10-07, when
+  it was rewritten on receiving data (see "Follow-ups shipped
+  2026-10-07").
+- Not in Phase 5: a Shipping sheet or CTE for distribution centers (the
+  answer is stored and read only by the plan generator). The scanner's
+  readiness score moved to receiving data on 2026-10-07.
 
 ## Phase 6 of the FSMA 204 handoff: the category wedge (built 2026-10-07)
 dashboard.html, index.html, signup.html, migration 028. Verified: every
@@ -909,7 +919,7 @@ render in a local preview. Not verified against the live database.
   (organisations.focus_categories, migration 024). Pickers:
   `_focusPickerHtml(selected, editable, prefix)` renders chips (the two
   wedge categories first, marked recommended) and `_focusPickerValues`
-  reads them. Settings, Organisation card "Where you start" saves
+  reads them. Settings, Organization card "Where you start" saves
   through saveOrgSettings; Getting started has a "Where do you want to
   start?" card saved by `saveFocusCategories('ob')`; signup step 3 has
   the same two preselected chips plus an "Add another category" select
@@ -1049,7 +1059,7 @@ aggregation or the network_benchmarks table yet. That is what shipped:
   `_NETWORK_OPTIN_REVIEWED` gated the toggle until Elliott had reviewed
   the copy, which the handoff's section 10 requires; Elliott approved it
   on 2026-10-07 and the constant is true, so the toggle renders in the
-  Organisation card below "Where you start" and saveOrgSettings writes
+  Organization card below "Where you start" and saveOrgSettings writes
   the flag (corp_admin only, with the usual missing-column retry).
 - Nothing reads the flag. When aggregation comes it must run in a
   scheduled Netlify function with the service key, write only
@@ -1061,15 +1071,18 @@ aggregation or the network_benchmarks table yet. That is what shipped:
   was met by John's migration 021 on 2026-09-22.
 
 ## FSMA 204 handoff: state at the end of the build (2026-10-07)
-Phases 0 to 8 are built. Phases 0 to 7 are on GitHub main and deployed;
-migrations 022 to 028 are applied on production (verified by probe);
-029 is Ian's to run. Phase 8 awaits upload. Still owed by Ian, from the
+Phases 0 to 8 are built, on GitHub main (blob hashes verified 2026-10-07)
+and deployed; migrations 022 to 028 are applied on production (verified
+by probe); 029 is Ian's to run. Still owed by Ian, from the
 handoff's section 10 and from the phase notes above:
 - Three photographed case labels (romaine case, nut butter case, one
   non-GS1 label) to test the GS1 parser against reality (Phase 2).
-- The current inflation-adjusted dollar thresholds for 21 CFR 1.1305
-  and 1.1455(c)(3), to correct `_FSMA_APPLICABILITY` (one constant) and
-  the copies in signup.html and index.html (Phase 5).
+- Nothing on the dollar thresholds for now: the eCFR text was verified
+  on 2026-10-07 ($250,000 in 1.1305(i), $1 million in 1.1455(c)(3)(iii),
+  2020 dollars, rolling 3-year average) and the FDA has not yet published
+  inflation-adjusted figures for this rule. When it does (its "FSMA
+  Inflation Adjusted Cut Offs" page), `_FSMA_APPLICABILITY` and the copies
+  in signup.html and index.html change together (Phase 5).
 - Brand ownership of the suggested supplier seeds, and photographed lot
   code formats for the five brands before any lot hints are added
   (Phase 6).
@@ -1079,11 +1092,157 @@ handoff's section 10 and from the phase notes above:
   run on the deployed apps by anyone. Everything in Phases 2 to 7 was
   verified only by syntax checks, Node tests with stubbed clients and
   local previews.
-Known follow-ups outside the handoff, noted in the phase sections: the
-scanner's manager FSMA readiness score still reads legacy scan fields;
-the sign-in error branches reference ids that do not exist; the
-British-to-American sweep of older UI labels; the invite email's "as a
-staff" wording.
+The follow-ups outside the handoff that the phase sections noted (the
+scanner's FSMA readiness score, the sign-in error branches, the
+British-to-American sweep, the invite email wording) shipped on
+2026-10-07; see the next section, which also covers the join page's
+read-only prefill, the Reports panel's FSMA report and the retirement of
+the scanner's local plan wizard. Nothing the phase notes parked is still
+open.
+
+## Follow-ups shipped 2026-10-07 (outside the handoff)
+Seven items the phase notes had parked, plus a citation correction, a
+threshold verification and a dashboard sign-in fix found on the way. Verified: every inline script block
+passes node --check (scanner 4, dashboard 6, admin 1, join 2); the six
+edited Netlify functions pass node --check; Node tests drive the new
+scanner score through three stubbed scenarios (full data, receiving table
+missing, empty org scoped to a store) and the Reports panel body through
+mixed and empty data; the FSMA tab, the Reports body and the join form
+(all fields supplied, two supplied, none) render in local previews with
+no console errors. Not verified against the live database.
+- Scanner FSMA tab score (`renderFsmaReadiness`, now async). It reads
+  receiving_events with status received in the last 365 days (store
+  managers: their store only, like loadMgrData), on-shelf scans in the
+  last 90 days with `receiving_event_id`, the current traceability_plans
+  row (superseded_at null) and, when `_recallCoordinator` is empty,
+  loadCoordinator(). Seven weighted components: lot code or exempt source
+  on every delivery (25), supplier location complete (20), reference
+  document (15), listed-food shelf scans linked to a delivery (10), recall
+  coordinator (10), traceability plan (10; stored plan first, the local
+  wizard date `batchd_tracplan_date` as fallback), deliveries in the last
+  30 days (10). The field checks are the same four as loadComplianceData
+  in dashboard.html; keep them in step. Components whose data is missing
+  (PGRST205 or 42703) show "n/a" and drop out of the weighted mean, and an
+  action item names migration 023. The category block is now "Delivery
+  records by listed-food category" (share complete). The plan card shows
+  "Version N, generated {date} in the corporate dashboard" and hides the
+  local print-wizard button when a stored plan exists. The function adds
+  `_fsmaApplicabilityBanner()` itself after rendering, so the tab switch
+  no longer calls the banner separately.
+- Scanner sign-in error branches (deactivated member, no membership row)
+  render into `login-screen` with the same full-height wrapper as the
+  onAuthStateChange branch, and clear `currentUser` before signing out so
+  the SIGNED_OUT handler calls showLogin() instead of raising the
+  session-expired overlay.
+- Invite email (send-invite.js): the role is phrased with its article ("a
+  staff member", "a store manager", "a corporate admin") and the sentence
+  reads "on Batch'd as {role}". Needs the netlify/functions upload to take
+  effect.
+- American English sweep of user-facing strings: dashboard.html,
+  index.html, admin.html, privacy.html, terms.html, docs.html and the
+  email or prompt text in send-invite, notify-consumers, notify-event,
+  recall-reminder, triage-complaint and ai-analyze. 140 replacements:
+  organisation to organization in copy (the Settings card title is now
+  "Organization"), centre, authorisation, cancelled, categorise,
+  labelled, standardised, enrolment, analyse, apologise, recognised,
+  anonymised, colour, odour, mould, aluminium. Deliberately left: every
+  identifier, table and column name (organisations, organisation_id,
+  normaliseProductKey, authoriseStaffInvite, the ocr.js op localise_lot),
+  element ids such as mfa-enrol-modal, i18n keys such as
+  action.snapAnalyse (its English value changed), code comments, frozen
+  NO strings, the severity `<option value>` attributes, and
+  "acknowledgement" (both spellings are standard in US usage and the
+  word is all over the compliance copy). The records_requests cancel
+  note now reads "Canceled before records were produced"; the card
+  detects cancelled rows with /cancel/i, so older rows still match.
+  admin.html's org-name placeholder lost its Norwegian example. Em dashes
+  were removed from the touched lines; the severity option texts keep
+  theirs because the sibling options do.
+- join.html read-only prefill. Profile fields the inviter supplied
+  (phone, store role, badge ID, hire date) render `readonly` with a
+  dashed border; blank ones stay editable; the section label becomes
+  "Profile details · entered by your administrator" and a note under the
+  block says to ask the administrator for corrections. The full name
+  stays editable (it is the invitee's account name). acceptInvitation is
+  unchanged: it reads the same inputs, so locked values reach
+  accept_invitation as before.
+- Reports panel, FSMA 204 report (US orgs; the NO branch is frozen and
+  untouched). fetchReportData returns receiving_events rows (status
+  received, `received_at` in the chosen range, with stores(name) and the
+  supplier location embedded; an error such as a missing table returns an
+  empty list). The on-screen report (`_reportFsmaUsHtml`, before
+  runReport) shows delivery records, complete-KDE share, supplier-location
+  share and listed-food count, a warning when any record misses a KDE, and
+  a table of the rows. Download CSV no longer builds its own 15-column
+  scan CSV: it calls `buildFsma204Records({ dateFrom, dateTo, ftlOnlyGaps:
+  true })` and `downloadFsma204Export`, so the file is the 27-column
+  export with the cover block, identical to the records request drill and
+  Live Recall. The report card on the Reports grid counts delivery records
+  (a head count on receiving_events, tolerant of a missing table) and
+  shelf scans, and is titled "FSMA 204 receiving records".
+- Scanner plan wizard retired. `openTraceabilityPlanWizard`,
+  `generateTraceabilityPlan`, `closeTraceabilityPlanWizard` and the
+  `tracplan-modal` markup (about 270 lines) are gone, with a comment at
+  each site. The wizard printed an unstored .txt plan with Norwegian
+  defaults (Kiwi, Rema, ASKO, country Norway) and OCR-era wording, so it
+  had no revert value. The FSMA tab's plan card now reads the stored
+  dashboard plan only: "Version N, generated {date} in the corporate
+  dashboard" with a View plan button, or "No plan on file. A corporate
+  admin generates it in the dashboard under Compliance". The score's plan
+  component no longer counts the device-local `batchd_tracplan_date`.
+  `fsmaViewStoredPlan()` opens the current traceability_plans row's
+  rendered_html in a new tab (opened synchronously so iOS does not treat
+  it as a pop-up), wraps a bare fragment in a printable document, adds a
+  Print bar hidden in print, and closes the tab with a toast when there is
+  no plan or the query fails. Members can read the table (migration 026).
+- Citation correction. `_CITATIONS.us.retention` was '21 CFR 1.1455(a)'
+  in both apps since Phase 0; (a) is the general records paragraph and
+  the 2-year retention is (d). Both tables now read '21 CFR 1.1455(d)',
+  and `availability` is '21 CFR 1.1455(c)' ((c)(1) is the 24-hour duty,
+  (c)(3) the electronic sortable spreadsheet). Verified 2026-10-07 on two
+  eCFR mirrors (law.cornell.edu and govinfo.gov; ecfr.gov itself redirects
+  automated fetches). Every surface reads through the table, so the
+  compliance panel, plan document, reports and the scanner updated with
+  it; SMOKE check 9 and SCHEMA.md were corrected. The inline SQL comment
+  in migration 023 still says (a); the file was left as it ran.
+- Thresholds verified. 21 CFR 1.1305(i): retail food establishments and
+  restaurants with an average annual monetary value of food sold of no
+  more than $250,000 over the previous 3 years (rolling, inflation
+  adjusted from a 2020 baseline) are exempt. 1.1455(c)(3)(iii): at no more
+  than $1 million the records are still due within 24 hours but need not
+  be an electronic sortable spreadsheet. The FDA's cut-offs page (updated
+  2026-05-13) lists no adjusted values for this rule yet. The constant's
+  comment and `thresholdNote` now say so, the "covered, no spreadsheet"
+  copy in all three files says the 24-hour duty still applies, and the
+  bands are unchanged. The $1 million to $10 million split is Batch'd's
+  own granularity, not a regulatory line.
+- Dashboard deactivated-member branch (initDashboard) wrote to `main-app`,
+  an id that does not exist in dashboard.html (the sign-in overlay is
+  `auth-gate`), so a deactivated member got a blank page and a console
+  error. It now renders into `auth-gate`. It does not sign out
+  automatically because the dashboard's SIGNED_OUT handler reloads the
+  page; the Sign out button does that on tap.
+- Migration 030 (`030_products_public_ftl_columns.sql`, written
+  2026-10-08, Ian's to run). An anon probe showed products_public still
+  exposes only the four columns from migration 001, so the scanner's
+  third FTL resolution step (products_public.is_ftl by GTIN) has answered
+  400 since Phase 2 and the name regex has decided every time. 030
+  re-creates the view with is_ftl, ftl_category and ftl_confirmed_source
+  appended (CREATE OR REPLACE VIEW keeps the column order and the grants;
+  security_invoker stays false as in 001). CHECK_MIGRATIONS has a 030 row;
+  SCHEMA.md documents the view. The two scanner call sites tolerate the
+  error on an older database, so nothing breaks before it runs.
+- html5-qrcode removed from index.html (the unpkg script tag and the
+  hidden canvas element). Nothing in the file or the retired stubs ever
+  called it; the head comment had said so since the perf pass. One fewer
+  third-party script and about 400 KB less on a cold start.
+- Dashboard emoji sweep (2026-10-08). The 70 pictographic emoji in
+  dashboard.html (Reports cards, Compliance category cards and checks,
+  empty states, drill and recall buttons, the certificate badge, CSV
+  import result, intelligence risk signals, exposure tiles) are inline
+  SVGs from `_ico(name, size)`. Two `textContent` assignments became
+  `innerHTML` so the icon renders. Flag glyphs stay. Not swept: the text
+  dingbats ✓ ✗ ⚠ ● ★ and index.html.
 
 ## Recall counting rules (platform-wide)
 A recall requires action only when ALL THREE are true:
@@ -1322,8 +1481,8 @@ post-mortem isn't ambiguous about who saw what.
 Updated 2026-05-26. Region is set ONLY by the corp admin, never by the
 user themselves. There are exactly two places region can be written:
 
-1. Organisation default: organisations.region. Editable in
-   Settings, Organisation, Region (corp_admin only). Applied to every
+1. Organization default: organisations.region. Editable in
+   Settings, Organization, Region (corp_admin only). Applied to every
    new invitee unless the admin overrides it at invite time.
 2. Per-invitee override: invitations.region. Picked in the Staff
    invite form's "Default region" field. Written to
@@ -1344,7 +1503,7 @@ for the founding admin.
 
 | Variable | Source | Meaning | Used by |
 |---|---|---|---|
-| `_orgDefaultRegion` | `organisations.region` | The org's stated default | Only the Settings, Organisation card dropdown (so the org admin can see and edit it) |
+| `_orgDefaultRegion` | `organisations.region` | The org's stated default | Only the Settings, Organization card dropdown (so the org admin can see and edit it) |
 | `_orgRegion` | `user_settings.region` ?? `organisations.region` | Effective region for the signed-in user. Admin-assigned (org default at signup, or invitations.region override at accept time), not user-changeable | Everything else in the dashboard: all regulatory copy, FSMA/EU references, regulator contacts, retention rules, recall coordinator notes, terminology entries, currency, date format, phone prefix examples |
 | `_userRegion` (scanner) | mirrors `user_settings.region` | Same value as `_orgRegion` on the dashboard side, used by the scanner | All region-dependent surfaces in the scanner (FSMA tab visibility, region badge, dateSep and formatDate, and so on) |
 
@@ -1360,7 +1519,7 @@ for the founding admin.
    derive the format from the region variable. The
    `user_settings.date_format` column added by migration 012 is
    preserved for backward compat but is never written from app code.
-3. The org-level dropdown in Settings, Organisation is the ONLY surface
+3. The org-level dropdown in Settings, Organization is the ONLY surface
    that reads `_orgDefaultRegion`. Everywhere else: `_orgRegion`.
 4. When an admin changes the org region, `saveOrgSettings()` also syncs
    the admin's own `user_settings.region` to the new value (and clears
@@ -1432,9 +1591,13 @@ embed the same tokens inline. Keep them in sync.
   `localStorage`. NEVER switch via `prefers-color-scheme`. This is a
   compliance product; theme is an explicit operator decision.
 - No emoji, except the US, EU and Norway flag glyphs used as
-  regulatory region markers. The codebase does not comply everywhere
-  yet (the Reports cards, for example, still use emoji icons);
-  .ui-polish-checklist.md tracks the sweep.
+  regulatory region markers. dashboard.html complies since 2026-10-08:
+  every pictographic emoji became an inline SVG through `_ico(name,
+  size)` (defined after esc(); 29 Lucide-style paths in `_ICON_PATHS`).
+  Use `_ico` for any new icon in the dashboard. The text dingbats ✓ ✗
+  ⚠ ● ★ used as status marks are still in place in both files, and
+  index.html has not had the sweep; .ui-polish-checklist.md tracks the
+  rest.
 - No purple or blue gradients. No left-border accent cards.
 - One saturated color: mint or emerald. Red, orange and blue are state
   signals, never decoration.

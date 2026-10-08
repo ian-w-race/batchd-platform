@@ -216,11 +216,11 @@
 <!-- Create org modal -->
 <div class="modal-overlay" id="create-modal" style="display:none;" onclick="if(event.target===this)closeCreateModal()">
   <div class="modal">
-    <div class="modal-title">Create new organisation</div>
+    <div class="modal-title">Create new organization</div>
     <div class="modal-sub">Creates the org and sends an invitation to the first admin.</div>
     <div id="create-msg" style="display:none;" class="msg"></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
-      <div class="field" style="margin:0;"><label>Organisation name *</label><input id="c-name" type="text" placeholder="e.g. Rema 1000 AS" /></div>
+      <div class="field" style="margin:0;"><label>Organization name *</label><input id="c-name" type="text" placeholder="e.g. Hometown Market Inc." /></div>
       <div class="field" style="margin:0;"><label>Type *</label>
         <select id="c-type">
           <option value="retailer">Retailer</option>
@@ -247,7 +247,7 @@
     <div class="field" style="margin-bottom:12px;"><label>First admin email * <span style="color:var(--muted);font-size:10px;">invitation will be sent here</span></label><input id="c-admin-email" type="email" placeholder="admin@company.com" /></div>
     <div class="field" style="margin-bottom:16px;"><label>Notes <span style="color:var(--muted);font-size:10px;">internal only</span></label><textarea id="c-notes" rows="2" placeholder="e.g. Contacted via LinkedIn, 12 stores in Oslo region"></textarea></div>
     <div style="display:flex;gap:8px;">
-      <button class="btn-primary" onclick="createOrg()" id="btn-create-org" style="flex:1;justify-content:center;">Create organisation →</button>
+      <button class="btn-primary" onclick="createOrg()" id="btn-create-org" style="flex:1;justify-content:center;">Create organization →</button>
       <button class="btn-ghost" onclick="closeCreateModal()">Cancel</button>
     </div>
   </div>
@@ -387,7 +387,7 @@ async function renderOverview() {
           </div>
           <div class="panel-body" style="display:flex;flex-direction:column;gap:8px;">
             <button class="btn-primary" onclick="showPanel('create')" style="width:100%;justify-content:center;">
-              + Create new organisation
+              + Create new organization
             </button>
             <button class="btn-ghost" onclick="showPanel('customers')" style="width:100%;justify-content:center;">
               View all customers →
@@ -454,7 +454,7 @@ async function renderCustomers() {
     el.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
         <div>
-          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">${list.length} organisation${list.length!==1?'s':''}</div>
+          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">${list.length} organization${list.length!==1?'s':''}</div>
           <div style="font-size:11px;color:var(--muted);margin-top:2px;">All customer orgs — excludes internal Batch'd orgs</div>
         </div>
         <button class="btn-primary" onclick="openCreateModal()">+ Create org</button>
@@ -462,10 +462,10 @@ async function renderCustomers() {
       <div class="panel">
         <div class="panel-body" style="padding:0 18px;">
           ${list.length === 0
-            ? `<div class="empty">No customer organisations yet.<br>Create your first one above.</div>`
+            ? `<div class="empty">No customer organizations yet.<br>Create your first one above.</div>`
             : `<table>
                 <thead><tr>
-                  <th style="padding:12px 0;">Organisation</th>
+                  <th style="padding:12px 0;">Organization</th>
                   <th style="padding:12px 8px;">Type</th>
                   <th style="padding:12px 8px;">Plan</th>
                   <th style="padding:12px 8px;">Members</th>
@@ -533,7 +533,7 @@ async function createOrg() {
   const msgEl      = document.getElementById('create-msg');
 
   msgEl.style.display = 'none';
-  if (!name)       { showCreateMsg('Organisation name is required.', 'error'); return; }
+  if (!name)       { showCreateMsg('Organization name is required.', 'error'); return; }
   if (!email)      { showCreateMsg('Contact email is required.', 'error'); return; }
   if (!adminEmail) { showCreateMsg('First admin email is required.', 'error'); return; }
 
@@ -581,17 +581,17 @@ async function createOrg() {
 
     if (!_inviteRes.ok) {
       const _e = await _inviteRes.json().catch(() => ({}));
-      showCreateMsg(`Organisation created, but the invitation email failed: ${_e.error || _inviteRes.status}. Re-send it from the customer row.`, 'error');
-      btn.disabled = false; btn.innerHTML = 'Create organisation →';
+      showCreateMsg(`Organization created, but the invitation email failed: ${_e.error || _inviteRes.status}. Re-send it from the customer row.`, 'error');
+      btn.disabled = false; btn.innerHTML = 'Create organization →';
       return;
     }
-    showCreateMsg(`✓ Organisation created and invitation sent to ${adminEmail}`, 'success');
-    btn.disabled = false; btn.innerHTML = 'Create organisation →';
+    showCreateMsg(`✓ Organization created and invitation sent to ${adminEmail}`, 'success');
+    btn.disabled = false; btn.innerHTML = 'Create organization →';
     setTimeout(() => { closeCreateModal(); showPanel('customers'); }, 2000);
 
   } catch(e) {
-    showCreateMsg('Error: ' + (e.message || 'Could not create organisation.'), 'error');
-    btn.disabled = false; btn.innerHTML = 'Create organisation →';
+    showCreateMsg('Error: ' + (e.message || 'Could not create organization.'), 'error');
+    btn.disabled = false; btn.innerHTML = 'Create organization →';
   }
 }
 
@@ -695,7 +695,7 @@ async function updateOrgPlan(orgId, plan) {
 async function sendAdminInvite(orgId) {
   // Name and type come from the row, never from the markup that opened this.
   const { data: org } = await sb.from('organisations').select('name, type').eq('id', orgId).single();
-  const orgName = org?.name || 'this organisation';
+  const orgName = org?.name || 'this organization';
   const email = prompt(`Send admin invitation for ${orgName}\n\nEnter email address:`);
   if (!email || !email.includes('@')) return;
 

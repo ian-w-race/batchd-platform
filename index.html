@@ -31,17 +31,15 @@
 <!-- Favicon + Apple touch icon -->
 <link rel="icon" type="image/png" href="/favicon.png" />
 <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-<!-- Perf fix #1: defer the three scanner-only CDN scripts so they don't
-     block first paint. ZXing, html5-qrcode, and Tesseract are only invoked
-     inside specific scanner functions (Phase 1 barcode, Phase 2 OCR
-     fallback) — never at script-evaluation time. Supabase is NOT deferred
-     because the inline body script calls supabase.createClient() at parse
-     time (line ~5295); deferring would break that. Saves ~300-700ms of
-     cold-start time on a 3-year-old phone over 4G.
-     Note: html5-qrcode is loaded but not invoked anywhere in the codebase;
-     keeping for now in case it's referenced in retired stub pages. -->
+<!-- Perf fix #1: defer the scanner-only CDN script so it does not block
+     first paint. ZXing is only invoked inside specific scanner functions,
+     never at script-evaluation time. Supabase is NOT deferred because the
+     inline body script calls supabase.createClient() at parse time;
+     deferring would break that.
+     html5-qrcode (unpkg, 2.3.8) was removed 2026-10-08: nothing in this
+     file or the retired stubs ever called it, so it was a wasted download
+     and one more third-party script on the page. -->
 <script src="https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js" defer></script>
-<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" defer></script>
 <!-- tesseract.js removed 2026-08-05 (manual lot-entry pivot) — the on-device
      OCR cascade only served the retired Phase 2 camera flow. initTesseract()
      guards on `typeof Tesseract === 'undefined'`, so dropping the script is
@@ -4578,7 +4576,7 @@
               <option value="" data-i18n="recall.severityUnknown">Unknown / not yet classified</option>
               <option value="Class I — Serious health risk">Class I — Serious health risk (FDA) / Serious (EU) — may cause death or serious injury</option>
               <option value="Class II — Moderate risk">Class II — Moderate risk (FDA) / Less serious (EU) — temporary illness or slight threat</option>
-              <option value="Class III — Unlikely to cause harm">Class III — Unlikely to cause harm (FDA) — labelling or regulatory violation</option>
+              <option value="Class III — Unlikely to cause harm">Class III — Unlikely to cause harm (FDA) — labeling or regulatory violation</option>
               <option value="Market withdrawal">Market withdrawal — not a public health hazard</option>
             </select>
           </div>
@@ -5702,7 +5700,7 @@ let _aiDisabledToastShown = false;
 function _aiDisabledToastOnce() {
   if (_aiDisabledToastShown) return;
   _aiDisabledToastShown = true;
-  try { showToast('AI product recognition is not enabled for this organisation.'); } catch (_) {}
+  try { showToast('AI product recognition is not enabled for this organization.'); } catch (_) {}
 }
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -5720,8 +5718,8 @@ window._CITATIONS = {
     subpart:        '21 CFR Part 1 Subpart S',
     plan:           '21 CFR 1.1315',
     receivingKde:   '21 CFR 1.1345',
-    availability:   '21 CFR 1.1455',
-    retention:      '21 CFR 1.1455(a)',
+    availability:   '21 CFR 1.1455(c)',
+    retention:      '21 CFR 1.1455(d)',   // verified on eCFR 2026-10-07; Phase 0 had (a)
     exemptions:     '21 CFR 1.1305',
     recallNotify:   '21 CFR 7.46',
     recallComms:    '21 CFR 7.49',
@@ -5737,7 +5735,7 @@ window._FSMA_APPLICABILITY_COPY = {
   labels: { exempt: 'Likely exempt', covered_no_spreadsheet: 'Covered, no spreadsheet duty', covered: 'Covered', unknown: 'Not yet answered' },
   copy: {
     exempt: "Based on your sales band, your store is likely exempt from the FSMA 204 record-keeping requirements. Lot-level receiving records still cut recall time and protect you if a supplier's records are wrong, which is why Batch'd keeps them anyway.",
-    covered_no_spreadsheet: "Your store is covered by FSMA 204 and must keep receiving records and a traceability plan, but is not required to produce the electronic sortable spreadsheet. Batch'd produces it anyway so an FDA request is a one-click answer.",
+    covered_no_spreadsheet: "Your store is covered by FSMA 204 and must keep receiving records and a traceability plan, and still has to make records available within 24 hours of an FDA request, but is not required to produce them as an electronic sortable spreadsheet. Batch'd produces the spreadsheet anyway so the request is a one-click answer.",
     covered: "Your store is covered by FSMA 204. Receiving records, a traceability plan and the ability to produce a sortable spreadsheet within 24 hours are required from July 20, 2028.",
     unknown: "Your corporate admin has not yet answered the FSMA 204 applicability questions in the dashboard's Settings.",
   },
@@ -5946,18 +5944,24 @@ async function showApp(user) {
     if (member) {
       // Deactivated members cannot use the scanning app
       if (member.active === false) {
-        document.getElementById('auth-view').innerHTML = `
-          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60dvh;padding:32px;text-align:center;gap:16px;">
+        // Fixed 2026-10-07: this branch wrote to ids that do not exist in the page (the
+        // login overlay is login-screen), so it threw before showing the message.
+        // currentUser is cleared first so the SIGNED_OUT handler calls showLogin()
+        // instead of raising the session-expired overlay.
+        currentUser = null;
+        const _lsDeact = document.getElementById('login-screen');
+        _lsDeact.innerHTML = `
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100dvh;padding:32px;text-align:center;gap:16px;background:var(--bg);">
             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.5"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
             <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:18px;">Account deactivated</div>
-            <div style="font-size:13px;color:var(--muted);max-width:300px;line-height:1.6;">Your account has been deactivated by your organisation administrator. Contact them to restore access.</div>
+            <div style="font-size:13px;color:var(--muted);max-width:300px;line-height:1.6;">Your account has been deactivated by your organization administrator. Contact them to restore access.</div>
             <button onclick="sb.auth.signOut().then(()=>location.reload())"
               style="margin-top:8px;padding:10px 20px;border-radius:8px;border:1px solid var(--border);background:none;color:var(--muted);font-family:'DM Mono',monospace;font-size:12px;cursor:pointer;">
               Sign out
             </button>
           </div>`;
-        document.getElementById('auth-view').style.display = 'flex';
-        document.getElementById('main-app').style.display  = 'none';
+        _lsDeact.style.display = 'flex';
+        _lsDeact.classList.remove('hidden');
         await sb.auth.signOut();
         return;
       }
@@ -5988,18 +5992,21 @@ async function showApp(user) {
       // No organisation membership row — invited user not yet added to an org,
       // or a data inconsistency. Without _currentOrgId every downstream query
       // either returns empty or fails. Block the app and route them back to admin.
-      document.getElementById('auth-view').innerHTML = `
-        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60dvh;padding:32px;text-align:center;gap:16px;">
+      // Fixed 2026-10-07: same id fix as the deactivated branch above.
+      currentUser = null;
+      const _lsNoOrg = document.getElementById('login-screen');
+      _lsNoOrg.innerHTML = `
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100dvh;padding:32px;text-align:center;gap:16px;background:var(--bg);">
           <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.5"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:18px;">Not linked to an organisation</div>
-          <div style="font-size:13px;color:var(--muted);max-width:320px;line-height:1.6;">Your account isn't linked to a Batch'd organisation yet. Ask your administrator to add you to your store's organisation, then sign in again.</div>
+          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:18px;">Not linked to an organization</div>
+          <div style="font-size:13px;color:var(--muted);max-width:320px;line-height:1.6;">Your account isn't linked to a Batch'd organization yet. Ask your administrator to add you to your store's organization, then sign in again.</div>
           <button onclick="sb.auth.signOut().then(()=>location.reload())"
             style="margin-top:8px;padding:10px 20px;border-radius:8px;border:1px solid var(--border);background:none;color:var(--muted);font-family:'DM Mono',monospace;font-size:12px;cursor:pointer;">
             Sign out
           </button>
         </div>`;
-      document.getElementById('auth-view').style.display = 'flex';
-      document.getElementById('main-app').style.display  = 'none';
+      _lsNoOrg.style.display = 'flex';
+      _lsNoOrg.classList.remove('hidden');
       await sb.auth.signOut();
       return;
     }
@@ -6336,7 +6343,7 @@ function openTerminologyOverlay(regionOverride) {
 
     ${term('GS1-128 / Applikasjonsidentifikator', 'GS1-128 / Application Identifier',
       'Standardisert strekkodeformat som koder inn flere dataelementer i én strekkode: partinummer (AI 10), utløpsdato (AI 17), produksjonsdato (AI 11), mengde (AI 37).',
-      'Standardised barcode encoding multiple data elements: lot number (AI 10), expiry (AI 17), production date (AI 11), quantity (AI 37).',
+      'Standardized barcode encoding multiple data elements: lot number (AI 10), expiry (AI 17), production date (AI 11), quantity (AI 37).',
       'Én GS1-128-skanning i Batch\'d henter alle kodede AIs samtidig.',
       'A single GS1-128 scan in Batch\'d captures all encoded AIs simultaneously.',
       'GS1 Global Spec')}
@@ -6374,13 +6381,13 @@ function openTerminologyOverlay(regionOverride) {
       'Simulert tilbaketrekkingsøvelse for opplæring og beredskapstesting. Inget ekte produkt er berørt.',
       'A simulated recall exercise for training or preparedness testing. No real product is affected.',
       'Øvelsesrekord er tydelig merket. Øvingssertifikat genereres automatisk ved fullføring.',
-      'Drill records are clearly labelled throughout the platform. A drill certificate is generated on completion.',
+      'Drill records are clearly labeled throughout the platform. A drill certificate is generated on completion.',
       r('Mattilsynet beredskapsplan', 'FDA 21 CFR 7.49'))}
 
     <div style="margin-top:20px;padding:12px 14px;background:var(--surface);border:1px solid var(--border);border-radius:9px;font-size:11px;color:var(--muted);line-height:1.65;">
       ${isNO
         ? '<strong style="color:var(--text);">Juridisk merknad:</strong> Disse definisjonene beskriver hvordan termer brukes i Batch\'d. Juridiske forpliktelser under Matloven og Mattilsynets regelverk forblir hos din organisasjon.'
-        : '<strong style="color:var(--text);">Legal note:</strong> These definitions describe how terms are used within Batch\'d. Legal obligations under ' + (showUS ? 'FDA, USDA FSIS, and FSMA 204' : 'Matloven and Mattilsynet') + ' remain with your organisation.'}
+        : '<strong style="color:var(--text);">Legal note:</strong> These definitions describe how terms are used within Batch\'d. Legal obligations under ' + (showUS ? 'FDA, USDA FSIS, and FSMA 204' : 'Matloven and Mattilsynet') + ' remain with your organization.'}
     </div>`;
 
   // Update the overlay header to reflect current language
@@ -6823,7 +6830,7 @@ async function _showSessionStorePicker() {
     const subtitle    = isNO ? 'Velg butikken du jobber på i dag. Valget gjelder i 12 timer.' : 'Choose the store you\'re scanning at today. This selection lasts 12 hours.';
     const primaryLbl  = isNO ? 'Din hovedbutikk'                                              : 'Your primary store';
     const otherLbl    = isNO ? 'Eller velg en annen butikk (vikar-skift)'                    : 'Or pick a different store (fill-in shift)';
-    const noOtherLbl  = isNO ? 'Ingen andre butikker'                                         : 'No other stores in this organisation';
+    const noOtherLbl  = isNO ? 'Ingen andre butikker'                                         : 'No other stores in this organization';
 
     const escAttr = (s) => String(s == null ? '' : s).replace(/"/g, '&quot;').replace(/</g, '&lt;');
     const escTxt  = (s) => String(s == null ? '' : s).replace(/</g, '&lt;');
@@ -6985,6 +6992,7 @@ async function _resolveP3FtlOverride(name) {
       if (data && data[0]) res = { isFtl: !!data[0].is_ftl, category: data[0].ftl_category, label: labelFor(data[0].ftl_category), source: 'override' };
     }
     if (!res && norm) {
+      // products_public exposes is_ftl and ftl_category from migration 030 (2026-10-08); on an older database this returns an error and falls through.
       const { data } = await sb.from('products_public').select('is_ftl,ftl_category').eq('barcode_normalized', norm).limit(1);
       const pr = data && data[0];
       if (pr && pr.is_ftl !== null && pr.is_ftl !== undefined) res = { isFtl: !!pr.is_ftl, category: pr.ftl_category, label: labelFor(pr.ftl_category), source: 'product' };
@@ -7206,12 +7214,12 @@ function applyRegion() {
     ? `<option value=''>Unknown / not yet classified</option>
        <option value='Class I — Serious health risk'>Class I — Serious health risk (FDA) — may cause death or serious injury</option>
        <option value='Class II — Moderate risk'>Class II — Moderate risk (FDA) — temporary illness or slight threat</option>
-       <option value='Class III — Unlikely to cause harm'>Class III — Unlikely to cause harm (FDA) — labelling or regulatory violation</option>
+       <option value='Class III — Unlikely to cause harm'>Class III — Unlikely to cause harm (FDA) — labeling or regulatory violation</option>
        <option value='Market withdrawal'>Market withdrawal — not a public health hazard</option>`
     : `<option value=''>Unknown / not yet classified</option>
        <option value='Serious — Class I'>Serious — Class I — may cause death or serious injury</option>
        <option value='Less serious — Class II'>Less serious — Class II — unlikely to cause lasting harm</option>
-       <option value='Not serious — regulatory only'>Not serious — regulatory/labelling violation only</option>
+       <option value='Not serious — regulatory only'>Not serious — regulatory/labeling violation only</option>
        <option value='Tilbaketrekking — Market withdrawal'>Tilbaketrekking — product removed before consumer purchase</option>`;
   // Supplier label
   const sl = document.getElementById('supplier-field-label');
@@ -7548,7 +7556,7 @@ AVAILABLE IN STORE: ${placedStr}${lastRemoved ? ` to ${removedStr}` : ' (still u
 
 If you purchased this product between ${placedStr} and ${removedStr || 'the present date'}, we ask that you: ${action}.
 
-We apologise for any inconvenience. If you have questions, please speak to a member of staff or contact store management.
+We apologize for any inconvenience. If you have questions, please speak to a member of staff or contact store management.
 
 Date of notice: ${today}
 Store: ${store}`;
@@ -10052,7 +10060,7 @@ async function _syncOfflineQueueImpl() {
   }
 
   if (discardedOtherOrg > 0) {
-    showToast(`${discardedOtherOrg} queued scan${discardedOtherOrg>1?'s':''} belonged to another organisation and ${discardedOtherOrg>1?'were':'was'} discarded.`, 'warn', 5000);
+    showToast(`${discardedOtherOrg} queued scan${discardedOtherOrg>1?'s':''} belonged to another organization and ${discardedOtherOrg>1?'were':'was'} discarded.`, 'warn', 5000);
   }
 }
 
@@ -14999,7 +15007,7 @@ function renderOcrResult(assignment, confidence, source, raw) {
                                 confidence === 'high' || confidence === 'learned' ? 'rgba(var(--accent-rgb),0.4)' : '';
 
   title.textContent = confidence === 'learned'
-    ? (currentLang==='no' ? 'Mønster gjenkjent — bekreft eller bytt nedenfor' : 'Pattern recognised — confirm or swap below')
+    ? (currentLang==='no' ? 'Mønster gjenkjent — bekreft eller bytt nedenfor' : 'Pattern recognized. Confirm or swap below')
     : (currentLang==='no' ? 'AI-forslag — bekreft eller korriger' : 'AI best guess — confirm or swap if incorrect');
 
   swapHint.textContent = source || '';
@@ -15412,7 +15420,7 @@ const BRAND_PATTERNS = {
   lofoten:    { hint: 'Vacuum pack sticker: lot near "Siste forbruksdag" or "Holdbar til". Ignore plant approval number.', format: 'Alphanumeric or YYMMDD' },
   fiskemannen:{ hint: 'Tray sticker: lot near best-before. May include plant code prefix.', format: 'Alphanumeric' },
   // ── TUBES ──────────────────────────────────────────────────
-  kavli:      { hint: 'Aluminium tube: lot code on the FLAT CRIMPED END of the tube in tiny inkjet characters. Often just YYMMDD.', format: 'YYMMDD' },
+  kavli:      { hint: 'Aluminum tube: lot code on the FLAT CRIMPED END of the tube in tiny inkjet characters. Often just YYMMDD.', format: 'YYMMDD' },
   stabburet:  { hint: 'Tube product: lot code on FLAT CRIMPED END. Box products: short end flap.', format: 'YYMMDD or alphanumeric' },
   // ── DRY / FROZEN ───────────────────────────────────────────
   grandiosa:  { hint: 'Frozen pizza box: lot code on SHORT END FLAP (the narrow end you push in).', format: 'YYMMDD or alphanumeric' },
@@ -17192,7 +17200,7 @@ async function rcvResolveFtl() {
     } catch (_) {}
   }
   if (!res && norm) {
-    // products_public may not expose the migration 025 columns yet; a 400 here is expected and ignored.
+    // products_public exposes is_ftl and ftl_category from migration 030 (2026-10-08); on an older database the 400 is ignored.
     try {
       const { data } = await sb.from('products_public').select('is_ftl,ftl_category').eq('barcode_normalized', norm).limit(1);
       const pr = data && data[0];
@@ -17686,7 +17694,7 @@ const TRANSLATIONS = {
     'p3.back': '← Back',
     // Actions
     'action.cancel': 'Cancel', 'action.capture': 'Capture',
-    'action.aiRead': 'AI Read', 'action.snapAnalyse': 'Snap & Analyse',
+    'action.aiRead': 'AI Read', 'action.snapAnalyse': 'Snap & Analyze',
     'action.retake': 'Retake',
     // Field labels
     'label.required': '*required', 'label.optional': 'optional',
@@ -18707,8 +18715,6 @@ async function fetchUserProfile() {
 // ── UTILS ─────────────────────────────────────────────────────
 </script>
 <!-- Mobile bottom nav -->
-<!-- Hidden element for html5-qrcode canvas decode -->
-<div id="p1-barcode-overlay-hidden" style="display:none;"></div>
 
 <div class="mobile-nav" id="mobile-nav">
   <div class="mobile-nav-inner">
@@ -18963,50 +18969,109 @@ function _fsmaApplicabilityBanner() {
   </div>`);
 }
 
-function renderFsmaReadiness() {
+// Rewritten 2026-10-07 (follow-up noted in Phase 5): the score reads receiving_events,
+// the delivery records staff keep in Receiving mode, instead of the legacy lot,
+// supplier and reference-document fields on shelf scans. The field checks match
+// loadComplianceData in dashboard.html: supplier location complete (name, phone,
+// street, city, state, ZIP), lot code or exempt source, quantity and unit, and a
+// reference document. Store managers see their store; corp admins see the org.
+// Tolerates an older database (PGRST205 or 42703): the delivery components show as
+// not available and the score is computed from the rest.
+let _fsmaReadinessSeq = 0;
+async function renderFsmaReadiness() {
   const el = document.getElementById('fsma-readiness-content');
-  if (!el) return;
+  if (!el || !_currentOrgId) return;
+  const seq = ++_fsmaReadinessSeq;
+  const now = new Date();
+  const since365 = new Date(now - 365 * 86400000).toISOString();
+  const since90  = new Date(now - 90 * 86400000).toISOString();
+  const storeScoped = !!(window._managerStoreId && _currentUserRole === 'store_manager');
 
-  const scans = _mgrAllScans || [];
-  const now   = new Date();
+  // Deliveries recorded in the last 12 months (status received).
+  let receiving = [], rcvAvailable = true;
+  try {
+    let q = sb.from('receiving_events')
+      .select('id, received_at, store_id, supplier_id, supplier_name_snapshot, product_name, traceability_lot_code, tlc_source_type, quantity, unit_of_measure, reference_document_number, is_ftl, ftl_category, suppliers(name,phone,street_address,city,region,postal_code)')
+      .eq('organisation_id', _currentOrgId).eq('status', 'received').gte('received_at', since365)
+      .order('received_at', { ascending: false }).limit(2000);
+    if (storeScoped) q = q.eq('store_id', window._managerStoreId);
+    const { data, error } = await q;
+    if (error) throw error;
+    receiving = data || [];
+  } catch (_) { rcvAvailable = false; }
 
-  // ── Identify FTL scans ──
-  const ftlScans = scans.filter(r => r.is_ftl || detectFtlCategory(r.product_name||'').isFtl);
+  // On-shelf scans of listed foods in the last 90 days, and whether each links to a delivery.
+  let ftlShelf = [], linkAvailable = true;
+  try {
+    let q = sb.from('scans')
+      .select('id, product_name, is_ftl, ftl_category, receiving_event_id, store_id')
+      .eq('organisation_id', _currentOrgId).is('removed_from_shelf_at', null).gte('created_at', since90).limit(2000);
+    if (storeScoped) q = q.eq('store_id', window._managerStoreId);
+    const { data, error } = await q;
+    if (error) throw error;
+    ftlShelf = (data || []).filter(s => s.is_ftl || s.ftl_category || detectFtlCategory(s.product_name || '').isFtl);
+  } catch (_) { linkAvailable = false; }
 
-  // ── Score components (each 0-100) ──
-  // 1. LOT CODE COVERAGE — % FTL scans with a lot number captured
-  const lotCovered   = ftlScans.filter(r => r.lot_number).length;
-  const lotScore     = ftlScans.length ? Math.round(lotCovered / ftlScans.length * 100) : (scans.length ? 0 : null);
+  // The current stored plan (dashboard Compliance panel, migration 026). Since 2026-10-07
+  // this is the only plan the tab knows; the local print wizard is retired.
+  let plan = null;
+  try {
+    const { data, error } = await sb.from('traceability_plans').select('version, generated_at')
+      .eq('organisation_id', _currentOrgId).is('superseded_at', null).order('version', { ascending: false }).limit(1);
+    if (error) throw error;
+    plan = (data || [])[0] || null;
+  } catch (_) { plan = null; }
 
-  // 2. SUPPLIER COVERAGE — % FTL scans with supplier name
-  const suppCovered  = ftlScans.filter(r => r.supplier_name).length;
-  const suppScore    = ftlScans.length ? Math.round(suppCovered / ftlScans.length * 100) : null;
+  if (!_recallCoordinator?.name && typeof loadCoordinator === 'function') { try { await loadCoordinator(); } catch (_) {} }
+  if (seq !== _fsmaReadinessSeq) return;   // a newer render superseded this one
 
-  // 3. REFERENCE DOC COVERAGE — % FTL scans with a PO/BOL ref
-  const refCovered   = ftlScans.filter(r => r.reference_document).length;
-  const refScore     = ftlScans.length ? Math.round(refCovered / ftlScans.length * 100) : null;
+  const supplierOk = r => { const s = r.suppliers || {}; return !!(r.supplier_name_snapshot || r.supplier_id) && !!(s.phone && s.street_address && s.city && s.region && s.postal_code); };
+  const tlcOk      = r => !!r.traceability_lot_code || r.tlc_source_type === 'not_required_exempt_source';
+  const qtyOk      = r => r.quantity != null && !!r.unit_of_measure;
+  const refOk      = r => !!r.reference_document_number;
+  const completeOk = r => supplierOk(r) && tlcOk(r) && qtyOk(r) && refOk(r);
+  const pct = (a, b) => b ? Math.round(a / b * 100) : null;
+  const plural = (k, one, many) => k === 1 ? one : many;
 
-  // 4. COORDINATOR DESIGNATION — is one set?
-  const hasCoord     = !!(_recallCoordinator?.name);
-  const coordScore   = hasCoord ? 100 : 0;
+  const n         = receiving.length;
+  const nSup      = receiving.filter(supplierOk).length;
+  const nTlc      = receiving.filter(tlcOk).length;
+  const nRef      = receiving.filter(refOk).length;
+  const nComplete = receiving.filter(completeOk).length;
+  const linked    = ftlShelf.filter(s => s.receiving_event_id).length;
+  const recent30  = receiving.filter(r => (now - new Date(r.received_at)) < 30 * 86400000).length;
 
-  // 5. TRACEABILITY PLAN — generated recently?
-  const planDate     = localStorage.getItem('batchd_tracplan_date');
-  const planAge      = planDate ? Math.round((now - new Date(planDate)) / 86400000) : null;
-  const planScore    = planDate ? (planAge < 365 ? 100 : 60) : 0;
+  const hasCoord      = !!(_recallCoordinator?.name);
+  const planDate      = plan?.generated_at || null;
+  const planAge       = planDate ? Math.round((now - new Date(planDate)) / 86400000) : null;
+  const planScore     = planDate ? (planAge < 365 ? 100 : 60) : 0;
+  const planCite      = window._CITATIONS?.us?.plan || '21 CFR 1.1315';
+  const kdeCite       = window._CITATIONS?.us?.receivingKde || '21 CFR 1.1345';
+  const NA            = 'Receiving records not available in this database yet';
+  const NONE          = 'No deliveries recorded yet';
 
-  // 6. RECORD RECENCY — are scans happening regularly (any in last 30 days)?
-  const recent30     = scans.filter(r => (now - new Date(r.created_at)) < 30*86400000).length;
-  const recentScore  = recent30 > 0 ? 100 : scans.length > 0 ? 40 : 0;
-
-  // ── Weighted overall score ──
   const components = [
-    { label: 'Lot Code (TLC) Capture',     score: lotScore,    weight: 30, detail: ftlScans.length ? `${lotCovered}/${ftlScans.length} FTL scans` : 'No FTL scans yet', required: true },
-    { label: 'Supplier Traceability',       score: suppScore,   weight: 20, detail: ftlScans.length ? `${suppCovered}/${ftlScans.length} with supplier` : '—', required: true },
-    { label: 'Reference Document (PO/BOL)', score: refScore,    weight: 20, detail: ftlScans.length ? `${refCovered}/${ftlScans.length} with ref doc` : '—', required: true },
-    { label: 'Recall Coordinator Assigned', score: coordScore,  weight: 10, detail: hasCoord ? (_recallCoordinator.name + (_recallCoordinator.contact ? ' · '+_recallCoordinator.contact : '')) : 'Not designated', required: true },
-    { label: 'Traceability Plan',           score: planScore,   weight: 10, detail: planDate ? `Generated ${planAge}d ago` : 'Not yet generated', required: false },
-    { label: 'Active Recordkeeping',        score: recentScore, weight: 10, detail: `${recent30} scans in last 30 days`, required: false },
+    { label: 'Lot code on every delivery',           weight: 25, required: true,
+      score:  rcvAvailable ? pct(nTlc, n) : null,
+      detail: !rcvAvailable ? NA : n ? `${nTlc}/${n} delivery records with a lot code or an exempt source` : NONE },
+    { label: 'Supplier location complete',           weight: 20, required: true,
+      score:  rcvAvailable ? pct(nSup, n) : null,
+      detail: !rcvAvailable ? NA : n ? `${nSup}/${n} with name, phone, street, city, state and ZIP` : NONE },
+    { label: 'Reference document on every delivery', weight: 15, required: true,
+      score:  rcvAvailable ? pct(nRef, n) : null,
+      detail: !rcvAvailable ? NA : n ? `${nRef}/${n} with a PO, BOL or invoice number` : NONE },
+    { label: 'Shelf scans linked to deliveries',     weight: 10, required: false,
+      score:  !linkAvailable ? null : ftlShelf.length ? pct(linked, ftlShelf.length) : (n ? 100 : null),
+      detail: !linkAvailable ? 'Not available' : ftlShelf.length ? `${linked}/${ftlShelf.length} listed-food shelf scans in the last 90 days link to a delivery` : 'No listed-food shelf scans in the last 90 days' },
+    { label: 'Recall coordinator assigned',          weight: 10, required: true,
+      score:  hasCoord ? 100 : 0,
+      detail: hasCoord ? (_recallCoordinator.name + (_recallCoordinator.contact ? ' · ' + _recallCoordinator.contact : '')) : 'Not designated' },
+    { label: 'Traceability plan',                    weight: 10, required: false,
+      score:  planScore,
+      detail: plan ? `Version ${plan.version}, generated ${planAge} ${plural(planAge, 'day', 'days')} ago in the dashboard` : 'No plan on file' },
+    { label: 'Active record keeping',                weight: 10, required: false,
+      score:  !rcvAvailable ? null : recent30 > 0 ? 100 : n > 0 ? 40 : 0,
+      detail: !rcvAvailable ? NA : `${recent30} ${plural(recent30, 'delivery', 'deliveries')} recorded in the last 30 days` },
   ];
 
   const validComponents = components.filter(c => c.score !== null);
@@ -19016,86 +19081,85 @@ function renderFsmaReadiness() {
     : 0;
 
   const scoreColor = weightedScore >= 80 ? 'var(--accent)' : weightedScore >= 50 ? 'var(--warn)' : 'var(--danger)';
-  // Bug fix 2026-09-05. The old badge glued a hex-alpha suffix onto the
-  // var() above, producing invalid CSS. The browser silently dropped the
-  // background and border. Translucent tints need the rgb triples.
-  const scoreRgb = weightedScore >= 80 ? 'var(--accent-rgb)' : weightedScore >= 50 ? 'var(--warn-rgb)' : 'var(--danger-rgb)';
-  const scoreLabel = weightedScore >= 80 ? 'On Track' : weightedScore >= 50 ? 'Needs Work' : 'At Risk';
+  const scoreRgb   = weightedScore >= 80 ? 'var(--accent-rgb)' : weightedScore >= 50 ? 'var(--warn-rgb)' : 'var(--danger-rgb)';
+  const scoreLabel = weightedScore >= 80 ? 'On track' : weightedScore >= 50 ? 'Needs work' : 'At risk';
 
-  // Update badge
   const badge = document.getElementById('mgr-fsma-badge');
   if (badge) badge.style.display = weightedScore < 80 ? 'block' : 'none';
 
-  // ── FTL Category Heatmap ──
-  const catCounts = {};
-  const catComplete = {};
-  for (const r of ftlScans) {
-    const cat = r.ftl_category || detectFtlCategory(r.product_name||'').category || 'unknown';
-    catCounts[cat]    = (catCounts[cat]    || 0) + 1;
-    catComplete[cat]  = (catComplete[cat]  || 0) + (r.lot_number && r.supplier_name && r.reference_document ? 1 : 0);
+  // Delivery records by listed-food category: share complete on all four checks.
+  const catCounts = {}, catComplete = {};
+  for (const r of receiving) {
+    const det = (r.is_ftl || r.ftl_category) ? { isFtl: true, category: r.ftl_category } : detectFtlCategory(r.product_name || '');
+    if (!det.isFtl) continue;
+    const cat = det.category || 'unknown';
+    catCounts[cat]   = (catCounts[cat]   || 0) + 1;
+    catComplete[cat] = (catComplete[cat] || 0) + (completeOk(r) ? 1 : 0);
   }
-  const catRows = Object.entries(catCounts).sort((a,b) => b[1]-a[1]).map(([cat, total]) => {
-    const full = catComplete[cat] || 0;
-    const pct  = Math.round(full / total * 100);
-    const label = FTL_CATEGORIES[cat]?.label || cat;
-    const col   = pct >= 90 ? 'var(--accent)' : pct >= 60 ? 'var(--warn)' : 'var(--danger)';
+  const catRows = Object.entries(catCounts).sort((a, b) => b[1] - a[1]).map(([cat, total]) => {
+    const full  = catComplete[cat] || 0;
+    const share = Math.round(full / total * 100);
+    const label = FTL_CATEGORIES[cat]?.label || (cat === 'unknown' ? 'Category not set' : cat);
+    const col   = share >= 90 ? 'var(--accent)' : share >= 60 ? 'var(--warn)' : 'var(--danger)';
     return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">
-      <div style="flex:1;font-size:12px;color:var(--text);">${label}</div>
-      <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">${total} scan${total!==1?'s':''}</div>
+      <div style="flex:1;font-size:12px;color:var(--text);">${esc(label)}</div>
+      <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">${total} ${plural(total, 'delivery', 'deliveries')}</div>
       <div style="width:80px;background:var(--surface2);border-radius:4px;height:6px;overflow:hidden;">
-        <div style="width:${pct}%;height:100%;background:${col};border-radius:4px;"></div>
+        <div style="width:${share}%;height:100%;background:${col};border-radius:4px;"></div>
       </div>
-      <div style="font-size:11px;font-family:'DM Mono',monospace;font-weight:700;color:${col};min-width:35px;text-align:right;">${pct}%</div>
+      <div style="font-size:11px;font-family:'DM Mono',monospace;font-weight:700;color:${col};min-width:35px;text-align:right;">${share}%</div>
     </div>`;
   }).join('');
 
-  // ── Action items ──
+  // Action items, most urgent first.
   const actions = [];
-  if (!hasCoord) actions.push({ urgency:'high', text:'Designate a Recall Coordinator in the Recall Management tab. Required by FSMA 204 (USA) for your Traceability Plan.' });
-  if (ftlScans.length === 0 && scans.length > 0) actions.push({ urgency:'high', text:'No FTL products detected in your scan history. Scan leafy greens, tomatoes, soft cheeses, seafood, or eggs to start building your record.' });
-  if (suppScore !== null && suppScore < 80) actions.push({ urgency:'high', text:`${ftlScans.length - suppCovered} FTL scans are missing a supplier name. Add the supplier when scanning these products.` });
-  if (refScore !== null && refScore < 60) actions.push({ urgency:'med', text:`${ftlScans.length - refCovered} FTL scans are missing a reference document number (PO/BOL). Add delivery reference numbers when scanning FTL products.` });
-  if (!planDate) actions.push({ urgency:'med', text:'Your Traceability Plan has not been generated. Use the Traceability Plan generator in this tab to create your mandatory FSMA 204 (USA) plan document.' });
-  if (lotScore !== null && lotScore < 90) actions.push({ urgency:'high', text:`${ftlScans.length - lotCovered} FTL scans are missing a lot number (TLC). Lot capture is the most critical FSMA 204 (USA) requirement.` });
-  if (recent30 === 0 && scans.length > 0) actions.push({ urgency:'low', text:'No scans in the last 30 days. Regular scanning is needed to maintain a current receiving record.' });
+  if (!rcvAvailable) actions.push({ urgency: 'high', text: 'Receiving records are not available in this database yet (migration 023). Ask your corporate admin to run it. The delivery components stay blank until then.' });
+  if (rcvAvailable && n === 0) actions.push({ urgency: 'high', text: 'No deliveries recorded yet. Switch to Receiving on the Scan view and record the next delivery of a listed food: case label, supplier, quantity and the PO or invoice number.' });
+  if (!hasCoord) actions.push({ urgency: 'high', text: `Designate a recall coordinator in the Recall Management tab. The traceability plan names this person (${planCite}).` });
+  if (n > 0 && nTlc < n) actions.push({ urgency: 'high', text: `${n - nTlc} delivery ${plural(n - nTlc, 'record has', 'records have')} no lot code. Scan the case label or type the lot at receiving; a delivery from an exempt source can be marked as such.` });
+  if (n > 0 && nSup < n) actions.push({ urgency: 'high', text: `${n - nSup} delivery ${plural(n - nSup, 'record has', 'records have')} an incomplete supplier address. Complete phone, street, city, state and ZIP in the dashboard under Settings, Suppliers (${kdeCite}).` });
+  if (n > 0 && nRef < n) actions.push({ urgency: 'med',  text: `${n - nRef} delivery ${plural(n - nRef, 'record has', 'records have')} no reference document. Enter the PO, BOL or invoice number at receiving.` });
+  if (linkAvailable && ftlShelf.length > 0 && linked < ftlShelf.length) actions.push({ urgency: 'med', text: `${ftlShelf.length - linked} shelf ${plural(ftlShelf.length - linked, 'scan', 'scans')} of listed foods in the last 90 days ${plural(ftlShelf.length - linked, 'has', 'have')} no delivery record behind ${plural(ftlShelf.length - linked, 'it', 'them')}. Record deliveries first so shelf scans link to them.` });
+  if (!planDate) actions.push({ urgency: 'med',  text: `No traceability plan on file. A corporate admin generates it in the dashboard under Compliance (${planCite}).` });
+  if (rcvAvailable && n > 0 && recent30 === 0) actions.push({ urgency: 'low', text: 'No deliveries recorded in the last 30 days. Record deliveries as they arrive so the record stays current.' });
 
   el.innerHTML = `
     <!-- Header -->
     <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px;flex-wrap:wrap;">
       <div style="text-align:center;background:var(--surface2);border:2px solid ${scoreColor};border-radius:16px;padding:14px 20px;min-width:140px;flex-shrink:0;">
-        <div style="font-size:11px;font-family:'DM Mono',monospace;letter-spacing:0.07em;color:var(--muted);text-transform:uppercase;margin-bottom:6px;">Readiness Score</div>
+        <div style="font-size:11px;font-family:'DM Mono',monospace;letter-spacing:0.07em;color:var(--muted);text-transform:uppercase;margin-bottom:6px;">Readiness score</div>
         <div style="display:flex;align-items:baseline;justify-content:center;gap:2px;">
           <span style="font-size:48px;font-weight:900;font-family:'Figtree',sans-serif;color:${scoreColor};line-height:1;">${weightedScore}</span>
           <span style="font-size:18px;font-weight:700;font-family:'Figtree',sans-serif;color:var(--muted);line-height:1;">/100</span>
         </div>
-        <div style="display:inline-block;margin-top:6px;padding:2px 10px;border-radius:20px;font-size:10px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.06em;background:rgba(${scoreRgb},0.13);color:${scoreColor};border:1px solid rgba(${scoreRgb},0.33);">${scoreLabel}</div>
+        <div style="display:inline-block;margin-top:6px;padding:2px 10px;border-radius:20px;font-size:10px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.06em;background:rgba(${scoreRgb},0.13);color:${scoreColor};text-transform:uppercase;">${scoreLabel}</div>
       </div>
       <div style="flex:1;min-width:200px;">
-        <div style="font-size:17px;font-weight:700;font-family:'Figtree',sans-serif;color:var(--text);margin-bottom:4px;">FSMA 204 (USA) Readiness</div>
-        <div style="font-size:12px;color:var(--muted);line-height:1.6;">Measures your store's readiness for the FDA Food Traceability Rule, effective July 20, 2028. A score of 80+ means you are on track for compliance.</div>
-        <div style="font-size:11px;color:var(--muted);margin-top:6px;font-family:'DM Mono',monospace;">${ftlScans.length} FTL product scans · ${scans.length} total scans analysed</div>
+        <div style="font-size:17px;font-weight:700;font-family:'Figtree',sans-serif;color:var(--text);margin-bottom:4px;">FSMA 204 (USA) readiness</div>
+        <div style="font-size:12px;color:var(--muted);line-height:1.6;">Measures ${storeScoped ? 'your store' : 'your organization'} against the FDA Food Traceability Rule (compliance date ${esc(window._CITATIONS?.us?.complianceDate || 'July 20, 2028')}) from the delivery records staff keep at receiving. A score of 80 or more means you are on track.</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:6px;font-family:'DM Mono',monospace;">${rcvAvailable ? `${n} delivery ${plural(n, 'record', 'records')} in the last 12 months` : 'Delivery records unavailable'} · ${linkAvailable ? `${ftlShelf.length} listed-food shelf ${plural(ftlShelf.length, 'scan', 'scans')} in the last 90 days` : 'shelf links unavailable'}</div>
       </div>
     </div>
 
     <!-- Score components -->
     <div class="settings-section" style="margin-bottom:16px;">
-      <div class="settings-section-header"><div class="settings-section-title">Compliance Components</div></div>
+      <div class="settings-section-header"><div class="settings-section-title">Readiness components</div><div class="settings-section-sub">Receiving key data elements (${esc(kdeCite)}), plan (${esc(planCite)}) and recall coordinator</div></div>
       <div class="settings-section-body" style="padding:0;">
         ${components.map(c => {
           const s = c.score;
           const col = s === null ? 'var(--muted)' : s >= 80 ? 'var(--accent)' : s >= 50 ? 'var(--warn)' : 'var(--danger)';
-          const icon = s === null ? '—' : s >= 80 ? '✓' : s >= 50 ? '~' : '✗';
+          const icon = s === null ? '·' : s >= 80 ? '✓' : s >= 50 ? '~' : '✗';
           return `<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border);">
             <div style="font-size:14px;font-weight:700;color:${col};width:20px;text-align:center;">${icon}</div>
             <div style="flex:1;">
-              <div style="font-size:12px;color:var(--text);font-weight:600;">${c.label}${c.required ? ' <span style="color:var(--danger);font-size:10px;">required</span>' : ''}</div>
-              <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:2px;">${c.detail}</div>
+              <div style="font-size:12px;color:var(--text);font-weight:600;">${esc(c.label)}${c.required ? ' <span style="color:var(--danger);font-size:10px;">required</span>' : ''}</div>
+              <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:2px;">${esc(c.detail)}</div>
             </div>
             <div style="text-align:right;">
               <div style="width:80px;background:var(--surface2);border-radius:4px;height:6px;overflow:hidden;margin-bottom:4px;">
-                <div style="width:${s||0}%;height:100%;background:${col};border-radius:4px;transition:width 0.6s ease;"></div>
+                <div style="width:${s || 0}%;height:100%;background:${col};border-radius:4px;transition:width 0.6s ease;"></div>
               </div>
-              <div style="font-size:11px;font-family:'DM Mono',monospace;font-weight:700;color:${col};">${s !== null ? s+'%' : 'N/A'}</div>
+              <div style="font-size:11px;font-family:'DM Mono',monospace;font-weight:700;color:${col};">${s !== null ? s + '%' : 'n/a'}</div>
             </div>
           </div>`;
         }).join('')}
@@ -19105,42 +19169,76 @@ function renderFsmaReadiness() {
     ${actions.length > 0 ? `
     <!-- Action items -->
     <div class="settings-section" style="margin-bottom:16px;">
-      <div class="settings-section-header"><div class="settings-section-title">Action Items</div><div class="settings-section-sub">Complete these to improve your score</div></div>
+      <div class="settings-section-header"><div class="settings-section-title">Action items</div><div class="settings-section-sub">Complete these to improve your score</div></div>
       <div class="settings-section-body" style="padding:0;">
         ${actions.map(a => {
-          const col = a.urgency==='high' ? 'var(--danger)' : a.urgency==='med' ? 'var(--warn)' : 'var(--info)';
-          const bg  = a.urgency==='high' ? 'rgba(var(--danger-rgb),0.06)' : a.urgency==='med' ? 'rgba(var(--warn-rgb),0.06)' : 'rgba(var(--info-rgb),0.06)';
+          const col = a.urgency === 'high' ? 'var(--danger)' : a.urgency === 'med' ? 'var(--warn)' : 'var(--info)';
+          const bg  = a.urgency === 'high' ? 'rgba(var(--danger-rgb),0.06)' : a.urgency === 'med' ? 'rgba(var(--warn-rgb),0.06)' : 'rgba(var(--info-rgb),0.06)';
           return `<div style="padding:12px 16px;border-bottom:1px solid var(--border);background:${bg};display:flex;gap:10px;align-items:flex-start;">
             <div style="font-size:13px;color:${col};margin-top:1px;">●</div>
-            <div style="font-size:12px;color:var(--text);line-height:1.5;">${a.text}</div>
+            <div style="font-size:12px;color:var(--text);line-height:1.5;">${esc(a.text)}</div>
           </div>`;
         }).join('')}
       </div>
-    </div>` : `<div style="padding:12px 16px;background:rgba(var(--accent-rgb),0.06);border:1px solid rgba(var(--accent-rgb),0.2);border-radius:8px;font-size:12px;color:var(--accent);margin-bottom:16px;">✓ No critical actions needed. Keep scanning and maintain your records to stay compliant.</div>`}
+    </div>` : `<div style="padding:12px 16px;background:rgba(var(--accent-rgb),0.06);border:1px solid rgba(var(--accent-rgb),0.2);border-radius:8px;font-size:12px;color:var(--accent);margin-bottom:16px;">No open action items. Keep recording deliveries as they arrive.</div>`}
 
     ${catRows ? `
-    <!-- FTL Category heatmap -->
+    <!-- Delivery records by listed-food category -->
     <div class="settings-section" style="margin-bottom:16px;">
-      <div class="settings-section-header"><div class="settings-section-title">KDE Coverage by FTL Category</div><div class="settings-section-sub">Percentage of scans with all three required KDEs: lot number, supplier, and reference document</div></div>
+      <div class="settings-section-header"><div class="settings-section-title">Delivery records by listed-food category</div><div class="settings-section-sub">Share of deliveries with lot code, supplier location, quantity and reference document</div></div>
       <div class="settings-section-body" style="padding:0 16px;">${catRows}</div>
     </div>` : ''}
 
-    <!-- Generate Traceability Plan CTA -->
+    <!-- Traceability plan: the stored dashboard document. The local print wizard was retired 2026-10-07. -->
     <div style="background:rgba(var(--info-rgb),0.07);border:1px solid rgba(var(--info-rgb),0.25);border-radius:10px;padding:14px 16px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
-      <div>
-        <div style="font-size:13px;font-weight:700;color:var(--text);">Traceability Plan</div>
-        <div style="font-size:11px;color:var(--muted);margin-top:2px;">${planDate ? `Last generated ${planAge} days ago. Regenerate if store details have changed.` : 'Required by FSMA 204 (USA) § 1.1315. Not yet generated.'}</div>
+      <div style="flex:1;min-width:200px;">
+        <div style="font-size:13px;font-weight:700;color:var(--text);">Traceability plan</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px;line-height:1.5;">${plan
+          ? `Version ${plan.version}, generated ${esc(fmtRegionDate(plan.generated_at, false))} in the corporate dashboard. A corporate admin regenerates it there when stores, suppliers or the coordinator change.`
+          : `No plan on file. A corporate admin generates it in the dashboard under Compliance (${esc(planCite)}); it then appears here for every manager to read and print.`}</div>
       </div>
-      <button onclick="openTraceabilityPlanWizard()" style="font-size:12px;font-family:'DM Mono',monospace;padding:8px 16px;border-radius:var(--r-md);border:1px solid rgba(var(--info-rgb),0.4);background:rgba(var(--info-rgb),0.15);color:var(--info);cursor:pointer;font-weight:700;white-space:nowrap;">
-        ${planDate ? '↺ Regenerate Plan' : '+ Generate Plan'}
-      </button>
+      ${plan ? `<button onclick="fsmaViewStoredPlan()" style="font-size:12px;font-family:'DM Mono',monospace;padding:8px 16px;border-radius:var(--r-md);border:1px solid rgba(var(--info-rgb),0.4);background:rgba(var(--info-rgb),0.12);color:var(--info);cursor:pointer;white-space:nowrap;">View plan</button>` : ''}
     </div>
 
     <div style="font-size:11px;color:var(--muted);line-height:1.6;text-align:center;">
-      FSMA 204 (USA) Food Traceability Rule · 21 CFR Part 1 Subpart S · Compliance date: July 20, 2028<br>
+      FSMA 204 (USA) Food Traceability Rule · ${esc(window._CITATIONS?.us?.subpart || '21 CFR Part 1 Subpart S')} · Compliance date: ${esc(window._CITATIONS?.us?.complianceDate || 'July 20, 2028')}<br>
       Score last calculated: ${new Date().toLocaleString()}
     </div>
   `;
+  _fsmaApplicabilityBanner();
+}
+
+// Opens the organization's current stored traceability plan (generated in the
+// dashboard, Phase 4) in a new tab for reading or printing. Members can read
+// traceability_plans (migration 026). Replaces the retired local wizard (2026-10-07).
+// The tab is opened synchronously so the tap is not treated as a pop-up.
+async function fsmaViewStoredPlan() {
+  if (!_currentOrgId) return;
+  const win = window.open('', '_blank');
+  try {
+    const { data, error } = await sb.from('traceability_plans').select('version, generated_at, rendered_html')
+      .eq('organisation_id', _currentOrgId).is('superseded_at', null).order('version', { ascending: false }).limit(1);
+    if (error) throw error;
+    const plan = (data || [])[0];
+    if (!plan || !plan.rendered_html) {
+      if (win) win.close();
+      showToast('No stored plan to show. A corporate admin generates it in the dashboard under Compliance.', 'warn', 4500);
+      return;
+    }
+    if (!win) { showToast('Your browser blocked the new tab. Allow pop-ups for this site and try again.', 'warn', 4500); return; }
+    const title = `Traceability plan, version ${plan.version}`;
+    const html = /^\s*<(!doctype|html)/i.test(plan.rendered_html)
+      ? plan.rendered_html
+      : `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title>
+<style>body{font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:12px;line-height:1.5;color:#111;background:#fff;max-width:760px;margin:24px auto;padding:0 16px;}@page{margin:18mm 15mm}</style></head><body>${plan.rendered_html}</body></html>`;
+    win.document.open(); win.document.write(html); win.document.close();
+    try {
+      win.document.body.insertAdjacentHTML('afterbegin', `<div class="bd-printbar" style="position:sticky;top:0;display:flex;justify-content:flex-end;gap:8px;padding:8px 0;background:#fff;"><button onclick="window.print()" style="font:12px -apple-system,'Segoe UI',Arial,sans-serif;padding:6px 14px;border:1px solid #999;border-radius:6px;background:#f5f5f5;cursor:pointer;">Print</button></div><style>@media print{.bd-printbar{display:none}}</style>`);
+    } catch (_) {}
+  } catch (e) {
+    if (win) win.close();
+    showToast('Could not load the plan: ' + (e.message || e), 'error', 4500);
+  }
 }
 
 function renderMgrStatTiles() {
@@ -19370,7 +19468,7 @@ function switchMgrTab(tab) {
   });
   if (tab === 'recalls' && _mgrLoaded) { loadMgrRecalls(); loadMgrSchemas(); loadCoordinator(); }
   if (tab === 'audit') { populateFsmaExportStores(); populateMgrAuditStores(); }
-  if (tab === 'fsma') { renderFsmaReadiness(); _fsmaApplicabilityBanner(); renderRegQuickRef(); }
+  if (tab === 'fsma') { renderFsmaReadiness(); renderRegQuickRef(); }   // the banner is added inside renderFsmaReadiness (2026-10-07)
   if (tab === 'storemgmt') loadStoreMgmt();
   if (tab === 'receiving') loadMgrReceiving();
   if (tab === 'patterns') loadMgrPatterns();
@@ -19815,7 +19913,7 @@ async function checkPriorComplaintsForRecall(recallId) {
 async function loadMgrIntel() {
   const el = document.getElementById('mgr-intel-output');
   if (!el) return;
-  el.innerHTML = '<div style="font-size:13px;color:var(--muted);padding:20px 0;text-align:center;"><div class="spinner" style="margin:0 auto 8px;"></div>Analysing last 7 days…</div>';
+  el.innerHTML = '<div style="font-size:13px;color:var(--muted);padding:20px 0;text-align:center;"><div class="spinner" style="margin:0 auto 8px;"></div>Analyzing last 7 days…</div>';
 
   try {
     const since7  = new Date(Date.now() - 7  * 86400000).toISOString();
@@ -20300,7 +20398,7 @@ async function mgrToggleRecall(id, active) {
       .select('id');
     if (error) throw error;
     if (!updated || !updated.length) {
-      showToast('Could not update recall — record not found in your organisation.', 'error', 4000);
+      showToast('Could not update recall. Record not found in your organization.', 'error', 4000);
       return;
     }
     loadMgrRecalls();
@@ -20320,7 +20418,7 @@ async function mgrDeleteRecall(id) {
       .select('id');
     if (error) throw error;
     if (!deleted || !deleted.length) {
-      showToast('Could not delete recall — record not found in your organisation.', 'error', 4000);
+      showToast('Could not delete recall. Record not found in your organization.', 'error', 4000);
       return;
     }
     loadMgrRecalls();
@@ -22436,190 +22534,11 @@ async function recallActionUnresolve() {
 
 
 // ── TRACEABILITY PLAN WIZARD ──────────────────────────────────
-function openTraceabilityPlanWizard() {
-  const modal = document.getElementById('tracplan-modal');
-  if (!modal) return;
-
-  // Pre-fill from known data
-  const stores = [...new Set((_mgrAllScans||[]).map(r => r.store_name).filter(Boolean))];
-  const ftlCount = (_mgrAllScans||[]).filter(r => r.is_ftl || detectFtlCategory(r.product_name||'').isFtl).length;
-  const suppliers = [...new Set((_mgrAllScans||[]).map(r => r.supplier_name).filter(Boolean))].slice(0,5).join(', ');
-
-  const nameEl   = document.getElementById('tp-store-name');
-  const coordEl  = document.getElementById('tp-coordinator');
-  const contactEl= document.getElementById('tp-coordinator-contact');
-  const suppEl   = document.getElementById('tp-suppliers');
-
-  if (nameEl   && !nameEl.value)    nameEl.value    = stores[0] || currentUser?.email?.split('@')[0] || '';
-  if (coordEl  && !coordEl.value)   coordEl.value   = _recallCoordinator?.name    || '';
-  if (contactEl&& !contactEl.value) contactEl.value = _recallCoordinator?.contact || '';
-  if (suppEl   && !suppEl.value && suppliers) suppEl.value = suppliers;
-
-  const ftlEl    = document.getElementById('tp-ftl-count');
-  const storeEl  = document.getElementById('tp-store-count');
-  if (ftlEl)   ftlEl.textContent   = ftlCount.toLocaleString();
-  if (storeEl) storeEl.textContent = stores.length || 1;
-
-  const msg = document.getElementById('tp-msg');
-  if (msg) msg.textContent = '';
-
-  modal.style.display = 'flex';
-}
-
-function closeTraceabilityPlanWizard() {
-  const modal = document.getElementById('tracplan-modal');
-  if (modal) modal.style.display = 'none';
-}
-
-function generateTraceabilityPlan() {
-  const storeName    = document.getElementById('tp-store-name')?.value.trim();
-  const storeAddr    = document.getElementById('tp-store-address')?.value.trim();
-  const country      = document.getElementById('tp-country')?.value || 'Norway';
-  const coordinator  = document.getElementById('tp-coordinator')?.value.trim();
-  const coordContact = document.getElementById('tp-coordinator-contact')?.value.trim();
-  const suppliers    = document.getElementById('tp-suppliers')?.value.trim();
-  const delivSched   = document.getElementById('tp-delivery-schedule')?.value.trim();
-  const notes        = document.getElementById('tp-notes')?.value.trim();
-  const msg          = document.getElementById('tp-msg');
-
-  if (!storeName) {
-    if (msg) { msg.style.color = 'var(--warn)'; msg.textContent = 'Please enter the store name.'; }
-    document.getElementById('tp-store-name')?.focus();
-    return;
-  }
-
-  if (msg) { msg.style.color = 'var(--muted)'; msg.textContent = currentLang==='no'?'Genererer plan…':'Generating plan…'; }
-
-  // Gather scan data for plan
-  const allScans  = _mgrAllScans || [];
-  const ftlScans  = allScans.filter(r => r.is_ftl || detectFtlCategory(r.product_name||'').isFtl);
-  const ftlCats   = [...new Set(ftlScans.map(r => {
-    const cat = r.ftl_category || detectFtlCategory(r.product_name||'').category;
-    return cat ? (FTL_CATEGORIES[cat]?.label || cat) : null;
-  }).filter(Boolean))];
-  const today     = fmtRegionDate(new Date().toISOString());
-  const stores    = [...new Set(allScans.map(r => r.store_name).filter(Boolean))];
-
-  const notesSection = notes ? 'Additional notes:\n' + notes : '';
-  const planText = `TRACEABILITY PLAN
-Food Safety Modernization Act Section 204 — Food Traceability Rule (21 CFR Part 1 Subpart S)
-
-Prepared by: ${storeName}
-Address: ${storeAddr || 'See store records'}
-Country: ${country}
-Date: ${today}
-Review date: ${fmtRegionDate(new Date(Date.now() + 365*86400000).toISOString())}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-1. RECORD-KEEPING PROCEDURES (§ 1.1315(a))
-
-${storeName} maintains electronic traceability records using Batch'd, a mobile-first food traceability platform. Staff scan or photograph product labels at the point of shelf placement. The system automatically captures:
-
-  • Product name and description (AI-identified from label photograph or barcode scan)
-  • Traceability Lot Code (TLC) — captured via OCR or barcode scan at receiving
-  • Date and time of receiving / placement
-  • Receiving location (store name and address)
-  • Quantity received (units)
-  • Supplier / immediate previous source name
-  • Reference document number (purchase order or bill of lading)
-  • Staff member who scanned the record
-
-Records are stored electronically in a cloud database (Supabase) and are retained for a minimum of 2 years from the date of creation, in accordance with 21 CFR § 1.1455. Records can be exported as an electronic sortable spreadsheet within 24 hours of an FDA request via the Batch'd Manager Dashboard FSMA 204 (USA) export function.
-
-Delivery schedule: ${delivSched || 'Per supplier agreements — recorded at time of receiving'}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-2. IDENTIFICATION OF FTL FOODS (§ 1.1315(b))
-
-${storeName} handles the following food categories on the FDA Food Traceability List (FTL):
-
-${ftlCats.length > 0 ? ftlCats.map(c => '  \u2022 ' + c).join(String.fromCharCode(10)) : '  \u2022 To be confirmed based on ongoing scan records'}
-
-The Batch'd system automatically identifies FTL foods using a built-in lookup table mapped to all 17 FTL categories. When an FTL food is identified during scanning, the system displays an "FSMA 204 (USA)" badge and prompts for the additional required Key Data Elements (TLC source, reference document number). All FTL scans are tagged with is_ftl = true and ftl_category in the database.
-
-Primary suppliers / distributors: ${suppliers || 'See scan records for supplier details'}
-
-${notesSection}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-3. TRACEABILITY LOT CODE (TLC) ASSIGNMENT (§ 1.1315(c))
-
-${storeName} is a retail food establishment (RFE). As a receiving entity, we do not assign new TLCs — we receive TLCs assigned by upstream packers, processors, or distributors. The TLC received with each shipment is captured at receiving via the Batch'd scanning system and linked to all required KDEs.
-
-If a Food Traceability List food is received from an exempt supplier (one not subject to FSMA 204 (USA)) without a TLC, ${storeName} staff will assign a TLC using the following format: [STORE CODE]-[YYYYMMDD]-[SEQUENTIAL NUMBER] and document this in the Batch'd system.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-4. POINT OF CONTACT (§ 1.1315(d))
-
-For questions regarding this Traceability Plan and associated records:
-
-  Name / Role: ${coordinator || 'Store Manager'}
-  Contact:     ${coordContact || 'See store contact details'}
-  Store:       ${storeName}
-  Address:     ${storeAddr || 'See store records'}
-
-This person is responsible for: responding to FDA data requests within 24 hours; ensuring records are maintained in accordance with this plan; updating this plan when procedures change; and retaining prior versions of this plan for 2 years following any update.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-5. RECORD RETENTION (§ 1.1455)
-
-All traceability records maintained by ${storeName} under this plan are:
-
-  • Retained for a minimum of 2 years from the date created
-  • Stored electronically in the Batch'd cloud database
-  • Available to the FDA within 24 hours of a request
-  • Exportable as an electronic sortable spreadsheet (CSV) matching the FDA's template
-  • Backed up automatically by the database provider
-
-When this plan is updated, the previous version is retained for 2 years.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-DECLARATION
-
-This Traceability Plan was prepared in accordance with 21 CFR Part 1 Subpart S, implementing Section 204(d) of the FDA Food Safety Modernization Act. It reflects the current traceability practices of ${storeName} as of ${today}.
-
-Prepared by: ${coordinator || '________________'}
-Title:        ${coordinator ? 'Recall Coordinator / Store Manager' : '________________'}
-Date:         ${today}
-Signature:    ________________
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Generated by Batch'd · FSMA 204 (USA) Traceability Plan · ${today}
-Batch'd is a food traceability platform for grocery retailers.
-This plan should be reviewed annually and updated when procedures change.
-Retain this document and all previous versions for 2 years.
-`;
-
-  // Create downloadable text file
-  const blob = new Blob([planText], { type: 'text/plain;charset=utf-8' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  const dateStr = new Date().toISOString().slice(0,10);
-  const safeName = storeName.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
-  a.href     = url;
-  a.download = `batched_traceability_plan_${safeName}_${dateStr}.txt`;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-
-  // Record that plan was generated
-  localStorage.setItem('batchd_tracplan_date', new Date().toISOString());
-  localStorage.setItem('batchd_tracplan_store', storeName);
-
-  if (msg) { msg.style.color = 'var(--accent)'; msg.textContent = '✓ Traceability Plan downloaded. Keep this document on file.'; }
-
-  setTimeout(() => {
-    closeTraceabilityPlanWizard();
-    if (document.getElementById('mgr-panel-fsma')?.style.display !== 'none') renderFsmaReadiness();
-    showToast('Traceability Plan generated and saved. Store it with your food safety records.', 'ok', 4000);
-  }, 2000);
-}
+// The local traceability plan wizard (openTraceabilityPlanWizard, generateTraceabilityPlan,
+// closeTraceabilityPlanWizard and the tracplan-modal markup) was retired 2026-10-07. It
+// printed an unstored text plan with Norwegian defaults and OCR-era wording. The plan of
+// record is the versioned document corporate admins generate in the dashboard (Phase 4,
+// traceability_plans); the FSMA tab opens it through fsmaViewStoredPlan().
 
 
 // ── Help tooltip system ──────────────────────────────────────────────────────
@@ -22710,7 +22629,7 @@ async function loadRecallsView() {
   try {
     const orgId = _currentOrgId || null;
     if (!orgId) {
-      container.innerHTML = '<div style="text-align:center;padding:32px 16px;color:var(--muted);font-size:13px;">Organisation not loaded yet — tap Refresh to try again.</div>';
+      container.innerHTML = '<div style="text-align:center;padding:32px 16px;color:var(--muted);font-size:13px;">Organization not loaded yet. Tap Refresh to try again.</div>';
       return;
     }
 
@@ -22948,89 +22867,7 @@ async function loadRecallsView() {
 </script>
 
 
-<!-- ── TRACEABILITY PLAN MODAL ─────────────────────────────── -->
-<div id="tracplan-modal" style="display:none;position:fixed;inset:0;z-index:900;background:var(--overlay);align-items:flex-start;justify-content:center;padding:calc(env(safe-area-inset-top, 0px) + 24px) 16px calc(env(safe-area-inset-bottom, 0px) + 16px);overflow-y:auto;">
-  <div style="width:100%;max-width:640px;background:var(--surface);border-radius:16px;border:1px solid var(--border);padding:0;position:relative;">
-    <!-- Header -->
-    <div style="padding:18px 20px 14px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:10px;">
-      <div>
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
-          <span style="font-size:11px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.08em;color:var(--info);">FSMA 204 (USA) § 1.1315</span>
-        </div>
-        <div style="font-family:'Figtree',sans-serif;font-size:17px;font-weight:700;color:var(--text);">Traceability Plan Generator</div>
-        <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:3px;">Generates a mandatory written plan meeting FDA Food Traceability Rule requirements</div>
-      </div>
-      <button onclick="closeTraceabilityPlanWizard()" aria-label="Close" style="background:none;border:none;color:var(--muted);cursor:pointer;padding:0;display:flex;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18" stroke-linecap="round"/><line x1="6" y1="6" x2="18" y2="18" stroke-linecap="round"/></svg></button>
-    </div>
-    <!-- Body -->
-    <div style="padding:18px 20px;display:flex;flex-direction:column;gap:14px;max-height:75vh;overflow-y:auto;">
-      <!-- Step 1: Store info -->
-      <div style="font-size:11px;font-family:'DM Mono',monospace;font-weight:700;color:var(--muted);letter-spacing:0.08em;">STEP 1 OF 3 — STORE & CONTACT DETAILS</div>
-      <div class="field">
-        <label>Business / Store Name <span style="color:var(--danger);">*</span></label>
-        <input type="text" id="tp-store-name" placeholder="e.g. Kiwi Majorstuen, Rema 1000 Grünerløkka" />
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-        <div class="field">
-          <label>Store Address</label>
-          <input type="text" id="tp-store-address" placeholder="e.g. Bogstadveien 1, Oslo" />
-        </div>
-        <div class="field">
-          <label>Country</label>
-          <select id="tp-country">
-            <option value="Norway">Norway</option>
-            <option value="United States">United States</option>
-            <option value="United Kingdom">United Kingdom</option>
-            <option value="Other EU/EEA">Other EU/EEA</option>
-          </select>
-        </div>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-        <div class="field">
-          <label>Recall Coordinator Name</label>
-          <input type="text" id="tp-coordinator" placeholder="Auto-filled from settings" />
-        </div>
-        <div class="field">
-          <label>Contact (Phone / Email)</label>
-          <input type="text" id="tp-coordinator-contact" placeholder="Auto-filled from settings" />
-        </div>
-      </div>
-
-      <div style="border-top:1px solid var(--border);padding-top:14px;font-size:11px;font-family:'DM Mono',monospace;font-weight:700;color:var(--muted);letter-spacing:0.08em;">STEP 2 OF 3 — TRACEABILITY SYSTEM & PROCEDURES</div>
-      <div class="field">
-        <label>Primary Suppliers / Distributors <span style="color:var(--muted);font-size:10px;">list main ones</span></label>
-        <input type="text" id="tp-suppliers" placeholder="e.g. ASKO, Norgesgruppen, direct from Tine, local farms" />
-      </div>
-      <div class="field">
-        <label>Delivery Schedule</label>
-        <input type="text" id="tp-delivery-schedule" placeholder="e.g. Monday, Wednesday, Friday mornings" />
-      </div>
-      <div class="field">
-        <label>Additional Notes <span style="color:var(--muted);font-size:10px;">optional — any specific procedures or exemptions</span></label>
-        <input type="text" id="tp-notes" placeholder="e.g. Some produce received direct from local farms — assigned TLCs manually" />
-      </div>
-
-      <div style="border-top:1px solid var(--border);padding-top:14px;font-size:11px;font-family:'DM Mono',monospace;font-weight:700;color:var(--muted);letter-spacing:0.08em;">STEP 3 OF 3 — GENERATE</div>
-      <div style="font-size:12px;color:var(--muted);line-height:1.6;">
-        Batch'd will generate a formatted Traceability Plan PDF covering all five required elements under FSMA 204 (USA) § 1.1315: record-keeping procedures, FTL food identification, TLC assignment method, point of contact, and record retention.
-      </div>
-      <div style="background:rgba(var(--info-rgb),0.06);border:1px solid rgba(var(--info-rgb),0.2);border-radius:8px;padding:10px 12px;font-size:11px;color:var(--info);font-family:'DM Mono',monospace;line-height:1.7;">
-        Your scan history shows <strong id="tp-ftl-count">—</strong> FTL product records across <strong id="tp-store-count">—</strong> stores.<br>
-        These will be referenced in the plan as evidence of your current traceability practices.
-      </div>
-
-      <div id="tp-msg" style="font-size:12px;min-height:16px;font-family:'DM Mono',monospace;"></div>
-
-      <div style="display:flex;gap:10px;flex-wrap:wrap;">
-        <button onclick="generateTraceabilityPlan()" style="font-size:13px;font-family:'DM Mono',monospace;padding:10px 20px;border-radius:var(--r-md);border:1px solid rgba(var(--info-rgb),0.4);background:rgba(var(--info-rgb),0.15);color:var(--info);cursor:pointer;font-weight:700;display:flex;align-items:center;gap:7px;">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-          Download Traceability Plan
-        </button>
-        <button onclick="closeTraceabilityPlanWizard()" style="font-size:12px;font-family:'DM Mono',monospace;padding:10px 16px;border-radius:8px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;">Cancel</button>
-      </div>
-    </div>
-  </div>
-</div>
+<!-- The traceability plan modal (tracplan-modal) was retired 2026-10-07; see fsmaViewStoredPlan(). -->
 
 </main>
 
