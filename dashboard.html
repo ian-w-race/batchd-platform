@@ -11734,8 +11734,12 @@ async function renderReports() {
       {
         key: 'audit', cat: 'Operations',
         title: 'Audit trail', icon: _ico('clipboard',20), color: 'var(--accent)',
-        desc: 'Full traceability scan log — every product, lot code, staff member, and timestamp',
-        stats: [
+        desc: isUS ? 'Every delivery and shelf scan in one chronological log: product, lot code, store, staff member and timestamp' : 'Full traceability scan log: every product, lot code, staff member, and timestamp',
+        stats: isUS ? [
+          { val: scans.length, label: 'shelf scans' },
+          { val: rcvCount, label: 'deliveries' },
+          { val: lotCoverage + '%', label: 'scan lot coverage' },
+        ] : [
           { val: scans.length, label: 'scan records' },
           { val: lotCoverage + '%', label: 'lot code coverage' },
           { val: staffSet.size, label: 'staff members' },
@@ -11745,7 +11749,7 @@ async function renderReports() {
       {
         key: 'staff', cat: 'Operations',
         title: 'Staff activity', icon: _ico('user',20), color: 'var(--info)',
-        desc: 'Scan counts and recall responses per team member',
+        desc: isUS ? 'Scans, deliveries recorded and recall responses per team member' : 'Scan counts and recall responses per team member',
         stats: [
           { val: staffSet.size, label: 'team members' },
           { val: scans.length, label: 'total actions' },
@@ -12084,6 +12088,51 @@ async function fetchReportData(key) {
   }
 }
 
+// Reports panel helpers (2026-10-09): deliveries alongside shelf scans in the
+// Audit trail and Staff activity reports, US orgs only (the NO branch is frozen).
+function _reportSince() {
+  return _reportDateRange === 'all' ? null : new Date(Date.now() - parseInt(_reportDateRange) * 86400000).toISOString();
+}
+// Received deliveries in the report's date range, newest first. Tolerates a
+// missing table (returns []). Store name is embedded.
+async function _reportDeliveries() {
+  if (_orgRegion !== 'us') return [];
+  try {
+    let q = sb.from('receiving_events')
+      .select('id, received_at, store_id, supplier_name_snapshot, product_name, gtin, traceability_lot_code, tlc_source_type, quantity, unit_of_measure, reference_document_type, reference_document_number, received_by, source, stores(name)')
+      .eq('organisation_id', _orgId).eq('status', 'received').order('received_at', { ascending: false }).limit(1000);
+    const since = _reportSince(); if (since) q = q.gte('received_at', since);
+    const { data, error } = await q;
+    if (error) { console.warn('[reports] receiving_events:', error.message); return []; }
+    return data || [];
+  } catch (e) { console.warn('[reports] receiving_events:', e.message || e); return []; }
+}
+// One chronological list for the audit trail: { kind: 'scan'|'delivery', at, row }, newest first.
+function _reportAuditRows(scans, deliveries) {
+  const rows = [
+    ...(scans || []).map(s => ({ kind: 'scan', at: s.created_at || '', row: s })),
+    ...(deliveries || []).map(r => ({ kind: 'delivery', at: r.received_at || '', row: r })),
+  ];
+  return rows.sort((a, b) => (b.at > a.at ? 1 : b.at < a.at ? -1 : 0));
+}
+// Per-person totals for the staff report. nameOf maps an email to the display
+// key (the table uses the part before @, the CSV the whole address).
+function _reportStaffRows(scans, deliveries, nameOf) {
+  const by = {};
+  const get = name => by[name] || (by[name] = { name, scans: [], deliveries: 0, resolved: 0, removed: 0, last: '' });
+  (scans || []).forEach(s => {
+    const p = get(nameOf(s.scanned_by)); p.scans.push(s);
+    if (s.recall_resolved) p.resolved++;
+    if (s.removed_from_shelf_at) p.removed++;
+    if ((s.created_at || '') > p.last) p.last = s.created_at;
+  });
+  (deliveries || []).forEach(r => {
+    const p = get(nameOf(r.received_by)); p.deliveries++;
+    if ((r.received_at || '') > p.last) p.last = r.received_at;
+  });
+  return Object.values(by).sort((a, b) => (b.scans.length + b.deliveries) - (a.scans.length + a.deliveries));
+}
+
 // Reports panel, US: the receiving-based FSMA 204 report body (2026-10-07).
 // data = receiving_events rows with stores(name) and suppliers(...) embedded.
 // The four checks are the same as loadComplianceData and the scanner's score.
@@ -12147,17 +12196,26 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
     </div>`;
 
   // ── Audit trail ──────────────────────────────────────────────
+  // 2026-10-09: US orgs see deliveries (receiving_events) in the same chronological
+  // list as shelf scans, with a Type column. NO orgs keep the scan-only table.
   if (key === 'audit') {
+    const deliveries = isUS ? await _reportDeliveries() : [];
     const withLot  = data.filter(s => s.lot_number).length;
     const lotPct   = data.length ? Math.round(withLot / data.length * 100) : 0;
     const resolved = data.filter(s => s.recall_resolved).length;
     const removed  = data.filter(s => s.removed_from_shelf_at && !s.recall_resolved).length;
-    const staff    = new Set(data.map(s => s.scanned_by).filter(Boolean)).size;
-    const stores   = new Set(data.map(s => s.store_name).filter(Boolean)).size;
-    el.innerHTML = reportHeader('Audit trail', `${data.length} records · ${_orgName}`, 'audit') +
+    const staff    = new Set([...data.map(s => s.scanned_by), ...deliveries.map(r => r.received_by)].filter(Boolean)).size;
+    const stores   = new Set([...data.map(s => s.store_name), ...deliveries.map(r => r.stores?.name)].filter(Boolean)).size;
+    const dlvLot   = deliveries.filter(r => r.traceability_lot_code || r.tlc_source_type === 'not_required_exempt_source').length;
+    const dlvLotPct = deliveries.length ? Math.round(dlvLot / deliveries.length * 100) : 0;
+    const rows     = _reportAuditRows(data, deliveries);
+    const pill = (txt, rgb, col) => `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(var(${rgb}),0.12);color:${col};font-weight:600;">${txt}</span>`;
+    el.innerHTML = reportHeader('Audit trail', `${data.length} shelf scan${data.length!==1?'s':''}${isUS ? ` · ${deliveries.length} deliver${deliveries.length===1?'y':'ies'}` : ''} · ${_orgName}`, 'audit') +
       `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:18px;">
-        ${statTile(data.length, 'Total scans')}
-        ${statTile(lotPct+'%', 'Lot code coverage', lotPct>=80?'var(--accent)':lotPct>=60?'var(--warn)':'var(--danger)')}
+        ${statTile(data.length, 'Shelf scans')}
+        ${statTile(lotPct+'%', 'Scan lot coverage', lotPct>=80?'var(--accent)':lotPct>=60?'var(--warn)':'var(--danger)')}
+        ${isUS ? statTile(deliveries.length, 'Deliveries recorded', deliveries.length>0?'var(--accent)':'var(--muted)') : ''}
+        ${isUS ? statTile(dlvLotPct+'%', 'Delivery lot coverage', deliveries.length===0?'var(--muted)':dlvLotPct>=80?'var(--accent)':dlvLotPct>=60?'var(--warn)':'var(--danger)') : ''}
         ${statTile(staff, 'Staff members')}
         ${statTile(stores, 'Stores')}
         ${statTile(resolved, 'Recalls resolved', resolved>0?'var(--accent)':'var(--muted)')}
@@ -12166,25 +12224,35 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
       <div class="panel"><div class="panel-body" style="padding:0;">
         <table class="store-table" style="width:100%;">
           <thead><tr>
-            <th>Date & time</th><th>Product</th><th>${isUS?'TLC / Lot':'Partinummer'}</th>
+            <th>Date & time</th>${isUS ? '<th>Type</th>' : ''}<th>Product</th><th>${isUS?'TLC / Lot':'Partinummer'}</th>
             <th>Store</th><th>Staff</th><th>Supplier</th><th>Status</th>
           </tr></thead>
           <tbody>
-            ${data.length === 0 ? `<tr><td colspan="7"><div class="empty">No scans in this date range.</div></td></tr>` :
-            data.map(s => `<tr>
+            ${rows.length === 0 ? `<tr><td colspan="${isUS?8:7}"><div class="empty">No records in this date range.</div></td></tr>` :
+            rows.map(x => x.kind === 'delivery' ? (r => `<tr>
+              <td style="white-space:nowrap;font-size:11px;color:var(--muted);">${fmtDT(r.received_at)}</td>
+              <td>${pill('Delivery', '--info-light-rgb', 'var(--info)')}</td>
+              <td><div style="font-size:12px;font-weight:500;color:var(--text);">${esc(r.product_name||'')}</div><div style="font-size:10px;color:var(--muted);">${esc(String(r.quantity ?? ''))} ${esc(r.unit_of_measure||'')}${r.reference_document_number ? ' · ' + esc((r.reference_document_type ? r.reference_document_type + ' ' : '') + r.reference_document_number) : ''}</div></td>
+              <td style="font-size:11px;color:${r.traceability_lot_code ? 'var(--muted)' : r.tlc_source_type === 'not_required_exempt_source' ? 'var(--muted)' : 'var(--danger)'};font-family:'DM Mono',monospace;">${esc(r.traceability_lot_code || (r.tlc_source_type === 'not_required_exempt_source' ? 'Exempt source' : 'Missing'))}${r.gtin?'<br><span style="font-size:10px;">'+esc(r.gtin)+'</span>':''}</td>
+              <td style="font-size:11px;color:var(--muted);">${esc(r.stores?.name||'')}</td>
+              <td style="font-size:11px;color:var(--muted);">${esc((r.received_by||'').split('@')[0])}</td>
+              <td style="font-size:11px;color:var(--muted);">${esc(r.supplier_name_snapshot||'Not recorded')}</td>
+              <td>${pill(r.source === 'wholesaler_import' ? 'Received (file)' : 'Received', '--accent-rgb', 'var(--accent)')}</td>
+            </tr>`)(x.row) : (s => `<tr>
               <td style="white-space:nowrap;font-size:11px;color:var(--muted);">${fmtDT(s.created_at)}</td>
-              <td><div style="font-size:12px;font-weight:500;color:var(--text);">${esc(s.product_name||'—')}</div></td>
-              <td style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">${esc(s.lot_number||'—')}${s.barcode_number?'<br><span style="font-size:10px;">'+esc(s.barcode_number)+'</span>':''}</td>
-              <td style="font-size:11px;color:var(--muted);">${esc(s.store_name||'—')}</td>
-              <td style="font-size:11px;color:var(--muted);">${esc((s.scanned_by||'—').split('@')[0])}</td>
-              <td style="font-size:11px;color:var(--muted);">${s.supplier_name||'—'}</td>
+              ${isUS ? `<td><span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(var(--accent-muted-rgb),0.08);color:var(--muted);">Shelf scan</span></td>` : ''}
+              <td><div style="font-size:12px;font-weight:500;color:var(--text);">${esc(s.product_name||'')}</div></td>
+              <td style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">${esc(s.lot_number||'')}${s.barcode_number?'<br><span style="font-size:10px;">'+esc(s.barcode_number)+'</span>':''}</td>
+              <td style="font-size:11px;color:var(--muted);">${esc(s.store_name||'')}</td>
+              <td style="font-size:11px;color:var(--muted);">${esc((s.scanned_by||'').split('@')[0])}</td>
+              <td style="font-size:11px;color:var(--muted);">${esc(s.supplier_name||'')}</td>
               <td>${s.recall_resolved
-                ? `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(var(--accent-rgb),0.12);color:var(--accent);font-weight:600;">Resolved</span>`
+                ? pill('Resolved', '--accent-rgb', 'var(--accent)')
                 : s.removed_from_shelf_at
-                  ? `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(var(--warn-rgb),0.12);color:var(--warn);font-weight:600;">Removed</span>`
+                  ? pill('Removed', '--warn-rgb', 'var(--warn)')
                   : `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(var(--accent-muted-rgb),0.08);color:var(--muted);">On shelf</span>`}
               </td>
-            </tr>`).join('')}
+            </tr>`)(x.row)).join('')}
           </tbody>
         </table>
       </div></div>`;
@@ -12236,59 +12304,52 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
   }
 
   // ── Staff activity ───────────────────────────────────────────
+  // 2026-10-09: US orgs also count deliveries recorded per person (received_by).
   else if (key === 'staff') {
-    const byStaff = {};
-    data.forEach(s => {
-      const name = (s.scanned_by||'Unknown').split('@')[0];
-      if (!byStaff[name]) byStaff[name] = { name, scans:[], resolved:0, removed:0 };
-      byStaff[name].scans.push(s);
-      if (s.recall_resolved)       byStaff[name].resolved++;
-      if (s.removed_from_shelf_at) byStaff[name].removed++;
-    });
-    const staffRows = Object.values(byStaff).sort((a,b) => b.scans.length - a.scans.length);
-    const lastScan  = s => s.scans.reduce((l,sc) => sc.created_at > l ? sc.created_at : l, '');
-    const topScanner = staffRows[0]?.name || '—';
-    const avgPerPerson = staffRows.length ? Math.round(data.length / staffRows.length) : 0;
-    // Items-removed stat tile takes the slot the "Escalations" tile used to
-    // occupy. Escalation concept retired 2026-05-27 — see also the table
-    // column drop below.
-    el.innerHTML = reportHeader('Staff activity', `${staffRows.length} team members · ${data.length} total scans`, 'staff') +
+    const deliveries = isUS ? await _reportDeliveries() : [];
+    const staffRows  = _reportStaffRows(data, deliveries, e => (e || 'Unknown').split('@')[0]);
+    const topScanner = staffRows[0]?.name || '';
+    const totalActions = data.length + deliveries.length;
+    const avgPerPerson = staffRows.length ? Math.round(totalActions / staffRows.length) : 0;
+    el.innerHTML = reportHeader('Staff activity', `${staffRows.length} team member${staffRows.length!==1?'s':''} · ${data.length} scan${data.length!==1?'s':''}${isUS ? ` · ${deliveries.length} deliver${deliveries.length===1?'y':'ies'}` : ''}`, 'staff') +
       `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:18px;">
         ${statTile(staffRows.length, 'Team members')}
-        ${statTile(data.length, 'Total scans')}
-        ${statTile(avgPerPerson, 'Avg scans / person')}
+        ${statTile(data.length, 'Shelf scans')}
+        ${isUS ? statTile(deliveries.length, 'Deliveries recorded', deliveries.length>0?'var(--accent)':'var(--muted)') : ''}
+        ${statTile(avgPerPerson, isUS ? 'Avg records / person' : 'Avg scans / person')}
         ${statTile(data.filter(s=>s.recall_resolved).length, 'Recalls resolved', data.filter(s=>s.recall_resolved).length>0?'var(--accent)':'var(--muted)')}
         ${statTile(data.filter(s=>s.removed_from_shelf_at).length, 'Items removed', data.filter(s=>s.removed_from_shelf_at).length>0?'var(--warn)':'var(--muted)')}
       </div>
       <div class="panel"><div class="panel-body" style="padding:0;">
         <table class="store-table" style="width:100%;">
           <thead><tr>
-            <th>Staff member</th><th>Scans</th><th>Lot coverage</th>
+            <th>Staff member</th><th>Scans</th>${isUS ? '<th>Deliveries</th>' : ''}<th>Lot coverage</th>
             <th>Recalls resolved</th><th>Items removed</th><th>Last active</th>
           </tr></thead>
           <tbody>
-            ${staffRows.length === 0 ? `<tr><td colspan="6"><div class="empty">No staff activity in this date range.</div></td></tr>` :
+            ${staffRows.length === 0 ? `<tr><td colspan="${isUS?7:6}"><div class="empty">No staff activity in this date range.</div></td></tr>` :
             staffRows.map((s,i) => {
               const lotPct = s.scans.length ? Math.round(s.scans.filter(sc=>sc.lot_number).length/s.scans.length*100) : 0;
-              const pctOfTotal = data.length ? Math.round(s.scans.length/data.length*100) : 0;
+              const pctOfTotal = totalActions ? Math.round((s.scans.length + s.deliveries)/totalActions*100) : 0;
               return `<tr>
                 <td>
                   <div style="font-size:12px;font-weight:600;color:var(--text);">${esc(s.name)}</div>
-                  ${i===0?`<div style="font-size:10px;color:var(--accent);">top performer</div>`:''}
+                  ${i===0?`<div style="font-size:10px;color:var(--accent);">most records</div>`:''}
                 </td>
                 <td>
                   <div style="font-size:14px;font-weight:700;color:var(--accent);">${s.scans.length}</div>
                   <div style="width:60px;height:3px;background:var(--border);border-radius:2px;margin-top:4px;overflow:hidden;"><div style="height:100%;width:${pctOfTotal}%;background:var(--accent);border-radius:2px;"></div></div>
                 </td>
+                ${isUS ? `<td><div style="font-size:14px;font-weight:700;color:${s.deliveries>0?'var(--info)':'var(--muted)'};">${s.deliveries}</div></td>` : ''}
                 <td>
-                  <div style="display:flex;align-items:center;gap:6px;">
+                  ${s.scans.length ? `<div style="display:flex;align-items:center;gap:6px;">
                     <div style="width:50px;height:3px;border-radius:2px;background:var(--border);overflow:hidden;"><div style="height:100%;width:${lotPct}%;background:${lotPct>=80?'var(--accent)':'var(--warn)'};border-radius:2px;"></div></div>
                     <span style="font-size:11px;color:${lotPct>=80?'var(--accent)':lotPct>=60?'var(--warn)':'var(--danger)'};">${lotPct}%</span>
-                  </div>
+                  </div>` : `<span style="font-size:11px;color:var(--muted);">No scans</span>`}
                 </td>
                 <td style="color:${s.resolved>0?'var(--accent)':'var(--muted)'};">${s.resolved}</td>
                 <td style="color:${s.removed>0?'var(--warn)':'var(--muted)'};">${s.removed}</td>
-                <td style="font-size:11px;color:var(--muted);">${fmtDate(lastScan(s))}</td>
+                <td style="font-size:11px;color:var(--muted);">${s.last ? fmtDate(s.last) : ''}</td>
               </tr>`;}).join('')}
           </tbody>
         </table>
@@ -12559,18 +12620,31 @@ async function downloadReport(key) {
       return;
     }
     if (key === 'audit') {
+      // 2026-10-09: deliveries ride along for US orgs, flagged in the first column.
+      const deliveries = isUS ? await _reportDeliveries() : [];
       downloadCSV(`batchd-audit-trail-${date}.csv`,
-        ['Date','Time','Product','Lot Number','Batch Number','Barcode','Store','Scanned By','Quantity','Shelf Location','Supplier','Status','Recall Resolved','Recall Resolved By','Recall Resolved At','Removed From Shelf At'],
-        data.map(s => [
+        ['Record Type','Date','Time','Product','Lot Number','Batch Number','Barcode / GTIN','Store','Recorded By','Quantity','Shelf Location','Supplier','Reference Document','Status','Recall Resolved','Recall Resolved By','Recall Resolved At','Removed From Shelf At'],
+        _reportAuditRows(data, deliveries).map(x => x.kind === 'delivery' ? (r => [
+          'Delivery',
+          r.received_at ? fmtDash(r.received_at) : '',
+          r.received_at ? new Date(r.received_at).toLocaleTimeString(_dashLocale()) : '',
+          r.product_name, r.traceability_lot_code || (r.tlc_source_type === 'not_required_exempt_source' ? 'Exempt source' : ''), '', r.gtin,
+          r.stores?.name || '', r.received_by, r.quantity != null ? `${r.quantity} ${r.unit_of_measure || ''}`.trim() : '', '', r.supplier_name_snapshot,
+          r.reference_document_number ? `${r.reference_document_type ? r.reference_document_type + ' ' : ''}${r.reference_document_number}` : '',
+          r.source === 'wholesaler_import' ? 'Received (delivery file)' : 'Received',
+          '', '', '', '',
+        ])(x.row) : (s => [
+          'Shelf scan',
           s.created_at ? fmtDash(s.created_at) : '',
           s.created_at ? new Date(s.created_at).toLocaleTimeString(_dashLocale()) : '',
           s.product_name, s.lot_number, s.batch_number, s.barcode_number,
           s.store_name, s.scanned_by, s.quantity, s.shelf_location, s.supplier_name,
+          s.reference_document || '',
           s.recall_resolved ? 'Resolved' : s.removed_from_shelf_at ? 'Removed' : 'On shelf',
           s.recall_resolved ? 'Yes' : 'No', s.recall_resolved_by,
           s.recall_resolved_at ? fmtDash(s.recall_resolved_at) : '',
           s.removed_from_shelf_at ? fmtDash(s.removed_from_shelf_at) : '',
-        ])
+        ])(x.row))
       );
     } else if (key === 'recalls') {
       // Fetch exposure data for the CSV
@@ -12604,23 +12678,14 @@ async function downloadReport(key) {
         })
       );
     } else if (key === 'staff') {
+      // 2026-10-09: deliveries recorded per person (US orgs); the CSV keeps the full address.
+      const deliveries = isUS ? await _reportDeliveries() : [];
       downloadCSV(`batchd-staff-activity-${date}.csv`,
-        ['Staff Member','Total Scans','Recalls Resolved','Items Removed','Last Active'],
-        (() => {
-          const byStaff = {};
-          data.forEach(s => {
-            const name = s.scanned_by || 'Unknown';
-            if (!byStaff[name]) byStaff[name] = { name, count:0, resolved:0, removed:0, last:'' };
-            byStaff[name].count++;
-            if (s.recall_resolved) byStaff[name].resolved++;
-            if (s.removed_from_shelf_at) byStaff[name].removed++;
-            if (s.created_at > byStaff[name].last) byStaff[name].last = s.created_at;
-          });
-          return Object.values(byStaff).sort((a,b) => b.count - a.count).map(s => [
-            s.name, s.count, s.resolved, s.removed,
-            s.last ? fmtDash(s.last) : '',
-          ]);
-        })()
+        ['Staff Member','Shelf Scans','Deliveries Recorded','Recalls Resolved','Items Removed','Last Active'],
+        _reportStaffRows(data, deliveries, e => e || 'Unknown').map(s => [
+          s.name, s.scans.length, s.deliveries, s.resolved, s.removed,
+          s.last ? fmtDash(s.last) : '',
+        ])
       );
     } else if (key === 'stores') {
       downloadCSV(`batchd-store-compliance-${date}.csv`,

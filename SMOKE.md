@@ -159,3 +159,13 @@ not repeated here.
     https://corporate.batchdapp.com/netlify/lib/auth.js: both return the
     404 page, not JavaScript. Then send a staff invite from the dashboard:
     the email still arrives (the function itself is unaffected).
+
+## Reports carry deliveries (2026-10-09)
+
+32. Dashboard, Reports and Exports, US org, after at least one delivery
+    is recorded in the scanner: the Audit trail card counts deliveries;
+    open it and the table shows a Type column with Delivery and Shelf scan
+    rows in one date order, a delivery row showing quantity and PO. Its
+    CSV starts with a "Record Type" column. Staff activity shows a
+    Deliveries column; a person who only recorded a delivery appears with
+    "No scans". Its CSV has "Deliveries Recorded".

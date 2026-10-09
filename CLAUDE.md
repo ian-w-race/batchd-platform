@@ -1262,6 +1262,26 @@ no console errors. Not verified against the live database.
   `dashboard?panel=recalls` (the netlify.toml rule from 2026-09-13 301s
   that path to corporate with the query string intact). Expect that
   difference whenever comparing the live scanner to the file.
+- Reports panel, Audit trail and Staff activity carry deliveries
+  (2026-10-09, US orgs; the NO branch is frozen). Shared helpers before
+  `_reportFsmaUsHtml`: `_reportSince()`, `_reportDeliveries()` (received
+  rows in the panel's date range with stores(name), tolerant of a missing
+  table), `_reportAuditRows(scans, deliveries)` (one list, newest first,
+  `kind` scan or delivery) and `_reportStaffRows(scans, deliveries,
+  nameOf)` (per-person totals; the table keys on the part before @, the
+  CSV on the whole address). Audit trail: a Type column, Delivery rows
+  with quantity, reference document, GTIN, "Received" or "Received
+  (file)", tiles for deliveries and delivery lot coverage, staff and
+  store counts include both kinds. Its CSV gained a leading "Record Type"
+  column plus "Reference Document"; "Barcode" became "Barcode / GTIN" and
+  "Scanned By" became "Recorded By". Staff activity: a Deliveries column
+  and tile, people who only recorded deliveries appear with "No scans",
+  "Last active" covers both kinds, the top row reads "most records"; its
+  CSV gained "Deliveries Recorded" and renamed "Total Scans" to "Shelf
+  Scans". The report cards show deliveries on the Audit trail card.
+  Verified: node --check, a Node test of the two pure helpers (ordering,
+  delivery-only person, unknown staff, CSV naming, empty inputs), both
+  reports in a local preview with sample data.
 
 ## Recall counting rules (platform-wide)
 A recall requires action only when ALL THREE are true:
