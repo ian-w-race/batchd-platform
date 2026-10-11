@@ -152,9 +152,10 @@ Live application surfaces:
   leftovers above.
 - privacy.html (108 lines) and terms.html (94 lines), both 2026-08-06:
   legal pages, reachable at /privacy and /terms. Found 2026-09-29:
-  terms.html exists only in Ian's local folder and was never uploaded
-  to GitHub, so /terms and /terms.html return 404 in production while
-  signup.html and privacy.html link to /terms. Fix is to upload it.
+  terms.html existed only in Ian's local folder, so /terms returned 404
+  while signup.html and privacy.html linked to it. RESOLVED: it went up
+  with the 2026-10-07 American English sweep; on 2026-10-11 the blob
+  matches GitHub main and /terms answers HTTP 200.
 
 Public intake surfaces (no login):
 - complaint.html (505 lines, 2026-05-02): consumer complaint form that
@@ -459,13 +460,17 @@ the deployed join.html and signup.html have been tested). As of
 missing function, so probe RPCs with their real parameter names).
 Whether the 2026-09-11 accept_invitation fix was re-run is unknown;
 re-running 018 is safe (CREATE OR REPLACE). CHECK_MIGRATIONS.sql
-reports APPLIED or MISSING for every migration.
+reports APPLIED or MISSING for every migration. Ian ran it on
+2026-10-11: every row APPLIED, including 007 and 017 (MISSING on
+2026-09-13), 020a (no org on the trial plan) and 029 and 030.
 The remaining tables need a further migration (020, not yet written).
 Code preconditions verified for it: every scanner scan insert spreads a
 payload that sets organisation_id (index.html 9344); the dashboard store
 insert carries organisation_id; the scanner's manager store-admin tab
 does NOT (list at index.html 18980 is unscoped, insert at 19055 has no
-organisation_id) and must be fixed before stores are locked down;
+organisation_id) and must be fixed before stores are locked down (fixed
+since: on 2026-10-11 the scanner's store list, insert and updates all
+carry organisation_id, index.html around 20240 to 20331);
 join.html gets the org name from the RPC; dashboard source-org name
 lookups (2792, 3451, 9978, 13800) read other orgs' rows and need a
 narrow policy or a fallback; admin.html relies on open reads for its
@@ -1040,7 +1045,8 @@ EDI 856 (handoff 7.3) is out of scope, as the handoff says.
   with a matching expected lot routes to the confirm instead of
   inserting a second row. Confirming needs a connection (no offline
   queue for updates).
-- Migration 029 (`029_receiving_confirm_policy.sql`, not yet applied):
+- Migration 029 (`029_receiving_confirm_policy.sql`, applied; confirmed
+  by CHECK_MIGRATIONS on 2026-10-11):
   policy b29_receiving_member_confirm_expected lets any active member
   UPDATE a receiving row while status = 'expected'; without it floor
   staff get "could not be updated" on confirm (managers still can).
@@ -1075,8 +1081,9 @@ aggregation or the network_benchmarks table yet. That is what shipped:
 
 ## FSMA 204 handoff: state at the end of the build (2026-10-07)
 Phases 0 to 8 are built, on GitHub main (blob hashes verified 2026-10-07)
-and deployed; migrations 022 to 028 are applied on production (verified
-by probe); 029 is Ian's to run. Still owed by Ian, from the
+and deployed; migrations 022 to 030 are applied on production (022 to
+028 and 030 verified by probe; CHECK_MIGRATIONS run by Ian on 2026-10-11
+reports every row APPLIED, 029 included). Still owed by Ian, from the
 handoff's section 10 and from the phase notes above:
 - Three photographed case labels (romaine case, nut butter case, one
   non-GS1 label) to test the GS1 parser against reality (Phase 2).
@@ -1385,6 +1392,60 @@ no console errors. Not verified against the live database.
   design review's "genuinely broken" list; the others were fixed in an
   earlier pass or live in standalone print documents with their own
   palette.
+- Recalls panel dead query (2026-10-11). renderRecalls read trading_partners
+  in its main Promise.all and mapped the result to `mfrPartners`, which
+  nothing read since the manufacturer-era drill launcher went. Query and
+  variables removed; one request fewer on every Recalls panel load.
+- Overview investigation query short-circuited (2026-10-11).
+  _renderOverviewLegacy still reads trading_partners (parallel batch) and
+  then queried investigation_requests with `.in('manufacturer_id', [])`
+  for every retailer without partners, a round-trip that always came back
+  empty. The query now runs only when the org has active partners; the
+  "Investigation deadline passed" risk signal is unchanged for legacy data.
+  The Investigations panel itself and createInvestigationFromPattern are
+  untouched pending Ian's decision on retiring the panel.
+- Settings panel token sweep (2026-10-11), the first panel of the design
+  review's cosmetic sweep (.ui-polish-checklist.md, local only). Inside
+  renderSettings, _notifyToggleRow, the Suppliers card, the supplier form
+  and import, and the Listed foods card, every inline `font-size:Npx`
+  moved onto the type ladder (10 and the fractional 9.5 and 10.5 to
+  `--fs-label`; 11 and 11.5 to `--fs-eyebrow`; 12 to `--fs-meta`; 13 and
+  12.5 to `--fs-body`; 15 to `--fs-body-lg`) and every inline
+  `border-radius:Npx` onto the radius ladder (4 and 6 to `--r-xs`, 7 and 8
+  to `--r-sm`, 10 to `--r-md`, 20 to `--r-2xl`, 999 to `--r-pill`). 83
+  sizes and 26 radii; the only visible changes are the half-pixel sizes
+  rounding to the ladder and the 4px chip corners becoming 6px. The
+  lookback `<select>` options read "90 days (3 months)" and so on, and
+  "365 days (1 year, recommended)"; three em dashes on touched Settings
+  lines were rewritten. Verified: node --check, a local preview of the
+  whole panel in both themes plus the supplier modal, zero elements with
+  an unresolved `var(--fs-*)` or `var(--r-*)`. Next panels follow the same
+  recipe, one panel per pass, exact ladder matches only; sizes with no
+  ladder step (14, 16, 18, 20, 24) are left for a judgment pass.
+- Reports panel token sweep (2026-10-11), second panel of the cosmetic
+  sweep, same recipe as Settings: renderReports, reportHeader,
+  fetchReportData, the report helpers, runReport, matchCustomersToRecall
+  and downloadReport. 105 inline sizes and 32 radii onto the ladders
+  (exact matches only: 10, 11, 12, 13, 15, 22 and 6, 7, 8, 10). Left as
+  pixels on purpose: font-size 14, 16 and 18 (no ladder step; a judgment
+  pass decides between neighbors) and the 2px radius on progress bars.
+  Trap found and closed: printReport copies the on-screen report HTML into
+  a standalone print window whose stylesheet has no tokens, so the new
+  `var(--fs-*)` sizes would have collapsed to the body size in print. New
+  helper `_printLadderCss()` (right before printReport) reads the 16
+  ladder values from the live page and printReport declares them on the
+  print document's `:root`; verified in a detached document (22px, 10px
+  and the 10px radius resolve). Any other print window that copies panel
+  HTML must call the same helper; the certificate, plan and compliance
+  documents build their own HTML with literal sizes and are unaffected.
+  Copy fixed on the way: the Exposure notice empty state said "No
+  manufacturer recalls on record ... manufacturer-pushed recalls" and now
+  says pushed recalls; the card description and the print banner lost
+  their em dashes; the "No customers matched" sentence was rewritten. The
+  em dash empty-cell placeholder in table rows stays: it is a data mark
+  used by every table in the file, not prose. Verified: node --check, a
+  local preview of the cards grid and all six reports with sample data,
+  zero elements with an unresolved ladder token.
 
 ## Recall counting rules (platform-wide)
 A recall requires action only when ALL THREE are true:
@@ -1829,6 +1890,12 @@ reference legacy token names. They keep rendering correctly via the
 alias bridge but should be migrated to semantic tokens incrementally
 for new components. Don't try to do a sweep; the migration is
 incremental per feature.
+Type and radius ladder: the Settings and Reports panels in dashboard.html
+use `var(--fs-*)` and `var(--r-*)` for their inline sizes since
+2026-10-11; the other panels still carry raw pixel values and are
+migrated one panel per pass (see "Follow-ups shipped"). A print window
+that copies panel HTML must declare the ladder on its own `:root`
+through `_printLadderCss()`, as printReport does.
 
 ## UI conventions
 - Every panel has exactly ONE page title: the topbar text set by the

@@ -199,3 +199,26 @@ not repeated here.
     and a "Delivery records" section; the CSV starts with "Record Type"
     and lists delivery rows after the scans. A pushed recall on a
     scanned lot counts in Recall matches.
+
+## Settings token sweep and dead queries (2026-10-11)
+
+40. Dashboard, Settings, in dark and then light theme (the toggle in Your
+    preferences): every card reads as before; labels, helper text, chips
+    and buttons are not visibly larger or smaller, nothing is blank or
+    unstyled. Recall management, lookback dropdown: the options read
+    "90 days (3 months)", "180 days (6 months)", "270 days (9 months)",
+    "365 days (1 year, recommended)". Suppliers card: Edit opens the
+    modal with rounded corners and the "Typically ships" chips are pills.
+41. Dashboard with devtools Network open, filter "trading_partners":
+    opening Recalls makes no request to that table. Then clear, filter
+    "investigation_requests" and open Dashboard (overview): for an org with
+    no active manufacturer partners, no request to that table either.
+42. Dashboard, Reports and Exports, US org: the six cards and each report
+    (Audit trail, Staff activity, Store compliance, Recall history,
+    Exposure notice, FSMA 204 receiving records) look as before in dark
+    and light theme: tiles, table text and buttons at their usual sizes,
+    nothing blank. Open Audit trail and press Print / PDF: in the print
+    window the stat tiles keep their large numbers and the table text its
+    small size (the same as on screen), and the green banner reads
+    "Report ready to print or save as PDF". Exposure notice with no pushed
+    recalls reads "No pushed recalls on record".

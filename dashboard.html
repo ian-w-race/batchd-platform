@@ -3460,13 +3460,17 @@ async function _renderOverviewLegacy() {
     });
     const complaintClusters = Object.values(complaintGroups).filter(g => g.count >= 2);
 
-    // Investigations awaiting response past deadline
-    const { data: overdueInvs } = await sb.from('investigation_requests')
+    // Investigations awaiting response past deadline. Manufacturer-era: the
+    // query only runs when the org has active trading partners. Retailers
+    // created after the pivot have none, so no round-trip is spent on an
+    // answer that is always empty (2026-10-11).
+    const _activeMfrIds = partners.filter(p=>p.status==='active').map(p=>p.organisations?.id).filter(Boolean);
+    const overdueInvs = _activeMfrIds.length ? ((await sb.from('investigation_requests')
       .select('id, product_name, deadline_at')
-      .in('manufacturer_id', partners.filter(p=>p.status==='active').map(p=>p.organisations?.id).filter(Boolean))
+      .in('manufacturer_id', _activeMfrIds)
       .lt('deadline_at', new Date().toISOString())
       .eq('status', 'open')
-      .limit(5);
+      .limit(5)).data || []) : [];
 
     // ── Units on shelf risk signal (from scan_recall_matches) ──
     const unitsOnShelfSignals = unitsOnShelf > 0 ? (() => {
@@ -3869,12 +3873,14 @@ async function renderRecalls() {
   try {
 
   const userId = (await sb.auth.getUser()).data?.user?.id;
-  // Perf fix #12: 3 of the 5 sequential queries that previously ran AFTER
-  // this Promise.all (recall_distributions, scan_recall_matches,
-  // trading_partners) are independent of the main batch. Moved them in.
-  // The remaining two (recall_events, organisations) are genuinely
-  // data-dependent and stay sequential below.
-  const [recallsRes, acksRes, coordRes, distRes, recallMatchRes, partnersRes] = await Promise.all([
+  // Perf fix #12: 2 of the sequential queries that previously ran AFTER
+  // this Promise.all (recall_distributions, scan_recall_matches) are
+  // independent of the main batch. Moved them in. The remaining two
+  // (recall_events, organisations) are genuinely data-dependent and stay
+  // sequential below. The trading_partners read that used to sit here was
+  // removed 2026-10-11: nothing read its result once the manufacturer-era
+  // drill launcher went.
+  const [recallsRes, acksRes, coordRes, distRes, recallMatchRes] = await Promise.all([
     // CLAUDE.md schema gotcha: recalls has `description`, not `reason`.
     // Aliased via PostgREST so downstream `r.reason` reads keep working
     // without touching every call site (renderRecalls table cell, the
@@ -3887,7 +3893,6 @@ async function renderRecalls() {
     sb.from('organisations').select('recall_coordinator_name, recall_coordinator_contact').eq('id', _orgId).single(),
     sb.from('recall_distributions').select('recall_event_id, est_affected_units, distributed_at').eq('retailer_org_id', _orgId),
     sb.from('scan_recall_matches').select('recall_id, scans!inner(removed_from_shelf_at)').eq('organisation_id', _orgId).is('scans.removed_from_shelf_at', null),
-    sb.from('trading_partners').select('organisations!trading_partners_manufacturer_id_fkey(id, name)').eq('retailer_id', _orgId).eq('status', 'active'),
   ]);
   const coord   = coordRes.data || {};
   const recalls = recallsRes.data || [];
@@ -3942,11 +3947,6 @@ async function renderRecalls() {
   // Audit fix: exclude drill acks from the "unacknowledged" count — CLAUDE.md rule:
   // "Mock drills never count toward active recall numbers."
   const unacknowledged = acks.filter(a => a.status === 'notified' && !a.recall_events?.is_drill).length;
-
-  // ── Connected manufacturers for drill launcher ─────────────
-  // Perf fix #12: this query is now in the main Promise.all.
-  const partners = partnersRes.data;
-  const mfrPartners = (partners||[]).map(p => p.organisations).filter(Boolean);
 
   const navBtn = document.getElementById('nav-recalls');
   if (navBtn && active > 0) {
@@ -11866,7 +11866,7 @@ async function renderReports() {
       {
         key: 'exposure', cat: 'Recalls',
         title: 'Exposure notice', icon: _ico('megaphone',20), color: 'var(--danger)',
-        desc: 'Customer-facing recall notification template — includes live unit exposure from scan history',
+        desc: 'Customer-facing recall notification template with live unit exposure from scan history',
         stats: (() => {
           const onShelf = srmAll.reduce((s,m)=>s+(m.quantity||1),0);
           const storesExposed = new Set(srmAll.map(m=>m.store_name).filter(Boolean)).size;
@@ -11901,13 +11901,13 @@ async function renderReports() {
       <!-- Header -->
       <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
         <div>
-          <div style="font-size:11px;color:var(--muted);">${isUS?'FDA / FSMA 204':'EU 178/2002 / Mattilsynet'}</div>
+          <div style="font-size:var(--fs-eyebrow);color:var(--muted);">${isUS?'FDA / FSMA 204':'EU 178/2002 / Mattilsynet'}</div>
         </div>
         <!-- Date range filter -->
-        <div style="display:flex;gap:2px;background:var(--surface2);border:1px solid var(--glass-border);border-radius:8px;padding:3px;">
+        <div style="display:flex;gap:2px;background:var(--surface2);border:1px solid var(--glass-border);border-radius:var(--r-sm);padding:3px;">
           ${['7','30','90','all'].map(d => `
             <button onclick="_reportDateRange='${d}';renderReports()"
-              style="font-family:'DM Mono',monospace;font-size:11px;padding:5px 12px;border-radius:6px;border:none;cursor:pointer;transition:all 0.15s;
+              style="font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);padding:5px 12px;border-radius:var(--r-xs);border:none;cursor:pointer;transition:all 0.15s;
                 background:${_reportDateRange===d?'var(--surface)':'none'};
                 color:${_reportDateRange===d?'var(--text)':'var(--muted)'};">
               ${d==='all'?'All time':'Last '+d+'d'}
@@ -11920,38 +11920,38 @@ async function renderReports() {
         const catReports = reports.filter(r => r.cat === cat);
         return `
           <div style="margin-bottom:22px;">
-            <div style="font-size:10px;font-weight:600;letter-spacing:0.09em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;">${cat}</div>
+            <div style="font-size:var(--fs-label);font-weight:600;letter-spacing:0.09em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;">${cat}</div>
             <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;">
               ${catReports.map(r => `
                 <div class="panel" style="transition:border-color 0.15s;cursor:default;">
                   <div class="panel-body">
                     <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:12px;">
-                      <div style="width:38px;height:38px;border-radius:10px;background:rgba(var(--accent-rgb),0.06);border:1px solid var(--glass-border);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">${r.icon}</div>
+                      <div style="width:38px;height:38px;border-radius:var(--r-md);background:rgba(var(--accent-rgb),0.06);border:1px solid var(--glass-border);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">${r.icon}</div>
                       <div style="flex:1;min-width:0;">
-                        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:13px;color:var(--text);margin-bottom:3px;">${r.title}</div>
-                        <div style="font-size:11px;color:var(--muted);line-height:1.5;">${r.desc}</div>
+                        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:var(--fs-body);color:var(--text);margin-bottom:3px;">${r.title}</div>
+                        <div style="font-size:var(--fs-eyebrow);color:var(--muted);line-height:1.5;">${r.desc}</div>
                       </div>
                     </div>
                     <!-- Live stats -->
                     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:12px;">
                       ${r.stats.map(s => `
-                        <div style="background:var(--surface2);border-radius:7px;padding:8px 10px;text-align:center;">
+                        <div style="background:var(--surface2);border-radius:var(--r-sm);padding:8px 10px;text-align:center;">
                           <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;color:var(--text);line-height:1;">${s.val}</div>
-                          <div style="font-size:10px;color:var(--muted);margin-top:2px;line-height:1.3;">${s.label}</div>
+                          <div style="font-size:var(--fs-label);color:var(--muted);margin-top:2px;line-height:1.3;">${s.label}</div>
                         </div>`).join('')}
                     </div>
                     <!-- Reg reference + actions -->
                     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
-                      <div style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);opacity:0.7;">${r.reg}</div>
+                      <div style="font-size:var(--fs-label);font-family:'DM Mono',monospace;color:var(--muted);opacity:0.7;">${r.reg}</div>
                       <div style="display:flex;gap:6px;">
                         <button onclick="runReport('${r.key}')"
-                          style="font-family:'DM Mono',monospace;font-size:11px;padding:6px 12px;border-radius:6px;border:1px solid var(--glass-border);background:var(--surface2);color:var(--text);cursor:pointer;transition:all 0.15s;"
+                          style="font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);padding:6px 12px;border-radius:var(--r-xs);border:1px solid var(--glass-border);background:var(--surface2);color:var(--text);cursor:pointer;transition:all 0.15s;"
                           onmouseenter="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'"
                           onmouseleave="this.style.borderColor='var(--glass-border)';this.style.color='var(--text)'">
                           View →
                         </button>
                         <button onclick="downloadReport('${r.key}')"
-                          style="font-family:'DM Mono',monospace;font-size:11px;padding:6px 12px;border-radius:6px;border:1px solid var(--glass-border);background:none;color:var(--muted);cursor:pointer;transition:all 0.15s;"
+                          style="font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);padding:6px 12px;border-radius:var(--r-xs);border:1px solid var(--glass-border);background:none;color:var(--muted);cursor:pointer;transition:all 0.15s;"
                           onmouseenter="this.style.borderColor='var(--muted)';this.style.color='var(--text)'"
                           onmouseleave="this.style.borderColor='var(--glass-border)';this.style.color='var(--muted)'">
                           ↓ CSV
@@ -11968,21 +11968,21 @@ async function renderReports() {
            data-driven reports. Currently just the Lot Code Guide; future
            additions go alongside it. -->
       <div style="margin-bottom:22px;">
-        <div style="font-size:10px;font-weight:600;letter-spacing:0.09em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;">Training materials</div>
+        <div style="font-size:var(--fs-label);font-weight:600;letter-spacing:0.09em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;">Training materials</div>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;">
           <div class="panel">
             <div class="panel-body">
               <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:12px;">
-                <div style="width:38px;height:38px;border-radius:10px;background:rgba(var(--accent-rgb),0.06);border:1px solid var(--glass-border);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">${_ico('file-text',18)}</div>
+                <div style="width:38px;height:38px;border-radius:var(--r-md);background:rgba(var(--accent-rgb),0.06);border:1px solid var(--glass-border);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">${_ico('file-text',18)}</div>
                 <div style="flex:1;min-width:0;">
-                  <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:13px;color:var(--text);margin-bottom:3px;">Lot Code Guide</div>
-                  <div style="font-size:11px;color:var(--muted);line-height:1.5;">Printable one-page reference showing where lot codes appear on six common package types. For posting in store back-of-house areas.</div>
+                  <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:var(--fs-body);color:var(--text);margin-bottom:3px;">Lot Code Guide</div>
+                  <div style="font-size:var(--fs-eyebrow);color:var(--muted);line-height:1.5;">Printable one-page reference showing where lot codes appear on six common package types. For posting in store back-of-house areas.</div>
                 </div>
               </div>
               <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
-                <div style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);opacity:0.7;">Staff training</div>
+                <div style="font-size:var(--fs-label);font-family:'DM Mono',monospace;color:var(--muted);opacity:0.7;">Staff training</div>
                 <a href="lot-code-guide.html?region=${isUS?'us':'no'}" target="_blank" rel="noopener"
-                   style="font-family:'DM Mono',monospace;font-size:11px;padding:6px 12px;border-radius:6px;border:1px solid var(--glass-border);background:var(--surface2);color:var(--text);cursor:pointer;text-decoration:none;display:inline-block;"
+                   style="font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);padding:6px 12px;border-radius:var(--r-xs);border:1px solid var(--glass-border);background:var(--surface2);color:var(--text);cursor:pointer;text-decoration:none;display:inline-block;"
                    onmouseenter="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'"
                    onmouseleave="this.style.borderColor='var(--glass-border)';this.style.color='var(--text)'">
                   Open & print →
@@ -11994,17 +11994,17 @@ async function renderReports() {
       </div>
 
       <!-- Footer note -->
-      <div style="font-size:11px;color:var(--muted);text-align:center;padding:8px 0;">
+      <div style="font-size:var(--fs-eyebrow);color:var(--muted);text-align:center;padding:8px 0;">
         Showing data for <strong style="color:var(--text);">${dateLabel}</strong> · ${scans.length} total records loaded
       </div>`;
 
   } catch(e) {
-    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading reports: ${e.message}</div>`;
+    el.innerHTML = `<div style="color:var(--danger);font-size:var(--fs-meta);padding:20px;">Error loading reports: ${e.message}</div>`;
   }
 
   } catch(_renderErr) {
     console.error('[renderReports]', _renderErr);
-    if (_errEl) _errEl.innerHTML += `<div style="margin:20px 0;padding:16px;background:rgba(var(--danger-rgb),0.08);border:1px solid rgba(var(--danger-rgb),0.2);border-radius:10px;font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;"><strong style="color:var(--danger);">Error loading Reports</strong><br>${_renderErr.message}</div>`;
+    if (_errEl) _errEl.innerHTML += `<div style="margin:20px 0;padding:16px;background:rgba(var(--danger-rgb),0.08);border:1px solid rgba(var(--danger-rgb),0.2);border-radius:var(--r-md);font-size:var(--fs-meta);color:var(--muted);font-family:'DM Mono',monospace;"><strong style="color:var(--danger);">Error loading Reports</strong><br>${_renderErr.message}</div>`;
   }
 }
 
@@ -12026,33 +12026,46 @@ function reportHeader(title, sub, csvKey) {
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px;">
       <div style="display:flex;align-items:center;gap:12px;">
         <button onclick="renderReports()"
-          style="font-family:'DM Mono',monospace;font-size:11px;padding:6px 12px;border-radius:6px;border:1px solid var(--glass-border);background:none;color:var(--muted);cursor:pointer;">
+          style="font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);padding:6px 12px;border-radius:var(--r-xs);border:1px solid var(--glass-border);background:none;color:var(--muted);cursor:pointer;">
           ← Reports
         </button>
         <div>
           <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;">${title}</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:1px;">${sub} · ${dateLabel}</div>
+          <div style="font-size:var(--fs-eyebrow);color:var(--muted);margin-top:1px;">${sub} · ${dateLabel}</div>
         </div>
       </div>
       <div style="display:flex;gap:8px;">
         <button onclick="printReport()"
-          style="font-family:'DM Mono',monospace;font-size:11px;padding:7px 14px;border-radius:6px;border:1px solid var(--glass-border);background:none;color:var(--muted);cursor:pointer;">
+          style="font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);padding:7px 14px;border-radius:var(--r-xs);border:1px solid var(--glass-border);background:none;color:var(--muted);cursor:pointer;">
           ${_ico('printer',12)} Print / PDF
         </button>
         <button onclick="downloadReport('${csvKey}')"
-          style="font-family:'DM Mono',monospace;font-size:11px;padding:7px 14px;border-radius:6px;border:1px solid var(--glass-border);background:var(--surface2);color:var(--text);cursor:pointer;">
+          style="font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);padding:7px 14px;border-radius:var(--r-xs);border:1px solid var(--glass-border);background:var(--surface2);color:var(--text);cursor:pointer;">
           ↓ Download CSV
         </button>
       </div>
     </div>`;
 }
 
+// 2026-10-11: the report HTML copied into a print window carries inline
+// var(--fs-*) and var(--r-*) sizes since the Reports token sweep. The print
+// document has no :root tokens of its own, so read the live page's ladder
+// and declare it there; otherwise every tile and label would fall back to
+// the body size. Reusable by any other print window that copies panel HTML.
+function _printLadderCss() {
+  const cs = getComputedStyle(document.documentElement);
+  return ['--fs-label','--fs-eyebrow','--fs-meta','--fs-body','--fs-body-lg','--fs-h4','--fs-h3','--fs-h2','--fs-h1',
+          '--r-xs','--r-sm','--r-md','--r-lg','--r-xl','--r-2xl','--r-pill']
+    .map(t => { const v = cs.getPropertyValue(t).trim(); return v ? t + ':' + v : ''; }).filter(Boolean).join(';');
+}
+
 function printReport() {
   const reportContent = document.getElementById('main-content')?.innerHTML || '';
   const today = new Date().toLocaleDateString(_dashLocale(), {weekday:'long',day:'numeric',month:'long',year:'numeric'});
   const win = window.open('', '_blank');
-  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Batch'd Report — ${esc(_orgName)}</title>
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Batch'd Report: ${esc(_orgName)}</title>
   <style>
+    :root{${_printLadderCss()}}
     body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#111;margin:0;padding:24px 40px;max-width:1000px;}
     @media print{@page{margin:20mm}body{padding:0}.no-print{display:none}}
     table{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:16px;}
@@ -12063,7 +12076,7 @@ function printReport() {
     button{display:none!important;}
   </style></head><body>
   <div class="no-print" style="background:#34d399;color:#065f46;padding:10px 16px;border-radius:8px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;">
-    <span style="font-weight:700;">Report — ready to print or save as PDF</span>
+    <span style="font-weight:700;">Report ready to print or save as PDF</span>
     <button onclick="window.print()" style="display:inline!important;background:#065f46;color:#fff;border:none;border-radius:6px;padding:7px 16px;font-weight:700;cursor:pointer;">Print / Save PDF</button>
   </div>
   <div class="report-hdr">
@@ -12262,25 +12275,25 @@ function _reportFsmaUsHtml(data, statTile, fmtDate) {
       ${statTile(pct(supOk) + '%', 'Supplier location', data.length ? tone(pct(supOk)) : 'var(--muted)')}
       ${statTile(listed, 'Listed-food records', listed > 0 ? 'var(--info)' : 'var(--muted)')}
     </div>
-    ${data.length > 0 && complete < data.length ? `<div style="background:rgba(var(--warn-rgb),0.06);border:1px solid rgba(var(--warn-rgb),0.2);border-radius:10px;padding:12px 16px;margin-bottom:14px;font-size:12px;color:var(--warn);">
+    ${data.length > 0 && complete < data.length ? `<div style="background:rgba(var(--warn-rgb),0.06);border:1px solid rgba(var(--warn-rgb),0.2);border-radius:var(--r-md);padding:12px 16px;margin-bottom:14px;font-size:var(--fs-meta);color:var(--warn);">
       ${data.length - complete} of ${data.length} delivery records are missing a receiving key data element (${_CITATIONS.us.receivingKde}): supplier location, lot code or exempt source, quantity and unit, or reference document. Target 100 percent.
     </div>` : ''}
-    <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6;">The CSV download is the 27-column FSMA 204 export: receiving records in this date range plus listed-food shelf scans with no delivery record behind them, the same file the records request drill and Live Recall produce.</div>
+    <div style="font-size:var(--fs-eyebrow);color:var(--muted);margin-bottom:12px;line-height:1.6;">The CSV download is the 27-column FSMA 204 export: receiving records in this date range plus listed-food shelf scans with no delivery record behind them, the same file the records request drill and Live Recall produce.</div>
     <div class="panel"><div class="panel-body" style="padding:0;">
       <table class="store-table" style="width:100%;">
         <thead><tr><th>Received</th><th>Product</th><th>TLC / Lot</th><th>GTIN</th><th>Supplier</th><th>Store</th><th>Qty</th><th>Ref doc</th><th>Listed</th></tr></thead>
         <tbody>
           ${data.length === 0 ? `<tr><td colspan="9"><div class="empty">No deliveries recorded in this date range. Staff record them in the scanner under Scan, Receiving.</div></td></tr>` :
           data.map(r => `<tr>
-            <td style="white-space:nowrap;font-size:11px;color:var(--muted);">${fmtDate(r.received_at)}</td>
-            <td style="font-size:12px;font-weight:500;color:var(--text);">${esc(r.product_name || '')}</td>
-            <td style="font-size:11px;color:${tlcOk(r) ? 'var(--text)' : 'var(--danger)'};font-family:'DM Mono',monospace;">${esc(r.traceability_lot_code || (r.tlc_source_type === 'not_required_exempt_source' ? 'Exempt source' : 'Missing'))}</td>
-            <td style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${esc(r.gtin || '')}</td>
-            <td style="font-size:11px;color:${supplierOk(r) ? 'var(--muted)' : 'var(--warn)'};">${esc(r.supplier_name_snapshot || r.suppliers?.name || 'Not recorded')}${supplierOk(r) ? '' : ' <span style="font-size:10px;">(address incomplete)</span>'}</td>
-            <td style="font-size:11px;color:var(--muted);">${esc(r.stores?.name || '')}</td>
-            <td style="font-size:11px;color:var(--muted);white-space:nowrap;">${esc(String(r.quantity ?? ''))} ${esc(r.unit_of_measure || '')}</td>
-            <td style="font-size:10px;color:${refOk(r) ? 'var(--muted)' : 'var(--warn)'};font-family:'DM Mono',monospace;">${refOk(r) ? esc(_refDocLabel(r)) : 'Missing'}</td>
-            <td>${(r.is_ftl || r.ftl_category) ? '<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(var(--info-light-rgb),0.1);color:var(--info);font-weight:600;">Listed</span>' : '<span style="font-size:10px;color:var(--muted);">No</span>'}</td>
+            <td style="white-space:nowrap;font-size:var(--fs-eyebrow);color:var(--muted);">${fmtDate(r.received_at)}</td>
+            <td style="font-size:var(--fs-meta);font-weight:500;color:var(--text);">${esc(r.product_name || '')}</td>
+            <td style="font-size:var(--fs-eyebrow);color:${tlcOk(r) ? 'var(--text)' : 'var(--danger)'};font-family:'DM Mono',monospace;">${esc(r.traceability_lot_code || (r.tlc_source_type === 'not_required_exempt_source' ? 'Exempt source' : 'Missing'))}</td>
+            <td style="font-size:var(--fs-label);color:var(--muted);font-family:'DM Mono',monospace;">${esc(r.gtin || '')}</td>
+            <td style="font-size:var(--fs-eyebrow);color:${supplierOk(r) ? 'var(--muted)' : 'var(--warn)'};">${esc(r.supplier_name_snapshot || r.suppliers?.name || 'Not recorded')}${supplierOk(r) ? '' : ' <span style="font-size:var(--fs-label);">(address incomplete)</span>'}</td>
+            <td style="font-size:var(--fs-eyebrow);color:var(--muted);">${esc(r.stores?.name || '')}</td>
+            <td style="font-size:var(--fs-eyebrow);color:var(--muted);white-space:nowrap;">${esc(String(r.quantity ?? ''))} ${esc(r.unit_of_measure || '')}</td>
+            <td style="font-size:var(--fs-label);color:${refOk(r) ? 'var(--muted)' : 'var(--warn)'};font-family:'DM Mono',monospace;">${refOk(r) ? esc(_refDocLabel(r)) : 'Missing'}</td>
+            <td>${(r.is_ftl || r.ftl_category) ? '<span style="font-size:var(--fs-label);padding:2px 8px;border-radius:var(--r-md);background:rgba(var(--info-light-rgb),0.1);color:var(--info);font-weight:600;">Listed</span>' : '<span style="font-size:var(--fs-label);color:var(--muted);">No</span>'}</td>
           </tr>`).join('')}
         </tbody>
       </table>
@@ -12299,9 +12312,9 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
 
   // Shared: stat tile
   const statTile = (val, label, color='var(--text)') =>
-    `<div style="background:var(--surface2);border-radius:10px;padding:14px 16px;text-align:center;">
-      <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:22px;color:${color};line-height:1;">${val}</div>
-      <div style="font-size:10px;color:var(--muted);margin-top:4px;text-transform:uppercase;letter-spacing:0.06em;">${label}</div>
+    `<div style="background:var(--surface2);border-radius:var(--r-md);padding:14px 16px;text-align:center;">
+      <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:var(--fs-h3);color:${color};line-height:1;">${val}</div>
+      <div style="font-size:var(--fs-label);color:var(--muted);margin-top:4px;text-transform:uppercase;letter-spacing:0.06em;">${label}</div>
     </div>`;
 
   // ── Audit trail ──────────────────────────────────────────────
@@ -12318,7 +12331,7 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
     const dlvLot   = deliveries.filter(r => r.traceability_lot_code || r.tlc_source_type === 'not_required_exempt_source').length;
     const dlvLotPct = deliveries.length ? Math.round(dlvLot / deliveries.length * 100) : 0;
     const rows     = _reportAuditRows(data, deliveries);
-    const pill = (txt, rgb, col) => `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(var(${rgb}),0.12);color:${col};font-weight:600;">${txt}</span>`;
+    const pill = (txt, rgb, col) => `<span style="font-size:var(--fs-label);padding:2px 8px;border-radius:var(--r-md);background:rgba(var(${rgb}),0.12);color:${col};font-weight:600;">${txt}</span>`;
     el.innerHTML = reportHeader('Audit trail', `${data.length} shelf scan${data.length!==1?'s':''}${isUS ? ` · ${deliveries.length} deliver${deliveries.length===1?'y':'ies'}` : ''} · ${_orgName}`, 'audit') +
       `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:18px;">
         ${statTile(data.length, 'Shelf scans')}
@@ -12339,27 +12352,27 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
           <tbody>
             ${rows.length === 0 ? `<tr><td colspan="${isUS?8:7}"><div class="empty">No records in this date range.</div></td></tr>` :
             rows.map(x => x.kind === 'delivery' ? (r => `<tr>
-              <td style="white-space:nowrap;font-size:11px;color:var(--muted);">${fmtDT(r.received_at)}</td>
+              <td style="white-space:nowrap;font-size:var(--fs-eyebrow);color:var(--muted);">${fmtDT(r.received_at)}</td>
               <td>${pill('Delivery', '--info-light-rgb', 'var(--info)')}</td>
-              <td><div style="font-size:12px;font-weight:500;color:var(--text);">${esc(r.product_name||'')}</div><div style="font-size:10px;color:var(--muted);">${esc(String(r.quantity ?? ''))} ${esc(r.unit_of_measure||'')}${r.reference_document_number ? ' · ' + esc(_refDocLabel(r)) : ''}</div></td>
-              <td style="font-size:11px;color:${r.traceability_lot_code ? 'var(--muted)' : r.tlc_source_type === 'not_required_exempt_source' ? 'var(--muted)' : 'var(--danger)'};font-family:'DM Mono',monospace;">${esc(r.traceability_lot_code || (r.tlc_source_type === 'not_required_exempt_source' ? 'Exempt source' : 'Missing'))}${r.gtin?'<br><span style="font-size:10px;">'+esc(r.gtin)+'</span>':''}</td>
-              <td style="font-size:11px;color:var(--muted);">${esc(r.stores?.name||'')}</td>
-              <td style="font-size:11px;color:var(--muted);">${esc((r.received_by||'').split('@')[0])}</td>
-              <td style="font-size:11px;color:var(--muted);">${esc(r.supplier_name_snapshot||'Not recorded')}</td>
+              <td><div style="font-size:var(--fs-meta);font-weight:500;color:var(--text);">${esc(r.product_name||'')}</div><div style="font-size:var(--fs-label);color:var(--muted);">${esc(String(r.quantity ?? ''))} ${esc(r.unit_of_measure||'')}${r.reference_document_number ? ' · ' + esc(_refDocLabel(r)) : ''}</div></td>
+              <td style="font-size:var(--fs-eyebrow);color:${r.traceability_lot_code ? 'var(--muted)' : r.tlc_source_type === 'not_required_exempt_source' ? 'var(--muted)' : 'var(--danger)'};font-family:'DM Mono',monospace;">${esc(r.traceability_lot_code || (r.tlc_source_type === 'not_required_exempt_source' ? 'Exempt source' : 'Missing'))}${r.gtin?'<br><span style="font-size:var(--fs-label);">'+esc(r.gtin)+'</span>':''}</td>
+              <td style="font-size:var(--fs-eyebrow);color:var(--muted);">${esc(r.stores?.name||'')}</td>
+              <td style="font-size:var(--fs-eyebrow);color:var(--muted);">${esc((r.received_by||'').split('@')[0])}</td>
+              <td style="font-size:var(--fs-eyebrow);color:var(--muted);">${esc(r.supplier_name_snapshot||'Not recorded')}</td>
               <td>${pill(r.source === 'wholesaler_import' ? 'Received (file)' : 'Received', '--accent-rgb', 'var(--accent)')}</td>
             </tr>`)(x.row) : (s => `<tr>
-              <td style="white-space:nowrap;font-size:11px;color:var(--muted);">${fmtDT(s.created_at)}</td>
-              ${isUS ? `<td><span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(var(--accent-muted-rgb),0.08);color:var(--muted);">Shelf scan</span></td>` : ''}
-              <td><div style="font-size:12px;font-weight:500;color:var(--text);">${esc(s.product_name||'')}</div></td>
-              <td style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">${esc(s.lot_number||'')}${s.barcode_number?'<br><span style="font-size:10px;">'+esc(s.barcode_number)+'</span>':''}</td>
-              <td style="font-size:11px;color:var(--muted);">${esc(s.store_name||'')}</td>
-              <td style="font-size:11px;color:var(--muted);">${esc((s.scanned_by||'').split('@')[0])}</td>
-              <td style="font-size:11px;color:var(--muted);">${esc(s.supplier_name||'')}</td>
+              <td style="white-space:nowrap;font-size:var(--fs-eyebrow);color:var(--muted);">${fmtDT(s.created_at)}</td>
+              ${isUS ? `<td><span style="font-size:var(--fs-label);padding:2px 8px;border-radius:var(--r-md);background:rgba(var(--accent-muted-rgb),0.08);color:var(--muted);">Shelf scan</span></td>` : ''}
+              <td><div style="font-size:var(--fs-meta);font-weight:500;color:var(--text);">${esc(s.product_name||'')}</div></td>
+              <td style="font-size:var(--fs-eyebrow);color:var(--muted);font-family:'DM Mono',monospace;">${esc(s.lot_number||'')}${s.barcode_number?'<br><span style="font-size:var(--fs-label);">'+esc(s.barcode_number)+'</span>':''}</td>
+              <td style="font-size:var(--fs-eyebrow);color:var(--muted);">${esc(s.store_name||'')}</td>
+              <td style="font-size:var(--fs-eyebrow);color:var(--muted);">${esc((s.scanned_by||'').split('@')[0])}</td>
+              <td style="font-size:var(--fs-eyebrow);color:var(--muted);">${esc(s.supplier_name||'')}</td>
               <td>${s.recall_resolved
                 ? pill('Resolved', '--accent-rgb', 'var(--accent)')
                 : s.removed_from_shelf_at
                   ? pill('Removed', '--warn-rgb', 'var(--warn)')
-                  : `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(var(--accent-muted-rgb),0.08);color:var(--muted);">On shelf</span>`}
+                  : `<span style="font-size:var(--fs-label);padding:2px 8px;border-radius:var(--r-md);background:rgba(var(--accent-muted-rgb),0.08);color:var(--muted);">On shelf</span>`}
               </td>
             </tr>`)(x.row)).join('')}
           </tbody>
@@ -12396,16 +12409,16 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
               // returned true. formatSeverity uses an exact-match map.
               const sevColor = formatSeverity(r.severity).color;
               return `<tr>
-                <td style="white-space:nowrap;font-size:11px;color:var(--muted);">${fmtDate(d)}</td>
-                <td style="font-size:12px;font-weight:600;color:var(--text);">${esc(r.product_name||'—')}
-                  ${r.is_drill?`<div style="font-size:10px;color:var(--warn);">DRILL</div>`:''}
+                <td style="white-space:nowrap;font-size:var(--fs-eyebrow);color:var(--muted);">${fmtDate(d)}</td>
+                <td style="font-size:var(--fs-meta);font-weight:600;color:var(--text);">${esc(r.product_name||'—')}
+                  ${r.is_drill?`<div style="font-size:var(--fs-label);color:var(--warn);">DRILL</div>`:''}
                 </td>
-                <td style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">${esc(r.lot_number||'—')}</td>
-                <td><span style="font-size:10px;padding:2px 8px;border-radius:10px;${isPushed?'background:rgba(var(--info-light-rgb),0.1);color:var(--info);':'background:rgba(var(--accent-muted-rgb),0.1);color:var(--muted);'}">
+                <td style="font-size:var(--fs-eyebrow);color:var(--muted);font-family:'DM Mono',monospace;">${esc(r.lot_number||'—')}</td>
+                <td><span style="font-size:var(--fs-label);padding:2px 8px;border-radius:var(--r-md);${isPushed?'background:rgba(var(--info-light-rgb),0.1);color:var(--info);':'background:rgba(var(--accent-muted-rgb),0.1);color:var(--muted);'}">
                   ${isPushed?'Manufacturer':(r.source||'Manual')}</span></td>
-                <td style="font-size:11px;color:${sevColor};">${esc(r.severity?formatSeverity(r.severity).label:'—')}</td>
-                <td style="font-size:11px;color:var(--muted);max-width:180px;">${esc(r.reason||'—')}</td>
-                <td><span style="font-size:10px;padding:2px 8px;border-radius:10px;background:${(isPushed||r.active)?'rgba(var(--danger-rgb),0.12)':'rgba(var(--accent-rgb),0.12)'};color:${(isPushed||r.active)?'var(--danger)':'var(--accent)'};">${(isPushed||r.active)?'Active':'Resolved'}</span></td>
+                <td style="font-size:var(--fs-eyebrow);color:${sevColor};">${esc(r.severity?formatSeverity(r.severity).label:'—')}</td>
+                <td style="font-size:var(--fs-eyebrow);color:var(--muted);max-width:180px;">${esc(r.reason||'—')}</td>
+                <td><span style="font-size:var(--fs-label);padding:2px 8px;border-radius:var(--r-md);background:${(isPushed||r.active)?'rgba(var(--danger-rgb),0.12)':'rgba(var(--accent-rgb),0.12)'};color:${(isPushed||r.active)?'var(--danger)':'var(--accent)'};">${(isPushed||r.active)?'Active':'Resolved'}</span></td>
               </tr>`;}).join('')}
           </tbody>
         </table>
@@ -12442,8 +12455,8 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
               const pctOfTotal = totalActions ? Math.round((s.scans.length + s.deliveries)/totalActions*100) : 0;
               return `<tr>
                 <td>
-                  <div style="font-size:12px;font-weight:600;color:var(--text);">${esc(s.name)}</div>
-                  ${i===0?`<div style="font-size:10px;color:var(--accent);">most records</div>`:''}
+                  <div style="font-size:var(--fs-meta);font-weight:600;color:var(--text);">${esc(s.name)}</div>
+                  ${i===0?`<div style="font-size:var(--fs-label);color:var(--accent);">most records</div>`:''}
                 </td>
                 <td>
                   <div style="font-size:14px;font-weight:700;color:var(--accent);">${s.scans.length}</div>
@@ -12453,12 +12466,12 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
                 <td>
                   ${s.scans.length ? `<div style="display:flex;align-items:center;gap:6px;">
                     <div style="width:50px;height:3px;border-radius:2px;background:var(--border);overflow:hidden;"><div style="height:100%;width:${lotPct}%;background:${lotPct>=80?'var(--accent)':'var(--warn)'};border-radius:2px;"></div></div>
-                    <span style="font-size:11px;color:${lotPct>=80?'var(--accent)':lotPct>=60?'var(--warn)':'var(--danger)'};">${lotPct}%</span>
-                  </div>` : `<span style="font-size:11px;color:var(--muted);">No scans</span>`}
+                    <span style="font-size:var(--fs-eyebrow);color:${lotPct>=80?'var(--accent)':lotPct>=60?'var(--warn)':'var(--danger)'};">${lotPct}%</span>
+                  </div>` : `<span style="font-size:var(--fs-eyebrow);color:var(--muted);">No scans</span>`}
                 </td>
                 <td style="color:${s.resolved>0?'var(--accent)':'var(--muted)'};">${s.resolved}</td>
                 <td style="color:${s.removed>0?'var(--warn)':'var(--muted)'};">${s.removed}</td>
-                <td style="font-size:11px;color:var(--muted);">${s.last ? fmtDate(s.last) : ''}</td>
+                <td style="font-size:var(--fs-eyebrow);color:var(--muted);">${s.last ? fmtDate(s.last) : ''}</td>
               </tr>`;}).join('')}
           </tbody>
         </table>
@@ -12479,7 +12492,7 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
         ${statTile(dark, 'Dark stores', dark>0?'var(--danger)':'var(--muted)')}
         ${statTile(avgScore+'%', 'Avg compliance', avgScore>=80?'var(--accent)':avgScore>=60?'var(--warn)':'var(--danger)')}
       </div>
-      ${dark > 0 ? `<div style="background:rgba(var(--danger-rgb),0.06);border:1px solid rgba(var(--danger-rgb),0.2);border-radius:10px;padding:12px 16px;margin-bottom:14px;font-size:12px;color:var(--danger);">
+      ${dark > 0 ? `<div style="background:rgba(var(--danger-rgb),0.06);border:1px solid rgba(var(--danger-rgb),0.2);border-radius:var(--r-md);padding:12px 16px;margin-bottom:14px;font-size:var(--fs-meta);color:var(--danger);">
         ⚠ ${dark} dark store${dark!==1?'s':''}: ${isUS ? 'no scans or deliveries recorded' : 'no scanning activity'} in the last 7 days: ${data.filter(s=>s.status==='dark').map(s=>esc(s.name)).join(', ')}
       </div>` : ''}
       <div class="panel"><div class="panel-body" style="padding:0;">
@@ -12491,17 +12504,17 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
           <tbody>
             ${data.length === 0 ? `<tr><td colspan="${isUS?11:8}"><div class="empty">No stores configured.</div></td></tr>` :
             data.map(s => `<tr>
-              <td style="font-size:12px;font-weight:600;color:var(--text);">${esc(s.name)}</td>
-              <td style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${esc(s.store_code||'—')}</td>
-              <td><span style="font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600;background:${s.status==='active'?'rgba(var(--accent-rgb),0.12)':s.status==='slow'?'rgba(var(--warn-rgb),0.12)':'rgba(var(--danger-rgb),0.12)'};color:${s.status==='active'?'var(--accent)':s.status==='slow'?'var(--warn)':'var(--danger)'};">${s.status.charAt(0).toUpperCase()+s.status.slice(1)}</span></td>
+              <td style="font-size:var(--fs-meta);font-weight:600;color:var(--text);">${esc(s.name)}</td>
+              <td style="font-size:var(--fs-label);color:var(--muted);font-family:'DM Mono',monospace;">${esc(s.store_code||'—')}</td>
+              <td><span style="font-size:var(--fs-label);padding:2px 8px;border-radius:var(--r-md);font-weight:600;background:${s.status==='active'?'rgba(var(--accent-rgb),0.12)':s.status==='slow'?'rgba(var(--warn-rgb),0.12)':'rgba(var(--danger-rgb),0.12)'};color:${s.status==='active'?'var(--accent)':s.status==='slow'?'var(--warn)':'var(--danger)'};">${s.status.charAt(0).toUpperCase()+s.status.slice(1)}</span></td>
               <td>
                 <div style="display:flex;align-items:center;gap:6px;">
                   <div style="width:60px;height:4px;border-radius:2px;background:var(--border);overflow:hidden;"><div style="height:100%;width:${s.score}%;background:${s.score>=80?'var(--accent)':s.score>=60?'var(--warn)':'var(--danger)'};border-radius:2px;"></div></div>
-                  <span style="font-size:11px;color:${s.score>=80?'var(--accent)':s.score>=60?'var(--warn)':'var(--danger)'};">${s.score}%</span>
+                  <span style="font-size:var(--fs-eyebrow);color:${s.score>=80?'var(--accent)':s.score>=60?'var(--warn)':'var(--danger)'};">${s.score}%</span>
                 </div>
               </td>
-              <td style="font-size:13px;font-weight:700;color:${(s.recent7 + (s.deliveries7||0))>0?'var(--text)':'var(--danger)'};">${s.recent7}</td>
-              ${isUS ? `<td style="font-size:13px;font-weight:700;color:${s.deliveries7>0?'var(--info)':'var(--muted)'};">${s.deliveries7}</td>` : ''}
+              <td style="font-size:var(--fs-body);font-weight:700;color:${(s.recent7 + (s.deliveries7||0))>0?'var(--text)':'var(--danger)'};">${s.recent7}</td>
+              ${isUS ? `<td style="font-size:var(--fs-body);font-weight:700;color:${s.deliveries7>0?'var(--info)':'var(--muted)'};">${s.deliveries7}</td>` : ''}
               <td style="color:var(--muted);">${s.recent30}</td>
               ${isUS ? `<td style="color:var(--muted);">${s.deliveries30}</td>` : ''}
               <td style="color:var(--muted);">${s.totalScans}</td>
@@ -12518,7 +12531,7 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
     const recalls = data;
     if (recalls.length === 0) {
       el.innerHTML = reportHeader('Exposure notice', 'Customer-facing recall notification', 'exposure') +
-        `<div class="panel"><div class="panel-body"><div class="empty">No manufacturer recalls on record. Exposure notices are generated from manufacturer-pushed recalls.</div></div></div>`;
+        `<div class="panel"><div class="panel-body"><div class="empty">No pushed recalls on record. Exposure notices are generated from recalls pushed to your organization.</div></div></div>`;
       return;
     }
     const r = recalls[Math.min(_reportExposureIdx, recalls.length-1)];
@@ -12532,10 +12545,10 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
     el.innerHTML = reportHeader('Exposure notice', 'Customer-facing recall notification template', 'exposure') +
       `${recalls.length > 1 ? `
       <div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;align-items:center;">
-        <div style="font-size:11px;color:var(--muted);margin-right:4px;">Select recall:</div>
+        <div style="font-size:var(--fs-eyebrow);color:var(--muted);margin-right:4px;">Select recall:</div>
         ${recalls.map((rc,i) => `
           <button onclick="_reportExposureIdx=${i};runReport('exposure')"
-            style="font-family:'DM Mono',monospace;font-size:10px;padding:5px 10px;border-radius:6px;border:1px solid ${i===_reportExposureIdx?'var(--accent)':'var(--glass-border)'};background:${i===_reportExposureIdx?'rgba(var(--accent-rgb),0.08)':'none'};color:${i===_reportExposureIdx?'var(--accent)':'var(--muted)'};cursor:pointer;">
+            style="font-family:'DM Mono',monospace;font-size:var(--fs-label);padding:5px 10px;border-radius:var(--r-xs);border:1px solid ${i===_reportExposureIdx?'var(--accent)':'var(--glass-border)'};background:${i===_reportExposureIdx?'rgba(var(--accent-rgb),0.08)':'none'};color:${i===_reportExposureIdx?'var(--accent)':'var(--muted)'};cursor:pointer;">
             ${rc.product_name}
           </button>`).join('')}
       </div>` : ''}
@@ -12546,17 +12559,17 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
             <div class="panel-sub">${r.severity?formatSeverity(r.severity).label:''}${r.lot_number?' · Lot: '+esc(r.lot_number):''} · Published ${fmtDate(r.published_at)}</div>
           </div>
           <button onclick="navigator.clipboard.writeText(document.getElementById('notice-text').value).then(()=>{this.textContent='Copied ✓';setTimeout(()=>this.textContent='Copy text',2000)})"
-            style="font-family:'DM Mono',monospace;font-size:11px;padding:6px 12px;border-radius:6px;border:1px solid var(--glass-border);background:none;color:var(--muted);cursor:pointer;flex-shrink:0;">Copy text</button>
+            style="font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);padding:6px 12px;border-radius:var(--r-xs);border:1px solid var(--glass-border);background:none;color:var(--muted);cursor:pointer;flex-shrink:0;">Copy text</button>
         </div>
         <div class="panel-body">
           <textarea id="notice-text" rows="14"
-            style="width:100%;background:var(--surface2);border:1px solid var(--glass-border);border-radius:8px;padding:12px 14px;font-family:'DM Mono',monospace;font-size:12px;color:var(--text);resize:vertical;line-height:1.7;">${esc(noticeText)}</textarea>
+            style="width:100%;background:var(--surface2);border:1px solid var(--glass-border);border-radius:var(--r-sm);padding:12px 14px;font-family:'DM Mono',monospace;font-size:var(--fs-meta);color:var(--text);resize:vertical;line-height:1.7;">${esc(noticeText)}</textarea>
           <div id="customer-match-results" style="margin-top:14px;"></div>
           <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:14px;">
-            <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:8px;">Match against customer purchase list</div>
-            <div style="font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.6;">Upload a CSV with columns: <span style="font-family:'DM Mono',monospace;color:var(--text);">email, store_name, purchase_date</span> to identify which customers bought this product.</div>
+            <div style="font-size:var(--fs-eyebrow);font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:8px;">Match against customer purchase list</div>
+            <div style="font-size:var(--fs-eyebrow);color:var(--muted);margin-bottom:10px;line-height:1.6;">Upload a CSV with columns: <span style="font-family:'DM Mono',monospace;color:var(--text);">email, store_name, purchase_date</span> to identify which customers bought this product.</div>
             <input type="file" id="customer-csv-input" accept=".csv" onchange="matchCustomersToRecall()"
-              style="font-size:11px;color:var(--muted);cursor:pointer;" />
+              style="font-size:var(--fs-eyebrow);color:var(--muted);cursor:pointer;" />
           </div>
         </div>
       </div>`;
@@ -12585,7 +12598,7 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
         ${statTile(supPct+'%', 'Supplier coverage', supPct>=80?'var(--accent)':supPct>=60?'var(--warn)':'var(--danger)')}
         ${isUS ? statTile(ftl, 'FTL records', ftl>0?'var(--info)':'var(--muted)') : statTile(data.length - withLot, 'Missing lot codes', (data.length-withLot)>0?'var(--warn)':'var(--accent)')}
       </div>
-      ${lotPct < 80 ? `<div style="background:rgba(var(--warn-rgb),0.06);border:1px solid rgba(var(--warn-rgb),0.2);border-radius:10px;padding:12px 16px;margin-bottom:14px;font-size:12px;color:var(--warn);">
+      ${lotPct < 80 ? `<div style="background:rgba(var(--warn-rgb),0.06);border:1px solid rgba(var(--warn-rgb),0.2);border-radius:var(--r-md);padding:12px 16px;margin-bottom:14px;font-size:var(--fs-meta);color:var(--warn);">
         ⚠ ${isUS?'FSMA 204 requires Key Data Elements including TLC for all FDA Food Traceability List items. Current TLC capture rate is '+lotPct+'% — target 100%.':'EU Reg. 178/2002 Art. 18 requires one-step-back traceability for all food products. Current lot code coverage is '+lotPct+'% — target 100%.'}
       </div>` : ''}
       <div class="panel"><div class="panel-body" style="padding:0;">
@@ -12601,16 +12614,16 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
           <tbody>
             ${data.length === 0 ? `<tr><td colspan="8"><div class="empty">No records in this date range.</div></td></tr>` :
             data.map(s => `<tr>
-              <td style="white-space:nowrap;font-size:11px;color:var(--muted);">${fmtDate(s.created_at)}</td>
-              <td style="font-size:12px;font-weight:500;color:var(--text);">${esc(s.product_name||'—')}</td>
-              <td style="font-size:11px;color:${s.lot_number?'var(--text)':'var(--danger)'};font-family:'DM Mono',monospace;">${esc(s.lot_number||'⚠ missing')}</td>
-              <td style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${esc(s.barcode_number||'—')}</td>
-              <td style="font-size:11px;color:${s.supplier_name?'var(--muted)':'var(--warn)'};">${s.supplier_name||'—'}</td>
-              <td style="font-size:11px;color:var(--muted);">${esc(s.store_name||'—')}</td>
-              <td style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${esc(s.reference_document||'—')}</td>
+              <td style="white-space:nowrap;font-size:var(--fs-eyebrow);color:var(--muted);">${fmtDate(s.created_at)}</td>
+              <td style="font-size:var(--fs-meta);font-weight:500;color:var(--text);">${esc(s.product_name||'—')}</td>
+              <td style="font-size:var(--fs-eyebrow);color:${s.lot_number?'var(--text)':'var(--danger)'};font-family:'DM Mono',monospace;">${esc(s.lot_number||'⚠ missing')}</td>
+              <td style="font-size:var(--fs-label);color:var(--muted);font-family:'DM Mono',monospace;">${esc(s.barcode_number||'—')}</td>
+              <td style="font-size:var(--fs-eyebrow);color:${s.supplier_name?'var(--muted)':'var(--warn)'};">${s.supplier_name||'—'}</td>
+              <td style="font-size:var(--fs-eyebrow);color:var(--muted);">${esc(s.store_name||'—')}</td>
+              <td style="font-size:var(--fs-label);color:var(--muted);font-family:'DM Mono',monospace;">${esc(s.reference_document||'—')}</td>
               <td>${isUS
-                ? (s.is_ftl ? `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(var(--info-light-rgb),0.1);color:var(--info);font-weight:600;">FTL ✓</span>` : `<span style="font-size:10px;color:var(--muted);">—</span>`)
-                : (s.recall_resolved ? `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(var(--accent-rgb),0.12);color:var(--accent);font-weight:600;">Resolved</span>` : `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(var(--accent-muted-rgb),0.08);color:var(--muted);">On shelf</span>`)}
+                ? (s.is_ftl ? `<span style="font-size:var(--fs-label);padding:2px 8px;border-radius:var(--r-md);background:rgba(var(--info-light-rgb),0.1);color:var(--info);font-weight:600;">FTL ✓</span>` : `<span style="font-size:var(--fs-label);color:var(--muted);">—</span>`)
+                : (s.recall_resolved ? `<span style="font-size:var(--fs-label);padding:2px 8px;border-radius:var(--r-md);background:rgba(var(--accent-rgb),0.12);color:var(--accent);font-weight:600;">Resolved</span>` : `<span style="font-size:var(--fs-label);padding:2px 8px;border-radius:var(--r-md);background:rgba(var(--accent-muted-rgb),0.08);color:var(--muted);">On shelf</span>`)}
               </td>
             </tr>`).join('')}
           </tbody>
@@ -12624,12 +12637,12 @@ async function matchCustomersToRecall() {
   const file = document.getElementById('customer-csv-input')?.files?.[0];
   const el   = document.getElementById('customer-match-results');
   if (!file || !el) return;
-  el.innerHTML = '<div style="font-size:12px;color:var(--muted);">Parsing CSV…</div>';
+  el.innerHTML = '<div style="font-size:var(--fs-meta);color:var(--muted);">Parsing CSV…</div>';
 
   try {
     const text = await file.text();
     const lines = text.trim().split('\n').filter(l => l.trim());
-    if (lines.length < 2) { el.innerHTML = '<div style="color:var(--danger);font-size:12px;">CSV must have a header row and at least one data row.</div>'; return; }
+    if (lines.length < 2) { el.innerHTML = '<div style="color:var(--danger);font-size:var(--fs-meta);">CSV must have a header row and at least one data row.</div>'; return; }
 
     // Parse header
     const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/[^a-z_]/g,''));
@@ -12639,7 +12652,7 @@ async function matchCustomersToRecall() {
     const dateIdx    = headers.findIndex(h => h.includes('date') || h.includes('purchase'));
 
     if (emailIdx === -1 || storeIdx === -1 || dateIdx === -1) {
-      el.innerHTML = '<div style="color:var(--danger);font-size:12px;">CSV must have columns for email, store_name, and purchase_date.</div>';
+      el.innerHTML = '<div style="color:var(--danger);font-size:var(--fs-meta);">CSV must have columns for email, store_name, and purchase_date.</div>';
       return;
     }
 
@@ -12671,7 +12684,7 @@ async function matchCustomersToRecall() {
     });
 
     if (matched.length === 0) {
-      el.innerHTML = `<div style="background:rgba(var(--accent-rgb),0.07);border:1px solid rgba(var(--accent-rgb),0.2);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--accent);">No customers matched — either the stores don't overlap or purchase dates are outside the recall window.</div>`;
+      el.innerHTML = `<div style="background:rgba(var(--accent-rgb),0.07);border:1px solid rgba(var(--accent-rgb),0.2);border-radius:var(--r-sm);padding:12px 14px;font-size:var(--fs-meta);color:var(--accent);">No customers matched. Either the stores do not overlap or the purchase dates fall outside the recall window.</div>`;
       return;
     }
 
@@ -12684,10 +12697,10 @@ async function matchCustomersToRecall() {
 
     const fmtDate = fmtDash;
 el.innerHTML = `
-      <div style="background:rgba(var(--danger-rgb),0.06);border:1px solid rgba(var(--danger-rgb),0.2);border-radius:8px;padding:12px 14px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
-        <div style="font-size:12px;color:var(--danger);font-weight:600;">⚠ ${matched.length} customer${matched.length!==1?'s':''} matched · ${customers.length - matched.length} not affected</div>
+      <div style="background:rgba(var(--danger-rgb),0.06);border:1px solid rgba(var(--danger-rgb),0.2);border-radius:var(--r-sm);padding:12px 14px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+        <div style="font-size:var(--fs-meta);color:var(--danger);font-weight:600;">⚠ ${matched.length} customer${matched.length!==1?'s':''} matched · ${customers.length - matched.length} not affected</div>
         <a href="${csvUrl}" download="recall-affected-customers-${new Date().toISOString().split('T')[0]}.csv"
-          style="font-size:11px;padding:6px 12px;border-radius:6px;border:1px solid rgba(var(--danger-rgb),0.3);background:none;color:var(--danger);cursor:pointer;text-decoration:none;font-family:'DM Mono',monospace;font-weight:600;">
+          style="font-size:var(--fs-eyebrow);padding:6px 12px;border-radius:var(--r-xs);border:1px solid rgba(var(--danger-rgb),0.3);background:none;color:var(--danger);cursor:pointer;text-decoration:none;font-family:'DM Mono',monospace;font-weight:600;">
           ↓ Download matched list
         </a>
       </div>
@@ -12696,15 +12709,15 @@ el.innerHTML = `
           <table class="store-table" style="width:100%;">
             <thead><tr><th>Customer</th><th>Email</th><th>Store</th><th>Purchase date</th></tr></thead>
             <tbody>
-              ${matched.slice(0,20).map(c => '<tr><td style="font-size:12px;font-weight:500;color:var(--text);">' + esc(c.name||'—') + '</td><td style="font-size:11px;color:var(--muted);font-family:DM Mono,monospace;">' + esc(c.email) + '</td><td style="font-size:11px;color:var(--muted);">' + esc(c.store) + '</td><td style="font-size:11px;color:var(--muted);">' + esc(c.date) + '</td></tr>').join('')}
-              ${matched.length > 20 ? '<tr><td colspan="4" style="text-align:center;font-size:11px;color:var(--muted);padding:10px;">+' + (matched.length - 20) + ' more in downloaded CSV</td></tr>' : ''}
+              ${matched.slice(0,20).map(c => '<tr><td style="font-size:var(--fs-meta);font-weight:500;color:var(--text);">' + esc(c.name||'—') + '</td><td style="font-size:var(--fs-eyebrow);color:var(--muted);font-family:DM Mono,monospace;">' + esc(c.email) + '</td><td style="font-size:var(--fs-eyebrow);color:var(--muted);">' + esc(c.store) + '</td><td style="font-size:var(--fs-eyebrow);color:var(--muted);">' + esc(c.date) + '</td></tr>').join('')}
+              ${matched.length > 20 ? '<tr><td colspan="4" style="text-align:center;font-size:var(--fs-eyebrow);color:var(--muted);padding:10px;">+' + (matched.length - 20) + ' more in downloaded CSV</td></tr>' : ''}
             </tbody>
           </table>
         </div>
       </div>`;
 
   } catch(e) {
-    el.innerHTML = '<div style="color:var(--danger);font-size:12px;">Error parsing CSV: ' + e.message + '</div>';
+    el.innerHTML = '<div style="color:var(--danger);font-size:var(--fs-meta);">Error parsing CSV: ' + e.message + '</div>';
   }
 }
 
@@ -13527,7 +13540,7 @@ async function renderSettings() {
         <div class="panel" style="margin:0;">
           <div class="panel-header"><div class="panel-title">Organization</div></div>
           <div class="panel-body">
-            <div id="org-settings-msg" style="display:none;font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;"></div>
+            <div id="org-settings-msg" style="display:none;font-size:var(--fs-eyebrow);padding:9px 12px;border-radius:var(--r-xs);margin-bottom:12px;"></div>
             <div class="field"><label>Organization name</label>
               <input id="org-name-input" type="text" value="${esc(org?.name||_orgName)}" /></div>
             <div class="field"><label>Contact email</label>
@@ -13541,46 +13554,46 @@ async function renderSettings() {
                 ${_FSMA_APPLICABILITY.bands.map(b => `<option value="${b.key}" ${(org?.annual_food_sales_band || '') === b.key ? 'selected' : ''}>Annual food sales: ${b.label}</option>`).join('')}
               </select>
               <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">
-                <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:12px;color:var(--text);margin:0;"><input type="checkbox" id="org-registered-facility" ${org?.operates_registered_facility ? 'checked' : ''} ${isAdmin ? '' : 'disabled'} style="width:auto;height:auto;flex:0 0 auto;padding:0;margin:2px 0 0;appearance:auto;accent-color:var(--accent);"><span>We operate a registered warehouse, distribution center or central kitchen</span></label>
-                <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:12px;color:var(--text);margin:0;"><input type="checkbox" id="org-distribution-center" ${org?.operates_distribution_center ? 'checked' : ''} ${isAdmin ? '' : 'disabled'} style="width:auto;height:auto;flex:0 0 auto;padding:0;margin:2px 0 0;appearance:auto;accent-color:var(--accent);"><span>We ship listed foods from our own distribution center to our stores</span></label>
+                <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:var(--fs-meta);color:var(--text);margin:0;"><input type="checkbox" id="org-registered-facility" ${org?.operates_registered_facility ? 'checked' : ''} ${isAdmin ? '' : 'disabled'} style="width:auto;height:auto;flex:0 0 auto;padding:0;margin:2px 0 0;appearance:auto;accent-color:var(--accent);"><span>We operate a registered warehouse, distribution center or central kitchen</span></label>
+                <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:var(--fs-meta);color:var(--text);margin:0;"><input type="checkbox" id="org-distribution-center" ${org?.operates_distribution_center ? 'checked' : ''} ${isAdmin ? '' : 'disabled'} style="width:auto;height:auto;flex:0 0 auto;padding:0;margin:2px 0 0;appearance:auto;accent-color:var(--accent);"><span>We ship listed foods from our own distribution center to our stores</span></label>
               </div>
-              <div id="org-applicability-copy" style="font-size:11px;color:var(--text);margin-top:8px;line-height:1.6;padding:9px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;">${esc(fsmaApplicabilityCopy(fsmaApplicabilityFor(org?.annual_food_sales_band)))}</div>
-              <div style="font-size:10px;color:var(--muted);margin-top:6px;line-height:1.5;">${esc(_FSMA_APPLICABILITY.thresholdNote)}</div>
+              <div id="org-applicability-copy" style="font-size:var(--fs-eyebrow);color:var(--text);margin-top:8px;line-height:1.6;padding:9px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-sm);">${esc(fsmaApplicabilityCopy(fsmaApplicabilityFor(org?.annual_food_sales_band)))}</div>
+              <div style="font-size:var(--fs-label);color:var(--muted);margin-top:6px;line-height:1.5;">${esc(_FSMA_APPLICABILITY.thresholdNote)}</div>
             </div>
             <!-- Phase 6 (2026-10-07): starter scope and the informational pricing tier. -->
             <div class="field"><label>Where you start</label>
-              <div style="font-size:10.5px;color:var(--muted);margin-bottom:8px;line-height:1.5;">Focus categories drive the suggested suppliers, the drill scripts, the Compliance checklist and the focus badge on feed recalls.</div>
+              <div style="font-size:var(--fs-label);color:var(--muted);margin-bottom:8px;line-height:1.5;">Focus categories drive the suggested suppliers, the drill scripts, the Compliance checklist and the focus badge on feed recalls.</div>
               ${_focusPickerHtml(org?.focus_categories || [], isAdmin, 'org')}
             </div>
             ${_NETWORK_OPTIN_REVIEWED ? `
             <!-- Phase 8 (2026-10-07): network benchmarks opt-in. Default off. -->
             <div class="field">
-              <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:12px;color:var(--text);margin:0;"><input type="checkbox" id="org-network-optin" ${org?.network_benchmarks_opt_in ? 'checked' : ''} ${isAdmin ? '' : 'disabled'} style="width:auto;height:auto;flex:0 0 auto;padding:0;margin:2px 0 0;appearance:auto;accent-color:var(--accent);"><span><strong>Network benchmarks</strong><br><span style="color:var(--muted);font-size:11px;line-height:1.55;">${esc(_NETWORK_OPTIN_COPY)}</span></span></label>
+              <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:var(--fs-meta);color:var(--text);margin:0;"><input type="checkbox" id="org-network-optin" ${org?.network_benchmarks_opt_in ? 'checked' : ''} ${isAdmin ? '' : 'disabled'} style="width:auto;height:auto;flex:0 0 auto;padding:0;margin:2px 0 0;appearance:auto;accent-color:var(--accent);"><span><strong>Network benchmarks</strong><br><span style="color:var(--muted);font-size:var(--fs-eyebrow);line-height:1.55;">${esc(_NETWORK_OPTIN_COPY)}</span></span></label>
             </div>` : ''}
             <div class="field"><label>Pricing tier</label>
               <input type="text" value="${esc(_PRICING_TIER_LABELS[org?.pricing_tier] || 'Not set')}" readonly style="opacity:0.7;" />
-              <div style="font-size:10px;color:var(--muted);margin-top:4px;line-height:1.5;">Recorded by Batch'd for the pilot. Informational only; nothing is gated by it.</div>
+              <div style="font-size:var(--fs-label);color:var(--muted);margin-top:4px;line-height:1.5;">Recorded by Batch'd for the pilot. Informational only; nothing is gated by it.</div>
             </div>` : ''}
             <!-- The org region dropdown was removed 2026-09-29 (US-only decision).
                  organisations.region stays as a column and keeps its stored
                  value; saveOrgSettings() writes it back unchanged. -->
 
             <!-- Recall feeds — org-level (migration 012, 2026-05). Corp admin only. -->
-            <div class="field"><label>Recall feeds <span style="color:var(--muted);font-size:10px;text-transform:none;letter-spacing:0;">— compliance decision, applies to whole org</span></label>
+            <div class="field"><label>Recall feeds <span style="color:var(--muted);font-size:var(--fs-label);text-transform:none;letter-spacing:0;">· compliance decision, applies to the whole org</span></label>
               <div style="display:flex;gap:6px;flex-wrap:wrap;">
                 <button type="button" id="org-feeds-fda" ${isAdmin?'':'disabled'} onclick="${isAdmin?`_setOrgFeeds('fda')`:''}"
-                  style="flex:1;min-width:88px;font-family:'DM Mono',monospace;font-size:11px;padding:9px 10px;border-radius:8px;border:1.5px solid ${orgRecallSource==='fda'?'var(--accent)':'var(--border)'};background:${orgRecallSource==='fda'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${orgRecallSource==='fda'?'var(--accent)':'var(--muted)'};cursor:${isAdmin?'pointer':'not-allowed'};opacity:${isAdmin?'1':'0.7'};letter-spacing:0.04em;">🇺🇸 FDA</button>
+                  style="flex:1;min-width:88px;font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);padding:9px 10px;border-radius:var(--r-sm);border:1.5px solid ${orgRecallSource==='fda'?'var(--accent)':'var(--border)'};background:${orgRecallSource==='fda'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${orgRecallSource==='fda'?'var(--accent)':'var(--muted)'};cursor:${isAdmin?'pointer':'not-allowed'};opacity:${isAdmin?'1':'0.7'};letter-spacing:0.04em;">🇺🇸 FDA</button>
                 <button type="button" id="org-feeds-mattilsynet" ${isAdmin?'':'disabled'} onclick="${isAdmin?`_setOrgFeeds('mattilsynet')`:''}"
-                  style="flex:1;min-width:118px;font-family:'DM Mono',monospace;font-size:11px;padding:9px 10px;border-radius:8px;border:1.5px solid ${orgRecallSource==='mattilsynet'?'var(--accent)':'var(--border)'};background:${orgRecallSource==='mattilsynet'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${orgRecallSource==='mattilsynet'?'var(--accent)':'var(--muted)'};cursor:${isAdmin?'pointer':'not-allowed'};opacity:${isAdmin?'1':'0.7'};letter-spacing:0.04em;">🇳🇴 Mattilsynet</button>
+                  style="flex:1;min-width:118px;font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);padding:9px 10px;border-radius:var(--r-sm);border:1.5px solid ${orgRecallSource==='mattilsynet'?'var(--accent)':'var(--border)'};background:${orgRecallSource==='mattilsynet'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${orgRecallSource==='mattilsynet'?'var(--accent)':'var(--muted)'};cursor:${isAdmin?'pointer':'not-allowed'};opacity:${isAdmin?'1':'0.7'};letter-spacing:0.04em;">🇳🇴 Mattilsynet</button>
                 <button type="button" id="org-feeds-both" ${isAdmin?'':'disabled'} onclick="${isAdmin?`_setOrgFeeds('both')`:''}"
-                  style="flex:1;min-width:74px;font-family:'DM Mono',monospace;font-size:11px;padding:9px 10px;border-radius:8px;border:1.5px solid ${orgRecallSource==='both'?'var(--accent)':'var(--border)'};background:${orgRecallSource==='both'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${orgRecallSource==='both'?'var(--accent)':'var(--muted)'};cursor:${isAdmin?'pointer':'not-allowed'};opacity:${isAdmin?'1':'0.7'};letter-spacing:0.04em;">Both</button>
+                  style="flex:1;min-width:74px;font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);padding:9px 10px;border-radius:var(--r-sm);border:1.5px solid ${orgRecallSource==='both'?'var(--accent)':'var(--border)'};background:${orgRecallSource==='both'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${orgRecallSource==='both'?'var(--accent)':'var(--muted)'};cursor:${isAdmin?'pointer':'not-allowed'};opacity:${isAdmin?'1':'0.7'};letter-spacing:0.04em;">Both</button>
               </div>
-              <div style="font-size:10.5px;color:var(--muted);margin-top:6px;line-height:1.55;">${isAdmin
+              <div style="font-size:var(--fs-label);color:var(--muted);margin-top:6px;line-height:1.55;">${isAdmin
                 ? `Which regulatory feeds Batch'd ingests for the whole org. Compliance decision — all staff inherit. FDA covers US recalls; Mattilsynet (incl. RASFF) covers Norway/EU. <strong>Both</strong> is recommended for multi-region operators.`
                 : `Set by your corp admin. All staff in this org inherit this feed selection.`}</div></div>
 
             <div class="field" style="margin-bottom:12px;"><label>Organization ID</label>
-              <input type="text" value="${_orgId}" readonly style="opacity:0.5;font-size:10px;" /></div>
+              <input type="text" value="${_orgId}" readonly style="opacity:0.5;font-size:var(--fs-label);" /></div>
             <button class="btn-primary" onclick="saveOrgSettings()" id="btn-save-org" ${isAdmin?'':'disabled style="opacity:0.5;cursor:not-allowed;"'}>${isAdmin?'Save changes':'View only · ask corp admin to change'}</button>
           </div>
         </div>
@@ -13595,8 +13608,8 @@ async function renderSettings() {
             <div class="field" style="margin-bottom:0;"><label>Organization</label>
               <input type="text" value="${esc(_orgName)}" readonly style="opacity:0.7;" /></div>
             <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border);">
-              <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">To change your password or email, visit account settings.</div>
-              <a href="https://batchdapp.com" style="font-size:11px;color:var(--accent);text-decoration:none;">batchdapp.com →</a>
+              <div style="font-size:var(--fs-eyebrow);color:var(--muted);margin-bottom:8px;">To change your password or email, visit account settings.</div>
+              <a href="https://batchdapp.com" style="font-size:var(--fs-eyebrow);color:var(--accent);text-decoration:none;">batchdapp.com →</a>
             </div>
 
             ${_mfaEligible ? `
@@ -13607,8 +13620,8 @@ async function renderSettings() {
             <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border);">
               <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
                 <div>
-                  <div style="font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:4px;">Two-factor authentication</div>
-                  <div style="font-size:12.5px;color:var(--text);">
+                  <div style="font-family:'DM Mono',monospace;font-size:var(--fs-label);text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:4px;">Two-factor authentication</div>
+                  <div style="font-size:var(--fs-body);color:var(--text);">
                     <span style="display:inline-flex;align-items:center;gap:6px;">
                       <span style="width:8px;height:8px;border-radius:50%;background:${_mfaEnrolled?'var(--accent)':'var(--warn)'};"></span>
                       ${_mfaEnrolled ? '<strong>Enabled</strong> · authenticator app required at sign-in' : '<strong>Not enabled</strong> · recommended for ' + (_userRole==='corp_admin'?'corp admins':'store managers')}
@@ -13619,7 +13632,7 @@ async function renderSettings() {
                   ${_mfaEnrolled ? 'Disable 2FA' : 'Set up 2FA →'}
                 </button>
               </div>
-              ${!_mfaEnrolled ? `<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.55;">Uses any TOTP authenticator (Google Authenticator, Authy, 1Password, Bitwarden). The scanning app never asks for 2FA — only the corporate dashboard.</div>` : ''}
+              ${!_mfaEnrolled ? `<div style="font-size:var(--fs-eyebrow);color:var(--muted);margin-top:8px;line-height:1.55;">Uses any TOTP authenticator (Google Authenticator, Authy, 1Password, Bitwarden). The scanning app never asks for 2FA. Only the corporate dashboard does.</div>` : ''}
             </div>
             ` : ''}
           </div>
@@ -13643,7 +13656,7 @@ async function renderSettings() {
           </div>
         </div>
         <div class="panel-body" id="suppliers-body">
-          <div style="display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12px;"><div class="spinner"></div> Loading suppliers…</div>
+          <div style="display:flex;align-items:center;gap:10px;color:var(--muted);font-size:var(--fs-meta);"><div class="spinner"></div> Loading suppliers…</div>
         </div>
       </div>
 
@@ -13656,7 +13669,7 @@ async function renderSettings() {
             <div class="panel-sub">Decisions your managers made at receiving or on the shelf about whether a product is on the Food Traceability List. Deleting one returns the product to automatic detection.</div>
           </div>
         </div>
-        <div class="panel-body" id="ftl-overrides-body"><div style="display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12px;"><div class="spinner"></div> Loading…</div></div>
+        <div class="panel-body" id="ftl-overrides-body"><div style="display:flex;align-items:center;gap:10px;color:var(--muted);font-size:var(--fs-meta);"><div class="spinner"></div> Loading…</div></div>
       </div>
 
       <!-- Row 2: Your preferences — per-user settings (theme, language, feeds) -->
@@ -13668,26 +13681,26 @@ async function renderSettings() {
           </div>
         </div>
         <div class="panel-body">
-          <div id="prefs-msg" style="display:none;font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;"></div>
+          <div id="prefs-msg" style="display:none;font-size:var(--fs-eyebrow);padding:9px 12px;border-radius:var(--r-xs);margin-bottom:12px;"></div>
 
           <!-- Theme picker -->
           <div style="margin-bottom:18px;">
-            <label style="display:block;font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">Theme</label>
+            <label style="display:block;font-family:'DM Mono',monospace;font-size:var(--fs-label);text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">Theme</label>
             <div style="display:flex;gap:8px;">
-              <button type="button" id="pref-theme-dark"  onclick="_setPrefTheme('dark')"  style="flex:1;font-family:'DM Mono',monospace;font-size:11px;padding:10px 14px;border-radius:8px;border:1.5px solid ${userPref.theme==='dark'?'var(--accent)':'var(--border)'};background:${userPref.theme==='dark'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.theme==='dark'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;text-transform:uppercase;">Dark</button>
-              <button type="button" id="pref-theme-light" onclick="_setPrefTheme('light')" style="flex:1;font-family:'DM Mono',monospace;font-size:11px;padding:10px 14px;border-radius:8px;border:1.5px solid ${userPref.theme==='light'?'var(--accent)':'var(--border)'};background:${userPref.theme==='light'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.theme==='light'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;text-transform:uppercase;">Light</button>
+              <button type="button" id="pref-theme-dark"  onclick="_setPrefTheme('dark')"  style="flex:1;font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);padding:10px 14px;border-radius:var(--r-sm);border:1.5px solid ${userPref.theme==='dark'?'var(--accent)':'var(--border)'};background:${userPref.theme==='dark'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.theme==='dark'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;text-transform:uppercase;">Dark</button>
+              <button type="button" id="pref-theme-light" onclick="_setPrefTheme('light')" style="flex:1;font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);padding:10px 14px;border-radius:var(--r-sm);border:1.5px solid ${userPref.theme==='light'?'var(--accent)':'var(--border)'};background:${userPref.theme==='light'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.theme==='light'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;text-transform:uppercase;">Light</button>
             </div>
-            <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.55;">Applies immediately on this device. Also toggleable via the moon/sun icon in the topbar.</div>
+            <div style="font-size:var(--fs-eyebrow);color:var(--muted);margin-top:6px;line-height:1.55;">Applies immediately on this device. Also toggleable via the moon/sun icon in the topbar.</div>
           </div>
 
           <!-- Language picker -->
           <div style="margin-bottom:18px;">
-            <label style="display:block;font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">Display language</label>
+            <label style="display:block;font-family:'DM Mono',monospace;font-size:var(--fs-label);text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">Display language</label>
             <div style="display:flex;gap:8px;">
-              <button type="button" id="pref-lang-en" onclick="_setPrefLang('en')" style="flex:1;font-family:'DM Mono',monospace;font-size:11px;padding:10px 14px;border-radius:8px;border:1.5px solid ${userPref.language==='en'?'var(--accent)':'var(--border)'};background:${userPref.language==='en'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.language==='en'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;">🇺🇸 English</button>
-              <button type="button" id="pref-lang-no" onclick="_setPrefLang('no')" style="flex:1;font-family:'DM Mono',monospace;font-size:11px;padding:10px 14px;border-radius:8px;border:1.5px solid ${userPref.language==='no'?'var(--accent)':'var(--border)'};background:${userPref.language==='no'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.language==='no'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;">🇳🇴 Norsk</button>
+              <button type="button" id="pref-lang-en" onclick="_setPrefLang('en')" style="flex:1;font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);padding:10px 14px;border-radius:var(--r-sm);border:1.5px solid ${userPref.language==='en'?'var(--accent)':'var(--border)'};background:${userPref.language==='en'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.language==='en'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;">🇺🇸 English</button>
+              <button type="button" id="pref-lang-no" onclick="_setPrefLang('no')" style="flex:1;font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);padding:10px 14px;border-radius:var(--r-sm);border:1.5px solid ${userPref.language==='no'?'var(--accent)':'var(--border)'};background:${userPref.language==='no'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.language==='no'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;">🇳🇴 Norsk</button>
             </div>
-            <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.55;">The scanning app is fully translated to both languages. The corporate dashboard is English-only today; your selection persists and the dashboard will respect it once translations land.</div>
+            <div style="font-size:var(--fs-eyebrow);color:var(--muted);margin-top:6px;line-height:1.55;">The scanning app is fully translated to both languages. The corporate dashboard is English-only today; your selection persists and the dashboard will respect it once translations land.</div>
           </div>
 
           <!-- Region / Jurisdiction picker REMOVED 2026-05-26.
@@ -13716,22 +13729,22 @@ async function renderSettings() {
                role in the function — only corp_admin + store_manager
                are eligible — so this UI is meaningful for those roles. -->
           <div style="margin-bottom:18px;">
-            <label style="display:block;font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">Email notifications</label>
+            <label style="display:block;font-family:'DM Mono',monospace;font-size:var(--fs-label);text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">Email notifications</label>
             <div style="display:flex;flex-direction:column;gap:6px;">
               ${_notifyToggleRow('notifyRecall',    'Recall pushed',    'When a recall is initiated in your organization.', userPref.notifyRecall)}
               ${_notifyToggleRow('notifyComplaint', 'Complaint filed',  'When a customer complaint is logged at a store you manage.', userPref.notifyComplaint)}
               ${_notifyToggleRow('notifyDrill',     'Mock drill scheduled', 'When a mock recall readiness drill is launched.', userPref.notifyDrill)}
             </div>
-            <div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.55;">Sent to <strong>${esc(_userEmail || '(your account email)')}</strong> from <code style="font-family:'DM Mono',monospace;font-size:10.5px;">alerts@batchdapp.com</code>. Floor staff do not receive these — they get in-app alerts via the scanner.</div>
+            <div style="font-size:var(--fs-eyebrow);color:var(--muted);margin-top:8px;line-height:1.55;">Sent to <strong>${esc(_userEmail || '(your account email)')}</strong> from <code style="font-family:'DM Mono',monospace;font-size:var(--fs-label);">alerts@batchdapp.com</code>. Floor staff do not receive these. They get in-app alerts in the scanner.</div>
           </div>
 
           <!-- Recall feeds moved to the Organisation card (migration 012,
                2026-05). Compliance decision — applies whole-org, not per
                user. Surface a one-line read-only echo here so users know
                where to find it. -->
-          <div style="margin-bottom:14px;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;font-size:11px;color:var(--muted);line-height:1.6;">
-            <strong style="color:var(--text);font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;">Recall feeds</strong>
-            <span style="margin-left:10px;font-family:'DM Mono',monospace;font-size:11px;color:var(--accent);">${({fda:'🇺🇸 FDA only',mattilsynet:'🇳🇴 Mattilsynet only',both:'Both'})[orgRecallSource]||'Both'}</span>
+          <div style="margin-bottom:14px;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-sm);font-size:var(--fs-eyebrow);color:var(--muted);line-height:1.6;">
+            <strong style="color:var(--text);font-family:'DM Mono',monospace;font-size:var(--fs-label);text-transform:uppercase;letter-spacing:0.08em;">Recall feeds</strong>
+            <span style="margin-left:10px;font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);color:var(--accent);">${({fda:'🇺🇸 FDA only',mattilsynet:'🇳🇴 Mattilsynet only',both:'Both'})[orgRecallSource]||'Both'}</span>
             <div style="margin-top:4px;">Set at the org level by your corp admin · see <em>Organization → Recall feeds</em> above.</div>
           </div>
 
@@ -13753,7 +13766,7 @@ async function renderSettings() {
         </div>
         <div class="panel-body">
           <div id="coord-msg" style="display:none;"></div>
-          <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:10px;">Recall coordinator</div>
+          <div style="font-size:var(--fs-eyebrow);font-weight:600;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:10px;">Recall coordinator</div>
           <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-bottom:6px;">
             <div class="field">
               <label>Primary coordinator name</label>
@@ -13768,20 +13781,20 @@ async function renderSettings() {
               <input id="coord-backup" type="text" value="${coord.recall_coordinator_backup||''}" placeholder="Name + contact" />
             </div>
           </div>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:18px;">Named on all recall audit reports and regulatory submissions.</div>
+          <div style="font-size:var(--fs-eyebrow);color:var(--muted);margin-bottom:18px;">Named on all recall audit reports and regulatory submissions.</div>
           <div style="border-top:1px solid var(--border);margin-bottom:18px;"></div>
-          <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:10px;">Scan history lookback window</div>
-          <div id="recall-sett-msg" style="display:none;font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;"></div>
+          <div style="font-size:var(--fs-eyebrow);font-weight:600;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:10px;">Scan history lookback window</div>
+          <div id="recall-sett-msg" style="display:none;font-size:var(--fs-eyebrow);padding:9px 12px;border-radius:var(--r-xs);margin-bottom:12px;"></div>
           <div style="display:grid;grid-template-columns:240px 1fr;gap:16px;align-items:start;margin-bottom:16px;">
             <div class="field" style="margin:0;">
               <select id="lookback-days-input">
-                <option value="90"  ${lookbackDays<=90?'selected':''}>90 days — 3 months</option>
-                <option value="180" ${lookbackDays>90&&lookbackDays<=180?'selected':''}>180 days — 6 months</option>
-                <option value="270" ${lookbackDays>180&&lookbackDays<=270?'selected':''}>270 days — 9 months</option>
-                <option value="365" ${lookbackDays>270?'selected':''}>365 days — 1 year · recommended</option>
+                <option value="90"  ${lookbackDays<=90?'selected':''}>90 days (3 months)</option>
+                <option value="180" ${lookbackDays>90&&lookbackDays<=180?'selected':''}>180 days (6 months)</option>
+                <option value="270" ${lookbackDays>180&&lookbackDays<=270?'selected':''}>270 days (9 months)</option>
+                <option value="365" ${lookbackDays>270?'selected':''}>365 days (1 year, recommended)</option>
               </select>
             </div>
-            <div style="font-size:11px;color:var(--muted);line-height:1.7;">How far back Batch'd looks when cross-referencing recalls against your store scan records. 365 days covers all product types including frozen and long-life ambient goods.</div>
+            <div style="font-size:var(--fs-eyebrow);color:var(--muted);line-height:1.7;">How far back Batch'd looks when cross-referencing recalls against your store scan records. 365 days covers all product types including frozen and long-life ambient goods.</div>
           </div>
           <button class="btn-primary" onclick="saveCoordinatorSettings();saveRecallSettings();" id="btn-save-recall-mgmt">Save recall settings</button>
         </div>
@@ -13800,23 +13813,23 @@ async function renderSettings() {
         </div>
         <div class="panel-body">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
-            <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:16px;">
+            <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-md);padding:16px;">
               <div style="display:flex;align-items:flex-start;gap:12px;">
                 <div style="color:var(--info);flex-shrink:0;">${_ico('truck',22)}</div>
                 <div>
-                  <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px;">Wholesaler delivery files</div>
-                  <div style="font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:12px;">Import the shipping file your wholesaler sends (CSV). Each line becomes an expected delivery; staff confirm it at the dock from the scanner, and the record carries the lot, quantity and reference document.</div>
-                  <button onclick="showPanel('receiving')" style="font-family:'DM Mono',monospace;font-size:11px;font-weight:700;padding:7px 14px;border-radius:7px;border:1px solid rgba(var(--info-rgb),0.4);background:rgba(var(--info-rgb),0.1);color:var(--info);cursor:pointer;">Open Receiving</button>
+                  <div style="font-size:var(--fs-body);font-weight:700;color:var(--text);margin-bottom:4px;">Wholesaler delivery files</div>
+                  <div style="font-size:var(--fs-eyebrow);color:var(--muted);line-height:1.6;margin-bottom:12px;">Import the shipping file your wholesaler sends (CSV). Each line becomes an expected delivery; staff confirm it at the dock from the scanner, and the record carries the lot, quantity and reference document.</div>
+                  <button onclick="showPanel('receiving')" style="font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);font-weight:700;padding:7px 14px;border-radius:var(--r-sm);border:1px solid rgba(var(--info-rgb),0.4);background:rgba(var(--info-rgb),0.1);color:var(--info);cursor:pointer;">Open Receiving</button>
                 </div>
               </div>
             </div>
-            <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:16px;">
+            <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-md);padding:16px;">
               <div style="display:flex;align-items:flex-start;gap:12px;">
                 <div style="color:var(--accent);flex-shrink:0;">${_ico('file-text',22)}</div>
                 <div>
-                  <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px;">FSMA 204 records export</div>
-                  <div style="font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:12px;">The 27-column receiving record (${_CITATIONS.us.receivingKde}) for a lot, a product or a date range, with the cover block an FDA request needs. From Compliance (records request drill), Live Recall, or Reports.</div>
-                  <button onclick="showPanel('reports')" style="font-family:'DM Mono',monospace;font-size:11px;font-weight:700;padding:7px 14px;border-radius:7px;border:1px solid rgba(var(--accent-rgb),0.4);background:rgba(var(--accent-rgb),0.1);color:var(--accent);cursor:pointer;">Open Reports</button>
+                  <div style="font-size:var(--fs-body);font-weight:700;color:var(--text);margin-bottom:4px;">FSMA 204 records export</div>
+                  <div style="font-size:var(--fs-eyebrow);color:var(--muted);line-height:1.6;margin-bottom:12px;">The 27-column receiving record (${_CITATIONS.us.receivingKde}) for a lot, a product or a date range, with the cover block an FDA request needs. From Compliance (records request drill), Live Recall, or Reports.</div>
+                  <button onclick="showPanel('reports')" style="font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);font-weight:700;padding:7px 14px;border-radius:var(--r-sm);border:1px solid rgba(var(--accent-rgb),0.4);background:rgba(var(--accent-rgb),0.1);color:var(--accent);cursor:pointer;">Open Reports</button>
                 </div>
               </div>
             </div>
@@ -13829,12 +13842,12 @@ async function renderSettings() {
   renderSuppliersCard();   // Phase 3: fills #suppliers-body after the shell renders
   renderFtlOverridesCard(); // Phase 6: fills #ftl-overrides-body
   } catch(e) {
-    el.innerHTML = `<div style="color:var(--danger);font-size:12px;padding:20px;">Error loading settings: ${e.message}</div>`;
+    el.innerHTML = `<div style="color:var(--danger);font-size:var(--fs-meta);padding:20px;">Error loading settings: ${e.message}</div>`;
   }
 
   } catch(_renderErr) {
     console.error('[renderSettings]', _renderErr);
-    if (_errEl) _errEl.innerHTML += `<div style="margin:20px 0;padding:16px;background:rgba(var(--danger-rgb),0.08);border:1px solid rgba(var(--danger-rgb),0.2);border-radius:10px;font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;"><strong style="color:var(--danger);">Error loading Settings</strong><br>${_renderErr.message}</div>`;
+    if (_errEl) _errEl.innerHTML += `<div style="margin:20px 0;padding:16px;background:rgba(var(--danger-rgb),0.08);border:1px solid rgba(var(--danger-rgb),0.2);border-radius:var(--r-md);font-size:var(--fs-meta);color:var(--muted);font-family:'DM Mono',monospace;"><strong style="color:var(--danger);">Error loading Settings</strong><br>${_renderErr.message}</div>`;
   }
 }
 
@@ -13849,7 +13862,7 @@ async function saveRecallSettings() {
   const days  = parseInt(document.getElementById('lookback-days-input')?.value || '365', 10);
   const btn   = document.getElementById('btn-save-recall-sett');
   const msgEl = document.getElementById('recall-sett-msg');
-  const setMsg = (txt, ok) => { if (msgEl) { msgEl.textContent=txt; msgEl.style.cssText='display:block;font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;background:'+( ok?'rgba(var(--accent-rgb),0.1)':'rgba(var(--danger-rgb),0.1)')+';border:1px solid '+(ok?'rgba(var(--accent-rgb),0.3)':'rgba(var(--danger-rgb),0.3)')+';color:'+(ok?'var(--accent)':'var(--danger)'); } };
+  const setMsg = (txt, ok) => { if (msgEl) { msgEl.textContent=txt; msgEl.style.cssText='display:block;font-size:var(--fs-eyebrow);padding:9px 12px;border-radius:var(--r-xs);margin-bottom:12px;background:'+( ok?'rgba(var(--accent-rgb),0.1)':'rgba(var(--danger-rgb),0.1)')+';border:1px solid '+(ok?'rgba(var(--accent-rgb),0.3)':'rgba(var(--danger-rgb),0.3)')+';color:'+(ok?'var(--accent)':'var(--danger)'); } };
   if (btn) { btn.disabled=true; btn.textContent='Saving…'; }
   const userId = (await sb.auth.getUser()).data?.user?.id;
   // Save to user_settings (this user's personal setting)
@@ -13889,7 +13902,7 @@ async function saveCoordinatorSettings() {
   const backup  = document.getElementById('coord-backup')?.value?.trim();
   const btn     = document.getElementById('btn-save-coord');
   const msgEl   = document.getElementById('coord-msg');
-  const setMsg  = (txt, ok) => { if (msgEl) { msgEl.textContent=txt; msgEl.style.cssText='display:block;font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;background:'+( ok?'rgba(var(--accent-rgb),0.1)':'rgba(var(--danger-rgb),0.1)')+';border:1px solid '+(ok?'rgba(var(--accent-rgb),0.3)':'rgba(var(--danger-rgb),0.3)')+';color:'+(ok?'var(--accent)':'var(--danger)'); } };
+  const setMsg  = (txt, ok) => { if (msgEl) { msgEl.textContent=txt; msgEl.style.cssText='display:block;font-size:var(--fs-eyebrow);padding:9px 12px;border-radius:var(--r-xs);margin-bottom:12px;background:'+( ok?'rgba(var(--accent-rgb),0.1)':'rgba(var(--danger-rgb),0.1)')+';border:1px solid '+(ok?'rgba(var(--accent-rgb),0.3)':'rgba(var(--danger-rgb),0.3)')+';color:'+(ok?'var(--accent)':'var(--danger)'); } };
   if (!name) { setMsg('Coordinator name is required.', false); return; }
   if (btn) { btn.disabled=true; btn.textContent='Saving…'; }
   const userId = (await sb.auth.getUser()).data?.user?.id;
@@ -13960,12 +13973,12 @@ function _notifyToggleRow(draftKey, label, sub, isOn) {
   const bg       = isOn ? 'rgba(var(--accent-rgb),0.08)' : 'var(--surface2)';
   return `
     <button type="button" id="pref-${draftKey}" onclick="_togglePrefNotify('${draftKey}')"
-      style="display:flex;align-items:center;justify-content:space-between;gap:14px;width:100%;text-align:left;background:${bg};border:1.5px solid ${isOn ? onColor : 'var(--border)'};border-radius:8px;padding:10px 14px;cursor:pointer;font-family:'Figtree',sans-serif;">
+      style="display:flex;align-items:center;justify-content:space-between;gap:14px;width:100%;text-align:left;background:${bg};border:1.5px solid ${isOn ? onColor : 'var(--border)'};border-radius:var(--r-sm);padding:10px 14px;cursor:pointer;font-family:'Figtree',sans-serif;">
       <span>
-        <span style="display:block;font-size:13px;font-weight:600;color:var(--text);">${esc(label)}</span>
-        <span style="display:block;font-size:11px;color:var(--muted);margin-top:2px;">${esc(sub)}</span>
+        <span style="display:block;font-size:var(--fs-body);font-weight:600;color:var(--text);">${esc(label)}</span>
+        <span style="display:block;font-size:var(--fs-eyebrow);color:var(--muted);margin-top:2px;">${esc(sub)}</span>
       </span>
-      <span style="display:inline-flex;align-items:center;gap:6px;font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.04em;color:${isOn ? onColor : offColor};">
+      <span style="display:inline-flex;align-items:center;gap:6px;font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);letter-spacing:0.04em;color:${isOn ? onColor : offColor};">
         <span id="pref-${draftKey}-dot" style="width:8px;height:8px;border-radius:50%;background:${isOn ? onColor : offColor};"></span>
         <span id="pref-${draftKey}-label">${isOn ? 'ON' : 'OFF'}</span>
       </span>
@@ -14021,7 +14034,7 @@ async function saveUserPreferences() {
   const setMsg = (txt, ok) => {
     if (!msgEl) return;
     msgEl.textContent = txt;
-    msgEl.style.cssText = 'display:block;font-size:11px;padding:9px 12px;border-radius:6px;margin-bottom:12px;background:' +
+    msgEl.style.cssText = 'display:block;font-size:var(--fs-eyebrow);padding:9px 12px;border-radius:var(--r-xs);margin-bottom:12px;background:' +
       (ok ? 'rgba(var(--accent-rgb),0.1)' : 'rgba(var(--danger-rgb),0.1)') +
       ';border:1px solid ' + (ok ? 'rgba(var(--accent-rgb),0.3)' : 'rgba(var(--danger-rgb),0.3)') +
       ';color:' + (ok ? 'var(--accent)' : 'var(--danger)') + ';';
@@ -14172,7 +14185,7 @@ async function renderSuppliersCard() {
     (rcvRes.data || []).forEach(r => { if (!_supplierLastUsed[r.supplier_id]) _supplierLastUsed[r.supplier_id] = r.received_at; });
     el.innerHTML = _supplierTableHtml();
   } catch (e) {
-    el.innerHTML = `<div style="color:var(--danger);font-size:12px;">Could not load suppliers: ${esc(e.message || 'unknown error')}</div>`;
+    el.innerHTML = `<div style="color:var(--danger);font-size:var(--fs-meta);">Could not load suppliers: ${esc(e.message || 'unknown error')}</div>`;
   }
 }
 
@@ -14184,37 +14197,37 @@ function _supplierTableHtml() {
   const incomplete = active.filter(s => !supplierIsComplete(s)).length;
   const rows = _supplierShowInactive ? _suppliers : active;
   if (!_suppliers.length) {
-    return `<div style="text-align:center;padding:28px 16px;color:var(--muted);font-size:12.5px;line-height:1.7;">
+    return `<div style="text-align:center;padding:28px 16px;color:var(--muted);font-size:var(--fs-body);line-height:1.7;">
       No suppliers yet. Add the distributors, manufacturers and farms you receive from, or import a spreadsheet.<br>
       Staff can also add a supplier by name from the scanner's Receiving mode; you complete the address here.</div>`;
   }
-  const tag = (text, color, bg) => `<span style="font-family:'DM Mono',monospace;font-size:9.5px;letter-spacing:0.06em;text-transform:uppercase;padding:2px 6px;border-radius:4px;background:${bg};color:${color};">${text}</span>`;
+  const tag = (text, color, bg) => `<span style="font-family:'DM Mono',monospace;font-size:var(--fs-label);letter-spacing:0.06em;text-transform:uppercase;padding:2px 6px;border-radius:var(--r-xs);background:${bg};color:${color};">${text}</span>`;
   const tags = s => [
     s.is_exempt_entity ? tag('Exempt source', 'var(--info)', 'rgba(var(--info-rgb),0.12)') : '',
     !s.active && s.seeded_from ? tag('Suggested', 'var(--muted)', 'var(--surface2)') : '',
     !s.active && !s.seeded_from ? tag('Inactive', 'var(--muted)', 'var(--surface2)') : '',
   ].filter(Boolean).join(' ');
   const dot = s => `<span title="${esc(_SUPPLIER_COMPLETE_TIP)}" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${supplierIsComplete(s) ? 'var(--accent)' : 'var(--warn)'};"></span>`;
-  const missing = '<span style="color:var(--warn);font-size:11px;">Missing</span>';
+  const missing = '<span style="color:var(--warn);font-size:var(--fs-eyebrow);">Missing</span>';
   const lastUsed = s => _supplierLastUsed[s.id]
     ? esc(new Date(_supplierLastUsed[s.id]).toLocaleDateString(_dashLocale(), { year: 'numeric', month: 'short', day: 'numeric' }))
     : '<span style="color:var(--muted);">Never</span>';
   const summary = `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
-    <div style="font-size:12px;color:var(--muted);">
+    <div style="font-size:var(--fs-meta);color:var(--muted);">
       <strong style="color:var(--text);">${active.length}</strong> active${incomplete
         ? ` · <span style="color:var(--warn);" title="${esc(_SUPPLIER_COMPLETE_TIP)}">${incomplete} still need${incomplete === 1 ? 's' : ''} a full address</span>`
         : ' · all addresses complete'}${inactive.length ? ` · ${inactive.length} inactive${suggested ? ` (${suggested} suggested from your focus categories; activate the ones you buy from)` : ''}` : ''}
     </div>
-    ${inactive.length ? `<label style="display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);cursor:pointer;"><input type="checkbox" ${_supplierShowInactive ? 'checked' : ''} onchange="_supplierShowInactive=this.checked;_supplierToggleTouched=true;document.getElementById('suppliers-body').innerHTML=_supplierTableHtml();"> Show inactive</label>` : ''}
+    ${inactive.length ? `<label style="display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-eyebrow);color:var(--muted);cursor:pointer;"><input type="checkbox" ${_supplierShowInactive ? 'checked' : ''} onchange="_supplierShowInactive=this.checked;_supplierToggleTouched=true;document.getElementById('suppliers-body').innerHTML=_supplierTableHtml();"> Show inactive</label>` : ''}
   </div>`;
   const body = rows.map(s => `<tr style="${s.active ? '' : 'opacity:0.6;'}">
     <td style="width:26px;text-align:center;">${dot(s)}</td>
     <td style="white-space:normal;"><div style="font-weight:600;">${esc(s.name)}</div>
-      <div style="font-size:10.5px;color:var(--muted);margin-top:2px;">${esc(_SUPPLIER_TYPES[s.supplier_type] || s.supplier_type || '')}${s.gln ? ' · GLN ' + esc(s.gln) : ''} ${tags(s)}</div></td>
-    <td style="font-family:'DM Mono',monospace;font-size:11px;">${s.phone ? esc(s.phone) : missing}</td>
-    <td style="white-space:normal;font-size:11.5px;line-height:1.5;">${supplierAddressLine(s) ? esc(supplierAddressLine(s)) : missing}${s.country && s.country !== 'US' ? ' <span style="color:var(--muted);">(' + esc(s.country) + ')</span>' : ''}</td>
-    <td style="white-space:normal;font-size:11px;color:var(--muted);">${(s.category_hints || []).map(k => esc(_SUPPLIER_CATEGORIES[k] || k)).join(', ')}</td>
-    <td style="font-family:'DM Mono',monospace;font-size:10.5px;color:var(--muted);">${lastUsed(s)}</td>
+      <div style="font-size:var(--fs-label);color:var(--muted);margin-top:2px;">${esc(_SUPPLIER_TYPES[s.supplier_type] || s.supplier_type || '')}${s.gln ? ' · GLN ' + esc(s.gln) : ''} ${tags(s)}</div></td>
+    <td style="font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);">${s.phone ? esc(s.phone) : missing}</td>
+    <td style="white-space:normal;font-size:var(--fs-eyebrow);line-height:1.5;">${supplierAddressLine(s) ? esc(supplierAddressLine(s)) : missing}${s.country && s.country !== 'US' ? ' <span style="color:var(--muted);">(' + esc(s.country) + ')</span>' : ''}</td>
+    <td style="white-space:normal;font-size:var(--fs-eyebrow);color:var(--muted);">${(s.category_hints || []).map(k => esc(_SUPPLIER_CATEGORIES[k] || k)).join(', ')}</td>
+    <td style="font-family:'DM Mono',monospace;font-size:var(--fs-label);color:var(--muted);">${lastUsed(s)}</td>
     <td style="text-align:right;white-space:normal;">${canEdit ? `<div style="display:inline-flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;">
       <button class="btn-ghost" style="padding:5px 10px;" onclick="supplierOpenForm('${s.id}')">Edit</button>
       <button class="btn-ghost" style="padding:5px 10px;" onclick="supplierSetActive('${s.id}', ${s.active ? 'false' : 'true'})">${s.active ? 'Deactivate' : 'Activate'}</button>
@@ -14224,11 +14237,11 @@ function _supplierTableHtml() {
   return summary + `<div style="overflow-x:auto;"><table class="store-table" style="width:100%;table-layout:auto;">
     <thead><tr><th></th><th>Supplier</th><th>Phone</th><th>Address</th><th>Typically ships</th><th>Last used</th><th></th></tr></thead>
     <tbody>${body}</tbody></table></div>
-    <div style="font-size:10.5px;color:var(--muted);margin-top:10px;line-height:1.6;">Green: name, phone, street, city, state and ZIP are all present. Amber: something is still missing. Deactivated suppliers stay on past receiving records but disappear from the scanner's picker.</div>`;
+    <div style="font-size:var(--fs-label);color:var(--muted);margin-top:10px;line-height:1.6;">Green: name, phone, street, city, state and ZIP are all present. Amber: something is still missing. Deactivated suppliers stay on past receiving records but disappear from the scanner's picker.</div>`;
 }
 
 function _supHintBtn(key, label, on) {
-  return `<button type="button" data-key="${key}" data-on="${on ? '1' : '0'}" onclick="_supHintToggle(this)" style="font-family:'DM Mono',monospace;font-size:10.5px;padding:5px 10px;border-radius:999px;cursor:pointer;border:1.5px solid ${on ? 'var(--accent)' : 'var(--border)'};background:${on ? 'rgba(var(--accent-rgb),0.1)' : 'var(--surface2)'};color:${on ? 'var(--accent)' : 'var(--muted)'};">${label}</button>`;
+  return `<button type="button" data-key="${key}" data-on="${on ? '1' : '0'}" onclick="_supHintToggle(this)" style="font-family:'DM Mono',monospace;font-size:var(--fs-label);padding:5px 10px;border-radius:var(--r-pill);cursor:pointer;border:1.5px solid ${on ? 'var(--accent)' : 'var(--border)'};background:${on ? 'rgba(var(--accent-rgb),0.1)' : 'var(--surface2)'};color:${on ? 'var(--accent)' : 'var(--muted)'};">${label}</button>`;
 }
 function _supHintToggle(btn) {
   const on = btn.dataset.on !== '1';
@@ -14250,16 +14263,16 @@ function supplierOpenForm(id) {
   const inp = (fid, val, ph, extra) => `<input id="${fid}" type="text" value="${esc(val || '')}" placeholder="${esc(ph || '')}" ${extra || ''} />`;
   const hints = new Set(s?.category_hints || []);
   m.innerHTML = `
-    <div style="background:var(--surface);border:1px solid var(--border);border-radius:20px;width:100%;max-width:640px;max-height:92vh;overflow:hidden;display:flex;flex-direction:column;">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-2xl);width:100%;max-width:640px;max-height:92vh;overflow:hidden;display:flex;flex-direction:column;">
       <div style="padding:20px 24px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-shrink:0;">
         <div>
-          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:15px;color:var(--text);">${s ? 'Edit supplier' : 'Add supplier'}</div>
-          <div style="font-size:12px;color:var(--muted);margin-top:3px;">${esc(_SUPPLIER_COMPLETE_TIP)}</div>
+          <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:var(--fs-body-lg);color:var(--text);">${s ? 'Edit supplier' : 'Add supplier'}</div>
+          <div style="font-size:var(--fs-meta);color:var(--muted);margin-top:3px;">${esc(_SUPPLIER_COMPLETE_TIP)}</div>
         </div>
         <button onclick="document.getElementById('supplier-modal').remove()" aria-label="Close" style="background:none;border:none;color:var(--muted);cursor:pointer;padding:4px;display:inline-flex;flex-shrink:0;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
       </div>
       <div style="flex:1;overflow-y:auto;padding:20px 24px;display:flex;flex-direction:column;gap:14px;">
-        <div id="supplier-form-msg" style="display:none;font-size:11px;padding:9px 12px;border-radius:6px;background:rgba(var(--danger-rgb),0.1);border:1px solid rgba(var(--danger-rgb),0.3);color:var(--danger);"></div>
+        <div id="supplier-form-msg" style="display:none;font-size:var(--fs-eyebrow);padding:9px 12px;border-radius:var(--r-xs);background:rgba(var(--danger-rgb),0.1);border:1px solid rgba(var(--danger-rgb),0.3);color:var(--danger);"></div>
         <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;">
           ${field('Supplier name', inp('sup-name', s?.name, 'Legal or trading name', 'maxlength="160"'))}
           ${field('Type', `<select id="sup-type">${Object.entries(_SUPPLIER_TYPES).map(([k, v]) => `<option value="${k}" ${(s?.supplier_type || 'distributor') === k ? 'selected' : ''}>${v}</option>`).join('')}</select>`)}
@@ -14277,15 +14290,15 @@ function supplierOpenForm(id) {
         <datalist id="sup-state-list">${Object.entries(_US_STATES).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</datalist>
         <div style="max-width:140px;">${field('Country', inp('sup-country', s?.country || 'US', 'US', 'maxlength="2" style="text-transform:uppercase;"'))}</div>
         <div>
-          <label style="display:block;font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">Typically ships (optional)</label>
+          <label style="display:block;font-family:'DM Mono',monospace;font-size:var(--fs-label);text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">Typically ships (optional)</label>
           <div style="display:flex;flex-wrap:wrap;gap:6px;" id="sup-hints">${Object.entries(_SUPPLIER_CATEGORIES).map(([k, v]) => _supHintBtn(k, v, hints.has(k))).join('')}</div>
-          <div style="font-size:10.5px;color:var(--muted);margin-top:6px;line-height:1.55;">Food Traceability List categories this supplier usually delivers. Informational for now; later phases use it to pre-fill the FTL flag on receipts.</div>
+          <div style="font-size:var(--fs-label);color:var(--muted);margin-top:6px;line-height:1.55;">Food Traceability List categories this supplier usually delivers. Informational for now; later phases use it to pre-fill the FTL flag on receipts.</div>
         </div>
-        <label style="display:flex;align-items:flex-start;gap:10px;font-size:12px;color:var(--text);cursor:pointer;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;">
+        <label style="display:flex;align-items:flex-start;gap:10px;font-size:var(--fs-meta);color:var(--text);cursor:pointer;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-sm);">
           <input type="checkbox" id="sup-exempt" ${s?.is_exempt_entity ? 'checked' : ''} style="margin-top:2px;">
-          <span><strong>Exempt source</strong><br><span style="color:var(--muted);font-size:11px;line-height:1.55;">This supplier is exempt from FSMA 204 (for example a qualifying small farm, ${esc(_CITATIONS.us.exemptions)}). Receipts from it do not need a traceability lot code, but you still record its name and location.</span></span>
+          <span><strong>Exempt source</strong><br><span style="color:var(--muted);font-size:var(--fs-eyebrow);line-height:1.55;">This supplier is exempt from FSMA 204 (for example a qualifying small farm, ${esc(_CITATIONS.us.exemptions)}). Receipts from it do not need a traceability lot code, but you still record its name and location.</span></span>
         </label>
-        ${s ? `<label style="display:flex;align-items:center;gap:10px;font-size:12px;color:var(--text);cursor:pointer;"><input type="checkbox" id="sup-active" ${s.active ? 'checked' : ''}> Active (shown in the scanner's supplier picker)</label>` : ''}
+        ${s ? `<label style="display:flex;align-items:center;gap:10px;font-size:var(--fs-meta);color:var(--text);cursor:pointer;"><input type="checkbox" id="sup-active" ${s.active ? 'checked' : ''}> Active (shown in the scanner's supplier picker)</label>` : ''}
       </div>
       <div style="padding:14px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;flex-shrink:0;">
         <button class="btn-ghost" onclick="document.getElementById('supplier-modal').remove()">Cancel</button>
@@ -14450,18 +14463,18 @@ async function renderFtlOverridesCard() {
   const el = document.getElementById('ftl-overrides-body'); if (!el || !_orgId) return;
   const { data, error } = await sb.from('ftl_overrides').select('id, gtin, product_name_normalized, is_ftl, ftl_category, set_by, created_at')
     .eq('organisation_id', _orgId).order('created_at', { ascending: false }).limit(300);
-  if (error) { el.innerHTML = `<div style="font-size:12px;color:var(--warn);line-height:1.6;">${esc(_dbMissingHint(error, 'ftl_overrides', '025') || 'Could not load: ' + error.message)}</div>`; return; }
+  if (error) { el.innerHTML = `<div style="font-size:var(--fs-meta);color:var(--warn);line-height:1.6;">${esc(_dbMissingHint(error, 'ftl_overrides', '025') || 'Could not load: ' + error.message)}</div>`; return; }
   const rows = data || [];
-  if (!rows.length) { el.innerHTML = `<div style="font-size:12px;color:var(--muted);line-height:1.6;">No decisions yet. When a manager taps "Not a listed food" or "Listed food? Yes" in the scanner, the decision lands here and applies to the whole organization.</div>`; return; }
+  if (!rows.length) { el.innerHTML = `<div style="font-size:var(--fs-meta);color:var(--muted);line-height:1.6;">No decisions yet. When a manager taps "Not a listed food" or "Listed food? Yes" in the scanner, the decision lands here and applies to the whole organization.</div>`; return; }
   const isAdmin = _userRole === 'corp_admin';
   el.innerHTML = `<div style="overflow-x:auto;"><table class="store-table" style="width:100%;table-layout:auto;">
     <thead><tr><th>Product</th><th>Listed</th><th>Category</th><th>Set by</th><th>When</th><th></th></tr></thead>
     <tbody>${rows.map(r => `<tr>
-      <td style="white-space:normal;">${r.gtin ? `<span style="font-family:'DM Mono',monospace;font-size:11px;">GTIN ${esc(r.gtin)}</span>` : esc(r.product_name_normalized || '')}</td>
+      <td style="white-space:normal;">${r.gtin ? `<span style="font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);">GTIN ${esc(r.gtin)}</span>` : esc(r.product_name_normalized || '')}</td>
       <td>${r.is_ftl ? '<span style="color:var(--accent);font-weight:600;">Yes</span>' : '<span style="color:var(--muted);">No</span>'}</td>
-      <td style="font-size:11px;">${esc(_SUPPLIER_CATEGORIES[r.ftl_category] || r.ftl_category || '')}</td>
-      <td style="font-size:11px;color:var(--muted);">${esc(String(r.set_by || '').split('@')[0])}</td>
-      <td style="font-family:'DM Mono',monospace;font-size:10.5px;color:var(--muted);">${esc(fmtDash(r.created_at))}</td>
+      <td style="font-size:var(--fs-eyebrow);">${esc(_SUPPLIER_CATEGORIES[r.ftl_category] || r.ftl_category || '')}</td>
+      <td style="font-size:var(--fs-eyebrow);color:var(--muted);">${esc(String(r.set_by || '').split('@')[0])}</td>
+      <td style="font-family:'DM Mono',monospace;font-size:var(--fs-label);color:var(--muted);">${esc(fmtDash(r.created_at))}</td>
       <td style="text-align:right;">${isAdmin ? `<button class="btn-ghost" style="padding:5px 10px;" onclick="ftlOverrideDelete('${r.id}')">Delete</button>` : ''}</td>
     </tr>`).join('')}</tbody></table></div>`;
 }
