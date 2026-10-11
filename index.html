@@ -6339,7 +6339,43 @@ function openTerminologyOverlay(regionOverride) {
       "The act of a staff member placing a product onto a store shelf — the trigger for creating a traceability record in Batch'd.",
       'Hver post fanger: produktnavn, partinummer, utløpsdato, butikk, hylle, antall enheter, ansattnavn og tidsstempel.',
       'Each record captures: product name, lot code, expiry, store, shelf, units, staff member name, and timestamp.',
-      r('Matloven §14', 'FSMA 204 CTE: Receiving'))}
+      r('Matloven §14', 'Shelf record (not a FSMA 204 critical tracking event)'))}
+
+    ${showUS ? term(
+      // US-only (2026-09-29): NO branch intentionally identical.
+      'Receiving record (critical tracking event)', 'Receiving record (critical tracking event)',
+      'The record created when a delivery arrives: what was received, how much, from whom, where and when, with the reference document. For a retail store this is the FSMA 204 critical tracking event that matters.',
+      'The record created when a delivery arrives: what was received, how much, from whom, where and when, with the reference document. For a retail store this is the FSMA 204 critical tracking event that matters.',
+      'Recorded under Scan, Receiving: scan or photograph the case label, or type the lot, pick the supplier, enter the quantity and the PO or invoice number. Expected deliveries from a wholesaler file are confirmed the same way. Kept for two years.',
+      'Recorded under Scan, Receiving: scan or photograph the case label, or type the lot, pick the supplier, enter the quantity and the PO or invoice number. Expected deliveries from a wholesaler file are confirmed the same way. Kept for two years.',
+      `FSMA 204, ${_CITATIONS.us.receivingKde}`) : ''}
+
+    ${showUS ? term(
+      // US-only (2026-09-29): NO branch intentionally identical.
+      'Key data elements (KDEs)', 'Key data elements (KDEs)',
+      'The facts the rule requires on every receiving record: lot code, quantity and unit, product, where it came from (supplier name, phone and address), where it was received, the date, and the reference document type and number.',
+      'The facts the rule requires on every receiving record: lot code, quantity and unit, product, where it came from (supplier name, phone and address), where it was received, the date, and the reference document type and number.',
+      'Four of them are checked on every delivery: supplier address complete, lot code or exempt source, quantity and unit, reference document. The manager FSMA tab shows how many deliveries pass.',
+      'Four of them are checked on every delivery: supplier address complete, lot code or exempt source, quantity and unit, reference document. The manager FSMA tab shows how many deliveries pass.',
+      _CITATIONS.us.receivingKde) : ''}
+
+    ${showUS ? term(
+      // US-only (2026-09-29): NO branch intentionally identical.
+      'Immediate previous source', 'Immediate previous source',
+      'The business that shipped the food to you: the supplier or distributor on the delivery. Pick it from the supplier list at receiving; if it is not there, add it by name and the corporate team completes the address later.',
+      'The business that shipped the food to you: the supplier or distributor on the delivery. Pick it from the supplier list at receiving; if it is not there, add it by name and the corporate team completes the address later.',
+      'A supplier marked "(address incomplete)" in the picker is missing phone, street, city, state or ZIP. A supplier marked "(exempt source)" does not have to provide a lot code.',
+      'A supplier marked "(address incomplete)" in the picker is missing phone, street, city, state or ZIP. A supplier marked "(exempt source)" does not have to provide a lot code.',
+      _CITATIONS.us.receivingKde) : ''}
+
+    ${showUS ? term(
+      // US-only (2026-09-29): NO branch intentionally identical.
+      'Expected delivery', 'Expected delivery',
+      'A line from your wholesaler\'s delivery file, imported by the corporate team. In Receiving mode the chip at the top says how many are expected; typing or scanning a matching lot fills the form and asks you to confirm the delivery.',
+      'A line from your wholesaler\'s delivery file, imported by the corporate team. In Receiving mode the chip at the top says how many are expected; typing or scanning a matching lot fills the form and asks you to confirm the delivery.',
+      'Confirming records the real time, your name and the quantity that actually arrived. If the quantity differs, say so; the note is kept on the record. Confirming needs a connection.',
+      'Confirming records the real time, your name and the quantity that actually arrived. If the quantity differs, say so; the note is kept on the record. Confirming needs a connection.',
+      '') : ''}
 
     ${term('GS1-128 / Applikasjonsidentifikator', 'GS1-128 / Application Identifier',
       'Standardisert strekkodeformat som koder inn flere dataelementer i én strekkode: partinummer (AI 10), utløpsdato (AI 17), produksjonsdato (AI 11), mengde (AI 37).',
@@ -12563,9 +12599,21 @@ async function buildShiftSummary() {
     const { data: scans, error } = await query;
     if (error) throw error;
 
-    // Fetch active recalls for cross-check
-    const { data: recalls } = await sb.from('recalls').select('product_name, lot_number, batch_number, barcode_number').eq('active', true).eq('organisation_id', _currentOrgId);
-    const activeRecalls = recalls || [];
+    // Fetch active recalls for cross-check. Both sources (CLAUDE.md rule, 2026-10-09):
+    // the recalls table (manual and feed) and pushed recall_events via distributions.
+    const [recallsRes, distRes, rcvRes] = await Promise.all([
+      sb.from('recalls').select('product_name, lot_number, batch_number, barcode_number').eq('active', true).eq('organisation_id', _currentOrgId),
+      sb.from('recall_distributions').select('recall_events!inner(product_name, lot_number, barcode, is_drill)').eq('retailer_org_id', _currentOrgId).eq('recall_events.is_drill', false),
+      // Deliveries this person recorded today (US orgs; tolerant of a missing table).
+      _userRegion === 'us'
+        ? sb.from('receiving_events').select('id, product_name, traceability_lot_code, quantity, unit_of_measure, received_at, supplier_name_snapshot').eq('organisation_id', _currentOrgId).eq('status', 'received').eq('received_by', currentUser?.email || '').gte('received_at', todayStart).order('received_at', { ascending: false })
+        : Promise.resolve({ data: [] }),
+    ]);
+    const activeRecalls = [
+      ...(recallsRes.data || []),
+      ...((distRes && distRes.data) || []).map(dd => ({ product_name: dd.recall_events?.product_name, lot_number: dd.recall_events?.lot_number, barcode_number: dd.recall_events?.barcode })),
+    ];
+    const todayDeliveries = (rcvRes && !rcvRes.error && rcvRes.data) || [];
 
     // Compute stats
     const total = scans?.length || 0;
@@ -12607,6 +12655,7 @@ async function buildShiftSummary() {
     let html = `
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         ${statBox('Scans', total, 'var(--accent)')}
+        ${_userRegion === 'us' ? statBox('Deliveries', todayDeliveries.length, todayDeliveries.length > 0 ? 'var(--info)' : 'var(--muted)') : ''}
         ${statBox('Products', uniqueProducts, 'var(--accent)')}
         ${statBox('Recall Hits', recallMatches.length > 0 ? recallMatches.length + ' match' + (recallMatches.length > 1 ? 'es' : '') : '0', recallColor)}
       </div>`;
@@ -12631,6 +12680,16 @@ async function buildShiftSummary() {
       </div>`;
     }
 
+    if (todayDeliveries.length > 0) {
+      html += `<div>
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">Deliveries you recorded today</div>
+        ${todayDeliveries.slice(0, 5).map(r => `<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);">
+          <div style="font-size:13px;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">${esc(r.product_name || '')}<span style="color:var(--muted);font-size:11px;"> · ${esc(String(r.quantity ?? ''))} ${esc(r.unit_of_measure || '')}${r.supplier_name_snapshot ? ' · ' + esc(r.supplier_name_snapshot) : ''}</span></div>
+          <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);margin-left:10px;white-space:nowrap;">${esc(r.traceability_lot_code || 'no lot')}</div>
+        </div>`).join('')}
+      </div>`;
+    }
+
     if (recent.length > 0) {
       html += `<div>
         <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">Recent scans</div>
@@ -12641,7 +12700,7 @@ async function buildShiftSummary() {
       </div>`;
     }
 
-    if (total === 0) {
+    if (total === 0 && todayDeliveries.length === 0) {
       html = `<div style="text-align:center;padding:24px 0;color:var(--muted);font-size:13px;">${t("shift.noScans")}<br><span style="font-size:12px;">${t("shift.startScanning")}</span></div>`;
     }
 
@@ -12657,6 +12716,7 @@ async function buildShiftSummary() {
 // Cached data for print/export without re-fetching
 let _auditData = null;
 let _auditRecalls = null;
+let _auditDeliveries = [];   // 2026-10-09: receiving records in the period (US orgs)
 let _auditParams = {};
 
 function openAuditModal() {
@@ -12742,9 +12802,28 @@ async function generateAuditReport() {
     const { data, error } = await query;
     if (error) throw error;
 
-    const { data: recalls } = await sb.from('recalls').select('*').eq('active', true).eq('organisation_id', _currentOrgId);
+    // Both recall sources (CLAUDE.md rule, 2026-10-09): the recalls table plus pushed
+    // recall_events via distributions, mapped to the recalls shape the matcher reads.
+    // Deliveries in the same period (US orgs) ride along; tolerant of a missing table.
+    let rq = _userRegion === 'us'
+      ? sb.from('receiving_events').select('id, received_at, store_id, product_name, gtin, traceability_lot_code, tlc_source_type, quantity, unit_of_measure, supplier_name_snapshot, reference_document_type, reference_document_number, received_by, source, stores(name)').eq('organisation_id', _currentOrgId).eq('status', 'received').order('received_at', { ascending: true }).limit(2000)
+      : null;
+    if (rq && from) rq = rq.gte('received_at', from);
+    if (rq && to)   { const td2 = new Date(to); td2.setHours(23,59,59,999); rq = rq.lte('received_at', td2.toISOString()); }
+    if (rq && store) { const su = window._storeIdMap?.[store] || null; if (su) rq = rq.eq('store_id', su); }
+    const [recallsRes, distRes, rcvRes] = await Promise.all([
+      sb.from('recalls').select('*').eq('active', true).eq('organisation_id', _currentOrgId),
+      sb.from('recall_distributions').select('recall_events!inner(id, product_name, lot_number, barcode, severity, reason, is_drill)').eq('retailer_org_id', _currentOrgId).eq('recall_events.is_drill', false),
+      rq || Promise.resolve({ data: [] }),
+    ]);
     _auditData    = data || [];
-    _auditRecalls = recalls || [];
+    _auditRecalls = [
+      ...(recallsRes.data || []),
+      ...((distRes && distRes.data) || []).map(dd => ({ id: dd.recall_events?.id, product_name: dd.recall_events?.product_name, lot_number: dd.recall_events?.lot_number, barcode_number: dd.recall_events?.barcode, _pushed: true })),
+    ];
+    let dlv = (rcvRes && !rcvRes.error && rcvRes.data) || [];
+    if (store && !(window._storeIdMap?.[store])) dlv = dlv.filter(r => r.stores?.name === store);
+    _auditDeliveries = dlv;
     _auditParams  = { from, to, store };
 
     // ── Compute metrics ─────────────────────────────────────────
@@ -12836,6 +12915,7 @@ async function generateAuditReport() {
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;">
           ${[
             { label: t('audit.rpt.totalScans'),     value: totalScans,       color:'var(--accent)' },
+            ...(_userRegion === 'us' ? [{ label: 'Deliveries', value: _auditDeliveries.length, color: _auditDeliveries.length > 0 ? 'var(--info)' : 'var(--muted)' }] : []),
             { label: t('audit.rpt.uniqueProducts'), value: uniqueProducts,   color:'var(--accent)' },
             { label: t('audit.rpt.uniqueLots'),     value: uniqueLots,       color:'var(--accent)' },
             { label: t('audit.rpt.activeRecalls'),  value: activeRecallCount,color: activeRecallCount > 0 ? 'var(--warn)' : 'var(--accent)' },
@@ -12974,6 +13054,24 @@ async function generateAuditReport() {
           }).join('')}
         </div>`}
       </div>
+
+      ${_userRegion === 'us' ? `
+      <!-- Delivery records (2026-10-09): the FSMA 204 receiving records in the period -->
+      <div style="margin-bottom:18px;">
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;font-family:'DM Mono',monospace;">Delivery records (${_auditDeliveries.length}) · ${window._CITATIONS.us.receivingKde}</div>
+        ${_auditDeliveries.length === 0 ? `<div style="font-size:12px;color:var(--muted);padding:12px 0;">No deliveries recorded in this period. Staff record them under Scan, Receiving.</div>` : `
+        <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+          <div style="display:grid;grid-template-columns:90px 1fr 70px 70px;background:var(--surface2);padding:7px 10px;font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);font-family:'DM Mono',monospace;">
+            <span>Received</span><span>Product · lot · supplier</span><span>Store</span><span style="text-align:right;">Qty</span>
+          </div>
+          ${_auditDeliveries.map((r, i) => `<div style="display:grid;grid-template-columns:90px 1fr 70px 70px;gap:0;padding:6px 10px;${i % 2 === 0 ? '' : 'background:var(--surface2);'}${i < _auditDeliveries.length - 1 ? 'border-bottom:1px solid var(--border);' : ''}">
+              <span style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${fmtAuditDate(r.received_at)}</span>
+              <span style="font-size:10px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:8px;">${esc((r.product_name || '').slice(0, 28))} · <span style="font-family:'DM Mono',monospace;color:${r.traceability_lot_code ? 'var(--muted)' : 'var(--danger)'};">${esc(r.traceability_lot_code || (r.tlc_source_type === 'not_required_exempt_source' ? 'exempt' : 'no lot'))}</span>${r.supplier_name_snapshot ? ' · ' + esc(r.supplier_name_snapshot) : ''}${r.reference_document_number ? ' · ' + esc(_rcvDocLabel(r)) : ''}</span>
+              <span style="font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc((r.stores?.name || '').slice(0, 12))}</span>
+              <span style="text-align:right;font-size:10px;color:var(--text);">${esc(String(r.quantity ?? ''))} ${esc(r.unit_of_measure || '')}</span>
+            </div>`).join('')}
+        </div>`}
+      </div>` : ''}
 
       <!-- Signature block -->
       <div style="border-top:1px solid var(--border);padding-top:18px;margin-top:4px;">
@@ -13249,10 +13347,11 @@ function populateFsmaExportStores() {
 }
 
 function auditExportCSV() {
-  if (!_auditData || !_auditData.length) {
-    showToast('No data to export — generate a report first.', 'warn', 3500); return;
+  if ((!_auditData || !_auditData.length) && !(_auditDeliveries && _auditDeliveries.length)) {
+    showToast('No data to export. Generate a report first.', 'warn', 3500); return;
   }
-  const headers = ['Date Placed on Shelf','Product Name','Barcode','Lot Number','Batch Number','Store','Shelf Location','Quantity','Placed By','Notes','Recall Match','Resolved','Resolved By','Resolved At'];
+  // 2026-10-09: a leading Record Type column; delivery rows (US orgs) follow the scans.
+  const headers = ['Record Type','Date','Product Name','Barcode / GTIN','Lot Number','Batch Number','Store','Shelf Location','Quantity','Recorded By','Notes','Recall Match','Resolved','Resolved By','Resolved At','Supplier','Reference Document'];
   const recallSet = new Set((_auditRecalls||[]).flatMap(r => [r.lot_number, r.product_name].filter(Boolean).map(v => v.toLowerCase())));
   const rows = _auditData.map(r => {
     // Strict three-condition rule: exact lot OR exact barcode match only.
@@ -13266,6 +13365,7 @@ function auditExportCSV() {
              (recBarcode && sBarcode && recBarcode === sBarcode);
     });
     return [
+      'Shelf scan',
       fmtAuditDate(r.created_at),
       r.product_name||'', r.barcode_number||'', r.lot_number||'', r.batch_number||'',
       r.store_name||'', r.shelf_location||'', r.quantity||1,
@@ -13273,10 +13373,24 @@ function auditExportCSV() {
       isMatch ? 'YES' : 'NO',
       r.recall_resolved ? 'YES' : 'NO',
       r.recall_resolved_by||'',
-      r.recall_resolved_at ? fmtAuditDate(r.recall_resolved_at) : ''
+      r.recall_resolved_at ? fmtAuditDate(r.recall_resolved_at) : '',
+      r.supplier_name||'', r.reference_document||''
     ].map(v => `"${String(v).replace(/"/g,'""')}"`);
   });
-  const csv = [headers.map(h => `"${h}"`), ...rows].map(r => r.join(',')).join('\r\n');
+  const dlvRows = (_auditDeliveries || []).map(r => {
+    const lot = (r.traceability_lot_code || '').toLowerCase().trim();
+    const isMatch = !!lot && (_auditRecalls||[]).some(rec => (rec.lot_number || '').toLowerCase().trim() === lot);
+    return [
+      r.source === 'wholesaler_import' ? 'Delivery (file)' : 'Delivery',
+      fmtAuditDate(r.received_at),
+      r.product_name||'', r.gtin||'', r.traceability_lot_code || (r.tlc_source_type === 'not_required_exempt_source' ? 'Exempt source' : ''), '',
+      r.stores?.name||'', '', r.quantity != null ? `${r.quantity} ${r.unit_of_measure || ''}`.trim() : '',
+      r.received_by||'', '',
+      isMatch ? 'YES' : 'NO', '', '', '',
+      r.supplier_name_snapshot||'', _rcvDocLabel(r)
+    ].map(v => `"${String(v).replace(/"/g,'""')}"`);
+  });
+  const csv = [headers.map(h => `"${h}"`), ...rows, ...dlvRows].map(r => r.join(',')).join('\r\n');
   const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
   const a = document.createElement('a');
   const url = URL.createObjectURL(blob);

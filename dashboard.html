@@ -1654,7 +1654,8 @@ async function renderIntelligencePanel(containerId, productName, lotCode, opts =
       queries.push(Promise.resolve({ data: [] }));
     }
 
-    // 4. Active recalls matching this product or lot
+    // 4. Active recalls matching this product or lot. Both sources (CLAUDE.md rule,
+    //    2026-10-09): pushed recall_events plus the recalls table (manual and feed).
     queries.push(
       sb.from('recall_events').select('id, product_name, lot_number, severity, reason, is_drill, published_at, source_org_id')
         .eq('is_drill', false).order('published_at', { ascending: false }).limit(100)
@@ -1684,13 +1685,33 @@ async function renderIntelligencePanel(containerId, productName, lotCode, opts =
       queries.push(Promise.resolve({ data: [] }));
     }
 
-    const [scansRes, complaintsRes, shipmentsRes, recallsRes, invsRes] = await Promise.all(queries);
+    // 6. recalls table (manual and feed recalls live here, not in recall_events).
+    queries.push(
+      sb.from('recalls').select('id, product_name, lot_number, barcode_number, description, source, created_at')
+        .eq('organisation_id', _orgId).eq('active', true).limit(200)
+    );
+    // 7. Deliveries (receiving_events) for this lot or product, last 90 days. US orgs;
+    //    tolerant of a missing table.
+    if ((productName || lotCode) && _orgRegion === 'us') {
+      queries.push(
+        sb.from('receiving_events').select('id, product_name, traceability_lot_code, gtin, quantity, unit_of_measure, received_at, supplier_name_snapshot, status, stores(name)')
+          .eq('organisation_id', _orgId).eq('status', 'received').gte('received_at', since90).order('received_at', { ascending: false }).limit(300)
+      );
+    } else {
+      queries.push(Promise.resolve({ data: [] }));
+    }
+
+    const [scansRes, complaintsRes, shipmentsRes, recallsRes, invsRes, recallsTblRes, rcvRes] = await Promise.all(queries);
 
     const allScans      = scansRes.data      || [];
     const allComplaints = complaintsRes.data  || [];
     const allShipments  = shipmentsRes.data   || [];
-    const allRecalls    = recallsRes.data     || [];
+    const allRecalls    = [
+      ...(recallsRes.data || []),
+      ...((recallsTblRes && recallsTblRes.data) || []).map(r => ({ id: r.id, product_name: r.product_name, lot_number: r.lot_number, severity: null, reason: r.description, is_drill: false, published_at: r.created_at, _fromRecallsTable: true })),
+    ];
     const allInvs       = invsRes.data        || [];
+    const allDeliveries = (rcvRes && !rcvRes.error && rcvRes.data) || [];
 
     // Filter to matching records
     const matchedScans = allScans.filter(s =>
@@ -1701,6 +1722,10 @@ async function renderIntelligencePanel(containerId, productName, lotCode, opts =
     const matchedShipments = allShipments.filter(s =>
       lotCode && lotsMatch(s.lot_number, lotCode)
     );
+    const matchedDeliveries = allDeliveries.filter(r =>
+      (lotCode && lotsMatch(r.traceability_lot_code, lotCode)) ||
+      (productName && productNameMatch(r.product_name, productName))
+    );
 
     const matchedRecalls = allRecalls.filter(r =>
       (productName && productNameMatch(r.product_name, productName)) ||
@@ -1710,7 +1735,7 @@ async function renderIntelligencePanel(containerId, productName, lotCode, opts =
     // Check if this entity is the source of a recall already
     const isRecalled = matchedRecalls.length > 0;
 
-    const total = matchedScans.length + allComplaints.length + matchedShipments.length + matchedRecalls.length + allInvs.length;
+    const total = matchedScans.length + allComplaints.length + matchedShipments.length + matchedDeliveries.length + matchedRecalls.length + allInvs.length;
 
     if (total === 0 && !opts.alwaysShow) {
       el.innerHTML = `<div style="font-size:11px;color:var(--muted);padding:10px 0;font-style:italic;">No related records found in the last 90 days.</div>`;
@@ -1739,10 +1764,10 @@ const sevColor = s => s?.toLowerCase().includes('i') ? 'var(--danger)' : 'var(--
           ${[
             { label:'Scan records', val: matchedScans.length, color: matchedScans.length>0?'var(--accent)':'var(--muted)', icon:_ico('package',16), action: matchedScans.length>0?`showPanel('traceability')`:null },
             { label:'Complaints', val: allComplaints.length, color: allComplaints.length>0?'var(--warn)':'var(--muted)', icon:_ico('message-circle',16), action: allComplaints.length>0?`showPanel('triage')`:null },
-            { label:'Shipments', val: matchedShipments.length, color: matchedShipments.length>0?'var(--info)':'var(--muted)', icon:_ico('truck',16), action: null },
+            { label:'Deliveries', val: matchedDeliveries.length, color: matchedDeliveries.length>0?'var(--info)':'var(--muted)', icon:_ico('truck',16), action: matchedDeliveries.length>0?`showPanel('receiving')`:null },
             { label:'Active recalls', val: matchedRecalls.length, color: matchedRecalls.length>0?'var(--danger)':'var(--muted)', icon:_ico('alert-triangle',16), action: matchedRecalls.length>0?`showPanel('recalls')`:null },
           ].map((m,i) => `
-            <div ${m.action?`onclick="${m.action}" style="cursor:pointer;"`:''} style="padding:12px 14px;border-right:1px solid var(--glass-border);${m.action?'transition:background 0.15s;':''}${i===3?'border-right:none;':''}">
+            <div ${m.action?`onclick="${m.action}"`:''} style="${m.action?'cursor:pointer;transition:background 0.15s;':''}padding:12px 14px;border-right:1px solid var(--glass-border);${i===3?'border-right:none;':''}">
               <div style="font-size:18px;font-weight:700;color:${m.color};line-height:1;margin-bottom:3px;">${m.val}</div>
               <div style="font-size:10px;color:var(--muted);">${esc(m.label)}</div>
             </div>`).join('')}
@@ -1760,6 +1785,12 @@ const sevColor = s => s?.toLowerCase().includes('i') ? 'var(--danger)' : 'var(--
           <div style="font-size:11px;color:var(--muted);">
             <strong style="color:var(--text);">Scanned at:</strong> ${esc(storesSeen.slice(0,5).join(', '))}${storesSeen.length>5?` +${storesSeen.length-5} more`:''}
             <span style="color:var(--muted);"> · ${recent14.length} in last 14 days</span>
+          </div>` : ''}
+
+          ${matchedDeliveries.length > 0 ? `
+          <div style="font-size:11px;color:var(--muted);">
+            <strong style="color:var(--text);">Received:</strong>
+            ${matchedDeliveries.slice(0,3).map(r => `${esc(r.stores?.name||'store not set')} · ${esc(String(r.quantity ?? ''))} ${esc(r.unit_of_measure||'')} · ${fmtDate(r.received_at)}${r.supplier_name_snapshot ? ' · from ' + esc(r.supplier_name_snapshot) : ''}`).join('<br>')}${matchedDeliveries.length>3?`<br>+${matchedDeliveries.length-3} more`:''}
           </div>` : ''}
 
           ${matchedShipments.length > 0 ? `
@@ -2502,7 +2533,7 @@ async function traceLot() {
     // not worth it for the tracer where correctness > speed. Left as
     // client-side filter pending a more sophisticated server filter
     // (e.g. trigram similarity index in Postgres).
-    const [shipmentsRes, scansRes, recallsRes, acksRes, recallsTblRes] = await Promise.all([
+    const [shipmentsRes, scansRes, recallsRes, acksRes, recallsTblRes, rcvRes] = await Promise.all([
       sb.from('shipments').select('id,lot_number,quantity,unit,shipped_at,reference_document,stores(name,address),organisations!shipments_manufacturer_id_fkey(name),products(name)').eq('retailer_id', _orgId).limit(200),
       sb.from('scans').select('id,product_name,lot_number,store_name,scanned_by,created_at,tlc_source').eq('organisation_id', _orgId).order('created_at',{ascending:false}).limit(500),
       // recall_events is global by design (FDA + Mattilsynet feeds + pushed
@@ -2519,9 +2550,14 @@ async function traceLot() {
       // second query the tracer said "no active recall" for a lot under an
       // active manual recall (2026-09-09 audit fix).
       sb.from('recalls').select('id,product_name,lot_number,description,source,created_at').eq('organisation_id', _orgId).eq('active', true).limit(500),
+      // 2026-10-09: receiving records are the retailer's own "immediate previous
+      // source" evidence (21 CFR 1.1345). Shipments (manufacturer-era, nothing
+      // writes them) stay as a fallback for legacy rows. Tolerates a missing table.
+      sb.from('receiving_events').select('id,store_id,supplier_id,supplier_name_snapshot,product_name,gtin,traceability_lot_code,tlc_source_type,quantity,unit_of_measure,received_at,reference_document_type,reference_document_number,received_by,source,stores(name),suppliers(name,phone,city,region)').eq('organisation_id', _orgId).eq('status', 'received').order('received_at', { ascending: false }).limit(500),
     ]);
 
     const shipments = (shipmentsRes.data||[]).filter(s => lotsMatch(s.lot_number, lotCode));
+    const deliveries = ((rcvRes && !rcvRes.error && rcvRes.data) || []).filter(r => lotsMatch(r.traceability_lot_code, lotCode));
     const scans     = (scansRes.data||[]).filter(s => lotsMatch(s.lot_number, lotCode));
     const recallsTbl = (recallsTblRes.data||[])
       .filter(r => lotsMatch(r.lot_number, lotCode))
@@ -2534,8 +2570,16 @@ async function traceLot() {
 
     const storesSeen   = [...new Set(scans.map(s => s.store_name).filter(Boolean))];
     const storesShipped = [...new Set(shipments.map(s => s.stores?.name).filter(Boolean))];
-    const productName  = shipments[0]?.products?.name || scans[0]?.product_name || 'Unknown product';
+    const hasDeliveries = deliveries.length > 0;
+    const legacyShip    = !hasDeliveries && shipments.length > 0;
+    const storesReceived = [...new Set(deliveries.map(r => r.stores?.name).filter(Boolean))];
+    const suppliersSeen  = [...new Set(deliveries.map(r => r.supplier_name_snapshot || r.suppliers?.name).filter(Boolean))];
+    const unitsReceived  = deliveries.reduce((s, r) => s + (Number(r.quantity) || 0), 0);
+    const rcvUnit        = deliveries[0]?.unit_of_measure || 'units';
+    const refOf = _refDocLabel;
+    const productName  = deliveries[0]?.product_name || shipments[0]?.products?.name || scans[0]?.product_name || 'Unknown product';
     const mfrName      = shipments[0]?.organisations?.name || 'Unknown manufacturer';
+    const sourceName   = hasDeliveries ? (suppliersSeen.join(', ') || 'Supplier not recorded') : legacyShip ? mfrName : 'Supplier not recorded';
     const totalQty     = shipments.reduce((s,h) => s+(h.quantity||0), 0);
     const unit         = shipments[0]?.unit || 'units';
     const isRecalled   = recalls.length > 0;
@@ -2557,11 +2601,11 @@ const fmtDT        = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'num
       </div>`;
     };
 
-    if (shipments.length === 0 && scans.length === 0) {
+    if (deliveries.length === 0 && shipments.length === 0 && scans.length === 0) {
       el.innerHTML = `<div style="background:var(--surface);border:1px solid var(--glass-border);border-radius:12px;padding:28px;text-align:center;">
         <div style="font-size:28px;margin-bottom:12px;">${_ico('search',28)}</div>
         <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:6px;">No records found for lot "${esc(lotCode)}"</div>
-        <div style="font-size:12px;color:var(--muted);">Try a shorter prefix — fuzzy matching will find variants automatically.</div>
+        <div style="font-size:12px;color:var(--muted);">No delivery or shelf scan carries this lot. Try a shorter prefix; matching finds variants automatically.</div>
       </div>`;
       return;
     }
@@ -2571,7 +2615,7 @@ const fmtDT        = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'num
       ${isRecalled ? `<div style="background:rgba(var(--danger-rgb),0.08);border:1px solid rgba(var(--danger-rgb),0.3);border-radius:10px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:10px;">
         <div style="width:8px;height:8px;border-radius:50%;background:var(--danger);box-shadow:0 0 8px rgba(var(--danger-rgb),0.5);flex-shrink:0;"></div>
         <div style="flex:1;font-size:12px;color:var(--danger);">
-          <strong>ACTIVE RECALL</strong> — ${esc(recalls[0].product_name||'Product')} · ${esc(recalls[0].reason||'—')} · ${esc(recalls[0].severity||'—')}
+          <strong>ACTIVE RECALL</strong>: ${esc(recalls[0].product_name||'Product')}${recalls[0].reason ? ' · ' + esc(recalls[0].reason) : ''}${recalls[0].severity ? ' · ' + esc(recalls[0].severity) : ''}
         </div>
         <button onclick="showPanel('recalls')" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid rgba(var(--danger-rgb),0.3);background:none;color:var(--danger);cursor:pointer;font-family:inherit;">View recall →</button>
       </div>` : ''}
@@ -2583,16 +2627,21 @@ const fmtDT        = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'num
             <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;color:var(--text);">${esc(productName)}</div>
             <div style="font-size:11px;color:var(--muted);margin-top:2px;font-family:'DM Mono',monospace;">${esc(lotCode)}</div>
           </div>
-          ${isRecalled ? '<span style="font-size:10px;padding:3px 10px;border-radius:10px;background:rgba(var(--danger-rgb),0.12);color:var(--danger);font-weight:700;">⚠ RECALLED</span>' : '<span style="font-size:10px;padding:3px 10px;border-radius:10px;background:rgba(var(--accent-rgb),0.12);color:var(--accent);font-weight:600;">✓ No active recall</span>'}
+          ${isRecalled ? '<span style="font-size:10px;padding:3px 10px;border-radius:10px;background:rgba(var(--danger-rgb),0.12);color:var(--danger);font-weight:700;">RECALLED</span>' : '<span style="font-size:10px;padding:3px 10px;border-radius:10px;background:rgba(var(--accent-rgb),0.12);color:var(--accent);font-weight:600;">No active recall</span>'}
         </div>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;">
-          ${[
-            {l:'Manufacturer', v:mfrName},
-            {l:'Units shipped', v:totalQty?`${totalQty} ${unit}`:'Unknown'},
-            {l:'Stores shipped to', v:storesShipped.length||'—'},
-            {l:'Scan records', v:scans.length},
-            {l:'Stores scanned at', v:storesSeen.length||'—'},
-          ].map(k=>`<div style="background:var(--surface2);border-radius:8px;padding:10px 12px;"><div style="font-size:10px;color:var(--muted);margin-bottom:3px;">${k.l}</div><div style="font-size:13px;font-weight:600;color:var(--text);">${k.v}</div></div>`).join('')}
+          ${(legacyShip ? [
+            {l:'Manufacturer', v:esc(mfrName)},
+            {l:'Units shipped', v:totalQty?`${totalQty} ${esc(unit)}`:'Unknown'},
+            {l:'Stores shipped to', v:storesShipped.length||'0'},
+          ] : [
+            {l:'Supplier', v:esc(sourceName)},
+            {l:'Units received', v:hasDeliveries?`${unitsReceived} ${esc(rcvUnit)}`:'None recorded'},
+            {l:'Stores received at', v:storesReceived.length||'0'},
+          ]).concat([
+            {l:'Shelf scans', v:scans.length},
+            {l:'Stores scanned at', v:storesSeen.length||'0'},
+          ]).map(k=>`<div style="background:var(--surface2);border-radius:8px;padding:10px 12px;"><div style="font-size:10px;color:var(--muted);margin-bottom:3px;">${k.l}</div><div style="font-size:13px;font-weight:600;color:var(--text);">${k.v}</div></div>`).join('')}
         </div>
       </div>
 
@@ -2600,12 +2649,41 @@ const fmtDT        = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'num
       <div style="background:var(--surface);border:1px solid var(--glass-border);border-radius:12px;padding:18px 20px;margin-bottom:16px;">
         <div style="font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);margin-bottom:16px;">Supply chain trace</div>
         <div style="position:relative;">
-          ${chainNode(1, mfrName + ' — Manufacturer', shipments.length > 0 ? `${shipments.length} shipment${shipments.length!==1?'s':''} logged · ${totalQty} ${unit} total · First shipped ${fmtDate(shipments[shipments.length-1]?.shipped_at)}` : 'No shipment records on file — connect this manufacturer as a partner to receive shipment data', shipments.length?'ok':'muted', shipments.length?`Lot code: ${lotCode}`:null)}
-          ${chainNode(2, storesShipped.length > 0 ? storesShipped.join(', ') : 'Receiving stores', storesShipped.length > 0 ? shipments.map(s=>`${s.stores?.name||'?'} — ${s.quantity} ${s.unit||''} received ${fmtDate(s.shipped_at)}`).slice(0,4).join(' · ') : 'No store receipt records', storesShipped.length?'ok':'muted', storesShipped.length?`${storesShipped.length} store${storesShipped.length!==1?'s':''} received this lot`:null)}
-          ${chainNode(3, scans.length > 0 ? 'Scanned onto shelves' : 'Shelf placement', scans.length > 0 ? `${scans.length} scan${scans.length!==1?'s':''} by staff · ${storesSeen.map(esc).join(', ')}` : 'No scan records for this lot — staff may not have scanned it, or lot code may differ slightly', scans.length?'ok':'warn', scans.length?`Latest scan: ${fmtDT(scans[0]?.created_at)}`:null)}
-          ${chainNode(4, isRecalled ? 'Recall response' : 'Recall status', isRecalled ? (acks.length > 0 ? `${acks.filter(a=>a.status==='confirmed').length}/${acks.length} stores resolved · ${acks.reduce((s,a)=>s+(a.units_pulled||0),0)} units pulled` : 'Recall pushed — awaiting store acknowledgements') : 'No recall issued for this lot', isRecalled?(acks.every(a=>a.status==='confirmed')?'ok':'danger'):'ok', isRecalled?recalls[0].severity:null)}
+          ${hasDeliveries
+            ? chainNode(1, sourceName + ' (immediate previous source)', `${deliveries.length} deliver${deliveries.length!==1?'ies':'y'} recorded · ${unitsReceived} ${rcvUnit} total · First received ${fmtDate(deliveries[deliveries.length-1]?.received_at)}`, 'ok', `Lot code: ${lotCode}`)
+            : legacyShip
+              ? chainNode(1, mfrName + ' (manufacturer)', `${shipments.length} shipment${shipments.length!==1?'s':''} logged · ${totalQty} ${unit} total · First shipped ${fmtDate(shipments[shipments.length-1]?.shipped_at)}`, 'ok', `Lot code: ${lotCode}`)
+              : chainNode(1, 'Supplier', `No receiving record carries this lot. Staff record deliveries in the scanner under Scan, Receiving (${_CITATIONS.us.receivingKde}).`, 'muted', null)}
+          ${hasDeliveries
+            ? chainNode(2, storesReceived.length > 0 ? storesReceived.join(', ') : 'Received (store not set)', deliveries.slice(0,4).map(r=>`${r.stores?.name||'store not set'}: ${r.quantity} ${r.unit_of_measure||''} received ${fmtDate(r.received_at)}${refOf(r)?' ('+refOf(r)+')':''}`).join(' · '), 'ok', `${storesReceived.length} store${storesReceived.length!==1?'s':''} received this lot`)
+            : legacyShip
+              ? chainNode(2, storesShipped.length > 0 ? storesShipped.join(', ') : 'Receiving stores', storesShipped.length > 0 ? shipments.map(s=>`${s.stores?.name||'?'}: ${s.quantity} ${s.unit||''} received ${fmtDate(s.shipped_at)}`).slice(0,4).join(' · ') : 'No store receipt records', storesShipped.length?'ok':'muted', storesShipped.length?`${storesShipped.length} store${storesShipped.length!==1?'s':''} received this lot`:null)
+              : chainNode(2, 'Receiving', 'No delivery recorded for this lot', 'muted', null)}
+          ${chainNode(3, scans.length > 0 ? 'Scanned onto shelves' : 'Shelf placement', scans.length > 0 ? `${scans.length} scan${scans.length!==1?'s':''} by staff · ${storesSeen.join(', ')}` : (hasDeliveries ? 'Received but not yet scanned onto a shelf' : 'No scan records for this lot: staff may not have scanned it, or the lot code may differ slightly'), scans.length?'ok':'warn', scans.length?`Latest scan: ${fmtDT(scans[0]?.created_at)}`:(hasDeliveries && isRecalled ? 'Hold the received stock' : null))}
+          ${chainNode(4, isRecalled ? 'Recall response' : 'Recall status', isRecalled ? (acks.length > 0 ? `${acks.filter(a=>a.status==='confirmed').length}/${acks.length} stores resolved · ${acks.reduce((s,a)=>s+(a.units_pulled||0),0)} units pulled` : 'Recall pushed, awaiting store acknowledgements') : 'No recall issued for this lot', isRecalled?(acks.every(a=>a.status==='confirmed')?'ok':'danger'):'ok', isRecalled?recalls[0].severity:null)}
         </div>
       </div>
+
+      <!-- Delivery records (2026-10-09) -->
+      ${deliveries.length > 0 ? `
+      <div class="panel" style="margin-bottom:16px;">
+        <div class="panel-header"><div class="panel-title">Delivery records (${deliveries.length})</div></div>
+        <div class="panel-body" style="padding:0;">
+          <table class="store-table" style="width:100%;">
+            <thead><tr><th>Store</th><th>Supplier</th><th>Received</th><th>Qty</th><th>Reference</th><th>Received by</th></tr></thead>
+            <tbody>
+              ${deliveries.slice(0,20).map(r=>`<tr>
+                <td>${esc(r.stores?.name||'')}</td>
+                <td style="color:var(--muted);">${esc(r.supplier_name_snapshot||r.suppliers?.name||'Not recorded')}</td>
+                <td style="font-family:'DM Mono',monospace;font-size:10px;">${fmtDT(r.received_at)}</td>
+                <td style="font-size:11px;">${esc(String(r.quantity ?? ''))} ${esc(r.unit_of_measure||'')}</td>
+                <td style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${esc(refOf(r))}</td>
+                <td style="font-size:10px;color:var(--muted);">${esc(String(r.received_by||'').split('@')[0])}${r.source==='wholesaler_import'?' · file':''}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>` : ''}
 
       <!-- Scan detail table -->
       ${scans.length > 0 ? `
@@ -3067,7 +3145,7 @@ async function _renderOverviewLegacy() {
 
     const [
       storesRes, scansRes, partnersRes, shipmentsRes, acksRes, distRes, srmRes, onShelfRes,
-      ownRecallsRes, scans90Res, drillsRecentRes, recentComplaintsRes, rcvLinkRes, rcv90Res,
+      ownRecallsRes, scans90Res, drillsRecentRes, recentComplaintsRes, rcvLinkRes, rcv90Res, rcvLotsRes,
     ] = await Promise.all([
       sb.from('stores').select('id, name, active').eq('organisation_id', _orgId),
       sb.from('scans').select('id, created_at, store_name, store_id, product_name, lot_number, barcode_number, removed_from_shelf_at, scanned_by, recall_resolved').eq('organisation_id', _orgId).gte('created_at', days30).order('created_at', {ascending:false}).limit(500),
@@ -3108,6 +3186,9 @@ async function _renderOverviewLegacy() {
       // error and empty data, and the score falls to 0 instead of throwing.
       sb.from('scans').select('id, is_ftl, ftl_category, receiving_event_id').eq('organisation_id', _orgId).gte('created_at', days90Iso).is('removed_from_shelf_at', null).limit(5000),
       sb.from('receiving_events').select('id', { count: 'exact', head: true }).eq('organisation_id', _orgId).gte('received_at', days90Iso),
+      // 2026-10-09: received lots for recall exposure (replaces the manufacturer-era
+      // shipments match). Tolerant of a missing table.
+      sb.from('receiving_events').select('traceability_lot_code, store_id, product_name, received_at').eq('organisation_id', _orgId).eq('status', 'received').order('received_at', { ascending: false }).limit(5000),
     ]);
 
     const stores    = storesRes.data    || [];
@@ -3215,7 +3296,8 @@ async function _renderOverviewLegacy() {
     });
 
     // ── Pushed recall events split: actionable (on-shelf match) vs awaiting acknowledgement ──
-    const myLotNumbers = new Set(shipments.map(s => s.lot_number).filter(Boolean));
+    const deliveriesAll = (rcvLotsRes && !rcvLotsRes.error && rcvLotsRes.data) || [];
+    const myLotNumbers = new Set([...shipments.map(s => s.lot_number), ...deliveriesAll.map(r => r.traceability_lot_code)].filter(Boolean));
     const activeRecallEvents = recallEvents.filter(e => !e.is_drill);
     const _eventHasOnShelfMatch = (e) => {
       const eLot = (e.lot_number||'').toLowerCase().trim();
@@ -3230,7 +3312,9 @@ async function _renderOverviewLegacy() {
     const actionableRecalls  = activeRecallEvents.filter(_eventHasOnShelfMatch);
     // pendingAckRecalls = pushed events without an on-shelf match — still need acknowledgement
     const pendingAckRecalls  = activeRecallEvents.filter(e => !_eventHasOnShelfMatch(e));
-    const exposedShipments   = shipments.filter(s => s.lot_number && relevantRecalls.some(r => lotsMatch(r.lot_number, s.lot_number)));
+    // Lots we received (deliveries, plus legacy shipments) that match a relevant recall.
+    const exposedDeliveries  = deliveriesAll.filter(r => r.traceability_lot_code && relevantRecalls.some(rc => lotsMatch(rc.lot_number, r.traceability_lot_code)));
+    const exposedShipments   = [...shipments.filter(s => s.lot_number && relevantRecalls.some(r => lotsMatch(r.lot_number, s.lot_number))), ...exposedDeliveries];
 
     // ── Acknowledgement analysis ──────────────────────────────
     // Per CLAUDE.md, mock drills never count toward active recall numbers.
@@ -3460,7 +3544,7 @@ el.innerHTML = `
         ${unitsOnShelf > 0
           ? `<strong>${unitsOnShelf} unit${unitsOnShelf>1?'s':''} of recalled product may still be on shelf</strong> across ${storesExposed} store${storesExposed!==1?'s':''} — immediate action required.`
           : exposedShipments.length > 0
-            ? `<strong>${exposedShipments.length} recalled lot${exposedShipments.length>1?'s':''} match products in your shipment records</strong> — verify these are off shelf.`
+            ? `<strong>${exposedShipments.length} recalled lot${exposedShipments.length>1?'s':''} match lots you received.</strong> Check the stock is held or off the shelf.`
             : `<strong>${activeCount} active recall${activeCount>1?'s':''}</strong> pushed to your network — check response status.`}
       </div>
       <button class="alert-action">Review recalls →</button>
@@ -3531,10 +3615,10 @@ el.innerHTML = `
         <div class="panel" style="cursor:default;">
           <div class="panel-header" onclick="showPanel('recalls')" style="cursor:pointer;">
             <div>
-              <div class="panel-title">Recall inbox<span class="help-icon" data-tip-title="Recall inbox" data-tip-body="Recalls pushed to your network by manufacturers, plus FDA and RASFF alerts matching scanned products. Each recall requires your stores to complete a 5-step response chain.">?</span>
+              <div class="panel-title">Recall inbox<span class="help-icon" data-tip-title="Recall inbox" data-tip-body="Recalls pushed to your organization, plus FDA alerts matching products you carry. Each recall requires your stores to complete a 5-step response chain.">?</span>
                 ${activeCount>0?`<span style="background:rgba(var(--danger-rgb),0.12);color:var(--danger);font-size:10px;padding:2px 8px;border-radius:10px;margin-left:8px;font-family:'DM Mono',monospace;">${activeCount} active</span>`:''}
               </div>
-              <div class="panel-sub">Recalls pushed to your network by manufacturers + FDA/RASFF alerts</div>
+              <div class="panel-sub">${_orgRegion === 'us' ? 'Pushed recalls and FDA alerts matching your products' : 'Recalls pushed to your network by manufacturers + FDA/RASFF alerts'}</div>
             </div>
             <button class="panel-action">Manage all →</button>
           </div>
@@ -3543,7 +3627,7 @@ el.innerHTML = `
               ? `<div class="empty" style="padding:28px;">
                   <div style="font-size:24px;margin-bottom:8px;">${_ico('check-circle',24)}</div>
                   <div style="font-weight:600;color:var(--text);margin-bottom:4px;">No active recalls</div>
-                  <div style="font-size:11px;">Your network is clear. Recalls will appear here when manufacturers push them or FDA/RASFF alerts match your products.</div>
+                  <div style="font-size:11px;">${_orgRegion === 'us' ? 'All clear. Recalls appear here when one is pushed to your organization or an FDA alert matches a product you carry.' : 'Your network is clear. Recalls will appear here when manufacturers push them or FDA/RASFF alerts match your products.'}</div>
                 </div>`
               : [...relevantRecalls.slice(0,5), ...(ownRecalls||[]).slice(0, Math.max(0, 5-relevantRecalls.length))].map(r => {
                   const isPushed   = !!r.mfrName;
@@ -10764,7 +10848,7 @@ function renderComplianceCategory(el, step) {
           pass: d.lotScans > 0,
           label: 'Lot codes captured',
           detail: d.lotScans > 0 ? `${d.lotScans} of ${d.scans.length} records have lot codes (${Math.round(d.lotScans/Math.max(d.scans.length,1)*100)}%)` : 'No lot codes on record',
-          action: 'Ensure staff are photographing lot codes during the scan flow — use AI OCR if codes are hard to read',
+          action: 'Ensure staff capture the lot code at receiving and at shelf placement: scan the GS1-128 case label, or type the lot when the print is hard to read',
         },
         {
           pass: isUS ? d.ftlScans > 0 : d.lotScans / Math.max(d.scans.length,1) > 0.7,
@@ -11760,11 +11844,11 @@ async function renderReports() {
       {
         key: 'stores', cat: 'Operations',
         title: 'Store compliance', icon: _ico('store',20), color: 'var(--warn)',
-        desc: 'Per-store scan activity, compliance scores, and dark store detection',
+        desc: isUS ? 'Per-store scans and deliveries, compliance scores, and dark store detection' : 'Per-store scan activity, compliance scores, and dark store detection',
         stats: [
           { val: activeStores, label: 'active stores' },
           { val: stores.length, label: 'total locations' },
-          { val: scans.length, label: 'combined scans' },
+          isUS ? { val: rcvCount, label: 'deliveries' } : { val: scans.length, label: 'combined scans' },
         ],
         reg: isUS ? 'FSMA 204 CTE locations' : 'EU 178/2002 Art. 18',
       },
@@ -12038,27 +12122,43 @@ async function fetchReportData(key) {
       return data || [];
     }
     case 'stores': {
-      const [storesRes, scansRes] = await Promise.all([
+      // 2026-10-09: US orgs also count deliveries recorded per store (receiving_events,
+      // status received). Frequency, lot coverage and status use records of both kinds,
+      // so a store that records deliveries but has not shelf-scanned yet is not "dark".
+      // NO orgs get no deliveries and keep the scan-only numbers. All time, by design.
+      const isUSStores = _orgRegion === 'us';
+      const [storesRes, scansRes, rcvRes] = await Promise.all([
         sb.from('stores').select('id, name, store_code, active').eq('organisation_id', _orgId).order('name'),
         sb.from('scans').select('store_name, store_id, lot_number, created_at, recall_resolved, removed_from_shelf_at').eq('organisation_id', _orgId),
+        isUSStores
+          ? sb.from('receiving_events').select('store_id, received_at, traceability_lot_code, tlc_source_type').eq('organisation_id', _orgId).eq('status', 'received').limit(5000)
+          : Promise.resolve({ data: [] }),
       ]);
       const stores = storesRes.data || [];
       const scans  = scansRes.data  || [];
+      const rcvAll = (rcvRes && !rcvRes.error && rcvRes.data) || [];
       const now = Date.now();
       const days7  = now - 7  * 86400000;
       const days30 = now - 30 * 86400000;
       return stores.map(store => {
         const ss = scans.filter(s => s.store_id === store.id || s.store_name === store.name);
-        const recent7    = ss.filter(s => new Date(s.created_at) > days7).length;
-        const recent30   = ss.filter(s => new Date(s.created_at) > days30).length;
-        const resolved   = ss.filter(s => s.recall_resolved).length;
-        const lotCoverage = ss.length > 0 ? ss.filter(s => s.lot_number).length / ss.length : 0;
-        const freqScore   = recent7 >= 3 ? 40 : recent7 >= 1 ? 20 : 0;
+        const dd = rcvAll.filter(r => r.store_id === store.id);
+        const recent7     = ss.filter(s => new Date(s.created_at) > days7).length;
+        const recent30    = ss.filter(s => new Date(s.created_at) > days30).length;
+        const deliveries7  = dd.filter(r => new Date(r.received_at) > days7).length;
+        const deliveries30 = dd.filter(r => new Date(r.received_at) > days30).length;
+        const resolved    = ss.filter(s => s.recall_resolved).length;
+        const records     = ss.length + dd.length;
+        const withLot     = ss.filter(s => s.lot_number).length + dd.filter(r => r.traceability_lot_code || r.tlc_source_type === 'not_required_exempt_source').length;
+        const lotCoverage = records > 0 ? withLot / records : 0;
+        const rec7  = recent7 + deliveries7;
+        const rec30 = recent30 + deliveries30;
+        const freqScore   = rec7 >= 3 ? 40 : rec7 >= 1 ? 20 : 0;
         const lotScore    = Math.round(lotCoverage * 40);
-        const baseScore   = ss.length > 0 ? 20 : 0;
+        const baseScore   = records > 0 ? 20 : 0;
         const score       = freqScore + lotScore + baseScore;
-        const status      = recent7 >= 3 ? 'active' : recent7 >= 1 ? 'slow' : recent30 >= 1 ? 'slow' : 'dark';
-        return { ...store, totalScans: ss.length, recent7, recent30, resolved, score, status };
+        const status      = rec7 >= 3 ? 'active' : rec7 >= 1 ? 'slow' : rec30 >= 1 ? 'slow' : 'dark';
+        return { ...store, totalScans: ss.length, recent7, recent30, resolved, score, status, totalDeliveries: dd.length, deliveries7, deliveries30 };
       });
     }
     case 'exposure': {
@@ -12088,6 +12188,15 @@ async function fetchReportData(key) {
   }
 }
 
+// "PO 1042" or "PO-1042", never "PO PO-1042": the type prefix is skipped when
+// the number already starts with it (same rule as the scanner's _rcvDocLabel).
+function _refDocLabel(r) {
+  const num = (r && r.reference_document_number) ? String(r.reference_document_number).trim() : '';
+  if (!num) return '';
+  const type = (r.reference_document_type || '').trim();
+  if (!type || num.toLowerCase().startsWith(type.toLowerCase())) return num;
+  return type + ' ' + num;
+}
 // Reports panel helpers (2026-10-09): deliveries alongside shelf scans in the
 // Audit trail and Staff activity reports, US orgs only (the NO branch is frozen).
 function _reportSince() {
@@ -12170,7 +12279,7 @@ function _reportFsmaUsHtml(data, statTile, fmtDate) {
             <td style="font-size:11px;color:${supplierOk(r) ? 'var(--muted)' : 'var(--warn)'};">${esc(r.supplier_name_snapshot || r.suppliers?.name || 'Not recorded')}${supplierOk(r) ? '' : ' <span style="font-size:10px;">(address incomplete)</span>'}</td>
             <td style="font-size:11px;color:var(--muted);">${esc(r.stores?.name || '')}</td>
             <td style="font-size:11px;color:var(--muted);white-space:nowrap;">${esc(String(r.quantity ?? ''))} ${esc(r.unit_of_measure || '')}</td>
-            <td style="font-size:10px;color:${refOk(r) ? 'var(--muted)' : 'var(--warn)'};font-family:'DM Mono',monospace;">${refOk(r) ? esc((r.reference_document_type ? r.reference_document_type + ' ' : '') + r.reference_document_number) : 'Missing'}</td>
+            <td style="font-size:10px;color:${refOk(r) ? 'var(--muted)' : 'var(--warn)'};font-family:'DM Mono',monospace;">${refOk(r) ? esc(_refDocLabel(r)) : 'Missing'}</td>
             <td>${(r.is_ftl || r.ftl_category) ? '<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(var(--info-light-rgb),0.1);color:var(--info);font-weight:600;">Listed</span>' : '<span style="font-size:10px;color:var(--muted);">No</span>'}</td>
           </tr>`).join('')}
         </tbody>
@@ -12232,7 +12341,7 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
             rows.map(x => x.kind === 'delivery' ? (r => `<tr>
               <td style="white-space:nowrap;font-size:11px;color:var(--muted);">${fmtDT(r.received_at)}</td>
               <td>${pill('Delivery', '--info-light-rgb', 'var(--info)')}</td>
-              <td><div style="font-size:12px;font-weight:500;color:var(--text);">${esc(r.product_name||'')}</div><div style="font-size:10px;color:var(--muted);">${esc(String(r.quantity ?? ''))} ${esc(r.unit_of_measure||'')}${r.reference_document_number ? ' · ' + esc((r.reference_document_type ? r.reference_document_type + ' ' : '') + r.reference_document_number) : ''}</div></td>
+              <td><div style="font-size:12px;font-weight:500;color:var(--text);">${esc(r.product_name||'')}</div><div style="font-size:10px;color:var(--muted);">${esc(String(r.quantity ?? ''))} ${esc(r.unit_of_measure||'')}${r.reference_document_number ? ' · ' + esc(_refDocLabel(r)) : ''}</div></td>
               <td style="font-size:11px;color:${r.traceability_lot_code ? 'var(--muted)' : r.tlc_source_type === 'not_required_exempt_source' ? 'var(--muted)' : 'var(--danger)'};font-family:'DM Mono',monospace;">${esc(r.traceability_lot_code || (r.tlc_source_type === 'not_required_exempt_source' ? 'Exempt source' : 'Missing'))}${r.gtin?'<br><span style="font-size:10px;">'+esc(r.gtin)+'</span>':''}</td>
               <td style="font-size:11px;color:var(--muted);">${esc(r.stores?.name||'')}</td>
               <td style="font-size:11px;color:var(--muted);">${esc((r.received_by||'').split('@')[0])}</td>
@@ -12371,16 +12480,16 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
         ${statTile(avgScore+'%', 'Avg compliance', avgScore>=80?'var(--accent)':avgScore>=60?'var(--warn)':'var(--danger)')}
       </div>
       ${dark > 0 ? `<div style="background:rgba(var(--danger-rgb),0.06);border:1px solid rgba(var(--danger-rgb),0.2);border-radius:10px;padding:12px 16px;margin-bottom:14px;font-size:12px;color:var(--danger);">
-        ⚠ ${dark} dark store${dark!==1?'s':''} detected — no scanning activity in the last 7 days: ${data.filter(s=>s.status==='dark').map(s=>esc(s.name)).join(', ')}
+        ⚠ ${dark} dark store${dark!==1?'s':''}: ${isUS ? 'no scans or deliveries recorded' : 'no scanning activity'} in the last 7 days: ${data.filter(s=>s.status==='dark').map(s=>esc(s.name)).join(', ')}
       </div>` : ''}
       <div class="panel"><div class="panel-body" style="padding:0;">
         <table class="store-table" style="width:100%;">
           <thead><tr>
             <th>Store</th><th>Code</th><th>Status</th><th>Compliance</th>
-            <th>7d scans</th><th>30d scans</th><th>All-time</th><th>Recalls resolved</th>
+            <th>7d scans</th>${isUS ? '<th>7d deliveries</th>' : ''}<th>30d scans</th>${isUS ? '<th>30d deliveries</th>' : ''}<th>All-time scans</th>${isUS ? '<th>All-time deliveries</th>' : ''}<th>Recalls resolved</th>
           </tr></thead>
           <tbody>
-            ${data.length === 0 ? `<tr><td colspan="8"><div class="empty">No stores configured.</div></td></tr>` :
+            ${data.length === 0 ? `<tr><td colspan="${isUS?11:8}"><div class="empty">No stores configured.</div></td></tr>` :
             data.map(s => `<tr>
               <td style="font-size:12px;font-weight:600;color:var(--text);">${esc(s.name)}</td>
               <td style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${esc(s.store_code||'—')}</td>
@@ -12391,9 +12500,12 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
                   <span style="font-size:11px;color:${s.score>=80?'var(--accent)':s.score>=60?'var(--warn)':'var(--danger)'};">${s.score}%</span>
                 </div>
               </td>
-              <td style="font-size:13px;font-weight:700;color:${s.recent7>0?'var(--text)':'var(--danger)'};">${s.recent7}</td>
+              <td style="font-size:13px;font-weight:700;color:${(s.recent7 + (s.deliveries7||0))>0?'var(--text)':'var(--danger)'};">${s.recent7}</td>
+              ${isUS ? `<td style="font-size:13px;font-weight:700;color:${s.deliveries7>0?'var(--info)':'var(--muted)'};">${s.deliveries7}</td>` : ''}
               <td style="color:var(--muted);">${s.recent30}</td>
+              ${isUS ? `<td style="color:var(--muted);">${s.deliveries30}</td>` : ''}
               <td style="color:var(--muted);">${s.totalScans}</td>
+              ${isUS ? `<td style="color:var(--muted);">${s.totalDeliveries}</td>` : ''}
               <td style="color:${s.resolved>0?'var(--accent)':'var(--muted)'};">${s.resolved}</td>
             </tr>`).join('')}
           </tbody>
@@ -12630,7 +12742,7 @@ async function downloadReport(key) {
           r.received_at ? new Date(r.received_at).toLocaleTimeString(_dashLocale()) : '',
           r.product_name, r.traceability_lot_code || (r.tlc_source_type === 'not_required_exempt_source' ? 'Exempt source' : ''), '', r.gtin,
           r.stores?.name || '', r.received_by, r.quantity != null ? `${r.quantity} ${r.unit_of_measure || ''}`.trim() : '', '', r.supplier_name_snapshot,
-          r.reference_document_number ? `${r.reference_document_type ? r.reference_document_type + ' ' : ''}${r.reference_document_number}` : '',
+          _refDocLabel(r),
           r.source === 'wholesaler_import' ? 'Received (delivery file)' : 'Received',
           '', '', '', '',
         ])(x.row) : (s => [
@@ -12689,8 +12801,8 @@ async function downloadReport(key) {
       );
     } else if (key === 'stores') {
       downloadCSV(`batchd-store-compliance-${date}.csv`,
-        ['Store','Store Code','Status','Compliance Score','7-Day Scans','30-Day Scans','Total Scans','Recalls Resolved'],
-        data.map(s => [s.name, s.store_code||'', s.active?'Active':'Inactive', s.score+'%', s.recent7, s.recent30, s.totalScans, s.resolved])
+        ['Store','Store Code','Status','Compliance Score','7-Day Scans','7-Day Deliveries','30-Day Scans','30-Day Deliveries','Total Scans','Total Deliveries','Recalls Resolved'],
+        data.map(s => [s.name, s.store_code||'', s.active?'Active':'Inactive', s.score+'%', s.recent7, s.deliveries7||0, s.recent30, s.deliveries30||0, s.totalScans, s.totalDeliveries||0, s.resolved])
       );
     } else if (key === 'exposure') {
       downloadCSV(`batchd-exposure-notice-${date}.csv`,
@@ -12906,7 +13018,18 @@ async function runLotCheck(immediate = false) {
     if (_userRole === 'store_manager' && activeStoreId) {
       scansQuery = scansQuery.eq('store_id', activeStoreId);
     }
-    const [scansRes, recallsRes, distRes] = await Promise.all([
+    // 2026-10-09: deliveries (receiving_events) answer "did we receive this lot, when,
+    // from whom". US orgs only; tolerant of a missing table. Store managers see their
+    // store's deliveries, like scans. Expected rows (delivery file, not yet confirmed)
+    // are shown as expected.
+    let rcvQuery = _orgRegion === 'us'
+      ? sb.from('receiving_events')
+          .select('id,product_name,gtin,traceability_lot_code,tlc_source_type,quantity,unit_of_measure,received_at,status,supplier_name_snapshot,reference_document_type,reference_document_number,received_by,source,store_id,stores(name)')
+          .eq('organisation_id', _orgId).in('status', ['received', 'expected']).gte('received_at', cutoff)
+          .order('received_at', { ascending: false }).limit(1000)
+      : Promise.resolve({ data: [] });
+    if (_orgRegion === 'us' && _userRole === 'store_manager' && activeStoreId) rcvQuery = rcvQuery.eq('store_id', activeStoreId);
+    const [scansRes, recallsRes, distRes, rcvRes] = await Promise.all([
       scansQuery,
       // CLAUDE.md schema gotcha: alias description as reason so Lot Lookup
       // readers (runLotCheck rendering, intelligence panel) keep working.
@@ -12915,9 +13038,11 @@ async function runLotCheck(immediate = false) {
         .select('recall_event_id, recall_events!inner(id,product_name,lot_number,reason,severity,is_drill)')
         .eq('retailer_org_id', _orgId)
         .eq('recall_events.is_drill', false),
+      rcvQuery,
     ]);
 
     const allScans = scansRes.data || [];
+    const deliveries = (rcvRes && !rcvRes.error && rcvRes.data) || [];
     const recalls  = [
       ...(recallsRes.data || []),
       ...(distRes.data || []).map(d => ({
@@ -12939,6 +13064,16 @@ async function runLotCheck(immediate = false) {
              (q.length >= 4 && lbl.includes(qLow));
     });
 
+    // Match deliveries on lot, GTIN or (4+ characters) product name.
+    const matchedDlv = deliveries.filter(r => {
+      const lot  = (r.traceability_lot_code || '').toLowerCase();
+      const gt   = (r.gtin || '').toLowerCase();
+      const prod = (r.product_name || '').toLowerCase();
+      return (lot && (lot.includes(qLow) || qLow.includes(lot))) ||
+             (gt && (gt.includes(qLow) || qLow.includes(gt))) ||
+             (q.length >= 4 && prod.includes(qLow));
+    });
+
     // Match recalls.
     // 2026-09-11 blocker fix: this used to call recallMatchLevel(), which is
     // defined only in index.html (the scanner). dashboard.html loads no local
@@ -12956,12 +13091,12 @@ async function runLotCheck(immediate = false) {
     const possibleR = recalls.filter(r =>
       !_isExactRecall(r) && _qLot.length >= 4 && productNameMatch(r.product_name, _qLot));
 
-    if (!matched.length && !exactR.length && !possibleR.length) {
+    if (!matched.length && !matchedDlv.length && !exactR.length && !possibleR.length) {
       el.innerHTML = `
         <div style="padding:32px;text-align:center;background:var(--surface);border:1px solid var(--border);border-radius:12px;">
           <div style="font-size:28px;margin-bottom:10px;">${_ico('search',28)}</div>
           <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:6px;">No records found</div>
-          <div style="font-size:12px;color:var(--muted);">No scans or active recalls matched "<strong>${esc(q)}</strong>" in the last 180 days.</div>
+          <div style="font-size:12px;color:var(--muted);">No ${_orgRegion === 'us' ? 'deliveries, scans' : 'scans'} or active recalls matched "<strong>${esc(q)}</strong>" in the last 180 days.</div>
         </div>`;
       return;
     }
@@ -12991,6 +13126,39 @@ async function runLotCheck(immediate = false) {
           ${r.lot_number?`<div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--warn);margin-top:3px;">Recalled lot: ${esc(r.lot_number)}</div>`:''}
           <div style="font-size:11px;color:var(--warn);margin-top:5px;">Verify the exact lot code against the physical product.</div>
         </div>`).join('');
+    }
+
+    // Deliveries (US): what was received, when, from whom. A recall on a received
+    // lot that is not on shelf means the stock is held at receiving.
+    if (matchedDlv.length) {
+      const received  = matchedDlv.filter(r => r.status === 'received');
+      const expected  = matchedDlv.filter(r => r.status === 'expected');
+      const units     = received.reduce((n, r) => n + (Number(r.quantity) || 0), 0);
+      const suppliers = [...new Set(received.map(r => r.supplier_name_snapshot).filter(Boolean))];
+      const refOf = _refDocLabel;
+      html += `
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow-sm);margin-bottom:12px;">
+          <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <span style="color:var(--info);display:flex;">${_ico('truck',16)}</span>
+            <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:14px;color:var(--text);">${received.length ? `Received ${received.length} time${received.length!==1?'s':''}${units ? ` · ${units} unit${units!==1?'s':''}` : ''}` : 'Not yet received'}${expected.length ? ` · ${expected.length} expected` : ''}</div>
+            ${suppliers.length ? `<div style="margin-left:auto;font-size:11px;color:var(--muted);">from ${esc(suppliers.join(', '))}</div>` : ''}
+          </div>
+          ${exactR.length && received.length ? `<div style="padding:8px 18px;background:rgba(var(--danger-rgb),0.07);border-bottom:1px solid rgba(var(--danger-rgb),0.2);font-size:11px;color:var(--danger);font-weight:600;">Recall active for this lot: hold the received stock and do not place it on shelf.</div>` : ''}
+          <div style="padding:4px 18px 10px;">
+            ${matchedDlv.slice(0, 12).map(r => `
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">
+                <div style="min-width:0;">
+                  <div style="font-size:12px;font-weight:600;color:var(--text);">${esc(r.stores?.name || 'Store not set')} <span style="font-weight:400;color:var(--muted);">· ${esc(r.product_name || '')}</span></div>
+                  <div style="font-size:11px;color:var(--muted);margin-top:2px;">${r.status === 'expected' ? 'Expected' : 'Received'} ${fmtDashDT(r.received_at)}${r.supplier_name_snapshot ? ` · ${esc(r.supplier_name_snapshot)}` : ''}${refOf(r) ? ` · ${esc(refOf(r))}` : ''}${r.received_by ? ` · ${esc(String(r.received_by).split('@')[0])}` : ''}</div>
+                </div>
+                <div style="text-align:right;flex-shrink:0;">
+                  <div style="font-size:13px;font-weight:700;color:${r.status === 'expected' ? 'var(--muted)' : 'var(--text)'};">${esc(String(r.quantity ?? ''))} ${esc(r.unit_of_measure || '')}</div>
+                  <div style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);">${esc(r.traceability_lot_code || (r.tlc_source_type === 'not_required_exempt_source' ? 'exempt source' : 'no lot'))}</div>
+                </div>
+              </div>`).join('')}
+            ${matchedDlv.length > 12 ? `<div style="padding:8px 0;font-size:11px;color:var(--muted);text-align:center;">+${matchedDlv.length - 12} more · <button onclick="showPanel('receiving')" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:11px;font-family:inherit;padding:0;">Open Receiving</button></div>` : ''}
+          </div>
+        </div>`;
     }
 
     // Shelf status
@@ -13047,8 +13215,10 @@ async function runLotCheck(immediate = false) {
     }
 
     el.innerHTML = html;
-    // Save to cache — renderOverview is expensive (10 queries); serve from cache for 2 min
-    _overviewCache = { html, renderedAt: Date.now() };
+    // Fixed 2026-10-09: this used to write the search results into _overviewCache,
+    // so opening the Dashboard within OVERVIEW_CACHE_TTL of a search rendered the
+    // Lot Lookup results in place of the overview. Nothing else ever filled that
+    // cache, so renderOverview now always renders live.
 
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);padding:12px;">${e.message}</div>`;
@@ -13160,12 +13330,12 @@ function renderTerminology() {
             ? 'The unique alphanumeric identifier assigned to a specific batch of food product at the point of production.'
             : 'Unik alfanumerisk identifikator tildelt en spesifikk produksjonsbatch. Offisiell Mattilsynet-terminologi er "partinummer" — ikke "lotnummer".',
           isUS
-            ? 'Under FSMA 204, a TLC must be recorded at every Critical Tracking Event (CTE). Batch\'d captures the TLC during shelf placement via AI OCR or barcode scan. The TLC links every scan record to the specific production batch, enabling instant traceability when a recall is issued.'
+            ? 'Under FSMA 204, a TLC must be recorded at every Critical Tracking Event (CTE). Batch\'d records the TLC on every receiving record, read from the GS1-128 case label or typed at the dock, and again at shelf placement, which links the shelf scan to its delivery. The TLC ties every record to the specific production batch, enabling instant traceability when a recall is issued.'
             : 'Batch\'d bruker "partinummer" gjennomgående i alle norske visninger og rapporter i samsvar med Mattilsynets offisielle terminologi og EU-forordning 178/2002 art. 3.',
           isUS ? 'FSMA 204 / 21 CFR Part 1 Subpart S' : 'Matloven §14')}
         ${term('Lot code (batch number)',
           'The identifier printed on food product packaging by the manufacturer to identify the specific production run.',
-          'Lot codes vary significantly by manufacturer — they may include dates, plant codes, shift codes, or random alphanumeric sequences. Batch\'d\'s AI OCR pipeline is trained to identify lot codes across 20+ Norwegian and US product formats and can learn new formats over time.',
+          `Lot codes vary by manufacturer: dates, plant codes, shift codes or alphanumeric sequences. ${isUS ? 'Under FSMA 204 the lot code on the case is the traceability lot code (TLC) that every receiving record carries; Batch\'d reads it from the GS1-128 case label or staff type it at receiving.' : 'Batch\'d reads it from the GS1-128 label or staff type it.'}`,
           '')}
         ${term('One step back / One step forward',
           '"One step back" means you can identify the supplier or manufacturer you received the product from. "One step forward" means you can identify where you supplied the product to.',
@@ -13176,20 +13346,40 @@ function renderTerminology() {
           'GS1 Application Identifiers (AIs) are two-to-four digit codes that identify each data element. AI(10) = lot/batch number. AI(17) = expiry date. AI(15) = best-before date. AI(11) = production date. AI(21) = serial number. AI(37) = quantity. When Batch\'d scans a GS1-128 barcode, it extracts all encoded AIs simultaneously — a single scan can capture lot, expiry, and quantity at once.',
           'GS1 Global Specification')}
         ${term('Shelf placement',
-          'The act of a staff member placing a product onto a store shelf. In Batch\'d, shelf placement is the trigger for creating a traceability scan record.',
-          'Each scan record captures: product name, lot code, expiry date (if available), store location, shelf location (optional), number of units, the staff member\'s name, and the exact timestamp. This is the primary record-creation event in the Batch\'d traceability system.',
-          isUS ? 'FSMA 204 CTE — Receiving' : 'Matloven §14')}
+          'The act of a staff member placing a product onto a store shelf. In Batch\'d, shelf placement creates a shelf scan record.',
+          `Each scan record captures: product name, lot code, expiry date (if available), store location, shelf location (optional), number of units, the staff member\'s name, and the exact timestamp. ${isUS ? 'The FSMA 204 record is the receiving record for the delivery; a shelf scan links to it when the lot matches, which is how Batch\'d knows which shelves a received lot reached.' : 'This is the primary record-creation event in the Batch\'d traceability system.'}`,
+          isUS ? 'Batch\'d shelf record, not a FSMA 204 critical tracking event' : 'Matloven §14')}
+        ${isUS ? term('Receiving record (critical tracking event)',
+          'The record Batch\'d creates when a delivery arrives: what was received, how much, from whom, where and when, with the reference document. For a retail store this is the FSMA 204 critical tracking event that matters.',
+          `Created in the scanner under Scan, Receiving (case label scan or typed), or from a wholesaler delivery file confirmed at the dock. Each record keeps the traceability lot code, quantity and unit, product, supplier location, store, date received, reference document type and number, and a retain-until date two years out (${_CITATIONS.us.retention}).`,
+          `${_CITATIONS.us.rule}, ${_CITATIONS.us.receivingKde}`) : ''}
+        ${isUS ? term('Key data elements (KDEs)',
+          'The facts the rule requires on every receiving record: traceability lot code, quantity and unit, product description, location description of the immediate previous source, location description where received, date received, traceability lot code source reference, and reference document type and number.',
+          'Batch\'d checks four of them on every delivery (supplier location complete, lot code or exempt source, quantity and unit, reference document) and reports the share that passes in Compliance, the scanner\'s FSMA tab and the Store compliance report.',
+          _CITATIONS.us.receivingKde) : ''}
+        ${isUS ? term('Immediate previous source',
+          'The business that shipped the food to you: the supplier or distributor named on the delivery, with its phone and physical address (business name, street, city, state, ZIP).',
+          'Managed in Settings, Suppliers. A supplier with all six location fields shows a green dot; an incomplete one is flagged on every receipt that names it. A supplier that is exempt from the rule can be marked so, which satisfies the lot code requirement for its deliveries.',
+          _CITATIONS.us.receivingKde) : ''}
+        ${isUS ? term('Delivery file (expected delivery)',
+          'A shipping file from your wholesaler, imported in the dashboard under Receiving. Each line becomes an expected delivery that staff confirm at the dock from the scanner.',
+          'Confirming turns the line into a receiving record with the real time, person and quantity. Lines that never arrive can be cancelled. The export marks these records "From wholesaler delivery file".',
+          _CITATIONS.us.receivingKde) : ''}
+        ${isUS ? term('Records request (24 hours)',
+          'When the FDA asks, records must be available within 24 hours, and for most covered businesses as an electronic sortable spreadsheet.',
+          `Batch\'d produces the 27-column export from Compliance (the timed records request drill), from a Live Recall, or from Reports. Stores with no more than $1 million in average annual food sales may provide records in another format but still within 24 hours (${_CITATIONS.us.availability}).`,
+          _CITATIONS.us.availability) : ''}
         ${term('Scan record',
           'A single entry in the Batch\'d traceability database created when a staff member completes a shelf placement scan.',
-          'Scan records are stored with a unique ID, organization ID, store ID, and all captured lot and product data. Records are retained according to your configured retention window (visible in Settings). All scan records are instantly queryable. Response time for a Mattilsynet or FDA records request is seconds, not hours.',
+          `Scan records are stored with a unique ID, organization ID, store ID, and all captured lot and product data. Records are retained according to your configured retention window (visible in Settings). All scan records are instantly queryable. Response time for ${isUS ? 'an FDA' : 'a Mattilsynet or FDA'} records request is seconds, not hours.`,
           '')}
       </div>
 
       ${section('Compliance & documents')}
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:0 18px;margin-top:8px;">
         ${term('Joint completion report',
-          'A formal document generated by Batch\'d when all stores have reached Resolved status on a recall. It names both the manufacturer and the retailer organization.',
-          'The report contains: recall details (product, lot, severity, reason), manufacturer contact, date pushed, per-store response table with timestamps and unit counts, audit timeline, and signature blocks for both parties. It is formatted for regulatory submission and can be downloaded as a PDF. Batch\'d generates this automatically — no manual preparation is required.',
+          'A formal document generated by Batch\'d when all stores have reached Resolved status on a recall. It names the recalling firm and the retailer organization.',
+          'The report contains: recall details (product, lot, severity, reason), the recalling firm\'s contact, date pushed, per-store response table with timestamps and unit counts, audit timeline, and signature blocks for both parties. It is formatted for regulatory submission and can be downloaded as a PDF.',
           '')}
         ${term('Audit record',
           'A per-store document containing the complete response record for a single store on a specific recall.',
@@ -13212,9 +13402,9 @@ function renderTerminology() {
           'Calculated by cross-referencing the manufacturer\'s shipment records (which stores received the lot and when) with the retailer\'s scan records (which of those stores scanned that lot onto a shelf and how many units). The score is shown to the manufacturer before the recall is pushed, so the impact is understood before any store is notified.',
           '')}
         ${term('Record retention',
-          'The length of time Batch\'d stores your traceability scan records.',
-          `${isUS ? 'FSMA 204 requires a minimum of 2 years (730 days). Batch\'d defaults to 365 days. Adjust your retention window in Settings to meet FSMA 204 requirements.' : 'Matloven requires records to be kept for at minimum the product\'s shelf life plus 6 months, or up to 5 years for general products. Batch\'d defaults to 365 days. Adjust your retention window in Settings.'} Records beyond the retention window may not be retrievable.`,
-          isUS ? 'FSMA 204 §1.1345' : 'Matloven §14')}
+          `The length of time Batch\'d stores your traceability records.${isUS ? ' Receiving records carry a retain-until date of two years from receipt automatically.' : ''}`,
+          `${isUS ? `FSMA 204 requires records for 2 years (${_CITATIONS.us.retention}). Receiving records are retained for two years by default. Shelf scan retention follows the window in Settings; set it to 730 days or more so scans of listed foods are kept as long as the receiving records they link to.` : 'Matloven requires records to be kept for at minimum the product\'s shelf life plus 6 months, or up to 5 years for general products. Batch\'d defaults to 365 days. Adjust your retention window in Settings.'} Records beyond the retention window may not be retrievable.`,
+          isUS ? `${_CITATIONS.us.rule}, ${_CITATIONS.us.retention}` : 'Matloven §14')}
       </div>
 
       ${section('Platform roles')}
@@ -13231,10 +13421,10 @@ function renderTerminology() {
           'Access to the Batch\'d scanning app only. Can perform shelf placement scans, view their own scan history, and receive recall alerts.',
           'Staff members cannot access management or compliance functions. Their scans are attributed to them by name in all traceability records.',
           '')}
-        ${term('Trading partner',
-          'A confirmed connection between a manufacturer organization and a retailer organization in the Batch\'d network.',
-          'Once a trading partner connection is active, the manufacturer can push recalls directly to the retailer\'s stores, log shipment lot codes that feed into the retailer\'s incoming shipments view, and view the retailer\'s response chain progress on active recalls. The retailer can see incoming shipments from the manufacturer and receives recall alerts automatically.',
-          '')}
+        ${term('Supplier',
+          'A business you receive food from: a distributor, a manufacturer shipping direct, or a farm. Every delivery names one, and the export carries its name, phone and address as the immediate previous source.',
+          'Managed in Settings, Suppliers, where corporate admins and store managers add, edit and deactivate suppliers and import a supplier list. Staff can add a supplier by name from the receiving form; the address is completed later in the dashboard. The manufacturer "trading partner" connections from the earlier Batch\'d network are retired.',
+          isUS ? _CITATIONS.us.receivingKde : '')}
       </div>
 
       <div style="margin-top:24px;padding:14px 18px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;font-size:11px;color:var(--muted);line-height:1.7;">
@@ -13597,34 +13787,38 @@ async function renderSettings() {
         </div>
       </div>
 
-      <!-- Row 3: Integrations -->
+      <!-- Row 3: Data in and out (2026-10-09). Replaced the manufacturer-era
+           Integrations panel (ERP webhook, "share with your manufacturers"),
+           which only worked for organizations of type manufacturer and no
+           retailer could use. -->
       <div class="panel" style="margin:0;">
         <div class="panel-header">
           <div>
-            <div class="panel-title">Integrations</div>
-            <div class="panel-sub">Connect your manufacturer partners' ERP systems to push recalls directly into Batch'd</div>
+            <div class="panel-title">Data in and out</div>
+            <div class="panel-sub">Delivery files in from your wholesaler, FSMA 204 records out to the FDA</div>
           </div>
         </div>
         <div class="panel-body">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
             <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:16px;">
               <div style="display:flex;align-items:flex-start;gap:12px;">
-                <div style="font-size:22px;flex-shrink:0;">${_ico('plug',22)}</div>
+                <div style="color:var(--info);flex-shrink:0;">${_ico('truck',22)}</div>
                 <div>
-                  <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px;">ERP Webhook API</div>
-                  <div style="font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:12px;">Connect SAP, Oracle, or Dynamics to push recalls automatically. When a recall is logged in your manufacturer's ERP, every store is notified within 90 seconds.</div>
-                  <a href="/docs.html" target="_blank" style="display:inline-flex;align-items:center;gap:6px;font-family:'DM Mono',monospace;font-size:11px;font-weight:700;padding:7px 14px;border-radius:7px;background:rgba(var(--accent-rgb),0.08);border:1px solid rgba(var(--accent-rgb),0.25);color:var(--accent);text-decoration:none;" onmouseenter="this.style.background='rgba(var(--accent-rgb),0.15)'" onmouseleave="this.style.background='rgba(var(--accent-rgb),0.08)'">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                    View API docs →
-                  </a>
+                  <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px;">Wholesaler delivery files</div>
+                  <div style="font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:12px;">Import the shipping file your wholesaler sends (CSV). Each line becomes an expected delivery; staff confirm it at the dock from the scanner, and the record carries the lot, quantity and reference document.</div>
+                  <button onclick="showPanel('receiving')" style="font-family:'DM Mono',monospace;font-size:11px;font-weight:700;padding:7px 14px;border-radius:7px;border:1px solid rgba(var(--info-rgb),0.4);background:rgba(var(--info-rgb),0.1);color:var(--info);cursor:pointer;">Open Receiving</button>
                 </div>
               </div>
             </div>
             <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:16px;">
-              <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px;">Share with your manufacturers</div>
-              <div style="font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:10px;">Send this link to your manufacturer partners' IT or QA team to get them connected.</div>
-              <div style="background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:9px 12px;font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);margin-bottom:10px;user-select:all;">app.batchdapp.com/docs.html</div>
-              <button onclick="navigator.clipboard.writeText('https://app.batchdapp.com/docs.html').then(()=>{this.textContent='Copied ✓';setTimeout(()=>this.textContent='Copy link',2000)})" style="font-family:'DM Mono',monospace;font-size:11px;padding:6px 14px;border-radius:7px;border:1px solid var(--glass-border);background:var(--surface2);color:var(--muted);cursor:pointer;">Copy link</button>
+              <div style="display:flex;align-items:flex-start;gap:12px;">
+                <div style="color:var(--accent);flex-shrink:0;">${_ico('file-text',22)}</div>
+                <div>
+                  <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px;">FSMA 204 records export</div>
+                  <div style="font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:12px;">The 27-column receiving record (${_CITATIONS.us.receivingKde}) for a lot, a product or a date range, with the cover block an FDA request needs. From Compliance (records request drill), Live Recall, or Reports.</div>
+                  <button onclick="showPanel('reports')" style="font-family:'DM Mono',monospace;font-size:11px;font-weight:700;padding:7px 14px;border-radius:7px;border:1px solid rgba(var(--accent-rgb),0.4);background:rgba(var(--accent-rgb),0.1);color:var(--accent);cursor:pointer;">Open Reports</button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -14434,13 +14628,19 @@ async function renderStoreManagerOverview() {
     const storeName = activeStoreName;
     const today = new Date().toISOString().split('T')[0];
 
-    const [scansRes, acksRes] = await Promise.all([
+    // 2026-10-09: deliveries recorded at this store (US orgs; tolerant of a missing table).
+    const rcvQuery = (_orgRegion === 'us' && activeStoreId)
+      ? sb.from('receiving_events').select('id, received_at, product_name, quantity, unit_of_measure, supplier_name_snapshot, traceability_lot_code').eq('organisation_id', _orgId).eq('status', 'received').eq('store_id', activeStoreId).order('received_at', { ascending: false }).limit(500)
+      : Promise.resolve({ data: [] });
+    const [scansRes, acksRes, rcvRes] = await Promise.all([
       sb.from('scans').select('*').eq('organisation_id', _orgId).eq(activeStoreId ? 'store_id' : 'store_name', activeStoreId || storeName).order('created_at', { ascending: false }),
       sb.from('recall_acknowledgements').select('*, recall_events(product_name, lot_number, severity, reason, is_drill)').eq('organisation_id', _orgId).eq('store_id', activeStoreId || '00000000-0000-0000-0000-000000000000'),
+      rcvQuery,
     ]);
 
     const scans      = scansRes.data || [];
     const acks       = acksRes.data  || [];
+    const deliveries = (rcvRes && !rcvRes.error && rcvRes.data) || [];
     const scansToday = scans.filter(s => s.created_at?.startsWith(today)).length;
     const onShelf    = scans.filter(s => !s.removed_from_shelf_at).length;
     // Items pulled (removed from shelf) within the last 7 days. Replaces
@@ -14454,6 +14654,7 @@ async function renderStoreManagerOverview() {
       if (!s.removed_from_shelf_at) return false;
       return new Date(s.removed_from_shelf_at) >= sevenDaysAgo;
     }).length;
+    const deliveriesThisWeek = deliveries.filter(r => new Date(r.received_at) >= sevenDaysAgo).length;
     // Audit fix: drill acks don't count as pending action — CLAUDE.md rule.
     const pendingAcks = acks.filter(a => a.status === 'notified' && !a.recall_events?.is_drill).length;
 
@@ -14492,6 +14693,12 @@ async function renderStoreManagerOverview() {
           <div class="kpi-value">${pulledThisWeek}</div>
           <div class="kpi-sub">Items removed from shelf · last 7 days</div>
         </div>
+        ${_orgRegion === 'us' ? `
+        <div class="kpi-card ${deliveriesThisWeek>0?'green':'blue'}" onclick="showPanel('receiving')" style="cursor:pointer;">
+          <div class="kpi-label">Deliveries this week</div>
+          <div class="kpi-value ${deliveriesThisWeek>0?'accent':''}">${deliveriesThisWeek}</div>
+          <div class="kpi-sub">${deliveries.length} recorded at ${esc(storeName)} · ${deliveries.length ? 'latest ' + fmtDash(deliveries[0].received_at) : 'record them in the scanner'}</div>
+        </div>` : ''}
         <div class="kpi-card ${pendingAcks>0?'red':'green'}">
           <div class="kpi-label">Recall alerts</div>
           <div class="kpi-value ${pendingAcks>0?'danger':'accent'}">${pendingAcks}</div>

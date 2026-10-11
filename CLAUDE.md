@@ -89,11 +89,13 @@ Leftovers from the manufacturer era that still exist in the code:
   to the stub, because such rows exist in the database.
 - landing.html (last touched 2026-04-30) still pitches the
   manufacturer-retailer network and links to manufacturer.html.
-- webhook-recall.js, docs.html and the "ERP Webhook API" card in
-  Settings only work for orgs with type manufacturer. Since 2026-09-20
-  the key is matched by sha256 hash against organisation_api_keys
-  (migration 021); organisations.api_key is nulled but the column stays,
-  so the Settings card and admin.html's `select *` still work. No live
+- webhook-recall.js and docs.html only work for orgs with type
+  manufacturer. The "ERP Webhook API" card in Settings was replaced on
+  2026-10-09 by a retailer "Data in and out" panel (delivery file import,
+  FSMA 204 export); docs.html is still served but nothing links to it.
+  Since 2026-09-20 the key is matched by sha256 hash against
+  organisation_api_keys (migration 021); organisations.api_key is nulled
+  but the column stays, so admin.html's `select *` still works. No live
   flow can create a manufacturer org any more.
 - manufacturer-welcome.js and supplier-invite.js were deleted
   2026-09-20 (no callers).
@@ -1282,6 +1284,107 @@ no console errors. Not verified against the live database.
   Verified: node --check, a Node test of the two pure helpers (ordering,
   delivery-only person, unknown staff, CSV naming, empty inputs), both
   reports in a local preview with sample data.
+- Reports panel, Store compliance counts deliveries per store
+  (2026-10-09, US orgs). fetchReportData('stores') loads received
+  receiving_events (all time, like the scans it already loaded, limit
+  5,000) and matches them on store_id. The per-store score keeps its
+  weights (frequency 40, lot coverage 40, base 20) but counts records of
+  both kinds: frequency and the active/slow/dark status use scans plus
+  deliveries in the last 7 and 30 days, lot coverage counts a delivery
+  with a lot code or an exempt source as covered, and a store with any
+  record gets the base 20. A store that records deliveries but has no
+  shelf scans yet is therefore "slow" or "active", not "dark". Table
+  columns 7d, 30d and all-time deliveries; the dark-store warning says
+  "no scans or deliveries recorded"; the CSV gained 7-Day, 30-Day and
+  Total Deliveries. NO orgs load no deliveries, so their numbers are
+  unchanged. Verified: node --check and a Node test through a stubbed
+  client (mixed store, delivery-only store, dark store, NO branch).
+- Lot Lookup overwrote the Overview cache (fixed 2026-10-09). runLotCheck
+  ended with `_overviewCache = { html, ... }`, and renderOverview serves
+  `_overviewCache.html` while it is fresh (OVERVIEW_CACHE_TTL), so opening
+  the Dashboard within two minutes of a lot search rendered the search
+  results in place of the overview. Nothing else ever filled that cache,
+  so the overview now always renders live; the line is gone.
+- Lot Lookup shows deliveries (2026-10-09, US orgs). runLotCheck also
+  loads receiving_events (received and expected, last 180 days, store
+  scoped for store managers, tolerant of a missing table) and matches on
+  lot, GTIN or a 4+ character product name. A "Received N times · units
+  · expected" block lists each delivery (store, product, date, supplier,
+  reference, who, quantity, lot) above the shelf status; when a recall is
+  active on a received lot it adds "hold the received stock and do not
+  place it on shelf". The empty state names deliveries.
+- Scan History "Trace lot" (traceLot) traces from receiving records.
+  The chain is now Supplier (immediate previous source, 21 CFR 1.1345),
+  Received at stores (each delivery with quantity, date and reference),
+  Scanned onto shelves, Recall status, with a Delivery records table
+  above the scan table and tiles for supplier, units received and stores
+  received at. Legacy shipments rows (manufacturer era, nothing writes
+  them) still render the old manufacturer wording when a lot has
+  shipments but no deliveries, so old demo data is not degraded. A
+  received lot with no shelf scan reads "Received but not yet scanned
+  onto a shelf" and, under a recall, "Hold the received stock".
+- Reference document labels: `_refDocLabel(row)` (before the report
+  helpers) prints "PO-1042" or "PO 1042", never "PO PO-1042", skipping the
+  type when the number already starts with it (the scanner's
+  _rcvDocLabel rule). Used by the FSMA report body, the audit report and
+  CSV, Lot Lookup and the lot tracer; the Receiving panel keeps its
+  equivalent docText.
+- Intelligence panel (renderIntelligencePanel, 2026-10-09): reads both
+  recall sources, and the manufacturer-era "Shipments" tile and
+  "Shipment trail" became a "Deliveries" tile (receiving_events in the
+  last 90 days matching the lot or product, US orgs, click opens
+  Receiving) with a "Received:" line (store, quantity, date, supplier).
+  The legacy shipment trail still renders when shipment rows exist.
+- Overview (_renderOverviewLegacy, 2026-10-09): recall exposure
+  ("recalled lots match lots you received") is computed from received
+  lots (receiving_events, status received, up to 5,000 rows) plus any
+  legacy shipments; the banner and the KPI subtitle read from it.
+  Recall inbox copy for US orgs says "Pushed recalls and FDA alerts
+  matching your products" (RASFF and "manufacturers" wording stays only
+  in the frozen NO branch).
+- Settings "Integrations" panel replaced (2026-10-09) by "Data in and
+  out": a Wholesaler delivery files card (opens Receiving) and a FSMA 204
+  records export card (opens Reports). The ERP webhook and "share with
+  your manufacturers" cards only applied to manufacturer organizations.
+- Store manager overview (renderStoreManagerOverview, 2026-10-09): a
+  fifth KPI "Deliveries this week" for US orgs (receiving_events for the
+  active store, tolerant of a missing table), click opens Receiving.
+- Terminology (dashboard, 2026-10-09): new US entries Receiving record
+  (critical tracking event), Key data elements (KDEs), Immediate
+  previous source, Delivery file (expected delivery), Records request
+  (24 hours); "Trading partner" became "Supplier"; Joint completion
+  report names "the recalling firm" rather than the manufacturer; Shelf
+  placement is labeled a Batch'd shelf record, not a FSMA 204 CTE; Lot
+  code and TLC entries no longer describe the retired AI OCR pipeline;
+  Record retention cites 1.1455(d) and explains the two-year receiving
+  retention. The compliance detail action that said "use AI OCR" now says
+  to scan the GS1-128 label or type the lot.
+- Scanner shift summary (buildShiftSummary, 2026-10-09): recall
+  cross-check reads both sources; US orgs get a Deliveries tile and a
+  "Deliveries you recorded today" list (receiving_events by received_by
+  since midnight); the empty state only shows when there are neither
+  scans nor deliveries.
+- Scanner audit report (generateAuditReport, 2026-10-09): recall matches
+  read both sources; US orgs get a Deliveries tile and a "Delivery
+  records" section (date, product, lot or exempt, supplier, reference,
+  store, quantity) for the period and store filter; `_auditDeliveries`
+  holds the rows. auditExportCSV gained a leading "Record Type" column
+  ("Shelf scan", "Delivery", "Delivery (file)"), "Supplier" and
+  "Reference Document" columns, "Barcode" became "Barcode / GTIN" and
+  "Placed By" became "Recorded By"; delivery rows follow the scans. The
+  header changes apply to NO orgs too (structure, not copy).
+- Scanner terminology (openTerminologyOverlay, 2026-10-09): four
+  US-only entries (Receiving record, Key data elements, Immediate
+  previous source, Expected delivery) rendered only when the US
+  regulation toggle is on, with the English text passed to both language
+  slots per the US-only rule; the Shelf placement citation no longer
+  calls it the receiving CTE.
+- Lot tracer result tiles had two style attributes on clickable tiles,
+  so the browser dropped the padding and border on exactly the tiles that
+  had an action. Merged into one attribute. That was the last item on the
+  design review's "genuinely broken" list; the others were fixed in an
+  earlier pass or live in standalone print documents with their own
+  palette.
 
 ## Recall counting rules (platform-wide)
 A recall requires action only when ALL THREE are true:
@@ -1308,12 +1411,14 @@ Reads both sources:
 
 Reads the recalls table only:
 - index.html: loadRecallsList (10520) and loadMgrRecalls (19152), both
-  manual-recall management lists; buildShiftSummary (12231);
-  generateAuditReport (12409); loadMgrData (17873, but it also loads
+  manual-recall management lists; loadMgrData (17873, but it also loads
   scan_recall_matches, which holds Path B rows); checkActiveRecalls
   when called without a cache (callers at 9781, 10466, 11802, 19233).
-- dashboard.html: renderIntelligencePanel (1374) reads recall_events
-  only, not recalls.
+Moved to "reads both" on 2026-10-09: index.html buildShiftSummary and
+generateAuditReport (recall_distributions joined to recall_events,
+mapped to the recalls shape the exact-match code reads), and
+dashboard.html renderIntelligencePanel (which read recall_events only
+and now adds the org's active recalls table rows).
 
 Also note: renderCommandCenter's recall_events query (dashboard.html
 6114) filters on is_drill and closed_at but has no organisation
@@ -1633,10 +1738,14 @@ embed the same tokens inline. Keep them in sync.
   regulatory region markers. dashboard.html complies since 2026-10-08:
   every pictographic emoji became an inline SVG through `_ico(name,
   size)` (defined after esc(); 29 Lucide-style paths in `_ICON_PATHS`).
-  Use `_ico` for any new icon in the dashboard. The text dingbats ✓ ✗
-  ⚠ ● ★ used as status marks are still in place in both files, and
-  index.html has not had the sweep; .ui-polish-checklist.md tracks the
-  rest.
+  Use `_ico` for any new icon in the dashboard. index.html was checked
+  on 2026-10-09 and has no pictographic emoji at all (a full-range scan
+  found only flag glyphs and the text marks). The text marks ✓ ✗ ⚠ ● ★
+  stay in both files as typographic status marks: in the scanner 40 of
+  the 73 are in textContent, toast, i18n or frozen Norwegian strings,
+  where an SVG would need innerHTML writes on messages that include
+  error text. Treat them as text, not as emoji to sweep.
+  .ui-polish-checklist.md tracks the rest of the design review.
 - No purple or blue gradients. No left-border accent cards.
 - One saturated color: mint or emerald. Red, orange and blue are state
   signals, never decoration.

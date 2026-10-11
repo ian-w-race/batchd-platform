@@ -169,3 +169,33 @@ not repeated here.
     CSV starts with a "Record Type" column. Staff activity shows a
     Deliveries column; a person who only recorded a delivery appears with
     "No scans". Its CSV has "Deliveries Recorded".
+33. Same panel, Store compliance: the table has 7d, 30d and all-time
+    delivery columns; a store with a delivery this week and no shelf
+    scans is "slow" or "active", not "dark"; the CSV has the three
+    delivery columns.
+34. Dashboard, Lot Lookup: search a lot that has a delivery recorded. A
+    "Received N times" block lists the delivery with store, supplier,
+    reference and quantity above the shelf status; a reference typed as
+    "PO-1042" shows once, not "PO PO-1042". Search again, then open
+    Dashboard in the sidebar within a minute: the overview renders, not
+    the search results.
+35. Dashboard, Scan History, Trace lot, same lot: the chain reads
+    Supplier, Received at stores, Scanned onto shelves, Recall status, and
+    a Delivery records table sits above the scan records.
+36. Dashboard, Settings: the third row is "Data in and out" with two
+    cards, Wholesaler delivery files (opens Receiving) and FSMA 204
+    records export (opens Reports). No ERP webhook card.
+37. Dashboard, Terminology & Help: the traceability section lists
+    Receiving record, Key data elements, Immediate previous source,
+    Delivery file and Records request; the roles section lists Supplier,
+    not Trading partner. Nothing mentions AI OCR.
+38. Dashboard as a store manager: the overview shows a fifth tile,
+    "Deliveries this week", and clicking it opens Receiving. Overview as
+    corp admin with an active recall on a received lot: the banner says
+    "match lots you received".
+39. Scanner, End shift summary after recording a delivery today: a
+    Deliveries tile and "Deliveries you recorded today" list appear.
+    Manager, Audit report for a period with deliveries: a Deliveries tile
+    and a "Delivery records" section; the CSV starts with "Record Type"
+    and lists delivery rows after the scans. A pushed recall on a
+    scanned lot counts in Recall matches.
