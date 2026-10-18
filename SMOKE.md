@@ -222,3 +222,27 @@ not repeated here.
     small size (the same as on screen), and the green banner reads
     "Report ready to print or save as PDF". Exposure notice with no pushed
     recalls reads "No pushed recalls on record".
+
+## Seven more panels on the ladder (2026-10-18)
+
+43. Dashboard, dark and then light theme: open Lot Lookup, Terminology &
+    Help, Receiving, Store Network, Scan History, Staff Activity and (as a
+    store manager) the overview. Each reads as before: labels, table text,
+    chips and buttons at their usual sizes, nothing blank or unstyled.
+    Lot Lookup's hint under the search box starts "Fuzzy matching:"; the
+    Staff Activity header reads "N team members · staff and managers";
+    Store Network's Edit form and Staff Activity's Invite form open with
+    rounded corners and readable labels.
+
+## Rest of the dashboard on the ladder (2026-10-18)
+
+44. Dashboard, dark and then light theme: Dashboard (overview), Getting
+    started, Recalls (open Run drill, then Add recall, then a recall card
+    to reach Live Recall, then a store's timeline), Compose recall,
+    Compliance (the live view, one category and the results page),
+    Complaint Triage (list, Log Phone Complaint, one complaint's detail),
+    Investigations (and Submit response), Consumer Notify, Store Network's
+    Import stores dialog and Scan History's Trace lot. Each reads as
+    before: no text visibly larger or smaller, no blank or unstyled
+    element, buttons and chips keep their corners. Sign out and back in:
+    the sign-in card looks as before.

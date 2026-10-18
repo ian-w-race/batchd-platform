@@ -655,7 +655,9 @@ against the live database (needs a signed-in session).
   2026-10-07").
 - Local preview for the scanner: `.claude/launch.json` runs
   `.claude/serve.js` (Node static server on 127.0.0.1:8787). Neither
-  file is uploaded.
+  file is uploaded. For the dashboard, `.claude/build-app-preview.py` and
+  `.claude/app-stub.js` (2026-10-18) produce a stubbed whole-app preview;
+  see the ladder sweep note in "Follow-ups shipped".
 
 ## Phase 3 of the FSMA 204 handoff: supplier directory (built 2026-10-03)
 dashboard.html (a Settings card) plus a small index.html change. Verified:
@@ -1402,8 +1404,10 @@ no console errors. Not verified against the live database.
   for every retailer without partners, a round-trip that always came back
   empty. The query now runs only when the org has active partners; the
   "Investigation deadline passed" risk signal is unchanged for legacy data.
-  The Investigations panel itself and createInvestigationFromPattern are
-  untouched pending Ian's decision on retiring the panel.
+  DECISION 2026-10-18 (Ian): the Investigations panel stays. It,
+  createInvestigationFromPattern and the intelligence panel's
+  investigation query are kept as they are; they only ever return rows
+  for an org with manufacturer partners, which no new org has.
 - Settings panel token sweep (2026-10-11), the first panel of the design
   review's cosmetic sweep (.ui-polish-checklist.md, local only). Inside
   renderSettings, _notifyToggleRow, the Suppliers card, the supplier form
@@ -1446,6 +1450,69 @@ no console errors. Not verified against the live database.
   used by every table in the file, not prose. Verified: node --check, a
   local preview of the cards grid and all six reports with sample data,
   zero elements with an unresolved ladder token.
+- Seven more panels on the ladder (2026-10-18): Lot Lookup (renderLotCheck,
+  _loadCorpOnShelf, runLotCheck), Terminology & Help, Receiving (the panel,
+  its export, cancel and import helpers), Store Network (renderStores and
+  the store form), Scan History (renderTraceability, renderTraceRows,
+  traceabilityHeader), Staff Activity (renderStaff through showInvMsg) and
+  the store manager overview. Same recipe: 159 inline sizes and 70 radii
+  onto `var(--fs-*)` and `var(--r-*)`, exact ladder matches plus the
+  half-pixel retirements (9.5 and 10.5 to `--fs-label`, 4px to `--r-xs`).
+  Left as pixels: font-size 14 (Lot Lookup, 6), 20 (Lot Lookup, 1) and 16
+  (Scan History, 1), and border-radius 9 (Store Network) and 2 (store
+  manager progress bar). None of the seven ranges opens a print window.
+  Three hex literals in Store Network (#34d399, #7a8985, #f5a623) are the
+  map marker and status-dot colors and were left for the color pass. Em
+  dashes on touched lines: Lot Lookup "Fuzzy matching:" sentence, the
+  Staff header "N team members · staff and managers", and the hidden
+  Default region label (display:none since Phase 0) rewritten; the
+  empty-cell placeholder stays. Verified: node --check, one local preview
+  page per panel with a Proxy-based client stub (Lot Lookup searched a
+  recalled lot with a delivery; Staff opened the invite form; the store
+  manager overview rendered its five tiles), zero unresolved ladder
+  tokens, no console errors from the product code. Still on raw pixels:
+  Overview and command center, Onboarding, Recalls (panel, composer, Live
+  Recall), Compliance, Complaint Triage, Investigations, Consumer Notify,
+  the intelligence panel and the lot tracer; several of those build print
+  documents and need the `_printLadderCss()` check first.
+- The rest of dashboard.html on the ladder (2026-10-18, second pass of
+  the day). Every remaining function with inline sizes: Overview and
+  command center (with the store map), Onboarding, Recalls (panel, drill
+  launcher, manual recall, composer steps 1 to 4), Live Recall, Compliance
+  (dashboard, start, categories, results, records request and plan cards),
+  Complaint Triage (list, phone form, detail), Investigations (list and
+  response modal), Consumer Notify, the intelligence panel, the lot tracer,
+  the store timeline, the CSV import engine, the shell (sign-in, MFA
+  modals, toasts, topbar, sidebar) and the static markup. 675 inline sizes
+  and 279 radii, exact ladder matches plus the half-pixel retirements.
+  Excluded on purpose, still on raw pixels: the standalone print and
+  stored documents (_composerOpenCoordinationSheet,
+  _generateFdaRecallNotification, _planRenderHtml, generateJointRecallReport,
+  generateStoreAuditReport, generateComplianceReport, generateDrillReport,
+  generateDrillCertificate, the _batchdDoc* helpers, injectPrintButton,
+  printReport's own stylesheet), because their HTML renders in a window
+  with no tokens. Left for the judgment pass: font-size 14 (29), 18 (11),
+  16 (11), 20 (7), 32 (4), 13.5 (3), 24 (2), 8.5 (2, below the 10px
+  floor), 40 (1) and border-radius 2 (15), 14 (13), 9 (5), 5 (4), 3 (2),
+  18 (1). 27 em dashes on touched prose lines rewritten (colons, middle
+  dots or full stops; the empty-cell placeholder stays). Verified: node
+  --check, and a whole-app preview: `.claude/build-app-preview.py` writes
+  `.claude/app-preview.html`, the real dashboard.html with the Sentry
+  loader removed and the Supabase client swapped for `.claude/app-stub.js`
+  (a query-builder stub over sample rows for every table the dashboard
+  reads, plus auth, rpc, storage and channel stubs), so the page signs in
+  through its own boot path and every panel renders through showPanel.
+  Checked in dark and light: all seventeen panels, Live Recall, the drill
+  launcher, the composer, the store timeline, the triage phone form and
+  detail (with the intelligence block), the investigation response modal,
+  the CSV import modal, compliance category and results views, zero
+  elements with an unresolved ladder token, no console errors from product
+  code (MapTiler answers 403 on localhost, expected). The lot tracer was
+  checked through its own input on the Scan History tab (recall banner,
+  tiles, supply chain trace). Not visually confirmed: the MFA challenge
+  modal (the stub has no enrolled factor). The three .claude files are
+  local only, like serve.js; rebuild the preview after editing
+  dashboard.html.
 
 ## Recall counting rules (platform-wide)
 A recall requires action only when ALL THREE are true:
@@ -1890,10 +1957,14 @@ reference legacy token names. They keep rendering correctly via the
 alias bridge but should be migrated to semantic tokens incrementally
 for new components. Don't try to do a sweep; the migration is
 incremental per feature.
-Type and radius ladder: the Settings and Reports panels in dashboard.html
-use `var(--fs-*)` and `var(--r-*)` for their inline sizes since
-2026-10-11; the other panels still carry raw pixel values and are
-migrated one panel per pass (see "Follow-ups shipped"). A print window
+Type and radius ladder: since 2026-10-18 every panel, modal and shell
+element in dashboard.html uses `var(--fs-*)` and `var(--r-*)` for inline
+sizes that have a ladder step. Two exceptions: the standalone print and
+stored documents keep literal pixels (no tokens in their window), and
+sizes with no ladder step (14, 16, 18, 20, 24, 32, 40, the half sizes
+and radii 2, 3, 5, 9, 14, 18) wait for a judgment pass. The `<style>`
+block's own rules and index.html are separate passes. Use the ladder for
+any new inline style. A print window
 that copies panel HTML must declare the ladder on its own `:root`
 through `_printLadderCss()`, as printReport does.
 
