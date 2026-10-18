@@ -1513,6 +1513,57 @@ no console errors. Not verified against the live database.
   modal (the stub has no enrolled factor). The three .claude files are
   local only, like serve.js; rebuild the preview after editing
   dashboard.html.
+- Judgment pass on the off-ladder sizes (2026-10-18, dashboard.html).
+  Every inline size with no exact ladder step now sits on the nearest
+  step, with these calls: 8.5 up to `--fs-label` (the 10px floor), 13.5
+  to `--fs-body`, 14 to `--fs-body` for plain text and `--fs-body-lg`
+  for bold titles and counts (31 places), 16 and 18 to `--fs-h4` (26),
+  20 and 24 to `--fs-h3` (10), 32 to `--fs-h2` (4), 40 and the results
+  page's 56px score to `--fs-h1` (2). Radii: the 2px and 3px bars and step
+  tracks are pills (`--r-pill`, they are fully rounded by construction),
+  3 and 5px chips to `--r-xs`, 9px buttons and segmented controls to
+  `--r-md`, 14px cards to `--r-lg`, the two MFA boxes to `--r-xl` and the
+  18px investigation modal to `--r-2xl` like the other modals. One
+  multi-value radius (a bar chart column's top corners) stays. The
+  visible changes are small: composer step titles 20 to 22px, the big
+  results score 56 to 46px, bold 14px titles to 15px.
+- Color pass (2026-10-18, dashboard.html). The design review's checklist
+  was mostly stale (an earlier pass had already removed the blue CTA, the
+  #7ba9ff statutes, the hardcoded scrims, the stale emerald and the white
+  light-theme cards), so what remained: every black `rgba(0,0,0,…)`
+  shadow in the shell CSS and in panel code moved onto `--shadow-sm/-md/
+  -lg/-xl/-accent` (sidebar, topbar, modals, help tip, auth card, KPI
+  hover, drill and advance buttons, toast), the light-theme literals
+  (`#dc2626`, the placeholder rgba, the kpi and auth shadows) onto tokens,
+  `.alert-text strong` onto `--danger`, the CSV preview zebra and header
+  onto `--surface2`, the warn fallback literal dropped, the compliance
+  gap "Go" buttons onto `--accent`, and the authority contact cards onto
+  one neutral treatment (name in `--text`, link in `--accent`; the `color`
+  field in the array is now unused). Recall stage colors: two new tokens
+  `--stage-pulled-rgb` and `--stage-disposed-rgb` in both theme blocks of
+  dashboard.html, index.html and assets/design-tokens.css (dark keeps the
+  old yellow and light green; the light values 138,106,0 and 46,125,79
+  are Claude's picks for 4.5:1 on white, for the designer to confirm);
+  `_RECALL_DETAIL_STAGE_COLORS`, the stage badge tints and the gray
+  fallbacks read them (`--muted` for the fallback). Maps: `_MAP_STATUS_
+  COLORS.none`, renderStoreMap's fallback, the Store Network marker colors,
+  the legend text and note and the map pane background are tokens, and a
+  new `_resolveCssColor(c)` turns any var() color into a plain rgb()
+  before it reaches Leaflet (the 2026-09-05 comment said var() breaks SVG
+  presentation attributes; a probe in Chromium showed it resolves, but
+  the dots no longer depend on it). Print and stored documents got
+  literal colors for the tokens they referenced in a window that has
+  none (`var(--accent-on-primary)` to #065f46, the accent, warn and info
+  rgb triples to their light values). Left on purpose: white text on
+  danger, warn and info badges, buttons and toasts (signal colors, not
+  surfaces), the white box behind the MFA QR code, the dark-on-white text
+  inside Leaflet's white popups, the marker ring `#0a1814`, the Leaflet
+  attribution, the `theme-color` meta and the print stylesheets. Verified:
+  node --check on both apps, the whole-app preview in both themes (marker
+  fills resolve to rgb values per theme on the overview, Store Network and
+  Live Recall maps; stage badges tint from the new tokens; sidebar and
+  modal shadows read the theme's shadow tokens; the gap button and
+  authority cards are neutral), zero unresolved tokens.
 
 ## Recall counting rules (platform-wide)
 A recall requires action only when ALL THREE are true:
@@ -1877,6 +1928,13 @@ embed the same tokens inline. Keep them in sync.
 - No purple or blue gradients. No left-border accent cards.
 - One saturated color: mint or emerald. Red, orange and blue are state
   signals, never decoration.
+
+### Recall stage tokens
+`--stage-pulled-rgb` and `--stage-disposed-rgb` (2026-10-18) color the
+two Live Recall stages that sit between warn and accent. Defined per
+theme in all three token copies; read as `rgb(var(--stage-pulled-rgb))`
+or with an alpha. Anything handed to Leaflet goes through
+`_resolveCssColor` first.
 
 ### Translucent tints: `--*-rgb` triples
 For inline `rgba(...)` translucent backgrounds, chips and banners, use

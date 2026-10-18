@@ -246,3 +246,19 @@ not repeated here.
     before: no text visibly larger or smaller, no blank or unstyled
     element, buttons and chips keep their corners. Sign out and back in:
     the sign-in card looks as before.
+
+## Judgment and color passes (2026-10-18)
+
+45. Dashboard, dark then light theme. Recalls, open a live recall with
+    stores at different stages: on the map the dots read red (notified),
+    orange (acknowledged), amber (pulled), green (disposed), mint
+    (resolved), and the stage pills in the store rows use the same
+    colors; in light theme the amber and green are darker and still
+    readable. Dashboard overview and Store Network map: dots are mint or
+    gray, the legend text follows the theme. Light theme: the sidebar,
+    modals and the help tip cast soft gray shadows, not black ones.
+    Compliance: authority cards have plain names and mint "Notify /
+    report" links; gap "Go" buttons are mint. Compose recall: the step
+    titles read slightly larger than before; the results page's big
+    score reads slightly smaller. Open any report's Print / PDF: the
+    green status badges in the document have dark green text.
