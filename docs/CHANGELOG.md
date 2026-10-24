@@ -26,8 +26,14 @@ how it was verified and what is still unverified. Everything before
   still reading their own membership row for the "Account deactivated"
   screen, and a brand-new user able to sign up through
   create_organisation_with_admin; with 038 removed the same deactivated
-  admin read every table and updated the org. NOT YET APPLIED TO PRODUCTION:
-  the auto-mode safety check blocked the call; it needs Ian's approval.
+  admin read every table and updated the org. Applied to PRODUCTION the
+  same day on Ian's approval: 31 policies, the policy fingerprint matches
+  staging (179 policies), both deactivated accounts now read 0 scans,
+  stores, recalls, complaints and organizations (51, 7, 442, 1 and 1
+  before) but still read their own membership row; rolled-back checks as
+  Ian (same counts as before; scan insert, pull, recall insert, org update)
+  and as an active store manager (reads, scan insert) all pass; the join
+  page's invitation lookup still answers 200.
 - notify-consumers.js: a call takes at most 500 customers in batches of
   100, paced under Resend's 2 requests a second, each batch with an
   idempotency key so a retry does not email anyone twice; no single-send

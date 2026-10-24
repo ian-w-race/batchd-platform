@@ -491,9 +491,6 @@ both copies.
   legacy scans.
 
 ## Open items
-- Migration 038 (deactivated members locked out) is applied on staging
-  only; the auto-mode safety check blocked the production call. Production
-  still lets a deactivated member with a live session read their old org.
 ## Open items
 Owed by Ian:
 - Three photographed case labels (romaine, nut butter, one non-GS1) to
