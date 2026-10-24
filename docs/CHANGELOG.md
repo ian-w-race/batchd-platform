@@ -5,6 +5,14 @@ how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
 ## 2026-10-24
+- FOUND in Netlify logs: every ocr.js call this week failed with 400. The
+  scanner's sign-in warm-up sent a 1x1 image as identify_product before
+  the org had loaded, so the auth gate answered "org_id required"; when
+  the org had loaded, the same warm-up would have cost an Anthropic call.
+  ocr.js now has a "warmup" task that answers 204 before auth and never
+  calls Anthropic, and the scanner uses it. Verified: tests/ocr-warmup.test.mjs
+  (warmup 204 with no auth and no Anthropic call; other tasks still gated;
+  GET refused) and a live call to the pull request's preview.
 - robots.txt at the repo root asks crawlers not to index the app domains
   (Netlify logs showed about 150 robots.txt requests a week, all 404).
   The brand site batchd.no is a separate site and unaffected.

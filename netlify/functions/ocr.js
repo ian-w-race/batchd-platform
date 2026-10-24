@@ -1,6 +1,7 @@
 // netlify/functions/ocr.js
 // Batch'd AI OCR proxy — calls Anthropic API directly via fetch (no SDK dependency)
 // Tasks: identify_product | read_barcode | localise_lot | extract_codes | extract_raw_cluster
+//        warmup (no auth, no image, no Anthropic call; answers 204)
 //
 // Speed strategy:
 //   - localise_lot        -> haiku (fast localisation pass — only used for stored crops)
@@ -159,6 +160,15 @@ exports.handler = async (event) => {
   let parsedBody;
   try { parsedBody = JSON.parse(rawBody); }
   catch { return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON' }) }; }
+
+  // Warm-up ping from the scanner at sign-in (2026-10-24). It only wakes a
+  // cold function, so it answers before the auth check and never reaches
+  // Anthropic. Before this, the scanner sent a 1x1 image as identify_product:
+  // it was rejected with 400 (the org was not loaded yet), which filled the
+  // error logs, and when the org was loaded it cost a real Anthropic call.
+  if (parsedBody && parsedBody.task === 'warmup') {
+    return { statusCode: 204, body: '' };
+  }
 
   // Auth: an active member of the org named in the body, and that org must be
   // on a POV or Paying plan. Anthropic spend is billed to Batch'd, so a JWT
