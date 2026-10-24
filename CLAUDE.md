@@ -148,6 +148,17 @@ is not on GitHub; nothing live loads it.
   environment variable the functions read must exist with the same value
   on all three, INTERNAL_NOTIFY_SECRET above all (push-recall-email fails
   closed without it).
+- Since 2026-10-24 recall-escalation.js claims each escalation tier with
+  a conditional UPDATE (only while the column is NULL) before sending and
+  releases it if the send fails, so two sites running the cron at the
+  same minute cannot double-send. Observed 2026-10-24 via Netlify
+  observability: batchd-app and gentle-belekoy-be3cb7 (www) both invoke
+  recall-escalation 48 times a day; only www ran fetch-recall-feeds that
+  day. Site-level environment variables are not readable through the
+  Netlify connector, so whether SCHEDULED_FUNCTIONS_DISABLED is set on
+  batchd-app is still unconfirmed (its runs take about 1 s against about
+  3 s on www, which suggests it skips). The third team site, batchdsite,
+  is batchd.no, a different repo.
 - netlify.toml arms recall-escalation (every 30 min) and
   fetch-recall-feeds (daily 06:00 UTC) on every site, so
   SCHEDULED_FUNCTIONS_DISABLED=true must be set on exactly two of the
@@ -283,8 +294,9 @@ pov once and refuses to run again.
   and removed_from_shelf_by onto existing matches whenever a scan is
   pulled (found 2026-10-24; older notes said the column was never
   written). A match created after the pull does not get it, so
-  push-recall-email.js's "confirmed pulled" undercounts in that case.
-  Count on-shelf with scans.removed_from_shelf_at.
+  push-recall-email.js now reads scans.removed_from_shelf_at through an
+  embed and falls back to removed_at (2026-10-24). Count on-shelf with
+  scans.removed_from_shelf_at.
 - A recall requires action only when ALL THREE hold: the recall is
   active, an org scan matches by exact lot or barcode, and that scan is
   still on shelf. Mock drills never count.
@@ -471,8 +483,6 @@ storage bucket, 033 cross-org rules, 034 anon table writes and store
 names, 035 view user_accessible_stores, search paths and trigger
 functions). Nothing from that pass is still open.
 Code, known and not fixed:
-- push-recall-email.js reads scan_recall_matches.removed_at (see the
-  database rules).
 - landing.html's demo form posts to a removed send-invite branch.
 - Scanner: fetchUserProfile (second script block) calls applyManagerUI
   (third block). Safe in production because the network round-trip lands

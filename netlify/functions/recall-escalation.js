@@ -20,6 +20,30 @@ function esc(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
+// Claim an escalation tier for one acknowledgement row before sending
+// (2026-10-24). The UPDATE only matches while the column is still NULL, so
+// when two sites' crons run at the same minute only one of them gets the
+// row back and sends. A failed send releases the claim so the next run
+// retries. This makes duplicate emails impossible whether or not
+// SCHEDULED_FUNCTIONS_DISABLED is set correctly on every site.
+async function claimTier(sb, ackId, column, at) {
+  const { data, error } = await sb.from('recall_acknowledgements')
+    .update({ [column]: at })
+    .eq('id', ackId)
+    .is(column, null)
+    .select('id');
+  if (error) { console.error(`[recall-escalation] claim ${column} failed:`, error.message); return false; }
+  return Array.isArray(data) && data.length === 1;
+}
+
+async function releaseTier(sb, ackId, column, at) {
+  const { error } = await sb.from('recall_acknowledgements')
+    .update({ [column]: null })
+    .eq('id', ackId)
+    .eq(column, at);
+  if (error) console.error(`[recall-escalation] release ${column} failed:`, error.message);
+}
+
 async function sendEmail(to, subject, html) {
   const res = await fetch('https://api.resend.com/emails', {
     signal: AbortSignal.timeout(8000),
@@ -109,29 +133,28 @@ exports.handler = async (event) => {
         </div>
       </body></html>`;
 
-      const updates = {};
+      const stamp = now.toISOString();
 
-      if (elapsed >= TWO_H && !ack.escalation_2h_sent_at) {
+      if (elapsed >= TWO_H && !ack.escalation_2h_sent_at
+          && await claimTier(sb, ack.id, 'escalation_2h_sent_at', stamp)) {
         try {
           await sendEmail(toEmail, `[2h Escalation] Recall not acknowledged — ${product} · ${store}`, buildHtml('2h'));
-          updates.escalation_2h_sent_at = now.toISOString();
           sent2h++;
-        } catch(e) { console.error('2h email error:', e.message); }
+        } catch(e) {
+          console.error('2h email error:', e.message);
+          await releaseTier(sb, ack.id, 'escalation_2h_sent_at', stamp);
+        }
       }
 
-      if (elapsed >= H24 && !ack.escalation_24h_sent_at) {
+      if (elapsed >= H24 && !ack.escalation_24h_sent_at
+          && await claimTier(sb, ack.id, 'escalation_24h_sent_at', stamp)) {
         try {
           await sendEmail(toEmail, `[URGENT 24h] Recall still unacknowledged — ${product} · ${store}`, buildHtml('24h'));
-          updates.escalation_24h_sent_at = now.toISOString();
           sent24h++;
-        } catch(e) { console.error('24h email error:', e.message); }
-      }
-
-      if (Object.keys(updates).length) {
-        // supabase-js resolves errors instead of throwing — log failed
-        // stamps so a duplicate-email cause is at least visible in logs.
-        const { error: stampErr } = await sb.from('recall_acknowledgements').update(updates).eq('id', ack.id);
-        if (stampErr) console.error('[recall-escalation] stamp update failed:', stampErr.message);
+        } catch(e) {
+          console.error('24h email error:', e.message);
+          await releaseTier(sb, ack.id, 'escalation_24h_sent_at', stamp);
+        }
       }
     }
 
