@@ -1564,6 +1564,112 @@ no console errors. Not verified against the live database.
   Live Recall maps; stage badges tint from the new tokens; sidebar and
   modal shadows read the theme's shadow tokens; the gap button and
   authority cards are neutral), zero unresolved tokens.
+- Stylesheet pass (2026-10-18, dashboard.html `<style>` block). Every
+  rule's raw font size (49), radius (24) and transition duration (26) now
+  reads a token; the only judgment calls were the brand mark and card
+  values at 16 and 18px to `--fs-h4`, the empty-state icon size to
+  `--fs-h2`, the `.text-lg/-xl/-2xl` utilities to h4, h3 and h2, the 9px
+  logo corner to `--r-md`, the 2px score bars to `--r-pill` and the half
+  pill chips (`padding: 2px 8px; border-radius: 10px`) to `--r-pill`. The
+  three patch layers collapsed: `.store-table th` is one rule with the
+  later declaration's values, `.kpi-card` has one transition (box-shadow,
+  transform, border-color) and one hover, and the `!important` overrides
+  for `.nav-item` and `.kpi-card` are gone. `:focus-visible` uses
+  `var(--ring-focus)` instead of a plain outline. A `.field textarea`
+  rule joins `.field input` and `.field select`. Light-theme nav badges
+  take their ink from `--background-base` like the dark rule. Already
+  true before this pass, so the checklist entries were stale: body and
+  buttons use `var(--font-body)` (Figtree), the mobile sidebar rule, the
+  duplicate motion block and the duplicate keyframes are gone, the select
+  chevron has a light-theme variant.
+- Remaining design review items in panel code (2026-10-18). Inline
+  transition durations onto `--dur-fast/-normal/-slow` and
+  `--ease-out` (39 lines; print documents excluded). A styled
+  `_confirmDialog(message, { okLabel, cancelLabel, danger, title })`
+  (before showToast; Promise<boolean>, Enter confirms, Escape or the scrim
+  cancels, focus starts on Cancel) replaces every native confirm() except
+  the one inside the print document runtime (saveAsPdf), which has no
+  access to it: 2FA disable, composer discard (now async), resolve manual
+  recall, send reminders, cancel an expected line, deactivate or delete a
+  store, delete a learned pattern, deactivate a member, cancel a records
+  request drill, delete a supplier, delete a listed-food decision. Icons:
+  `_ICON_PATHS` gained x, arrow-right, external-link and chevron-down; the
+  "Recall history" report card's emoji is `_ico('alert-triangle',20)`; the
+  trailing arrows on 60 CTA labels (buttons, onboarding steps, composer
+  nav, "Sign in", "Verify", "Send invitation email", "Launch drill", the
+  triage step buttons) are `_ico('arrow-right',12)`; "Open scanning app",
+  "Map" and "Notify / report" carry external-link; "Clear" carries x; the
+  "View audit trail" button carries a chevron that turns when the log
+  opens (toggleCollabLog reads a `data-collab-toggle` attribute). Arrows in
+  prose ("Notified → Acknowledged", "Reports → Recall history") stay.
+  Complaint Triage: "Log phone complaint", "Submit and triage", "View all
+  complaints", "Log another" and the section labels are sentence case; the
+  phone complaint form uses the shared `.field` component (16 fields, the
+  state wrapper included) instead of hand-rolled label and input pairs.
+  The five citation lines under compliance steps and report cards dropped
+  their 70 percent opacity. Toasts and the danger badges (nav, triage,
+  recall counts, the consumer notify Send button) take their ink from
+  `--background-base`, the documented auto-inverting pattern. Keyboard:
+  a small shim after showPanel gives every rendered element with onclick
+  (and no native focusability) `role="button"` and `tabindex="0"`, and
+  Enter or Space activates it; a MutationObserver re-tags after each
+  render. Verified: node --check; the whole-app preview rendered every
+  change (dialog opens with focus on Cancel and a red confirm button,
+  Escape resolves false; the triage form fields are mono inputs on the
+  input background with uppercase labels; report icons and CTA arrows are
+  SVGs with no literal template text anywhere; toast ink is the base
+  color; the sign-in button carries its arrow; the audit log chevron
+  flips). Still open on the checklist: spacing onto `--s-*` (incremental
+  by rule), and every scanner (index.html) item.
+- Scanner design review pass (2026-10-24, index.html). The same ladder
+  recipe as the dashboard: every raw font size, radius and transition in
+  the `<style>` block and in panel code moved onto `--fs-*`, `--r-*`,
+  `--dur-*` and `--ease-out` (825 sizes, 301 radii, 60 transitions), with
+  the dashboard's judgment calls (14 to body or body-lg by weight, 16 and
+  18 to h4, 20 and 24 to h3, 26 and 32 to h2, 48 to h1; bars to pills,
+  chips to xs, 9 to md, 14 to lg, 20 to pill on chips and 2xl on sheets).
+  Kept on purpose: 16px on the four input rules and the quick-check
+  input (iOS zooms when a focused input is smaller; commented in the
+  stylesheet) and the three print documents (printExposureNotice,
+  printAuditReport, fsmaViewStoredPlan). Colors: the light-theme
+  placeholder, phase header border, mode toggle, input background and
+  white surfaces onto `--text-muted`, `--border`, `--surface2` and
+  `--background-surface`; the light accent inks onto
+  `--accent-on-primary`; the confidence badge, required-store and recall
+  banner tints onto the warn and danger rgb triples; the onboarding
+  check mark onto `--accent-on-primary`; the complaint submit ink and
+  the two danger buttons onto `--background-base`; the primary button
+  shadow onto `--shadow-accent`; the history filter chevron onto the
+  muted token with a light-theme variant; the drawer "Navigate" label
+  at full opacity. `:focus-visible` uses `var(--ring-focus)`, and the
+  keyboard shim from the dashboard (role, tab stop, Enter and Space on
+  elements with onclick) sits after showView. Already fixed before this
+  pass, so the checklist entries were stale: the Figtree body font, the
+  Norwegian placeholder precedence bug, the sign-in tab ink, the picker
+  color-scheme, the Tailwind blues, the hex-alpha readiness pill, the
+  drawer scrim, the camera-frame hex, the ack dot, the pull tint and
+  the light-only record-card border. BUG FOUND AND FIXED on the way:
+  populateFsmaExportStores read a manager-stores variable nothing had
+  ever declared, so opening the manager Audit tab threw a ReferenceError
+  and neither store dropdown populated; it now takes store names from
+  the loaded scans like populateMgrAuditStores. Noted, not changed:
+  fetchUserProfile (second script block) calls applyManagerUI (third
+  block); production is safe because the membership query's network
+  round-trip lands after parsing, but a client that answered from cache
+  on microtasks alone would hit a ReferenceError (the preview stub had
+  to resolve queries on a later task to match production). Verified:
+  node --check (4 blocks); a stubbed whole-app scanner preview
+  (`.claude/build-scanner-preview.py` writes `.claude/scanner-preview.
+  html` from index.html with the same `app-stub.js`) at phone width:
+  sign-in, store picker, the login recall alert, Shelf and Receiving
+  modes, History, Recalls, Settings, the manager dashboard and its
+  Audit (store dropdowns populate), FSMA and Receiving tabs, the Help
+  overlay, light theme; zero unresolved ladder tokens anywhere and no
+  errors on load. Camera access is blocked in the preview, so the
+  shelf phases past "Starting camera" and the shift summary were not
+  exercised. Left as literals on purpose: the photo lightbox and camera
+  overlays (theme-invariant media chrome, checklist items 137 to 139),
+  the brand mark fill, the print stylesheets.
 
 ## Recall counting rules (platform-wide)
 A recall requires action only when ALL THREE are true:
@@ -2015,14 +2121,14 @@ reference legacy token names. They keep rendering correctly via the
 alias bridge but should be migrated to semantic tokens incrementally
 for new components. Don't try to do a sweep; the migration is
 incremental per feature.
-Type and radius ladder: since 2026-10-18 every panel, modal and shell
-element in dashboard.html uses `var(--fs-*)` and `var(--r-*)` for inline
-sizes that have a ladder step. Two exceptions: the standalone print and
-stored documents keep literal pixels (no tokens in their window), and
-sizes with no ladder step (14, 16, 18, 20, 24, 32, 40, the half sizes
-and radii 2, 3, 5, 9, 14, 18) wait for a judgment pass. The `<style>`
-block's own rules and index.html are separate passes. Use the ladder for
-any new inline style. A print window
+Type, radius and motion ladders: since 2026-10-18 every rule in
+dashboard.html's `<style>` block and every inline style in its panels,
+modals and shell read `var(--fs-*)`, `var(--r-*)`, `var(--dur-*)` and
+`var(--ease-out)`. The one exception is the standalone print and stored
+documents, which keep literal values because their window has no
+tokens. index.html followed on 2026-10-24 (its inputs keep 16px for
+iOS). Use the ladders for any new style, `_ico()` for any icon in the
+dashboard, and `_confirmDialog()` instead of confirm(). A print window
 that copies panel HTML must declare the ladder on its own `:root`
 through `_printLadderCss()`, as printReport does.
 

@@ -262,3 +262,32 @@ not repeated here.
     titles read slightly larger than before; the results page's big
     score reads slightly smaller. Open any report's Print / PDF: the
     green status badges in the document have dark green text.
+
+## Stylesheet pass and review leftovers (2026-10-18)
+
+46. Dashboard: buttons and links that used to end in a text arrow (Sign
+    in, Verify, Add stores, Run a drill, Launch drill, Continue to
+    Classify, Send invitation email, View, Review) show a small arrow icon
+    instead; "Open scanning app" shows an external-link icon. Settings,
+    Suppliers, Delete on a supplier: a styled dialog appears (not the
+    browser's gray box) with Cancel focused and a red "Delete supplier"
+    button; Escape closes it without deleting; the same for Disable 2FA,
+    Deactivate on a staff member, Cancel drill and discarding a composer
+    draft. Complaint Triage, Log phone complaint: field labels are small
+    uppercase, inputs match the Settings forms, the submit button reads
+    "Submit and triage". Recalls, expand a recall card, View audit trail:
+    the chevron turns when the log opens. Tab through the overview: KPI
+    cards and other clickable tiles take focus with a visible ring and
+    open on Enter. Toasts: text is dark on red, orange and blue toasts in
+    dark theme and light on them in light theme.
+
+## Scanner on the ladder (2026-10-24)
+
+47. Scanner, signed in as a manager: Shelf and Receiving modes, History,
+    Recalls, Settings and the manager dashboard look as before (no text
+    visibly larger or smaller, inputs still readable, buttons keep their
+    corners); in light theme the inputs are white on a light page and
+    the dropdown chevron is visible. Manager dashboard, Audit export tab:
+    both store dropdowns list your stores (this tab used to fail
+    silently). Tab through the History list: cards take focus with a
+    visible ring and open on Enter. Help & Terminology opens and closes.
