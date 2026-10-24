@@ -113,6 +113,11 @@ WITH checks AS (
   UNION ALL SELECT '030 products_public exposes the FTL columns',
          EXISTS (SELECT 1 FROM information_schema.columns
                  WHERE table_schema='public' AND table_name='products_public' AND column_name='is_ftl')
+  UNION ALL SELECT '032 photo bucket locked to org members',
+         NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='storage' AND tablename='objects'
+                     AND policyname LIKE 'Public Access h0pwpd%')
+         AND EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='storage' AND tablename='objects'
+                     AND policyname='b32_scan_photos_member_insert')
   UNION ALL SELECT '031 open recall functions revoked',
          NOT has_function_privilege('authenticated',
                'public.push_recall(text,text,text,text,text,text,text,boolean)', 'EXECUTE')
@@ -149,7 +154,8 @@ ORDER BY migration;
 --                 022, 023, 024, 025, 026 (Phase 1 of the FSMA 204 handoff),
 --                 028 (Phases 6 and 7: two columns), 029 (Phase 7: one policy),
 --                 030 (CREATE OR REPLACE VIEW products_public, appends three columns),
---                 031 (REVOKE/GRANT EXECUTE on four functions)
+--                 031 (REVOKE/GRANT EXECUTE on four functions),
+--                 032 (DROP POLICY IF EXISTS before each storage policy)
 --   (idempotent: ADD COLUMN IF NOT EXISTS, CREATE OR REPLACE FUNCTION,
 --    DROP ... IF EXISTS before each CREATE POLICY / CREATE TRIGGER;
 --    020, 020a and 021 each run inside one BEGIN/COMMIT)
