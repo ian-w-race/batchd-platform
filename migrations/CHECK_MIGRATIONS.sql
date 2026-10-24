@@ -113,6 +113,11 @@ WITH checks AS (
   UNION ALL SELECT '030 products_public exposes the FTL columns',
          EXISTS (SELECT 1 FROM information_schema.columns
                  WHERE table_schema='public' AND table_name='products_public' AND column_name='is_ftl')
+  UNION ALL SELECT '033 cross-org rules closed',
+         EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='code_patterns'
+                 AND policyname='b33_patterns_member_select')
+         AND NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='complaints'
+                         AND policyname='Orgs insert complaints')
   UNION ALL SELECT '032 photo bucket locked to org members',
          NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='storage' AND tablename='objects'
                      AND policyname LIKE 'Public Access h0pwpd%')
@@ -155,7 +160,8 @@ ORDER BY migration;
 --                 028 (Phases 6 and 7: two columns), 029 (Phase 7: one policy),
 --                 030 (CREATE OR REPLACE VIEW products_public, appends three columns),
 --                 031 (REVOKE/GRANT EXECUTE on four functions),
---                 032 (DROP POLICY IF EXISTS before each storage policy)
+--                 032 (DROP POLICY IF EXISTS before each storage policy),
+--                 033 (DROP POLICY IF EXISTS, CREATE OR REPLACE, idempotent REVOKE)
 --   (idempotent: ADD COLUMN IF NOT EXISTS, CREATE OR REPLACE FUNCTION,
 --    DROP ... IF EXISTS before each CREATE POLICY / CREATE TRIGGER;
 --    020, 020a and 021 each run inside one BEGIN/COMMIT)

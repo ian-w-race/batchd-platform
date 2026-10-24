@@ -5,6 +5,18 @@ how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
 ## 2026-10-24
+- Migration 033 (cross-org rules) applied to STAGING only. code_patterns
+  scoped to the member's org (organisation_id now defaults to the
+  caller's org, so the scanner's saves keep working), scan_queue closed
+  to clients, scan_telemetry readable only for the member's own org,
+  no direct inserts into complaints or complaint_messages, complaint
+  audit-log inserts only for the member's own complaints, and
+  sweep_recall_matches checks membership and recall ownership (shared
+  no-org feed recalls still sweep). Verified on staging in rolled-back
+  transactions: 21 checks as staff, store manager, logged-out visitor
+  and server all behaved as intended. Control: with production's old
+  rules restored, staff in one org read another org's lot-code patterns
+  and a logged-out visitor inserted a complaint. Production not changed.
 - Migration 032 (photo bucket) applied to STAGING only. Removes the six
   scan-photos storage policies (four of them let anyone list, upload,
   overwrite and delete) and adds three: a signed-in member may read,
