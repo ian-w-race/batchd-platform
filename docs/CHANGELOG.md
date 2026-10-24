@@ -5,6 +5,15 @@ how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
 ## 2026-10-24
+- Tests for the scanner's GS1 parser and listed-food detector
+  (tests/scanner-parsers.test.mjs, 14 tests: human-readable, raw with and
+  without FNC1, the RM240928 lot, plain GTINs, net weight 310n/320n,
+  dates, Digital Link, pepper and egg misfires, no literal backspace in
+  any pattern), and two more checks in scripts/check.mjs (supplier
+  completeness fields, FSMA dollar thresholds). Verified: 9 of 9 checks,
+  24 of 24 tests; removing the pepper exclusions, dropping phone from the
+  dashboard's completeness rule and changing one dollar figure in signup
+  each made a check or test fail.
 - Migration 036 dropped two duplicate indexes (invitations_token_unique,
   idx_srm_organisation). Applied to staging, checked (duplicate invitation
   tokens still refused), then production; both projects have the same 137
