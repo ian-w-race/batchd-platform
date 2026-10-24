@@ -5,6 +5,22 @@ how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
 ## 2026-10-24
+- Live test of migration 038 on staging with two throwaway accounts
+  (qa-active-038 and qa-deactivated-038 @batchd-staging.test, in org "QA 038
+  Grocer"; the password is in .claude/staging-test-accounts.txt, local
+  only). Through the real sign-in service the deactivated account reads
+  empty scans, stores and organizations, cannot insert a scan, and cannot
+  reactivate itself, promote itself, add itself back or create a new
+  organization; the dashboard and the scanner both show "Account
+  deactivated" with no console errors. The active account's dashboard loads
+  its org and every data read succeeds; its scan insert returns 201.
+- FOUND in that test: the deactivated account still listed its old org's
+  members (user ids and roles; no emails). Migration 039 adds a restrictive
+  SELECT policy on organisation_members: own rows always, other rows only
+  with an active membership. Applied to STAGING and re-tested: the
+  deactivated account sees only its own row and both apps still show the
+  deactivated screen; the active admin still sees the whole team. NOT YET
+  APPLIED TO PRODUCTION: the auto-mode safety check blocked the call.
 - Data fixes run on production by Claude (Ian's instruction: "You run the
   sqls always from now on"): two accounts in a US org moved from region
   "no" to "us" and two US test orgs to the FDA feed; 953 exact-copy FDA
