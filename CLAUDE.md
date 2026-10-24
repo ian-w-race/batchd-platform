@@ -160,10 +160,10 @@ is not on GitHub; nothing live loads it.
   dashboard, join, signup and admin.
 - Email confirmation is OFF (mailer_autoconfirm true), which join.html's
   sign-in-after-signup relies on. Turning it on breaks invite acceptance.
-- Migrations: 001 to 033 with 020a, no 027 (John's code_patterns slot,
+- Migrations: 001 to 034 with 020a, no 027 (John's code_patterns slot,
   applied outside the folder). CHECK_MIGRATIONS.sql reports APPLIED or
   MISSING per migration; Ian ran it 2026-10-11 and every row was APPLIED.
-  031, 032 and 033 were applied 2026-10-24 through the Supabase connector,
+  031 to 034 were applied 2026-10-24 through the Supabase connector,
   which also records them in supabase_migrations. 001 to 030 were run by hand in the
   SQL editor and are not recorded there.
 - Claude has the Supabase connector (since 2026-10-24) on org Batch'd,
@@ -212,6 +212,13 @@ is not on GitHub; nothing live loads it.
   every function. `node_bundler = "esbuild"` bundles it.
 - The old demo account password is in git history and the repo is
   public. It must be rotated (open, see "Open items").
+- Migration 034 (2026-10-24): store names are unique per organization,
+  ignoring case and surrounding spaces (index stores_org_name_uidx; the
+  global stores_name_key is gone), and anon has SELECT only on public
+  tables, also for tables created later by role postgres (default
+  privileges). Logged-out reads of most tenant tables return 42501 from
+  the RLS helper functions (true since 020), not an empty list. Any new
+  page that reads before sign-in must expect that error.
 - Migration 033 (2026-10-24) scoped code_patterns to the member's org
   (organisation_id defaults to batchd_user_org_id(), because the scanner
   never sets it), closed scan_queue to clients, scoped scan_telemetry
@@ -438,15 +445,9 @@ Owed by Ian:
 - Rotate the demo account password (in public git history).
 - Check SCHEDULED_FUNCTIONS_DISABLED and the shared secrets on all three
   Netlify sites.
-Security, found 2026-10-24 while cloning to staging (the storage bucket
-was fixed by migration 032 and the cross-org rules by 033; still open):
-- Every table still grants full privileges to anon at the table level;
-  RLS is the only barrier. Fine while every policy is right, which the
-  items above show is not always true.
-Data model:
-- stores_name_key makes store names unique across ALL orgs, so two
-  retailers cannot both have a store called "Store 1". Should be unique
-  per organisation_id.
+Security, found 2026-10-24 while cloning to staging: all fixed (032
+storage bucket, 033 cross-org rules, 034 anon table writes and store
+names). Nothing from that pass is still open.
 Code, known and not fixed:
 - push-recall-email.js reads scan_recall_matches.removed_at (see the
   database rules).

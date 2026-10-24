@@ -18,7 +18,14 @@ how it was verified and what is still unverified. Everything before
   scans, organisations, stores and recalls already error in production
   (42501 on the RLS helper functions, since migration 020), not the
   empty list older notes describe. 034 does not change reads.
-  Production not changed.
+  Applied to PRODUCTION the same day: no store-name clashes beforehand
+  (19 stores), acceptance passed (0 anon write grants, per-org index
+  present, global constraint gone), and the fingerprint including
+  default privileges matches staging. Rolled-back checks as Ian and as a
+  store manager: both read scans, stores, recalls, deliveries and
+  suppliers, save and pull a scan, add a supplier, a delivery, a manual
+  recall (the sweep trigger matched) and a store; a duplicate store name
+  in the same org is refused. Not verified: a live app session.
 - Migration 033 (cross-org rules) applied to STAGING only. code_patterns
   scoped to the member's org (organisation_id now defaults to the
   caller's org, so the scanner's saves keep working), scan_queue closed
