@@ -5972,15 +5972,18 @@ async function showApp(user) {
   // Netlify functions cold-start after ~5-15 minutes of inactivity, adding
   // ~500ms to the first scan of every session. Fire a tiny warm-up call
   // immediately on login so by the time the user reaches Step 1, the function
-  // is already warm. Use a 1x1 pixel JPEG — minimal data, real cold-start wake.
+  // is already warm. Since 2026-10-24 this is a dedicated "warmup" task that
+  // ocr.js answers with 204 before the auth check: no image, no Anthropic
+  // call. The old 1x1 identify_product call was rejected with 400 because the
+  // org had not loaded yet, and cost an Anthropic call when it had.
   (async () => {
     try {
-      const warmCanvas = document.createElement('canvas');
-      warmCanvas.width = 1; warmCanvas.height = 1;
-      const warmBlob = await new Promise(r => warmCanvas.toBlob(r, 'image/jpeg', 0.5));
-      const warmB64  = await blobToBase64(warmBlob);
-      await callOcrFunction('identify_product', warmB64);
-    } catch(e) {} // silent — this is purely a warm-up
+      await fetch('/.netlify/functions/ocr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task: 'warmup' }),
+      });
+    } catch(e) {} // silent, this is purely a warm-up
   })();
 
   // ── TESSERACT PRE-INIT — RETIRED 2026-08-05 (manual-entry pivot) ──
