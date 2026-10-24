@@ -5,6 +5,22 @@ how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
 ## 2026-10-24
+- Migration 032 (photo bucket) applied to STAGING only. Removes the six
+  scan-photos storage policies (four of them let anyone list, upload,
+  overwrite and delete) and adds three: a signed-in member may read,
+  upload and overwrite only under orgs/<own org id prefix>/, nobody may
+  delete through the API, photos keep loading by public URL. Verified on
+  staging in rolled-back transactions: member uploads to own folder
+  allowed, to another org or the bucket root denied, sees only own org's
+  photos, overwrites own but not others or legacy photos, deletes 0;
+  logged-out lists 0, uploads denied, overwrites 0, deletes 0. Control:
+  with production's old rules restored, a logged-out visitor deleted 2 of
+  2 test photos. Applied to PRODUCTION the same day: production's
+  storage policies now match staging's exactly (same three rules, same
+  fingerprints), all 108 photos remain, three sample photos (two in the
+  org folder, one old root file) still load by public link with the same
+  byte sizes, and logged-out listing dropped from 83 entries to 0. Not
+  verified: a real signed-in scanner upload after the change.
 - Migration 031 applied to production through the Supabase connector.
   It revokes public access to push_recall, create_organisation and
   get_retailer_emails, and anon access to sweep_recall_matches.
