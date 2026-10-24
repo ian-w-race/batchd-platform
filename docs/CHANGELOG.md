@@ -5,6 +5,10 @@ how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
 ## 2026-10-24
+- Removed landing.html and recall-roi-calculator.html (no visits in the
+  week before, per Netlify observability; the landing page's demo form
+  posted to a send-invite branch removed in September). netlify.toml
+  301s both paths to https://batchd.no/.
 - FOUND in Netlify logs: every ocr.js call this week failed with 400. The
   scanner's sign-in warm-up sent a 1x1 image as identify_product before
   the org had loaded, so the auth gate answered "org_id required"; when

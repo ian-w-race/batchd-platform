@@ -116,9 +116,7 @@ are read by the lot tracer, intelligence panel and overview for legacy
 data, but nothing creates rows. webhook-recall.js and docs.html only work
 for manufacturer orgs; nothing links to docs.html. The Investigations
 panel stays (decision 2026-10-18); it only returns rows for orgs with
-manufacturer partners. landing.html still pitches the manufacturer
-network and its demo form posts to a send-invite branch that no longer
-exists.
+manufacturer partners.
 
 ## The files
 Live surfaces:
@@ -136,9 +134,10 @@ Live surfaces:
 - complaint.html and complaint-widget.js: public complaint intake to
   triage-complaint.js. The widget hardcodes www.batchdapp.com.
 - trace.html: retired notice; the trace function answers 410.
-Dormant: landing.html, recall-roi-calculator.html, the three retired
-stubs. Before deleting any, check Netlify analytics or search console for
-external links (needs verification).
+Dormant: the three retired stubs. landing.html and
+recall-roi-calculator.html were removed 2026-10-24 (no visits in the week
+before, per Netlify observability); netlify.toml 301s both to batchd.no.
+Check observability traffic before removing any other page.
 Not app files: README.md, SCHEMA.md, SECRETS.md, SMOKE.md, docs/,
 migrations/, fonts/, netlify/, netlify.toml, package.json (pins
 @supabase/supabase-js 2.112.1 for the functions).
@@ -500,7 +499,6 @@ storage bucket, 033 cross-org rules, 034 anon table writes and store
 names, 035 view user_accessible_stores, search paths and trigger
 functions). Nothing from that pass is still open.
 Code, known and not fixed:
-- landing.html's demo form posts to a removed send-invite branch.
 - Scanner: fetchUserProfile (second script block) calls applyManagerUI
   (third block). Safe in production because the network round-trip lands
   after parsing.
