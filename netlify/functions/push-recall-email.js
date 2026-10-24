@@ -160,7 +160,7 @@ exports.handler = async (event) => {
     try {
       const srmRes = await sb
         .from('scan_recall_matches')
-        .select('organisation_id, store_name, quantity, placed_at, removed_at, scanned_by')
+        .select('organisation_id, store_name, quantity, placed_at, removed_at, scanned_by, scans(removed_from_shelf_at)')
         .eq('recall_id', matchRecallId);
       if (!srmRes.error) matchRows = srmRes.data;
     } catch(srmErr) {
@@ -175,7 +175,11 @@ exports.handler = async (event) => {
         }
         const e = exposureByOrg[m.organisation_id];
         e.total += (m.quantity || 1);
-        if (m.removed_at) e.pulled += (m.quantity || 1);
+        // Pull tracking lives on scans.removed_from_shelf_at (2026-10-24).
+        // scan_recall_matches.removed_at is only copied there by a trigger
+        // when the pull happens after the match, so it undercounts.
+        const pulled = (m.scans && m.scans.removed_from_shelf_at) || m.removed_at;
+        if (pulled) e.pulled += (m.quantity || 1);
         else e.onShelf += (m.quantity || 1);
         if (m.store_name) e.stores.add(m.store_name);
       });
@@ -190,7 +194,7 @@ exports.handler = async (event) => {
 
       const exposure = exposureByOrg[org.id];
       const isDrill  = recallData.is_drill;
-      const isNO     = (org.region || 'no') === 'no';
+      const isNO     = (org.region || 'us') === 'no';   // US-only (2026-09-29): default us
 
       const subject = isDrill
         ? `[DRILL] Batch'd Recall Drill: ${recallData.product_name}`

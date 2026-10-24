@@ -5,6 +5,16 @@ how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
 ## 2026-10-24
+- recall-escalation.js claims each escalation (2h, 24h) in the database
+  before sending and releases the claim when the send fails, so two
+  sites' crons cannot double-email a store. push-recall-email.js counts
+  "confirmed pulled" from scans.removed_from_shelf_at and defaults a
+  missing region to us. Verified: tests/recall-escalation.test.mjs (4
+  tests: simultaneous runs send once, failed send retries, no repeat for
+  stamped rows, disabled flag still skips); the same race test fails on
+  the old code (duplicate 2h emails); the new embedded query shape passes
+  PostgREST's relationship check on staging. Not verified: a live
+  escalation (production has no open unacknowledged recalls).
 - Automatic checks on every pull request (GitHub Actions): scripts/check.mjs
   (7 checks) and tests/env-block.test.mjs (6 tests). netlify.toml now
   forces 404 for /scripts/*, /tests/* and /.github/*. Verified locally:
