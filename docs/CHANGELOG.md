@@ -5,6 +5,43 @@ how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
 ## 2026-10-24
+- Data fixes run on production by Claude (Ian's instruction: "You run the
+  sqls always from now on"): two accounts in a US org moved from region
+  "no" to "us" and two US test orgs to the FDA feed; 953 exact-copy FDA
+  recall rows deleted, 7,707 kept, every kept row distinct, none referenced
+  by a scan match, deleted rows kept in backup.recalls_fda_duplicates_20261024
+  (a schema the public keys cannot reach). FOUND before deleting: the first
+  draft of scripts/cleanup-duplicate-fda-recalls.sql would have deleted 7,827
+  rows, most of them distinct recalls, because old rows carry no recall
+  number and it fell back to "same product, same day". The script now
+  records the exact-copy rule that ran.
+- FOUND: about 70 older RLS policies check membership but not the active
+  flag, so a deactivated member with a live session kept access. On
+  production both deactivated accounts could read 51 scans, 7 stores, 442
+  recalls and a complaint, and a deactivated corp_admin could update the
+  organization. Migration 038 adds one restrictive policy per tenant table
+  (31 tables) requiring an active membership. Applied to STAGING: a
+  rolled-back test shows the active admin unchanged (reads, scan insert, org
+  update), the deactivated admin seeing 0 rows and refused writes while
+  still reading their own membership row for the "Account deactivated"
+  screen, and a brand-new user able to sign up through
+  create_organisation_with_admin; with 038 removed the same deactivated
+  admin read every table and updated the org. Applied to PRODUCTION the
+  same day on Ian's approval: 31 policies, the policy fingerprint matches
+  staging (179 policies), both deactivated accounts now read 0 scans,
+  stores, recalls, complaints and organizations (51, 7, 442, 1 and 1
+  before) but still read their own membership row; rolled-back checks as
+  Ian (same counts as before; scan insert, pull, recall insert, org update)
+  and as an active store manager (reads, scan insert) all pass; the join
+  page's invitation lookup still answers 200.
+- notify-consumers.js: a call takes at most 500 customers in batches of
+  100, paced under Resend's 2 requests a second, each batch with an
+  idempotency key so a retry does not email anyone twice; no single-send
+  fallback flood; a 429 is retried once. The dashboard splits longer lists
+  into calls of 500 and adds up the results. The notice subject lost its em
+  dash. Consumer Notify's manual-recall query now selects is_pushed and
+  recall_event_id, which its dedup filter reads. Verified:
+  tests/notify-consumers.test.mjs (6 tests).
 - Audit of the server functions and the dashboard's complaint code. Fixed:
   - Complaint intake (triage-complaint.js) saved only part of the form:
     people affected, medical attention, best-before date, store, city,

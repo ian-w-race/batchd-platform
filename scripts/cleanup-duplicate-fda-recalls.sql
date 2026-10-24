@@ -1,35 +1,41 @@
 -- scripts/cleanup-duplicate-fda-recalls.sql
--- FOR IAN TO REVIEW AND RUN. NOT RUN BY CLAUDE (it deletes production rows).
+-- RAN ON PRODUCTION 2026-10-24 (Claude, on Ian's standing instruction to run
+-- SQL). Kept as the record of what ran. Re-running it is safe: it finds 0.
 --
--- The old FDA import (before 2026-10-24) inserted the same FDA recall more
--- than once for the same organization: 955 of 8,660 FDA rows were repeats
--- on 2026-10-24, and one product appeared 73 times for one org. This keeps
--- the oldest row of each (organization, recall) and deletes the rest.
--- A recall is identified by its FDA recall number at the end of the
--- description, or, when the number was cut off, by product name and day.
--- Rows that any scan_recall_matches row points at are never deleted.
+-- The old FDA import (before 2026-10-24) inserted the same recall more than
+-- once for the same organization. A row counts as a duplicate only when every
+-- content column matches another row of the same org (product, lot, batch,
+-- barcode, description, created_at, active, resolved_at, source org, pushed
+-- flags). The first draft of this script keyed on the FDA recall number "or
+-- product name and day"; old rows carry no recall number, so that key would
+-- have deleted 7,827 distinct recalls. Do not use that key.
 --
--- Step 1, preview (read-only). Run this first and check the counts.
-with f as (
-  select id, organisation_id, created_at,
-         coalesce(substring(description from '\[([A-Z]-\d{4}-\d{4})\]$'),
-                  product_name || '|' || created_at::date) as recall_key
-  from recalls where source = 'fda'
-), ranked as (
-  select id, row_number() over (partition by organisation_id, recall_key order by created_at, id) as n
-  from f
-)
-select count(*) filter (where n > 1) as rows_to_delete,
-       count(*) filter (where n > 1 and exists (select 1 from scan_recall_matches m where m.recall_id = ranked.id)) as kept_because_matched,
-       count(*) as fda_rows_now
+-- Result on 2026-10-24: 953 rows deleted, 7,707 FDA rows kept, every kept row
+-- distinct, none referenced by scan_recall_matches. The deleted rows are in
+-- backup.recalls_fda_duplicates_20261024 (schema not reachable by anon or
+-- signed-in users). To restore one:
+--   insert into recalls select id, created_at, product_name, lot_number,
+--     batch_number, barcode_number, description, active, organisation_id,
+--     source_org_id, is_pushed, recall_event_id, source, potential_duplicate,
+--     duplicate_source, duplicate_ref, resolved_at
+--   from backup.recalls_fda_duplicates_20261024 where id = '<id>';
+
+-- Preview (read-only)
+with ranked as (
+  select id, row_number() over (partition by organisation_id, product_name, lot_number, batch_number,
+    barcode_number, description, created_at, active, resolved_at, source_org_id, is_pushed, recall_event_id
+    order by id) n
+  from recalls where source = 'fda')
+select count(*) filter (where n > 1) as duplicates,
+       count(*) filter (where n > 1 and exists (select 1 from scan_recall_matches m where m.recall_id = ranked.id)) as referenced
 from ranked;
 
--- Step 2, delete. Remove the leading "-- " from the six lines below and run
--- them together. It runs in one transaction; check the reported count
--- matches rows_to_delete minus kept_because_matched from step 1.
+-- What ran (one transaction)
 -- begin;
--- with f as (select id, organisation_id, created_at, coalesce(substring(description from '\[([A-Z]-\d{4}-\d{4})\]$'), product_name || '|' || created_at::date) as recall_key from recalls where source = 'fda'),
---      ranked as (select id, row_number() over (partition by organisation_id, recall_key order by created_at, id) as n from f)
--- delete from recalls r using ranked where r.id = ranked.id and ranked.n > 1
---   and not exists (select 1 from scan_recall_matches m where m.recall_id = r.id);
+-- create schema if not exists backup;
+-- revoke all on schema backup from public, anon, authenticated;
+-- create table backup.recalls_fda_duplicates_20261024 as
+-- with ranked as (select r.*, row_number() over (partition by organisation_id, product_name, lot_number, batch_number, barcode_number, description, created_at, active, resolved_at, source_org_id, is_pushed, recall_event_id order by id) n from recalls r where source = 'fda')
+-- select * from ranked where n > 1 and not exists (select 1 from scan_recall_matches m where m.recall_id = ranked.id);
+-- delete from recalls r using backup.recalls_fda_duplicates_20261024 b where r.id = b.id;
 -- commit;

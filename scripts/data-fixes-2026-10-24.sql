@@ -1,8 +1,8 @@
 -- scripts/data-fixes-2026-10-24.sql
--- FOR IAN TO REVIEW AND RUN in the Supabase SQL editor (production,
--- lurxucdmrugikdlvvebc). Found by the 2026-10-24 data audit. Claude's
--- attempt to run it was blocked by the auto-mode safety check because it
--- changes other people's settings. Nothing here deletes data.
+-- RAN ON PRODUCTION 2026-10-24 by Claude (production,
+-- lurxucdmrugikdlvvebc) on Ian's instruction. Result: 2 user_settings rows
+-- and 2 organizations updated; afterwards 0 US members with region 'no' and 0
+-- US retailers off 'fda'. Kept as the record. Nothing here deletes data.
 --
 -- 1. Two accounts in the US org "Batch'd Admin" still have their personal
 --    region set to 'no', so they see Norwegian regulatory copy (the US-only
