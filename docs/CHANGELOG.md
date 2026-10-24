@@ -5,6 +5,20 @@ how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
 ## 2026-10-24
+- Migration 034 applied to STAGING only. Store names are unique per
+  organization (ignoring case and surrounding spaces) instead of across
+  the platform, and the anon role keeps SELECT only on public tables
+  (no table-level writes), including tables created later. Verified on
+  staging in a rolled-back transaction: two orgs can both have "Store 1",
+  one org cannot have "Store 1" and " store 1 ", the real signup function
+  creates a retailer whose store names another org already uses,
+  signed-in writes work, logged-out inserts and updates are refused, the
+  join page's invitation lookup and products_public still work, a new
+  table gives anon SELECT only. Found on the way: logged-out reads of
+  scans, organisations, stores and recalls already error in production
+  (42501 on the RLS helper functions, since migration 020), not the
+  empty list older notes describe. 034 does not change reads.
+  Production not changed.
 - Migration 033 (cross-org rules) applied to STAGING only. code_patterns
   scoped to the member's org (organisation_id now defaults to the
   caller's org, so the scanner's saves keep working), scan_queue closed
