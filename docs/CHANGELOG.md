@@ -5,6 +5,11 @@ how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
 ## 2026-10-24
+- Scanner: fetchUserProfile calls applyManagerUI, which is declared in a
+  later script block, through _applyManagerUISafe; if the later block has
+  not parsed yet it waits for DOMContentLoaded instead of throwing.
+  Verified: node --check and the repository checks; a test drives the
+  helper with the function missing and then defined.
 - Removed landing.html and recall-roi-calculator.html (no visits in the
   week before, per Netlify observability; the landing page's demo form
   posted to a send-invite branch removed in September). netlify.toml
