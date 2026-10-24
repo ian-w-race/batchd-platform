@@ -26,9 +26,22 @@ work. Never give Ian partial diffs or snippets to paste in by hand.
 - After a change Ian should test, add a numbered check to SMOKE.md and a
   dated entry to docs/CHANGELOG.md. Keep this file to rules and current
   state; do not grow it back into a log.
-- Deploy previews talk to the PRODUCTION Supabase project and, unless the
-  Netlify variables are scoped otherwise, the production function keys.
-  Testing on a preview writes real data. Use a test org.
+- Since 2026-10-24 every page picks its database from the host
+  (BATCHD_ENV, set next to SUPABASE_URL in index, dashboard, signup, join
+  and admin): any "name--site.netlify.app" host (deploy previews, branch
+  deploys) and localhost or 127.0.0.1 use STAGING (tiwrrocdwljazweveeth);
+  everything else uses production. Staging pages show a "Staging
+  database" badge, rewrite links and window.open calls aimed at the
+  production apps to the preview's own origin (batchdPreviewUrl), and
+  use batchdLink(productionUrl, stagingPath) for redirects. Keep the
+  block identical in all five files.
+- Netlify FUNCTIONS on previews still run with the production
+  environment variables, so anything that calls /.netlify/functions/
+  from a preview (invite emails, AI, reminders, complaint intake) talks
+  to production and rejects the staging sign-in. Fix by giving the
+  Deploy Previews context its own SUPABASE_URL and SUPABASE_SERVICE_KEY
+  (staging values) in Netlify; until then, do not test those features on
+  a preview, and never submit the public complaint form there.
 - Local previews (local only, excluded from git through .git/info/exclude):
   `.claude/launch.json` and `.claude/serve.js` serve the folder on
   127.0.0.1:8787. `.claude/build-app-preview.py` and
@@ -70,7 +83,8 @@ FSMA 204. The US/NO region layer is FROZEN, not removed:
 - No em dashes in product copy or docs. Short sentences.
 - Think before building. Work surgically. Do not break what works.
 - Never expose secrets client-side. The only keys allowed in HTML: the
-  Supabase anon key (public by design, RLS-protected), the MapTiler
+  Supabase anon keys of production and staging (public by design,
+  RLS-protected), the MapTiler
   publishable key in dashboard.html (origin-locked) and the Sentry
   browser-loader public key. Rotation runbook: SECRETS.md.
 - batchd.no is the brand site: its own repo and Netlify site. Never edit
