@@ -5712,7 +5712,7 @@ async function _fdaDataFromManualRecall(recallId) {
 // of truth for distribution at this point).
 async function _fdaDataFromRecallEvent(recallEventId) {
   let { data: ev, error } = await sb.from('recall_events')
-    .select('id, product_name, lot_number, barcode, severity, reason, description, depth, public_warning, effectiveness, published_at, is_drill')
+    .select('id, product_name, lot_number, barcode, severity, reason, description, published_at, is_drill')
     .eq('id', recallEventId)
     .single();
   if (error) {
@@ -17201,6 +17201,12 @@ const fmtDT      = d => d ? new Date(d).toLocaleString(_dashLocale(), {day:'nume
 // GAP 3: COMPLAINT PATTERN DETECTION
 // ═══════════════════════════════════════════════════════════════
 
+// complaints has no store_id column (2026-10-24 audit): the store is
+// store_name (staff and phone intake) or purchase_store (public form).
+// Both queries below asked for store_id, failed with 42703 and returned
+// nothing, so pattern alerts never appeared.
+function _complaintStore(c) { return (c && (c.store_name || c.purchase_store)) || null; }
+
 // Called after a complaint is saved — checks for patterns
 // Also surfaces in the dashboard as a banner
 async function checkComplaintPatterns(productName, orgId) {
@@ -17208,7 +17214,7 @@ async function checkComplaintPatterns(productName, orgId) {
   const cutoff = new Date(Date.now() - 30 * 86400000).toISOString();
   try {
     const { data: recent } = await sb.from('complaints')
-      .select('id, product_name, triage_level, store_id, created_at, triage_category')
+      .select('id, product_name, triage_level, store_name, purchase_store, created_at, triage_category')
       .eq('receiving_org_id', orgId)
       .gte('created_at', cutoff)
       .ilike('product_name', `%${productName.split(' ')[0]}%`);
@@ -17216,7 +17222,7 @@ async function checkComplaintPatterns(productName, orgId) {
     if (!recent || recent.length < 2) return null;
 
     // Count unique stores
-    const stores = new Set(recent.map(c => c.store_id).filter(Boolean));
+    const stores = new Set(recent.map(_complaintStore).filter(Boolean));
     const criticalCount = recent.filter(c => c.triage_level === 'critical').length;
 
     // Pattern threshold: 2+ complaints, 2+ stores OR any critical
@@ -17246,7 +17252,7 @@ async function renderPatternAlerts() {
   const cutoff = new Date(Date.now() - 30 * 86400000).toISOString();
   try {
     const { data: complaints } = await sb.from('complaints')
-      .select('product_name, store_id, triage_level, created_at')
+      .select('product_name, store_name, purchase_store, triage_level, created_at')
       .eq('receiving_org_id', _orgId)
       .gte('created_at', cutoff)
       .not('product_name', 'is', null);
@@ -17262,7 +17268,7 @@ async function renderPatternAlerts() {
     });
 
     const patterns = Object.values(groups).filter(g => {
-      const stores = new Set(g.items.map(i => i.store_id).filter(Boolean));
+      const stores = new Set(g.items.map(_complaintStore).filter(Boolean));
       const hasCritical = g.items.some(i => i.triage_level === 'critical');
       return (g.items.length >= 2 && stores.size >= 2) || (g.items.length >= 2 && hasCritical);
     });
@@ -17270,7 +17276,7 @@ async function renderPatternAlerts() {
     if (!patterns.length) { el.innerHTML = ''; return; }
 
     el.innerHTML = patterns.map(p => {
-      const stores = new Set(p.items.map(i => i.store_id).filter(Boolean));
+      const stores = new Set(p.items.map(_complaintStore).filter(Boolean));
       const hasCritical = p.items.some(i => i.triage_level === 'critical');
       return `
         <div style="display:flex;align-items:flex-start;gap:12px;padding:12px 16px;background:${hasCritical?'rgba(var(--danger-rgb),0.08)':'rgba(var(--warn-rgb),0.07)'};border:1px solid ${hasCritical?'rgba(var(--danger-rgb),0.3)':'rgba(var(--warn-rgb),0.25)'};border-radius:var(--r-md);margin-bottom:10px;">

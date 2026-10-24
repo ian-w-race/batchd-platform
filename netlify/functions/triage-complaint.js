@@ -15,6 +15,45 @@ const MAX = { text: 4000, short: 200, name: 120, phone: 40, email: 254 };
 const S = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : null) || null;
 const ONE_OF = (v, allowed) => (typeof v === 'string' && allowed.includes(v)) ? v : null;
 const ANTHROPIC_TIMEOUT_MS = 7000; // Netlify synchronous functions are killed at 10 s
+const EMAIL_TIMEOUT_MS = 4000;
+// Date columns (purchase_date, incident_date, best_before_date) take only a
+// real YYYY-MM-DD; anything else would fail the whole insert.
+const D = (v) => {
+  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v.trim())) return null;
+  const t = new Date(v.trim() + 'T00:00:00Z');
+  return !Number.isNaN(t.getTime()) && t.toISOString().slice(0, 10) === v.trim() ? v.trim() : null;
+};
+const TRIAGE_LEVELS = ['critical', 'serious', 'monitor', 'pending'];
+// The model's JSON is untrusted: keep only values the complaints CHECK and the
+// rest of the flow accept, so a stray "High" or a missing field cannot turn a
+// saved complaint into a 500.
+function normalizeTriage(t, fallback) {
+  if (!t || typeof t !== 'object') return fallback;
+  const level = String(t.triage_level || '').toLowerCase().trim();
+  const str = (v, max) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null);
+  const arr = (v) => Array.isArray(v) ? v.filter((x) => typeof x === 'string').map((x) => x.slice(0, 80)).slice(0, 20) : [];
+  return {
+    triage_level: TRIAGE_LEVELS.includes(level) ? level : fallback.triage_level,
+    triage_category: str(t.triage_category, 60) || fallback.triage_category,
+    triage_summary: str(t.triage_summary, 500) || fallback.triage_summary,
+    keywords_detected: arr(t.keywords_detected),
+    follow_up_type: str(t.follow_up_type, 40) || 'general',
+    recall_flag: t.recall_flag === true,
+    recall_flag_reason: str(t.recall_flag_reason, 300),
+    severity_factors: arr(t.severity_factors),
+  };
+}
+// Resend returns a JSON error with a non-2xx status; a send that is not
+// confirmed must not be logged as sent.
+async function sendEmail(payload) {
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${RESEND_API_KEY}` },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(EMAIL_TIMEOUT_MS)
+  });
+  if (!res.ok) throw new Error('Resend ' + res.status + ': ' + (await res.text().catch(() => '')).slice(0, 200));
+}
 
 async function resolveStaff(event, orgId) {
   const user = await verifyUser(event);
@@ -223,9 +262,11 @@ Return ONLY valid JSON:
       body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 600, messages: [{ role: 'user', content: prompt }] }),
       signal: AbortSignal.timeout(ANTHROPIC_TIMEOUT_MS)
     });
+    if (!res.ok) throw new Error('Anthropic ' + res.status);
     const data = await res.json();
-    const raw = (data.content?.[0]?.text || '{}').replace(/```json|```/g, '').trim();
-    return JSON.parse(raw);
+    const raw = (data.content?.[0]?.text || '').replace(/```json|```/g, '').trim();
+    const m = raw.match(/\{[\s\S]*\}/);
+    return normalizeTriage(m ? JSON.parse(m[0]) : null, FALLBACK);
   } catch (e) {
     console.warn('[triage-complaint] triage unavailable:', e?.message);
     return FALLBACK;
@@ -315,17 +356,13 @@ async function sendFollowUpEmail(complaint, triage, orgName) {
 
   const body = `${s.greeting}\n\n${s.intro}\n${isUrgent ? s.urgent : ''}\n${s.followup}\n\n${questionList}\n\n${s.reply}\n\n${s.team}\n\n---\n${s.footer}`;
 
-  await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${RESEND_API_KEY}` },
-    body: JSON.stringify({ from: "Batch'd Triage <triage@batchdapp.com>", to: complaint.customer_email, subject, text: body })
-  });
+  await sendEmail({ from: "Batch'd Triage <triage@batchdapp.com>", to: complaint.customer_email, subject, text: body });
 }
 
 async function sendCriticalAlert(complaint, triage, matches, orgId, orgName) {
   const orgs = await sbQuery('organisations', { id: `eq.${orgId}`, 'select': 'contact_email', 'limit': '1' });
   const alertEmail = orgs?.[0]?.contact_email;
-  if (!alertEmail) return;
+  if (!alertEmail) return false;
 
   const matchSummary = [];
   if (matches.products?.length) matchSummary.push(`Product match: ${matches.products[0].name} (${matches.products[0].reason})`);
@@ -359,16 +396,13 @@ ${matchSummary.length ? 'BATCH\'D MATCHES FOUND:\n' + matchSummary.join('\n') + 
 Review and take action: https://corporate.batchdapp.com/?panel=triage
 Reference: ${complaint.complaint_number}`;
 
-  await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${RESEND_API_KEY}` },
-    body: JSON.stringify({
-      from: "Batch'd Triage <triage@batchdapp.com>",
-      to: alertEmail,
-      subject: `CRITICAL complaint: ${complaint.product_name || 'Unknown product'} [${complaint.complaint_number}]`,
-      text: body
-    })
+  await sendEmail({
+    from: "Batch'd Triage <triage@batchdapp.com>",
+    to: alertEmail,
+    subject: `CRITICAL complaint: ${complaint.product_name || 'Unknown product'} [${complaint.complaint_number}]`,
+    text: body
   });
+  return true;
 }
 
 // ── Main handler ───────────────────────────────────────────────
@@ -405,8 +439,8 @@ exports.handler = async (event) => {
     const store_name        = S(body.store_name, MAX.short);
     const purchase_city     = S(body.purchase_city, 100);
     const purchase_state    = S(body.purchase_state, 100);
-    const best_before_date  = S(body.best_before_date, 20);
-    const purchase_date     = S(body.purchase_date, 20);
+    const best_before_date  = D(body.best_before_date);
+    const purchase_date     = D(body.purchase_date);
     const people_affected   = S(body.people_affected, 60);
     const medical_attention = S(body.medical_attention, 60);
     const storage_method    = S(body.storage_method, 60);
@@ -490,8 +524,17 @@ exports.handler = async (event) => {
       customer_email,
       customer_phone,
       purchase_store: store_name,
+      store_name,
+      purchase_city,
+      purchase_state,
+      country,
       purchase_date,
       incident_date: purchase_date,
+      best_before_date,
+      people_affected,
+      medical_attention,
+      storage_method,
+      lang,
       still_has_product,
       linked_scan_id,
       ip_hash: staff ? null : ipHash,
@@ -544,6 +587,7 @@ exports.handler = async (event) => {
       triage_category: triage.triage_category,
       triage_summary: triage.triage_summary,
       keywords_detected: triage.keywords_detected || [],
+      smart_matches: matches,
       status: 'triaged'
     });
 
@@ -560,6 +604,21 @@ exports.handler = async (event) => {
         matches_found: { products: matches.products.length, stores: matches.stores.length, shipments: matches.shipments.length }
       }
     });
+
+    // 7a. Critical alert first: it is the one email that must not be lost
+    // to the 10 s function limit, so it goes before the slower sends.
+    if (triage.triage_level === 'critical' && targetOrgId) {
+      try {
+        const sent = await sendCriticalAlert(
+          { ...complaint, product_name, barcode, lot_number, best_before_date, customer_name, customer_email, customer_phone, complaint_text, store_name, purchase_city, purchase_state, country, people_affected, medical_attention, still_has_product },
+          triage, matches, targetOrgId, org_name
+        );
+        if (sent) await sbInsert('complaint_audit_log', {
+          complaint_id: complaint.id, action: 'critical_alert_sent',
+          actor_label: "Batch'd Triage (automated)", details: { org_id: targetOrgId }
+        });
+      } catch (e) { console.error('Critical alert failed:', e.message); }
+    }
 
     // 7b. Per-user notification emails to opted-in corp_admins +
     // store_managers in the receiving org. Fire-and-forget — failure
@@ -583,6 +642,7 @@ exports.handler = async (event) => {
               store_id:         null,  // not resolved here; complaint_filed scopes corp_admins + all store_managers of the org if null
             },
           }),
+         signal: AbortSignal.timeout(EMAIL_TIMEOUT_MS),
         });
         if (!notifyRes.ok) {
           console.warn('[triage-complaint] notify-event non-2xx:', notifyRes.status);
@@ -608,20 +668,6 @@ exports.handler = async (event) => {
           actor_label: "Batch'd Triage (automated)", details: { recipient: customer_email, lang }
         });
       } catch (e) { console.error('Follow-up email failed:', e.message); }
-    }
-
-    // 9. Critical alert
-    if (triage.triage_level === 'critical' && targetOrgId) {
-      try {
-        await sendCriticalAlert(
-          { ...complaint, product_name, barcode, lot_number, best_before_date, customer_name, customer_email, customer_phone, complaint_text, store_name, purchase_city, purchase_state, country, people_affected, medical_attention, still_has_product },
-          triage, matches, targetOrgId, org_name
-        );
-        await sbInsert('complaint_audit_log', {
-          complaint_id: complaint.id, action: 'critical_alert_sent',
-          actor_label: "Batch'd Triage (automated)", details: { org_id: targetOrgId }
-        });
-      } catch (e) { console.error('Critical alert failed:', e.message); }
     }
 
     // 10. Pattern detection — check if this new complaint creates a pattern
@@ -696,3 +742,6 @@ exports.handler = async (event) => {
     return { statusCode: 500, headers, body: JSON.stringify({ error: 'Something went wrong. Please try again or contact support if the problem persists.' }) };
   }
 };
+
+// For tests only.
+exports._test = { D, normalizeTriage };

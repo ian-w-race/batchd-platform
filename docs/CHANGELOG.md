@@ -5,6 +5,48 @@ how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
 ## 2026-10-24
+- Audit of the server functions and the dashboard's complaint code. Fixed:
+  - Complaint intake (triage-complaint.js) saved only part of the form:
+    people affected, medical attention, best-before date, store, city,
+    state, country, storage and language never reached their columns, so
+    the dashboard showed them blank. All are saved now, plus the smart
+    match results. Dates must be real YYYY-MM-DD dates or are dropped.
+  - The AI triage answer was written as returned. A level outside critical,
+    serious, monitor or pending broke the database CHECK after the complaint
+    was saved, so the reporter saw an error and often resubmitted. The
+    answer is now checked field by field, an Anthropic error status uses the
+    manual-review fallback, and prose around the JSON is tolerated.
+  - Emails were never checked: a refused send was still logged as "follow-up
+    sent". Sends now time out after 4 s and only a confirmed send is logged.
+    The critical alert goes out before the other emails so the 10 s function
+    limit cannot cut it off.
+  - Dashboard complaint pattern detection queried complaints.store_id, a
+    column that does not exist, so it never found a pattern. It reads
+    store_name or purchase_store now. The FDA notification draft's
+    recall_events select asked for missing columns; trimmed.
+  - Escalation and reminder emails still went out for recalls that were
+    administratively closed. Both now skip closed recalls.
+  - push-recall-email.js matched pushed recalls on recall_id, which points
+    at the recalls table, so the email's exposure block was always empty.
+    It uses recall_event_id for pushed recalls.
+  - webhook-recall.js sent null severity and reason into NOT NULL columns
+    and accepted "market_withdrawal", which the CHECK refuses. "unknown" or
+    no severity now takes the Class II default, market withdrawals get a
+    clear 422, and a missing reason falls back to the description.
+    docs.html matches.
+  - notify-event.js compares the internal secret in constant time through
+    the shared helper and returns a clean 502 when the recipient lookup
+    fails. It, ocr.js and ai-analyze.js refuse a body that is not a JSON
+    object. ocr.js waited 25 s for Anthropic in a function Netlify ends at
+    10 s; both AI proxies now give up at 9 s.
+  - The invite email said invitations expire in 7 days; they last 30.
+    Consumer recall emails print US dates.
+  Verified: 9 of 9 repository checks, 46 of 46 tests, including the new
+  tests/triage-complaint.test.mjs (7 tests, all fail on the old code) and a
+  closed-recall test in tests/recall-escalation.test.mjs (fails on the old
+  query). Not verified: a live complaint, escalation or webhook call.
+  Left for later: notify-consumers.js sends serially and a retry repeats
+  emails; recall-feeds.js is frozen Norwegian code.
 - Scanner: fetchUserProfile calls applyManagerUI, which is declared in a
   later script block, through _applyManagerUISafe; if the later block has
   not parsed yet it waits for DOMContentLoaded instead of throwing.

@@ -71,10 +71,11 @@ exports.handler = async (event) => {
     let q = sb.from('recall_acknowledgements')
       .select(`id,status,created_at,organisation_id,escalation_2h_sent_at,escalation_24h_sent_at,
         stores(name),
-        recall_events!inner(id,product_name,lot_number,severity,published_at,is_drill),
+        recall_events!inner(id,product_name,lot_number,severity,published_at,is_drill,closed_at),
         organisations!recall_acknowledgements_organisation_id_fkey(name,contact_email,recall_coordinator_name,recall_coordinator_contact)`)
       .eq('status','notified')
-      .eq('recall_events.is_drill', false);
+      .eq('recall_events.is_drill', false)
+      .is('recall_events.closed_at', null); // an administratively closed recall gets no more emails
 
     const { data: acks, error } = await q;
     if (error) throw error;

@@ -205,6 +205,10 @@ is not on GitHub; nothing live loads it.
   dashboard, join, signup and admin.
 - Email confirmation is OFF (mailer_autoconfirm true), which join.html's
   sign-in-after-signup relies on. Turning it on breaks invite acceptance.
+- Migration 007 (scan_corrections) is NOT applied: the table does not
+  exist in production (checked 2026-10-24; CHECK_MIGRATIONS reports it
+  MISSING). The only writer is the retired OCR path in saveRecord, so the
+  insert never runs today. Apply 007 before reviving OCR capture.
 - Migrations: 001 to 037 with 020a, no 027 (John's code_patterns slot,
   applied outside the folder). CHECK_MIGRATIONS.sql reports APPLIED or
   MISSING per migration; Ian ran it 2026-10-11 and every row was APPLIED.

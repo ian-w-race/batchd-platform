@@ -41,6 +41,9 @@ exports.handler = async (event) => {
   try { body = JSON.parse(rawBody); } catch(e) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON' }) };
   }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { statusCode: 400, body: JSON.stringify({ error: 'Request body must be a JSON object' }) };
+  }
 
   // Auth: an active member of the org named in the body, and that org must be
   // on a POV or Paying plan. Anthropic spend is billed to Batch'd, so a JWT
@@ -134,6 +137,9 @@ If the question cannot be answered from available data, return:
         'x-api-key': ANTHROPIC_API_KEY,
         'anthropic-version': '2023-06-01',
       },
+      // Netlify ends synchronous functions at 10 s; give up first so the
+      // caller gets a clean error instead of a platform 502.
+      signal: AbortSignal.timeout(9000),
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: maxTokens,

@@ -161,7 +161,9 @@ exports.handler = async (event) => {
       const srmRes = await sb
         .from('scan_recall_matches')
         .select('organisation_id, store_name, quantity, placed_at, removed_at, scanned_by, scans(removed_from_shelf_at)')
-        .eq('recall_id', matchRecallId);
+        // Pushed recalls match on recall_event_id (recall_id has a foreign key
+        // to recalls and is null on those rows); manual recalls on recall_id.
+        .eq(recall_event_id ? 'recall_event_id' : 'recall_id', matchRecallId);
       if (!srmRes.error) matchRows = srmRes.data;
     } catch(srmErr) {
       // Table may not exist — exposure data will be omitted from the email

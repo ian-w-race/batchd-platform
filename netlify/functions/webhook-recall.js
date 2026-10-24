@@ -7,7 +7,10 @@ const SUPABASE_URL = 'https://lurxucdmrugikdlvvebc.supabase.co';
 const SB_SVC_KEY   = process.env.SUPABASE_SERVICE_KEY;
 const crypto = require('crypto');
 const SITE_URL = process.env.URL || 'https://app.batchdapp.com';
-const SEVERITIES = new Set(['unknown', 'class_i', 'class_ii', 'class_iii', 'market_withdrawal']);
+// recall_events.severity is NOT NULL with a CHECK of class_i/ii/iii (default
+// class_ii). 'unknown' or no value leaves the column to its default; a market
+// withdrawal is not a recall class and is refused.
+const SEVERITIES = new Set(['class_i', 'class_ii', 'class_iii']);
 // Text fields: strings only, tag-shaped runs removed, whitespace collapsed, length-capped.
 const txt = (v, max) => {
   if (typeof v !== 'string') return null;
@@ -67,9 +70,11 @@ exports.handler = async (event) => {
                    : Array.isArray(body.retailer_org_ids)   ? body.retailer_org_ids : [];
   const retailer_org_ids = rawTargets.filter(id => typeof id === 'string' && /^[0-9a-f-]{36}$/i.test(id));
   if (!product_name) return jsonResponse(400, { error: 'product_name is required.' });
-  if (severity !== null && !SEVERITIES.has(severity)) {
-    return jsonResponse(422, { error: 'Invalid severity. Use one of: unknown, class_i, class_ii, class_iii, market_withdrawal.' });
+  if (severity !== null && severity !== 'unknown' && !SEVERITIES.has(severity)) {
+    return jsonResponse(422, { error: 'Invalid severity. Use one of: class_i, class_ii, class_iii, or unknown (recorded as class_ii).' });
   }
+  // recall_events.reason is NOT NULL.
+  const reasonText = reason || (description ? description.slice(0, 500) : null) || 'Not stated by the sender';
 
   try {
     // ── 1. Create recall_event ─────────────────────────────────────────────
@@ -78,8 +83,8 @@ exports.handler = async (event) => {
       product_name,
       lot_number:          lot_number || null,
       barcode:             barcode    || null,
-      severity:            severity   || null,
-      reason:              reason     || null,
+      ...(SEVERITIES.has(severity) ? { severity } : {}),
+      reason:              reasonText,
       description:         description || null,
       authority_reference: authority_reference || null,
       affected_countries:  affected_countries || null,
