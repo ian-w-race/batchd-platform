@@ -461,7 +461,9 @@ Owed by Ian:
   Netlify sites.
 Security, found 2026-10-24 while cloning to staging: all fixed (032
 storage bucket, 033 cross-org rules, 034 anon table writes and store
-names). Nothing from that pass is still open.
+names). Still open: migration 035 (written, applied to staging only)
+closes view user_accessible_stores, which leaks every org's stores and
+user ids to the public key in production.
 Code, known and not fixed:
 - push-recall-email.js reads scan_recall_matches.removed_at (see the
   database rules).
