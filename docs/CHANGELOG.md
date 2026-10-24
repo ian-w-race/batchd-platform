@@ -5,6 +5,12 @@ how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
 ## 2026-10-24
+- Automatic checks on every pull request (GitHub Actions): scripts/check.mjs
+  (7 checks) and tests/env-block.test.mjs (6 tests). netlify.toml now
+  forces 404 for /scripts/*, /tests/* and /.github/*. Verified locally:
+  7 of 7 checks and 6 of 6 tests pass; three planted mistakes (a changed
+  export column, a wrong retention citation, a changed database block in
+  join.html) each made check.mjs fail.
 - FOUND: production view user_accessible_stores (security definer, unused
   by any code) returned 26 rows covering 4 organizations and 5 user ids,
   with store names, codes and addresses, to a logged-out request with the

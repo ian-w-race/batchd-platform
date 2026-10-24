@@ -50,10 +50,17 @@ work. Never give Ian partial diffs or snippets to paste in by hand.
   Supabase swapped for `.claude/app-stub.js`, a stub over sample rows.
   Rebuild after editing the page. The stub must answer queries on a later
   task, not a microtask, or the scanner's script-order assumption breaks.
-- Verification standard so far: `node --check` on every inline script
-  block (scanner 4, dashboard 6, signup 2, join 2, admin 1), Node tests
-  with stubbed clients, local previews in both themes. None of that proves
-  behavior against the live database; say so when reporting.
+- Automatic checks (2026-10-24): GitHub Actions runs `node
+  scripts/check.mjs` and `node --test tests/*.test.mjs` on every pull
+  request and push to main (.github/workflows/checks.yml). check.mjs
+  covers syntax of every inline script and function, the identical
+  database selection block in the five app pages, anon-only keys in
+  pages, identical FSMA204_EXPORT_HEADERS, agreeing citation tables, and
+  forced 404s for private paths. When CLAUDE.md says "keep X in step",
+  add a check there. Run both locally before opening a pull request.
+- Verification standard beyond that: Node tests with stubbed clients,
+  local previews in both themes, rolled-back SQL checks as real roles.
+  None of that proves behavior in a live session; say so when reporting.
 
 ## Decision 2026-09-29: United States only
 Norway is abandoned for the foreseeable future. Every new feature,
