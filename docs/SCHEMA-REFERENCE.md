@@ -1,6 +1,6 @@
 # Batch'd database reference
 
-Generated 2026-10-24 18:41 UTC from the production project (lurxucdmrugikdlvvebc) by scripts/schema-reference.sql. Do not edit by hand; regenerate after every migration.
+Generated 2026-10-24 18:44 UTC from the production project (lurxucdmrugikdlvvebc) by scripts/schema-reference.sql. Do not edit by hand; regenerate after every migration.
 
 45 tables, 2 views, 42 functions, 148 policies.
 
@@ -9,7 +9,7 @@ Generated 2026-10-24 18:41 UTC from the production project (lurxucdmrugikdlvvebc
 ## code_patterns
 
 Row security: on · Approximate rows: 30
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -59,7 +59,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## complaint_audit_log
 
 Row security: on · Approximate rows: 0
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -96,7 +96,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## complaint_escalations
 
 Row security: on · Approximate rows: 0
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -135,7 +135,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## complaint_messages
 
 Row security: on · Approximate rows: 0
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -171,7 +171,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## complaints
 
 Row security: on · Approximate rows: 2
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -250,7 +250,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## ftl_overrides
 
 Row security: on · Approximate rows: 0
-Table access: authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -285,7 +285,7 @@ Table access: authenticated: delete, insert, references, select, trigger, trunca
 ## ingredient_receipts
 
 Row security: on · Approximate rows: 0
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -322,7 +322,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## investigation_requests
 
 Row security: on · Approximate rows: 0
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -363,7 +363,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## investigation_responses
 
 Row security: on · Approximate rows: 0
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -408,7 +408,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## invitations
 
 Row security: on · Approximate rows: 9
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -455,7 +455,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## mock_recall_drills
 
 Row security: on · Approximate rows: 0
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -512,7 +512,7 @@ none
 ## organisation_members
 
 Row security: on · Approximate rows: 14
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -575,7 +575,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## organisations
 
 Row security: on · Approximate rows: 9
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -643,7 +643,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## product_lots
 
 Row security: on · Approximate rows: 0
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -688,7 +688,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## products
 
 Row security: on · Approximate rows: 6
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -760,7 +760,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## products_pending
 
 Row security: on · Approximate rows: 184
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -818,7 +818,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## recall_acknowledgements
 
 Row security: on · Approximate rows: 20
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -870,7 +870,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## recall_consumer_notifications
 
 Row security: on · Approximate rows: 0
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -899,7 +899,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## recall_distributions
 
 Row security: on · Approximate rows: 0
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -925,7 +925,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## recall_effectiveness_checks
 
 Row security: on · Approximate rows: 0
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -960,7 +960,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## recall_events
 
 Row security: on · Approximate rows: 0
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -1024,7 +1024,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## recalls
 
 Row security: on · Approximate rows: 9534
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -1077,7 +1077,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## receiving_events
 
 Row security: on · Approximate rows: 0
-Table access: authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -1146,7 +1146,7 @@ Table access: authenticated: delete, insert, references, select, trigger, trunca
 ## records_requests
 
 Row security: on · Approximate rows: 0
-Table access: authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -1205,7 +1205,7 @@ none
 ## scan_recall_matches
 
 Row security: on · Approximate rows: 2
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -1272,7 +1272,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## scan_telemetry
 
 Row security: on · Approximate rows: 0
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -1310,7 +1310,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## scans
 
 Row security: on · Approximate rows: 92
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -1408,7 +1408,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## scans_audit_log
 
 Row security: on · Approximate rows: 0
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -1440,7 +1440,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## shipments
 
 Row security: on · Approximate rows: 0
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -1498,7 +1498,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## store_group_members
 
 Row security: on · Approximate rows: 0
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -1525,7 +1525,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## store_groups
 
 Row security: on · Approximate rows: 0
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -1552,7 +1552,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## store_manager_stores
 
 Row security: on · Approximate rows: 0
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -1585,7 +1585,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## stores
 
 Row security: on · Approximate rows: 19
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -1637,7 +1637,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## supplier_connections
 
 Row security: on · Approximate rows: 0
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -1672,7 +1672,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## supplier_ingredients
 
 Row security: on · Approximate rows: 0
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -1708,7 +1708,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## supplier_lot_codes
 
 Row security: on · Approximate rows: 0
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -1747,7 +1747,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## supplier_manufacturer_links
 
 Row security: on · Approximate rows: 0
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -1789,7 +1789,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## supplier_shipments
 
 Row security: on · Approximate rows: 0
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -1829,7 +1829,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## suppliers
 
 Row security: on · Approximate rows: 0
-Table access: authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -1879,7 +1879,7 @@ Table access: authenticated: delete, insert, references, select, trigger, trunca
 ## traceability_plans
 
 Row security: on · Approximate rows: 0
-Table access: authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -1912,7 +1912,7 @@ Table access: authenticated: delete, insert, references, select, trigger, trunca
 ## trading_partners
 
 Row security: on · Approximate rows: 0
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -1954,7 +1954,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## user_profiles
 
 Row security: on · Approximate rows: 0
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
@@ -1982,7 +1982,7 @@ Table access: anon: select; authenticated: delete, insert, references, select, t
 ## user_settings
 
 Row security: on · Approximate rows: 11
-Table access: anon: select; authenticated: delete, insert, references, select, trigger, truncate, update; service_role: delete, insert, references, select, trigger, truncate, update
+Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
 |---|---|---|---|
