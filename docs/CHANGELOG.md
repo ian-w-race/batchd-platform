@@ -5,6 +5,12 @@ how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
 ## 2026-10-24
+- Migration 037: signed-in users keep only select, insert, update and
+  delete on public tables (TRUNCATE, REFERENCES, TRIGGER and MAINTAIN
+  removed, also for future tables). Applied to staging, then production;
+  rolled-back checks as a test user on staging and as Ian on production:
+  reads, insert, update, delete and the recall sweep work, TRUNCATE is
+  refused, 0 non-CRUD grants left. docs/SCHEMA-REFERENCE.md regenerated.
 - docs/SCHEMA-REFERENCE.md generated from production by the new
   scripts/schema-reference.sql (45 tables, 2 views, 42 functions, 148
   policies). CLAUDE.md now points to it as the schema authority.
