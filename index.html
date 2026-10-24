@@ -18893,6 +18893,16 @@ function initMode() {
 
 // ── MANAGER ROLE ─────────────────────────────────────────────
 
+// applyManagerUI is declared in the next script block. fetchUserProfile
+// normally runs after a network round trip, by which time every block has
+// parsed, but a cached or instant response could arrive first and throw a
+// ReferenceError (also from inside the catch). Wait for the page instead
+// (2026-10-24).
+function _applyManagerUISafe(isManager) {
+  if (typeof applyManagerUI === 'function') { applyManagerUI(isManager); return; }
+  document.addEventListener('DOMContentLoaded', () => applyManagerUI(isManager), { once: true });
+}
+
 async function fetchUserProfile() {
   if (!currentUser) return;
   try {
@@ -18917,18 +18927,18 @@ async function fetchUserProfile() {
       dlog('[fetchUserProfile] re-read after upsert:', JSON.stringify(reread));
       const isManager = reread?.is_manager === true;
       currentUser.isManager = isManager;
-      applyManagerUI(isManager);
+      _applyManagerUISafe(isManager);
       renderSettingsForRole();
       return;
     }
     const isManager = data?.is_manager === true;
     currentUser.isManager = isManager;
-    applyManagerUI(isManager);
+    _applyManagerUISafe(isManager);
     renderSettingsForRole();
   } catch(e) {
     console.warn('[fetchUserProfile] error:', e.message);
     currentUser.isManager = false;
-    applyManagerUI(false);
+    _applyManagerUISafe(false);
     renderSettingsForRole();
   }
 }

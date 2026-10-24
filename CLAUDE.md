@@ -499,9 +499,6 @@ storage bucket, 033 cross-org rules, 034 anon table writes and store
 names, 035 view user_accessible_stores, search paths and trigger
 functions). Nothing from that pass is still open.
 Code, known and not fixed:
-- Scanner: fetchUserProfile (second script block) calls applyManagerUI
-  (third block). Safe in production because the network round-trip lands
-  after parsing.
 - Design review leftovers: spacing onto `--s-*`; the photo lightbox and
   camera overlays keep literal colors on purpose.
 Not built (by decision): EDI 856, a Shipping sheet for distribution
