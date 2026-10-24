@@ -160,9 +160,16 @@ is not on GitHub; nothing live loads it.
   dashboard, join, signup and admin.
 - Email confirmation is OFF (mailer_autoconfirm true), which join.html's
   sign-in-after-signup relies on. Turning it on breaks invite acceptance.
-- Migrations: 001 to 030 with 020a, no 027 (John's code_patterns slot,
+- Migrations: 001 to 031 with 020a, no 027 (John's code_patterns slot,
   applied outside the folder). CHECK_MIGRATIONS.sql reports APPLIED or
   MISSING per migration; Ian ran it 2026-10-11 and every row was APPLIED.
+  031 was applied 2026-10-24 through the Supabase connector, which also
+  records it in supabase_migrations. 001 to 030 were run by hand in the
+  SQL editor and are not recorded there.
+- Claude has the Supabase connector (since 2026-10-24) on org Batch'd,
+  free plan, one project. Read-only SQL and advisors are fine to run;
+  any write, migration or new project waits for Ian's yes on the exact
+  change.
   On GitHub, 001 and 004 are named `.sql.sql`; contents are correct.
 - Before running SQL, confirm the editor is on lurxucdmrugikdlvvebc.
   Migrations 022 to 026 once reported PASS against a different project.
@@ -190,6 +197,13 @@ is not on GitHub; nothing live loads it.
   every function. `node_bundler = "esbuild"` bundles it.
 - The old demo account password is in git history and the repo is
   public. It must be rotated (open, see "Open items").
+- Migration 031 (2026-10-24) revoked EXECUTE on push_recall,
+  create_organisation and get_retailer_emails from anon and signed-in
+  users (no callers; push_recall let any signed-in user push recalls to
+  every retailer) and on sweep_recall_matches from anon. Signed-in users
+  can still call sweep_recall_matches with any p_organisation_id; a
+  membership check inside it is open. Run the Supabase security advisor
+  after any DDL change.
 
 ## Commercial plan flag (organisations.plan)
 Values trial (signup default), pov, active (paying), churned. Only a

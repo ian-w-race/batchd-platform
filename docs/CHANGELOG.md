@@ -5,6 +5,15 @@ how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
 ## 2026-10-24
+- Migration 031 applied to production through the Supabase connector.
+  It revokes public access to push_recall, create_organisation and
+  get_retailer_emails, and anon access to sweep_recall_matches.
+  push_recall had let any signed-in user push recalls into every
+  retailer's dashboard; recall_events showed no sign of abuse. Verified:
+  privilege check (anon and signed-in false on the first three, signed-in
+  true on the sweep), anon REST probes answer 42501, and
+  get_invitation_by_token still answers 200 for the join page. Not
+  verified: a signed-in scanner session calling the sweep.
 - Moved to a git workflow. The repo is cloned at ~/Desktop/batchd-platform,
   changes go through a branch, a pull request and a Netlify deploy
   preview, and Ian merges.
