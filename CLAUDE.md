@@ -202,7 +202,6 @@ is not on GitHub; nothing live loads it.
   free plan, one project. Read-only SQL and advisors are fine to run;
   any write, migration or new project waits for Ian's yes on the exact
   change.
-  On GitHub, 001 and 004 are named `.sql.sql`; contents are correct.
 - Staging: project batchd-staging, tiwrrocdwljazweveeth, eu-west-1, free
   plan, created 2026-10-24. Its schema was rebuilt from production's
   catalog in ten steps (recorded in its supabase_migrations as clone_01
