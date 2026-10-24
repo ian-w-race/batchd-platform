@@ -19,8 +19,11 @@ how it was verified and what is still unverified. Everything before
   SELECT policy on organisation_members: own rows always, other rows only
   with an active membership. Applied to STAGING and re-tested: the
   deactivated account sees only its own row and both apps still show the
-  deactivated screen; the active admin still sees the whole team. NOT YET
-  APPLIED TO PRODUCTION: the auto-mode safety check blocked the call.
+  deactivated screen; the active admin still sees the whole team. Applied
+  to PRODUCTION the same day on Ian's approval: policy present; rolled-back
+  checks show Ian and an active store manager each see the org's 6 members
+  (the member email lookup returns 6, and Ian's platform-admin view still
+  spans every org), and both deactivated accounts see only their own row.
 - Data fixes run on production by Claude (Ian's instruction: "You run the
   sqls always from now on"): two accounts in a US org moved from region
   "no" to "us" and two US test orgs to the FDA feed; 953 exact-copy FDA

@@ -491,8 +491,6 @@ both copies.
   legacy scans.
 
 ## Open items
-- Migration 039 (deactivated members see only their own membership row)
-  is applied on staging only; it needs Ian's go-ahead for production.
 ## Open items
 Owed by Ian:
 - Three photographed case labels (romaine, nut butter, one non-GS1) to
