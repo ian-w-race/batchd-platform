@@ -164,6 +164,15 @@ is not on GitHub; nothing live loads it.
   batchd-app is still unconfirmed (its runs take about 1 s against about
   3 s on www, which suggests it skips). The third team site, batchdsite,
   is batchd.no, a different repo.
+- fetch-recall-feeds.js (rewritten 2026-10-24): one FDA request, one
+  query for what the US orgs already hold, one bulk upsert with stable ids
+  derived from org and FDA recall number (or product and report day when
+  the feed sends "N/A" or nothing). The recall number is always kept at
+  the end of the description ("... [H-0015-2027]"). Before the rewrite
+  most runs were cut off at Netlify's 15 s limit and the import created
+  duplicates; scripts/cleanup-duplicate-fda-recalls.sql (preview, then a
+  commented delete) is for Ian to run. The Mattilsynet RSS URL answers 404
+  (frozen NO path; it fails fast and is caught).
 - netlify.toml arms recall-escalation (every 30 min) and
   fetch-recall-feeds (daily 06:00 UTC) on every site, so
   SCHEDULED_FUNCTIONS_DISABLED=true must be set on exactly two of the
