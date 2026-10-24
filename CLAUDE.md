@@ -221,9 +221,13 @@ is not on GitHub; nothing live loads it.
   production, and the fingerprint comparison rerun.
 - Before running SQL, confirm the editor is on lurxucdmrugikdlvvebc.
   Migrations 022 to 026 once reported PASS against a different project.
-- Schema reference: SCHEMA.md (recall-flow tables, Phase 1 tables, views,
-  policies). Older parts predate May 2026; verify against
-  information_schema before trusting a column.
+- Schema reference: docs/SCHEMA-REFERENCE.md, generated from production
+  by scripts/schema-reference.sql (every table's columns, constraints,
+  indexes, triggers, policies and grants, plus views, functions with who
+  may call them, and storage). Regenerate it after every migration (run
+  the query through the Supabase connector and save the single cell).
+  SCHEMA.md is the older hand-written guide to the recall flow; where the
+  two disagree, the generated file wins.
 - Probing: a made-up table answers 404 PGRST205; a locked real table
   answers 42501 to anon. PostgREST returns PGRST202 for a wrong parameter
   list as well as a missing function, so probe RPCs with real names.

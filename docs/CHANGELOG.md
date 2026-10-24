@@ -5,6 +5,9 @@ how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
 ## 2026-10-24
+- docs/SCHEMA-REFERENCE.md generated from production by the new
+  scripts/schema-reference.sql (45 tables, 2 views, 42 functions, 148
+  policies). CLAUDE.md now points to it as the schema authority.
 - Tests for the scanner's GS1 parser and listed-food detector
   (tests/scanner-parsers.test.mjs, 14 tests: human-readable, raw with and
   without FNC1, the RM240928 lot, plain GTINs, net weight 310n/320n,
