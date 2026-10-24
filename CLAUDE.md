@@ -160,17 +160,29 @@ is not on GitHub; nothing live loads it.
   dashboard, join, signup and admin.
 - Email confirmation is OFF (mailer_autoconfirm true), which join.html's
   sign-in-after-signup relies on. Turning it on breaks invite acceptance.
-- Migrations: 001 to 031 with 020a, no 027 (John's code_patterns slot,
+- Migrations: 001 to 032 with 020a, no 027 (John's code_patterns slot,
   applied outside the folder). CHECK_MIGRATIONS.sql reports APPLIED or
   MISSING per migration; Ian ran it 2026-10-11 and every row was APPLIED.
-  031 was applied 2026-10-24 through the Supabase connector, which also
-  records it in supabase_migrations. 001 to 030 were run by hand in the
+  031 and 032 were applied 2026-10-24 through the Supabase connector,
+  which also records them in supabase_migrations. 001 to 030 were run by hand in the
   SQL editor and are not recorded there.
 - Claude has the Supabase connector (since 2026-10-24) on org Batch'd,
   free plan, one project. Read-only SQL and advisors are fine to run;
   any write, migration or new project waits for Ian's yes on the exact
   change.
   On GitHub, 001 and 004 are named `.sql.sql`; contents are correct.
+- Staging: project batchd-staging, tiwrrocdwljazweveeth, eu-west-1, free
+  plan, created 2026-10-24. Its schema was rebuilt from production's
+  catalog in ten steps (recorded in its supabase_migrations as clone_01
+  to clone_10) and matched production exactly on every category: 631
+  columns, 202 constraints, 139 indexes, 42 functions, 2 views, 15
+  triggers (auth.users included), RLS flags, 156 policies (storage
+  included), 938 table grants, 125 function grants, the scan-photos
+  bucket, extensions. No data was copied. Known difference: email
+  confirmation is ON in staging and OFF in production (Ian toggles it in
+  the dashboard; no connector tool for auth settings). Nothing points at
+  staging yet. Any schema change must go to staging first, then
+  production, and the fingerprint comparison rerun.
 - Before running SQL, confirm the editor is on lurxucdmrugikdlvvebc.
   Migrations 022 to 026 once reported PASS against a different project.
 - Schema reference: SCHEMA.md (recall-flow tables, Phase 1 tables, views,
@@ -191,12 +203,21 @@ is not on GitHub; nothing live loads it.
 - recall_events: the open read policy was dropped 2026-09-13. Some reads
   (renderCommandCenter, traceLot, renderIntelligencePanel, the scanner's
   _loadClosedEventIds) have no org filter and rely on RLS.
+- The recall composer's non-drill recall_events insert is allowed for a
+  corp_admin by policy b20_events_source_admin_write (confirmed from
+  pg_policies 2026-10-24).
 - Netlify functions run with the service-role key, which bypasses RLS.
   `netlify/lib/auth.js` (verifyUser, activeMembership, isPlatformAdmin,
   requireMember, requireAi, internalSecretOk) is the tenant boundary for
   every function. `node_bundler = "esbuild"` bundles it.
 - The old demo account password is in git history and the repo is
   public. It must be rotated (open, see "Open items").
+- Migration 032 (2026-10-24) locked the scan-photos bucket: no anon
+  policy at all (photos still load by public URL because the bucket is
+  public), signed-in members may read, upload and overwrite only under
+  orgs/<first 8 characters of an active org id>/, nobody deletes through
+  the API. Uploads to any other path fail; the scanner logs a warning and
+  saves the scan without the photo.
 - Migration 031 (2026-10-24) revoked EXECUTE on push_recall,
   create_organisation and get_retailer_emails from anon and signed-in
   users (no callers; push_recall let any signed-in user push recalls to
@@ -219,10 +240,14 @@ pov once and refuses to run again.
 ## Database rules (never violate)
 - scans.recall_resolved defaults false on every insert. Never use it to
   count active recalls.
-- Pull tracking lives on scans.removed_from_shelf_at.
-  scan_recall_matches.removed_at exists but app code never writes it.
-  Known violation: push-recall-email.js (around lines 163 and 178) reads
-  it, so the email's "confirmed pulled" is always 0.
+- Pull tracking lives on scans.removed_from_shelf_at. App code never
+  writes scan_recall_matches.removed_at, but the database does: trigger
+  on_scan_pulled (sync_recall_match_removal) copies removed_from_shelf_at
+  and removed_from_shelf_by onto existing matches whenever a scan is
+  pulled (found 2026-10-24; older notes said the column was never
+  written). A match created after the pull does not get it, so
+  push-recall-email.js's "confirmed pulled" undercounts in that case.
+  Count on-shelf with scans.removed_from_shelf_at.
 - A recall requires action only when ALL THREE hold: the recall is
   active, an org scan matches by exact lot or barcode, and that scan is
   still on shelf. Mock drills never count.
@@ -404,11 +429,26 @@ Owed by Ian:
 - Rotate the demo account password (in public git history).
 - Check SCHEDULED_FUNCTIONS_DISABLED and the shared secrets on all three
   Netlify sites.
+Security, found 2026-10-24 while cloning to staging (not fixed; the
+storage bucket finding from the same pass was fixed by migration 032):
+- code_patterns: any signed-in user can read, insert and update every
+  org's learned label patterns. scan_queue: any signed-in user can read
+  and delete every queued scan. scan_telemetry: readable by all signed-in
+  users.
+- complaints, complaint_messages, complaint_audit_log accept INSERT from
+  anon directly through PostgREST, bypassing triage-complaint.js's rate
+  limits and plan gate.
+- sweep_recall_matches trusts p_organisation_id from any signed-in user.
+- Every table still grants full privileges to anon at the table level;
+  RLS is the only barrier. Fine while every policy is right, which the
+  items above show is not always true.
+Data model:
+- stores_name_key makes store names unique across ALL orgs, so two
+  retailers cannot both have a store called "Store 1". Should be unique
+  per organisation_id.
 Code, known and not fixed:
 - push-recall-email.js reads scan_recall_matches.removed_at (see the
   database rules).
-- Whether _composerPushRecall's insert of a non-drill recall_events row
-  succeeds for a corp_admin under current policies needs a live test.
 - landing.html's demo form posts to a removed send-invite branch.
 - Scanner: fetchUserProfile (second script block) calls applyManagerUI
   (third block). Safe in production because the network round-trip lands

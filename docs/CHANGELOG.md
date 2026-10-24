@@ -21,6 +21,18 @@ how it was verified and what is still unverified. Everything before
   org folder, one old root file) still load by public link with the same
   byte sizes, and logged-out listing dropped from 83 entries to 0. Not
   verified: a real signed-in scanner upload after the change.
+- Staging Supabase project batchd-staging (tiwrrocdwljazweveeth) created
+  at $0 a month and its schema rebuilt from production's catalog.
+  Verified: a fingerprint per category (columns, constraints, indexes,
+  functions, views, triggers, RLS, policies, table and function grants,
+  bucket, extensions) is identical on both projects, and logged-out
+  probes return the same errors on both. Not done: email confirmation
+  is still on in staging, and no app or preview points at it yet.
+- The rebuild surfaced security gaps in production (storage bucket
+  writable and deletable by anyone, fixed by migration 032 above;
+  several cross-org table policies; direct anon complaint inserts) and a
+  global unique constraint on store names. The open ones are listed
+  under Open items in CLAUDE.md.
 - Migration 031 applied to production through the Supabase connector.
   It revokes public access to push_recall, create_organisation and
   get_retailer_emails, and anon access to sweep_recall_matches.
