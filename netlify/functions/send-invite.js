@@ -129,7 +129,7 @@ async function handleStaffInvite({ to, orgName, inviterEmail, role, inviteUrl })
               Accept invitation →
             </a>
             <p style="font-size:11px;color:#6aaf9e;line-height:1.6;">
-              This invitation expires in 7 days.<br>
+              This invitation expires in 30 days.<br>
               If you didn't expect this email, you can safely ignore it.
             </p>
             <div style="border-top:1px solid #163d37;margin-top:24px;padding-top:16px;font-size:10px;color:#6aaf9e;">

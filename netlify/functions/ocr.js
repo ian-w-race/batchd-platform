@@ -107,7 +107,9 @@ function buildExtractCodesPrompt(extra) {
 }
 
 async function callAnthropic(model, maxTokens, prompt, imageB64, temperature) {
-  // 25-second timeout — Netlify background functions allow 26s; leave 1s buffer.
+  // 9-second timeout: this is a synchronous function, which Netlify ends at
+  // 10 s (the old 25 s assumed a background function), so give up first and
+  // return a clean error instead of a platform 502.
   // temperature defaults to undefined (lets the API pick its own default ~1.0).
   // For verbatim OCR tasks pass temperature: 0 so the model returns what it sees
   // rather than completing toward a plausible-looking date/lot string.
@@ -128,7 +130,7 @@ async function callAnthropic(model, maxTokens, prompt, imageB64, temperature) {
   if (typeof temperature === 'number') body.temperature = temperature;
   const resp = await fetch(ANTHROPIC_API_URL, {
     method: 'POST',
-    signal: AbortSignal.timeout(25000),
+    signal: AbortSignal.timeout(9000),
     headers: {
       'Content-Type': 'application/json',
       'x-api-key': process.env.ANTHROPIC_API_KEY,
@@ -160,6 +162,9 @@ exports.handler = async (event) => {
   let parsedBody;
   try { parsedBody = JSON.parse(rawBody); }
   catch { return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON' }) }; }
+  if (!parsedBody || typeof parsedBody !== 'object' || Array.isArray(parsedBody)) {
+    return { statusCode: 400, body: JSON.stringify({ error: 'Request body must be a JSON object' }) };
+  }
 
   // Warm-up ping from the scanner at sign-in (2026-10-24). It only wakes a
   // cold function, so it answers before the auth check and never reaches

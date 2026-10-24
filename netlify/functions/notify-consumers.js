@@ -135,7 +135,7 @@ exports.handler = async (event) => {
 
   const recallProduct = recall.product_name || 'Recalled product';
   const subject    = `Important: Product recall notice — ${recallProduct}`;
-  const today      = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  const today      = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' });
   const senderName = recall.org_name || "Your retailer";
 
   let sent   = 0;

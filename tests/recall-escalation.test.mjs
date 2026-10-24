@@ -8,6 +8,8 @@ import Module from 'node:module';
 
 const require = createRequire(import.meta.url);
 
+const get = (r, c) => c.split('.').reduce((o, k) => (o == null ? undefined : o[k]), r);
+
 function makeDb(acks) {
   const rows = new Map(acks.map((a) => [a.id, { ...a }]));
   // A tiny stand-in for the supabase-js query builder: enough for the
@@ -19,8 +21,9 @@ function makeDb(acks) {
       const b = {
         select() { if (st.op === 'update') st.returning = true; return b; },
         update(p) { st.op = 'update'; st.patch = p; return b; },
-        eq(c, v) { st.filters.push((r) => (c.includes('.') ? true : r[c] === v)); return b; },
-        is(c, v) { st.filters.push((r) => (r[c] ?? null) === v); return b; },
+        // Dotted names filter on the embedded row, as PostgREST does with !inner.
+        eq(c, v) { st.filters.push((r) => get(r, c) === v); return b; },
+        is(c, v) { st.filters.push((r) => (get(r, c) ?? null) === v); return b; },
         then(res, rej) {
           return Promise.resolve().then(async () => {
             // Random delay so the two simultaneous runs interleave.
@@ -56,7 +59,7 @@ const ack = (id, publishedHoursAgo, extra = {}) => ({
   escalation_2h_sent_at: null, escalation_24h_sent_at: null,
   stores: { name: 'Store ' + id },
   recall_events: { id: 'ev', product_name: 'Romaine', lot_number: 'L1', severity: 'class_i',
-                   published_at: hoursAgo(publishedHoursAgo), is_drill: false },
+                   published_at: hoursAgo(publishedHoursAgo), is_drill: false, closed_at: null },
   organisations: { name: 'Grocer', contact_email: 'ops@example.com' },
   ...extra,
 });
@@ -112,5 +115,17 @@ test('the disabled flag still skips the whole run', async () => {
   const r = await loadHandler(db)({});
   delete process.env.SCHEDULED_FUNCTIONS_DISABLED;
   assert.match(r.body, /skipped/);
+  assert.equal(sent.length, 0);
+});
+
+test('closed recalls and drills get no escalation email', async () => {
+  delete process.env.SCHEDULED_FUNCTIONS_DISABLED;
+  const base = ack('f', 30);
+  const closed = ack('f', 30, { recall_events: { ...base.recall_events, closed_at: hoursAgo(1) } });
+  const drill = ack('g', 30, { recall_events: { ...base.recall_events, is_drill: true } });
+  const db = makeDb([closed, drill]);
+  const sent = [];
+  global.fetch = async () => { sent.push(1); return { ok: true, json: async () => ({}) }; };
+  await loadHandler(db)({});
   assert.equal(sent.length, 0);
 });

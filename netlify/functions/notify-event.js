@@ -24,6 +24,7 @@
 // Function verifies the caller is a member of the claimed org_id
 // before sending. Prevents cross-org abuse.
 
+const { internalSecretOk } = require('../lib/auth');
 const SUPABASE_URL = 'https://lurxucdmrugikdlvvebc.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const RESEND_API_KEY       = process.env.RESEND_API_KEY;
@@ -306,12 +307,15 @@ exports.handler = async (event) => {
   let body;
   try { body = JSON.parse(event.body || '{}'); }
   catch { return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON' }) }; }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { statusCode: 400, body: JSON.stringify({ error: 'Request body must be a JSON object' }) };
+  }
 
   const { event_type, org_id, payload, internal_secret } = body;
   if (!event_type || !TEMPLATES[event_type]) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Unknown event_type' }) };
   }
-  if (!org_id || !payload) {
+  if (!org_id || !payload || typeof payload !== 'object') {
     return { statusCode: 400, body: JSON.stringify({ error: 'org_id + payload required' }) };
   }
 
@@ -321,8 +325,7 @@ exports.handler = async (event) => {
   //     this from a no-JWT context.
   //  2. Browser: include Authorization: Bearer <jwt>. Caller must
   //     be a member of org_id.
-  const internalOk = !!(process.env.INTERNAL_NOTIFY_SECRET &&
-                        internal_secret === process.env.INTERNAL_NOTIFY_SECRET);
+  const internalOk = internalSecretOk(internal_secret); // constant-time, fails closed
   if (!internalOk) {
     const auth = event.headers.authorization || event.headers.Authorization || '';
     const jwt  = auth.replace(/^Bearer\s+/i, '');
@@ -341,7 +344,13 @@ exports.handler = async (event) => {
 
   // Resolve recipients per event type
   const storeIdScope = (event_type === 'complaint_filed') ? (payload.store_id || null) : null;
-  const recipients = await listRecipients(org_id, event_type, storeIdScope);
+  let recipients;
+  try {
+    recipients = await listRecipients(org_id, event_type, storeIdScope);
+  } catch (e) {
+    console.error('[notify-event] recipient lookup failed:', e?.message);
+    return { statusCode: 502, body: JSON.stringify({ error: 'Recipient lookup failed' }) };
+  }
 
   if (recipients.length === 0) {
     return {
