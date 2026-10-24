@@ -5,6 +5,9 @@ how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
 ## 2026-10-24
+- robots.txt at the repo root asks crawlers not to index the app domains
+  (Netlify logs showed about 150 robots.txt requests a week, all 404).
+  The brand site batchd.no is a separate site and unaffected.
 - FOUND: the daily FDA import mostly failed. Netlify's scheduler cut runs
   off at 15 s (status 499) on both app sites; between 2026-10-18 and
   2026-10-24 only the runs on 10-22 and 10-24 completed. It also created
