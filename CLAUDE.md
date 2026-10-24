@@ -174,10 +174,10 @@ is not on GitHub; nothing live loads it.
   dashboard, join, signup and admin.
 - Email confirmation is OFF (mailer_autoconfirm true), which join.html's
   sign-in-after-signup relies on. Turning it on breaks invite acceptance.
-- Migrations: 001 to 034 with 020a, no 027 (John's code_patterns slot,
+- Migrations: 001 to 035 with 020a, no 027 (John's code_patterns slot,
   applied outside the folder). CHECK_MIGRATIONS.sql reports APPLIED or
   MISSING per migration; Ian ran it 2026-10-11 and every row was APPLIED.
-  031 to 034 were applied 2026-10-24 through the Supabase connector,
+  031 to 035 were applied 2026-10-24 through the Supabase connector,
   which also records them in supabase_migrations. 001 to 030 were run by hand in the
   SQL editor and are not recorded there.
 - Claude has the Supabase connector (since 2026-10-24) on org Batch'd,
@@ -461,9 +461,8 @@ Owed by Ian:
   Netlify sites.
 Security, found 2026-10-24 while cloning to staging: all fixed (032
 storage bucket, 033 cross-org rules, 034 anon table writes and store
-names). Still open: migration 035 (written, applied to staging only)
-closes view user_accessible_stores, which leaks every org's stores and
-user ids to the public key in production.
+names, 035 view user_accessible_stores, search paths and trigger
+functions). Nothing from that pass is still open.
 Code, known and not fixed:
 - push-recall-email.js reads scan_recall_matches.removed_at (see the
   database rules).
