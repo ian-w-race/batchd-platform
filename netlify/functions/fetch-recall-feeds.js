@@ -5,7 +5,7 @@
 // region.
 //
 // Schedule: daily at 06:00 UTC (configured in netlify.toml)
-// Also callable on-demand via POST from the dashboard.
+// Scheduled only: Netlify scheduled functions cannot be called by URL.
 //
 // Sources:
 //   FDA    — api.fda.gov/food/enforcement.json (US orgs)
@@ -15,6 +15,7 @@
 // ================================================================
 
 const { createClient } = require('@supabase/supabase-js');
+const crypto = require('crypto');
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://lurxucdmrugikdlvvebc.supabase.co';
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -23,6 +24,13 @@ const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 exports.schedule = '0 6 * * *';
 
 exports.handler = async (event) => {
+  // Same cron-singleton switch as recall-escalation.js. The FDA import below
+  // is idempotent (stable ids), so running on two sites is harmless, but
+  // there is no reason to do the work twice.
+  if (process.env.SCHEDULED_FUNCTIONS_DISABLED === 'true') {
+    console.log('[fetch-recall-feeds] skipped: scheduled functions disabled on this site');
+    return { statusCode: 200, body: JSON.stringify({ skipped: 'scheduled functions disabled on this site' }) };
+  }
   // Accept both scheduled invocations and manual POST triggers
   const isScheduled = event?.['scheduled'] === true;
   const body = event.body ? JSON.parse(event.body) : {};
@@ -81,51 +89,112 @@ exports.handler = async (event) => {
 };
 
 // ── FDA enforcement feed ──────────────────────────────────────
+// Rewritten 2026-10-24. The old loop ran one leading-wildcard ILIKE per
+// recall over the whole recalls table, then one insert per org per recall,
+// all sequential across the Atlantic (Netlify us-east, Supabase eu-west).
+// Runs took 11 to 15 s and Netlify's scheduler cut most of them off at
+// 15 s, so for most of the week of 2026-10-18 no FDA recall arrived.
+// It also deduplicated globally (a recall present for one org was never
+// added for an org created later) and cut the recall number off when the
+// reason was long, which let the same recall be inserted again: 955 of
+// 8,660 FDA rows were duplicates on 2026-10-24.
+// Now: one FDA request, one query for what the US orgs already have, one
+// bulk insert. Each org and recall pair gets a stable id, so two sites or
+// two retries can never insert the same pair twice.
+const FDA_DESC_MAX = 200;
+
+function fdaDescription(reason, recallNumber) {
+  const suffix = recallNumber ? ` [${recallNumber}]` : '';
+  return String(reason || '').slice(0, FDA_DESC_MAX - suffix.length) + suffix;
+}
+
+function recallNumberFrom(description) {
+  const m = /\[([A-Z]-\d{4}-\d{4})\]$/.exec(String(description || ''));
+  return m ? m[1] : null;
+}
+
+// Stable UUID (version 5 layout) from the org and the FDA recall number.
+function stableRecallId(orgId, key) {
+  const h = crypto.createHash('sha1').update(`batchd-fda|${orgId}|${key}`).digest('hex');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-${((parseInt(h[16], 16) & 0x3) | 0x8).toString(16)}${h.slice(17, 20)}-${h.slice(20, 32)}`;
+}
+
 async function fetchFDA(sb, orgIds) {
   const url = 'https://api.fda.gov/food/enforcement.json?limit=50&sort=report_date:desc';
   const resp = await fetch(url, {
     headers: { 'User-Agent': 'Batched-RecallTracker/1.0 (batchd-app.netlify.app)' },
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(8000),
   });
   if (!resp.ok) throw new Error('FDA API returned ' + resp.status);
 
   const json = await resp.json();
-  const results = json.results || [];
-  let added = 0, skipped = 0;
-
-  for (const r of results) {
+  const candidates = [];
+  let skipped = 0;
+  for (const r of json.results || []) {
     const productName = (r.product_description || '').slice(0, 120);
-    const lotNumber   = (r.code_info || '').slice(0, 80) || null;
-    const description = ((r.reason_for_recall || '') + (r.recall_number ? ` [${r.recall_number}]` : '')).slice(0, 200);
-    const recallDate  = r.report_date ? parseDate(r.report_date) : null;
-
     if (!productName) { skipped++; continue; }
+    const createdAt = (r.report_date ? parseDate(r.report_date) : null) || new Date().toISOString();
+    // Only a real FDA recall number counts (the feed also sends "N/A" or
+    // nothing); otherwise the recall is keyed on product and report day.
+    const recallNumber = /^[A-Z]-\d{4}-\d{4}$/.test(r.recall_number || '') ? r.recall_number : null;
+    candidates.push({
+      recallNumber,
+      productName,
+      lotNumber:    (r.code_info || '').slice(0, 80) || null,
+      description:  fdaDescription(r.reason_for_recall, recallNumber),
+      createdAt,
+    });
+  }
+  if (!candidates.length) return { added: 0, skipped };
 
-    // Dedup check: same product + recall_number already in DB?
-    const dedupeKey = r.recall_number || productName.slice(0, 40);
-    const { data: existing } = await sb.from('recalls')
-      .select('id')
-      .ilike('description', '%' + (r.recall_number || productName.slice(0, 20)) + '%')
-      .limit(1);
-    if (existing?.length) { skipped++; continue; }
+  // What the US orgs already hold for this window. Old rows may have lost
+  // the recall number to truncation, so they also match on product and day.
+  const earliest = candidates.reduce((m, c) => (c.createdAt < m ? c.createdAt : m), candidates[0].createdAt);
+  const since = new Date(new Date(earliest).getTime() - 86400000).toISOString();
+  const { data: existing, error: exErr } = await sb.from('recalls')
+    .select('id, organisation_id, product_name, description, created_at')
+    .eq('source', 'fda')
+    .in('organisation_id', orgIds)
+    .gte('created_at', since)
+    .limit(5000);
+  if (exErr) throw new Error('Could not read existing FDA recalls: ' + exErr.message);
 
-    // Insert for every US org
+  const have = new Set();
+  for (const row of existing || []) {
+    const rn = recallNumberFrom(row.description);
+    if (rn) have.add(`${row.organisation_id}|rn|${rn}`);
+    have.add(`${row.organisation_id}|pd|${row.product_name}|${String(row.created_at).slice(0, 10)}`);
+    have.add(`id|${row.id}`);
+  }
+
+  const rows = [];
+  for (const c of candidates) {
+    const key = c.recallNumber || `${c.productName}|${c.createdAt.slice(0, 10)}`;
     for (const orgId of orgIds) {
-      const { error } = await sb.from('recalls').insert({
-        product_name:    productName,
-        lot_number:      lotNumber,
-        description,
+      const id = stableRecallId(orgId, key);
+      if (have.has(`id|${id}`)) continue;
+      if (c.recallNumber && have.has(`${orgId}|rn|${c.recallNumber}`)) continue;
+      if (have.has(`${orgId}|pd|${c.productName}|${c.createdAt.slice(0, 10)}`)) continue;
+      rows.push({
+        id,
+        product_name:    c.productName,
+        lot_number:      c.lotNumber,
+        description:     c.description,
         source:          'fda',
         active:          true,
         organisation_id: orgId,
-        created_at:      recallDate || new Date().toISOString(),
+        created_at:      c.createdAt,
       });
-      if (!error) added++;
-      else console.warn('[FDA insert error]', error.message, productName);
     }
   }
+  if (!rows.length) return { added: 0, skipped: skipped + candidates.length * orgIds.length };
 
-  return { added, skipped };
+  const { data: inserted, error: insErr } = await sb.from('recalls')
+    .upsert(rows, { onConflict: 'id', ignoreDuplicates: true })
+    .select('id');
+  if (insErr) throw new Error('FDA insert failed: ' + insErr.message);
+  const added = (inserted || []).length;
+  return { added, skipped: skipped + candidates.length * orgIds.length - added };
 }
 
 // ── Mattilsynet RSS feed ──────────────────────────────────────
@@ -212,3 +281,6 @@ function parseRSSItems(xml) {
   }
   return items;
 }
+
+// Exported for tests.
+exports._test = { fdaDescription, recallNumberFrom, stableRecallId, fetchFDA };

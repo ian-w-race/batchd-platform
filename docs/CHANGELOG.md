@@ -5,6 +5,18 @@ how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
 ## 2026-10-24
+- FOUND: the daily FDA import mostly failed. Netlify's scheduler cut runs
+  off at 15 s (status 499) on both app sites; between 2026-10-18 and
+  2026-10-24 only the runs on 10-22 and 10-24 completed. It also created
+  duplicates (955 of 8,660 FDA rows) and never gave a recall to an org
+  created after another org had it. fetch-recall-feeds.js now makes three
+  database calls with stable ids and a per-org check, honors
+  SCHEDULED_FUNCTIONS_DISABLED, and keeps the recall number whole.
+  Verified: tests/fetch-recall-feeds.test.mjs (8 tests, including two
+  simultaneous runs and the feed's "N/A" recall numbers); a read-only dry
+  run against production with the live FDA feed would add 1 recall per US
+  org. Not verified: the next scheduled run (06:00 UTC). The duplicates
+  are untouched; scripts/cleanup-duplicate-fda-recalls.sql is for Ian.
 - Migration 037: signed-in users keep only select, insert, update and
   delete on public tables (TRUNCATE, REFERENCES, TRIGGER and MAINTAIN
   removed, also for future tables). Applied to staging, then production;
