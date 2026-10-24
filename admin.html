@@ -268,8 +268,74 @@ const esc = (s) => String(s == null ? '' : s)
   .replace(/"/g, '&quot;')
   .replace(/'/g, '&#39;');
 
-const SUPABASE_URL = 'https://lurxucdmrugikdlvvebc.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1cnh1Y2RtcnVnaWtkbHZ2ZWJjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTU5NTQsImV4cCI6MjA4OTgzMTk1NH0.ewNhBbF8nUzpF9Ve822D9t8VLwB_hjk27KuFFEXct0A';
+// Database selection (2026-10-24). The real domains use production.
+// Netlify deploy previews and branch deploys (any "name--site.netlify.app"
+// host) and the local test server use the staging project, so testing a
+// pull request never touches customer data. See CLAUDE.md, "How we work".
+const BATCHD_ENV = (function () {
+  var h = location.hostname;
+  if (h === 'localhost' || h === '127.0.0.1' || /--[a-z0-9-]+\.netlify\.app$/.test(h)) return 'staging';
+  return 'production';
+})();
+const SUPABASE_URL = BATCHD_ENV === 'staging'
+  ? 'https://tiwrrocdwljazweveeth.supabase.co'
+  : 'https://lurxucdmrugikdlvvebc.supabase.co';
+const SUPABASE_KEY = BATCHD_ENV === 'staging'
+  ? 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRpd3Jyb2Nkd2xqYXp3ZXZlZXRoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI4MzQ4ODcsImV4cCI6MjEwODQxMDg4N30.OfjEU4oprGZmvm2dLmUnZDD7k7KP9bycS7FwXqhgIjc'
+  : 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1cnh1Y2RtcnVnaWtkbHZ2ZWJjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTU5NTQsImV4cCI6MjA4OTgzMTk1NH0.ewNhBbF8nUzpF9Ve822D9t8VLwB_hjk27KuFFEXct0A';
+// Same-origin links on staging hosts; the production URL everywhere else.
+function batchdLink(productionUrl, stagingPath) {
+  return BATCHD_ENV === 'staging' ? stagingPath : productionUrl;
+}
+if (BATCHD_ENV === 'staging') {
+  (function () {
+    function addBadge() {
+      var b = document.createElement('div');
+      b.id = 'batchd-staging-badge';
+      b.textContent = 'Staging database · test data only';
+      b.setAttribute('role', 'status');
+      b.setAttribute('style', "position:fixed;left:12px;bottom:12px;z-index:2147483000;pointer-events:none;"
+        + "font-family:'DM Mono',monospace;font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;"
+        + "padding:5px 10px;border-radius:999px;background:var(--warn, #F5A623);color:var(--background-base, #080F12);");
+      document.body.appendChild(b);
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', addBadge);
+    else addBadge();
+    // Links and window.open calls that point at the production apps are
+    // rewritten to this preview's own origin, so a click never leaves
+    // staging. location.replace cannot be intercepted; those call sites
+    // use batchdLink() directly.
+    window.batchdPreviewUrl = function (u) {
+      if (typeof u !== 'string') return u;
+      var map = [
+        ['https://corporate.batchdapp.com/dashboard.html', '/dashboard.html'],
+        ['https://corporate.batchdapp.com/', '/dashboard.html'],
+        ['https://app.batchdapp.com/dashboard.html', '/dashboard.html'],
+        ['https://app.batchdapp.com/manufacturer.html', '/manufacturer.html'],
+        ['https://app.batchdapp.com/signup', '/signup'],
+        ['https://batchd-app.netlify.app', '/']
+      ];
+      for (var i = 0; i < map.length; i++) {
+        if (u.indexOf(map[i][0]) === 0) {
+          var rest = u.slice(map[i][0].length);
+          if (map[i][1] === '/' && rest.charAt(0) === '/') rest = rest.slice(1);
+          return location.origin + map[i][1] + rest;
+        }
+      }
+      return u;
+    };
+    var _open = window.open;
+    window.open = function (u) {
+      var args = Array.prototype.slice.call(arguments);
+      args[0] = window.batchdPreviewUrl(u);
+      return _open.apply(window, args);
+    };
+    document.addEventListener('click', function (e) {
+      var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+      if (a) { var r = window.batchdPreviewUrl(a.getAttribute('href')); if (r !== a.getAttribute('href')) a.setAttribute('href', r); }
+    }, true);
+  })();
+}
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 

@@ -5,6 +5,15 @@ how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
 ## 2026-10-24
+- Preview links use the staging database. The five pages choose staging
+  on any "name--site.netlify.app" host and on localhost, production
+  elsewhere; staging shows a badge, keeps cross-app links and the
+  signup and join redirects on the preview. Verified: node --check on
+  every inline block (index 4, dashboard 6, signup 2, join 2, admin 1);
+  a Node test of the selection block over ten hosts (four real domains
+  and the bare netlify.app name stay production; previews, branch
+  deploys and localhost go to staging; a look-alike foreign host stays
+  production) and of the link rewriting.
 - Migration 034 applied to STAGING only. Store names are unique per
   organization (ignoring case and surrounding spaces) instead of across
   the platform, and the anon role keeps SELECT only on public tables
