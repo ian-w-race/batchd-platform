@@ -5,6 +5,12 @@ how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
 ## 2026-10-24
+- Migration 036 dropped two duplicate indexes (invitations_token_unique,
+  idx_srm_organisation). Applied to staging, checked (duplicate invitation
+  tokens still refused), then production; both projects have the same 137
+  index definitions. The rest of the performance advisor's 465 notes were
+  reviewed and left on purpose at the current data size; see the header
+  of migrations/036_drop_duplicate_indexes.sql.
 - recall-escalation.js claims each escalation (2h, 24h) in the database
   before sending and releases the claim when the send fails, so two
   sites' crons cannot double-email a store. push-recall-email.js counts
