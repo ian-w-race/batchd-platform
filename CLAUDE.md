@@ -160,10 +160,10 @@ is not on GitHub; nothing live loads it.
   dashboard, join, signup and admin.
 - Email confirmation is OFF (mailer_autoconfirm true), which join.html's
   sign-in-after-signup relies on. Turning it on breaks invite acceptance.
-- Migrations: 001 to 032 with 020a, no 027 (John's code_patterns slot,
+- Migrations: 001 to 033 with 020a, no 027 (John's code_patterns slot,
   applied outside the folder). CHECK_MIGRATIONS.sql reports APPLIED or
   MISSING per migration; Ian ran it 2026-10-11 and every row was APPLIED.
-  031 and 032 were applied 2026-10-24 through the Supabase connector,
+  031, 032 and 033 were applied 2026-10-24 through the Supabase connector,
   which also records them in supabase_migrations. 001 to 030 were run by hand in the
   SQL editor and are not recorded there.
 - Claude has the Supabase connector (since 2026-10-24) on org Batch'd,
@@ -212,6 +212,15 @@ is not on GitHub; nothing live loads it.
   every function. `node_bundler = "esbuild"` bundles it.
 - The old demo account password is in git history and the repo is
   public. It must be rotated (open, see "Open items").
+- Migration 033 (2026-10-24) scoped code_patterns to the member's org
+  (organisation_id defaults to batchd_user_org_id(), because the scanner
+  never sets it), closed scan_queue to clients, scoped scan_telemetry
+  reads to the member's org, removed direct inserts into complaints and
+  complaint_messages (only triage-complaint.js, with the service role,
+  writes them), limited complaint_audit_log inserts to the member's own
+  complaints, and made sweep_recall_matches refuse a signed-in caller
+  outside p_organisation_id and skip recalls owned by another org
+  (no-org shared feed recalls still sweep).
 - Migration 032 (2026-10-24) locked the scan-photos bucket: no anon
   policy at all (photos still load by public URL because the bucket is
   public), signed-in members may read, upload and overwrite only under
@@ -429,16 +438,8 @@ Owed by Ian:
 - Rotate the demo account password (in public git history).
 - Check SCHEDULED_FUNCTIONS_DISABLED and the shared secrets on all three
   Netlify sites.
-Security, found 2026-10-24 while cloning to staging (not fixed; the
-storage bucket finding from the same pass was fixed by migration 032):
-- code_patterns: any signed-in user can read, insert and update every
-  org's learned label patterns. scan_queue: any signed-in user can read
-  and delete every queued scan. scan_telemetry: readable by all signed-in
-  users.
-- complaints, complaint_messages, complaint_audit_log accept INSERT from
-  anon directly through PostgREST, bypassing triage-complaint.js's rate
-  limits and plan gate.
-- sweep_recall_matches trusts p_organisation_id from any signed-in user.
+Security, found 2026-10-24 while cloning to staging (the storage bucket
+was fixed by migration 032 and the cross-org rules by 033; still open):
 - Every table still grants full privileges to anon at the table level;
   RLS is the only barrier. Fine while every policy is right, which the
   items above show is not always true.
