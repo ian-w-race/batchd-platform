@@ -113,6 +113,9 @@ WITH checks AS (
   UNION ALL SELECT '030 products_public exposes the FTL columns',
          EXISTS (SELECT 1 FROM information_schema.columns
                  WHERE table_schema='public' AND table_name='products_public' AND column_name='is_ftl')
+  UNION ALL SELECT '035 view and function hygiene',
+         NOT has_table_privilege('anon', 'public.user_accessible_stores', 'SELECT')
+         AND NOT has_function_privilege('anon', 'public.handle_new_user()', 'EXECUTE')
   UNION ALL SELECT '034 store names per org, no anon table writes',
          EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='stores_org_name_uidx')
          AND NOT EXISTS (SELECT 1 FROM information_schema.role_table_grants
@@ -166,7 +169,8 @@ ORDER BY migration;
 --                 031 (REVOKE/GRANT EXECUTE on four functions),
 --                 032 (DROP POLICY IF EXISTS before each storage policy),
 --                 033 (DROP POLICY IF EXISTS, CREATE OR REPLACE, idempotent REVOKE),
---                 034 (IF [NOT] EXISTS, idempotent REVOKE and default privileges)
+--                 034 (IF [NOT] EXISTS, idempotent REVOKE and default privileges),
+--                 035 (ALTER VIEW/FUNCTION SET, idempotent REVOKE)
 --   (idempotent: ADD COLUMN IF NOT EXISTS, CREATE OR REPLACE FUNCTION,
 --    DROP ... IF EXISTS before each CREATE POLICY / CREATE TRIGGER;
 --    020, 020a and 021 each run inside one BEGIN/COMMIT)

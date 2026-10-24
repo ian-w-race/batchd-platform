@@ -5,6 +5,29 @@ how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
 ## 2026-10-24
+- FOUND: production view user_accessible_stores (security definer, unused
+  by any code) returned 26 rows covering 4 organizations and 5 user ids,
+  with store names, codes and addresses, to a logged-out request with the
+  public key. Migration 035 closes it (security_invoker, service role
+  only), pins search_path on 11 functions and stops API calls to trigger
+  functions. Applied to STAGING only. Verified there in a rolled-back
+  transaction: 12 checks (sign-up profile trigger, scan insert with the
+  barcode index, pull audit trigger, scan immutability guard, recall
+  sweep trigger, retention trigger, supplier updated_at trigger, plan
+  guard, self-role guard, trigger function not callable, view denied to
+  signed-in and logged-out users); the Supabase security advisor on
+  staging no longer lists the view, any mutable search_path or any
+  trigger function. Applied to PRODUCTION the same day: acceptance passed
+  (view closed to anon and signed-in users, 0 functions without a
+  search_path, 0 trigger functions callable by anon), fingerprints of
+  functions, function grants, views, table grants and policies match
+  staging, the same logged-out request that returned 26 rows now gets
+  42501, the join page's invitation lookup and products_public still
+  answer 200. Rolled-back checks as Ian and a store manager: reads,
+  saving and pulling a scan (audit trigger wrote 2 rows; the manager's
+  RLS hides them for a scan outside their stores, as designed), the
+  immutability guard, supplier, delivery with retention date, manual
+  recall with sweep match. Not verified: a live app session.
 - Preview links use the staging database. The five pages choose staging
   on any "name--site.netlify.app" host and on localhost, production
   elsewhere; staging shows a badge, keeps cross-app links and the
