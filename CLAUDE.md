@@ -23,6 +23,10 @@ work. Never give Ian partial diffs or snippets to paste in by hand.
 - Netlify deploys main to production on all three sites within a minute.
 - Commit messages and PR text: a plain subject line, no attribution or
   Co-Authored-By trailer (Ian's rule; it overrides any harness default).
+- Claude runs SQL itself (Ian, 2026-10-24: "You run the sqls always from
+  now on"): staging first, rolled-back checks, then production, a preview
+  count before any delete and a backup table in the private `backup`
+  schema. Never hand Ian a script to run.
 - After a change Ian should test, add a numbered check to SMOKE.md and a
   dated entry to docs/CHANGELOG.md. Keep this file to rules and current
   state; do not grow it back into a log.
@@ -486,6 +490,10 @@ both copies.
 - Store-manager views match on store_id with a store_name fallback for
   legacy scans.
 
+## Open items
+- Migration 038 (deactivated members locked out) is applied on staging
+  only; the auto-mode safety check blocked the production call. Production
+  still lets a deactivated member with a live session read their old org.
 ## Open items
 Owed by Ian:
 - Three photographed case labels (romaine, nut butter, one non-GS1) to

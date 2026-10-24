@@ -113,6 +113,8 @@ WITH checks AS (
   UNION ALL SELECT '030 products_public exposes the FTL columns',
          EXISTS (SELECT 1 FROM information_schema.columns
                  WHERE table_schema='public' AND table_name='products_public' AND column_name='is_ftl')
+  UNION ALL SELECT '038 deactivated members locked out',
+         (SELECT count(*) FROM pg_policies WHERE schemaname='public' AND policyname='b38_active_members_only') = 31
   UNION ALL SELECT '037 signed-in users keep only CRUD on tables',
          NOT has_table_privilege('authenticated', 'public.scans', 'TRUNCATE')
   UNION ALL SELECT '036 duplicate indexes dropped',

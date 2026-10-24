@@ -17363,14 +17363,12 @@ async function renderConsumerNotification() {
     // Limit to last 90 days to avoid showing stale/imported data
     const ninetyDaysAgo = new Date(Date.now() - 90 * 86400000).toISOString();
     const { data: manualRecalls } = await sb.from('recalls')
-      // is_pushed and recall_event_id removed — neither column exists on the
-      // live recalls schema (same hotfix as the line ~2105 SELECT). Manual
-      // recalls page deduplication still works via the product+lot key set
-      // built below; the dropped fields weren't load-bearing.
+      // is_pushed and recall_event_id exist on recalls (checked against
+      // docs/SCHEMA-REFERENCE.md 2026-10-24); the dedup filter below reads them.
       // CLAUDE.md schema gotcha: alias description as reason so the
       // Consumer Notify picker (selectNotifRecall onclick + search filter
       // at lines 14636/14668/14791/14818) gets the field it expects.
-      .select('id, product_name, lot_number, active, created_at, source, reason:description')
+      .select('id, product_name, lot_number, active, created_at, source, is_pushed, recall_event_id, reason:description')
       .eq('organisation_id', _orgId)
       .eq('active', true)
       .not('source', 'in', '("fda","rasff","FDA","RASFF")')
@@ -17750,33 +17748,40 @@ async function sendConsumerNotifications() {
 
   try {
     const { data: { session: _cnSession } } = await sb.auth.getSession();
-    const res = await fetch('/.netlify/functions/notify-consumers', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_cnSession?.access_token || ''}` },
-      body: JSON.stringify({
-        recall_event_id: _consumerNotifRecallId,
-        org_id:   _orgId,
-        org_name: _orgName,
-        customers: _consumerNotifCustomers,
-        product_name: _consumerNotifCtx.product || 'Recalled product',
-        lot_number:   _consumerNotifCtx.lot || null,
-        reason:       _consumerNotifCtx.reason || null,
-      }),
-    });
-
-    // 2026-09-09 audit fix: this used to ignore res.ok and the returned
-    // failure counts, so a 403 (auth), a 503 (mail service unconfigured) or
-    // a 200 where every Resend call failed all rendered as a green
-    // "Sent to 0 customers" — and then wiped the uploaded recipient list.
-    // During a live consumer recall that means zero notices went out while
-    // the operator believes they did. Only clear the queue on real sends.
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || `Send failed (${res.status})`);
-    const sentN   = data.sent   || 0;
-    const failedN = data.failed || 0;
+    // The function takes at most 500 customers per call (it must finish inside
+    // Netlify's 10 s limit), so a longer list goes out in several calls. Each
+    // batch carries an idempotency key, so pressing Retry after a partial send
+    // does not email anyone twice within 24 hours.
+    const CHUNK = 500;
+    let sentN = 0, failedN = 0;
+    for (let i = 0; i < _consumerNotifCustomers.length; i += CHUNK) {
+      if (btn && _consumerNotifCustomers.length > CHUNK) btn.textContent = `Sending ${Math.min(i + CHUNK, _consumerNotifCustomers.length)} of ${_consumerNotifCustomers.length}…`;
+      const res = await fetch('/.netlify/functions/notify-consumers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_cnSession?.access_token || ''}` },
+        body: JSON.stringify({
+          recall_event_id: _consumerNotifRecallId,
+          org_id:   _orgId,
+          org_name: _orgName,
+          customers: _consumerNotifCustomers.slice(i, i + CHUNK),
+          product_name: _consumerNotifCtx.product || 'Recalled product',
+          lot_number:   _consumerNotifCtx.lot || null,
+          reason:       _consumerNotifCtx.reason || null,
+        }),
+      });
+      // 2026-09-09 audit fix: never treat a refused call as sent; only clear
+      // the queue on real sends.
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (sentN > 0) throw new Error(`${data.error || 'Send failed (' + res.status + ')'}. ${sentN} already sent; Retry will not repeat them`);
+        throw new Error(data.error || `Send failed (${res.status})`);
+      }
+      sentN   += data.sent   || 0;
+      failedN += data.failed || 0;
+    }
     if (sentN === 0) {
       showToast(failedN > 0
-        ? `No notices sent — ${failedN} failed at the mail service. List kept, try again.`
+        ? `No notices sent. ${failedN} failed at the mail service. List kept, try again.`
         : 'No notices sent. List kept, try again.', 'error', 6000);
       if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
       return;

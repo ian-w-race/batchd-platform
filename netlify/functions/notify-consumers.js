@@ -58,7 +58,11 @@ async function verifyCorpAdminOfOrg(jwt, orgId) {
 }
 
 const { sbGet, isUuid } = require('../lib/auth');
-const MAX_CUSTOMERS = 5000;
+// One call must finish inside Netlify's 10 s limit while Resend allows about
+// two requests a second, so a call takes at most 500 customers (5 batches of
+// 100); the dashboard splits a longer list into several calls.
+const MAX_CUSTOMERS = 500;
+const crypto = require('crypto');
 // Permissive shape check; apostrophes are legal in local parts.
 const isValidEmail = (e) => /^[^\s@<>"\\,;]+@[^\s@<>"\\,;]+\.[^\s@<>"\\,;]+$/.test(String(e || ''));
 
@@ -79,8 +83,16 @@ async function loadRecallForOrg(recallId, orgId) {
   return { product_name: ev[0].product_name, lot_number: ev[0].lot_number, reason: ev[0].reason, org_name: orgName };
 }
 
-// Max batch size per Resend call — stay under their 100/call limit
-const BATCH_SIZE = 50;
+// Resend's batch endpoint takes up to 100 emails per request.
+const BATCH_SIZE = 100;
+const BATCH_GAP_MS = 550; // stay under Resend's default 2 requests per second
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Same recall, org and addresses give the same key, so a retried batch is not
+// sent twice (Resend keeps idempotency keys for 24 hours).
+function batchKey(recallId, orgId, emails) {
+  return 'notify-consumers/' + crypto.createHash('sha256')
+    .update([recallId, orgId, ...[...emails].sort()].join('|')).digest('hex');
+}
 
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
@@ -98,6 +110,9 @@ exports.handler = async (event) => {
     return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON' }) };
   }
 
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { statusCode: 400, body: JSON.stringify({ error: 'Request body must be a JSON object' }) };
+  }
   const { recall_event_id, org_id, org_name, customers, product_name, lot_number, reason } = body;
 
   const authHeader = event.headers?.authorization || event.headers?.Authorization || '';
@@ -134,7 +149,7 @@ exports.handler = async (event) => {
   }
 
   const recallProduct = recall.product_name || 'Recalled product';
-  const subject    = `Important: Product recall notice — ${recallProduct}`;
+  const subject    = `Important: Product recall notice: ${recallProduct}`;
   const today      = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' });
   const senderName = recall.org_name || "Your retailer";
 
@@ -142,17 +157,16 @@ exports.handler = async (event) => {
   let failed = 0;
   const errors = [];
 
-  // Send in batches
+  // Send in batches, one Resend request per batch, paced and idempotent.
   for (let i = 0; i < uniqueCustomers.length; i += BATCH_SIZE) {
+    if (i > 0) await sleep(BATCH_GAP_MS);
     const batch = uniqueCustomers.slice(i, i + BATCH_SIZE);
-
-    // Build individual sends (personalised greeting, same body)
     const sends = batch.map(customer => ({
       from:    `${FROM_NAME} <${FROM_EMAIL}>`,
       to:      [customer.email],
       subject,
       html:    buildNoticeHtml({
-        customerName: customer.name || null,
+        customerName: typeof customer.name === 'string' ? customer.name.slice(0, 120) : null,
         orgName:      senderName,
         productName:  recallProduct,
         lotNumber:    recall.lot_number,
@@ -160,44 +174,38 @@ exports.handler = async (event) => {
         today,
       }),
     }));
+    const key = batchKey(recall_event_id, org_id, batch.map((c) => c.email));
 
-    try {
-      // Resend supports batch sends via /emails/batch
-      const res = await fetch('https://api.resend.com/emails/batch', {
-        method:  'POST',
-        headers: {
-          'Content-Type':  'application/json',
-          'Authorization': `Bearer ${RESEND_API_KEY}`,
-        },
-        body: JSON.stringify(sends),
-      });
-
-      const data = await res.json();
-
-      if (res.ok && Array.isArray(data)) {
-        // data is array of { id } for each sent email
-        sent += data.length;
-      } else if (res.ok && data.data) {
-        sent += data.data.length;
-      } else {
-        // Batch endpoint not available — fall back to individual sends
-        console.warn('[notify-consumers] Batch send failed, falling back to individual:', data);
-        for (const send of sends) {
-          try {
-            const r = await fetch('https://api.resend.com/emails', {
-              method:  'POST',
-              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${RESEND_API_KEY}` },
-              body:    JSON.stringify(send),
-            });
-            if (r.ok) sent++;
-            else { failed++; const d = await r.json(); errors.push(d.message || 'send error'); }
-          } catch(e) { failed++; errors.push(e.message); }
+    let attempt = 0;
+    for (;;) {
+      try {
+        const res = await fetch('https://api.resend.com/emails/batch', {
+          method:  'POST',
+          headers: {
+            'Content-Type':    'application/json',
+            'Authorization':   `Bearer ${RESEND_API_KEY}`,
+            'Idempotency-Key': key,
+          },
+          body: JSON.stringify(sends),
+          signal: AbortSignal.timeout(4000),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.status === 429 && attempt === 0) { attempt++; await sleep(1100); continue; }
+        if (res.ok) {
+          const n = Array.isArray(data) ? data.length : Array.isArray(data?.data) ? data.data.length : batch.length;
+          sent += n;
+          failed += batch.length - n;
+        } else {
+          console.warn('[notify-consumers] batch refused:', res.status, data?.message);
+          failed += batch.length;
+          errors.push(data?.message || `mail service ${res.status}`);
         }
+      } catch (e) {
+        console.error('[notify-consumers] batch error:', e.message);
+        failed += batch.length;
+        errors.push(e.message);
       }
-    } catch(e) {
-      console.error('[notify-consumers] Batch error:', e.message);
-      failed += batch.length;
-      errors.push(e.message);
+      break;
     }
   }
 
