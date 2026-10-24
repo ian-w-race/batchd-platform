@@ -55,8 +55,13 @@ work. Never give Ian partial diffs or snippets to paste in by hand.
   request and push to main (.github/workflows/checks.yml). check.mjs
   covers syntax of every inline script and function, the identical
   database selection block in the five app pages, anon-only keys in
-  pages, identical FSMA204_EXPORT_HEADERS, agreeing citation tables, and
-  forced 404s for private paths. When CLAUDE.md says "keep X in step",
+  pages, identical FSMA204_EXPORT_HEADERS, agreeing citation tables, the
+  supplier completeness fields, the FSMA dollar thresholds across
+  dashboard, signup and scanner, and forced 404s for private paths. The
+  tests cover the database switch, the escalation job's duplicate
+  protection, parseGS1 and detectFtlCategory (loaded straight from
+  index.html). When the FDA publishes inflation-adjusted thresholds,
+  change all three files together or the check fails. When CLAUDE.md says "keep X in step",
   add a check there. Run both locally before opening a pull request.
 - Verification standard beyond that: Node tests with stubbed clients,
   local previews in both themes, rolled-back SQL checks as real roles.

@@ -132,6 +132,30 @@ check('US citation table agrees in dashboard and scanner', () => {
   return `${keys.length} citations`;
 });
 
+// 7a. The supplier "complete location" rule matches in dashboard and scanner.
+check('Supplier completeness fields match in dashboard and scanner', () => {
+  const fields = (f, name) => {
+    const m = read(f).match(new RegExp(`function ${name}\\((\\w+)\\) \\{ return !!\\(([^;]*)\\);`));
+    if (!m) throw new Error(`${f}: ${name} not found`);
+    return [...m[2].matchAll(new RegExp(`${m[1]}\\.(\\w+)`, 'g'))].map((x) => x[1]).sort().join(',');
+  };
+  const d = fields('dashboard.html', 'supplierIsComplete');
+  const i = fields('index.html', '_rcvSupplierComplete');
+  if (d !== i) throw new Error(`dashboard [${d}] vs scanner [${i}]`);
+  return d;
+});
+
+// 7b. FSMA 204 dollar thresholds agree across the dashboard, signup and scanner.
+check('FSMA dollar thresholds agree in dashboard, signup and scanner', () => {
+  const amounts = (f) => new Set(read(f).match(/\$\d[\d,]*(?:,000| million)/g) || []);
+  const d = amounts('dashboard.html'), s = amounts('signup.html'), i = amounts('index.html');
+  const fmt = (x) => [...x].sort().join(', ') || 'none';
+  if (fmt(d) !== fmt(s)) throw new Error(`dashboard {${fmt(d)}} vs signup {${fmt(s)}}`);
+  const extra = [...i].filter((x) => !d.has(x));
+  if (extra.length) throw new Error(`scanner mentions ${extra.join(', ')} which the dashboard does not`);
+  return fmt(d);
+});
+
 // 7. Private files and folders stay blocked on the public site.
 check('Private paths forced to 404 in netlify.toml', () => {
   const toml = read('netlify.toml');
