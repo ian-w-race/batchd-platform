@@ -4986,6 +4986,31 @@ async function _noticePoll(first) {
   _noticeRenderReview();
 }
 
+// "Example Creamy Peanut Butter, 16 oz" rather than "Example Example Creamy
+// Peanut Butter, 16 oz 16 oz": add brand and size only when the description
+// does not already contain them.
+function _noticeProductName(p) {
+  const d = (p?.description || '').trim();
+  const low = d.toLowerCase();
+  const parts = [];
+  if (p?.brand && !low.includes(p.brand.toLowerCase())) parts.push(p.brand);
+  parts.push(d);
+  if (p?.size && !low.includes(p.size.toLowerCase())) parts.push(p.size);
+  return parts.filter(Boolean).join(' ');
+}
+
+// Map the hazard named in a notice onto the composer's hazard categories.
+// A starting point only; the admin confirms it in step 2.
+function _noticeHazardType(ex) {
+  const h = `${ex?.hazard || ''} ${ex?.reason || ''}`.toLowerCase();
+  if (/salmonella|listeria|e\.?\s?coli|stec|pathogen|bacteri|cyclospora|hepatitis|norovirus|botulin|clostridium|microbial|mold|mould/.test(h)) return 'contamination';
+  if (/undeclared|allergen/.test(h)) return 'allergen';
+  if (/metal|glass|plastic|rubber|foreign (object|material|matter)|wood|stone|bone/.test(h)) return 'foreign_object';
+  if (/mislabel|wrong (label|product)|incorrect label/.test(h)) return 'mislabeling';
+  if (/lead|arsenic|cadmium|mercury|chemical|pesticide|sanitizer/.test(h)) return 'chemical';
+  return '';
+}
+
 // Lot entries the composer and the scanner understand: single codes, plus
 // each printed range as "FROM-TO" (lotsMatch and the scanner's lotMatchLevel
 // both treat that form as a range).
@@ -5062,7 +5087,7 @@ function _noticeRenderReview() {
     <div style="font-size:var(--fs-label);font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;">Products in the notice (${products.length})</div>
     ${products.map(p => `
       <div style="padding:12px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-md);margin-bottom:8px;">
-        <div style="font-size:var(--fs-body);font-weight:700;color:var(--text);">${esc([p.brand, p.description, p.size].filter(Boolean).join(' · '))}</div>
+        <div style="font-size:var(--fs-body);font-weight:700;color:var(--text);">${esc(_noticeProductName(p))}</div>
         <div style="font-size:var(--fs-meta);color:var(--muted);margin-top:6px;line-height:1.9;">
           GTIN / UPC: ${code(p.gtins)}<br>
           Lots: ${code([...(p.lots || []), ...(p.lot_ranges || []).map(r => `${r.from} to ${r.to}`)])}
@@ -5118,7 +5143,7 @@ function noticeToComposer() {
   const lots = _noticeLots(ex);
   const gtins = [...new Set((ex.products || []).flatMap(p => p.gtins || []))];
   const sev = ['class_i', 'class_ii', 'class_iii'].includes(ex.classification) ? ex.classification : 'unknown';
-  const productName = [first.brand, first.description, first.size].filter(Boolean).join(' ')
+  const productName = _noticeProductName(first)
     + (ex.products.length > 1 ? ` and ${ex.products.length - 1} more product${ex.products.length > 2 ? 's' : ''}` : '');
   const reason = [ex.reason, ex.recalling_firm ? `Recalling firm: ${ex.recalling_firm}` : '', ex.instructions ? `Instructions: ${ex.instructions}` : '']
     .filter(Boolean).join(' ');
@@ -5129,7 +5154,7 @@ function noticeToComposer() {
   openRecallComposer();
   Object.assign(_composerState, {
     product: productName.slice(0, 200), lot: lots.join(', '), barcode: gtins[0] || '', gtins,
-    severity: sev, reason: reason.slice(0, 1000), noticeId, noticeProducts: ex.products || [],
+    severity: sev, hazardType: _noticeHazardType(ex), reason: reason.slice(0, 1000), noticeId, noticeProducts: ex.products || [],
   });
   _composerState.scope = _composerScopeFromMatches(matches);
   renderRecallComposer();
@@ -5138,7 +5163,8 @@ function noticeToComposer() {
 // Turn match_recall_notice rows into the composer's scope shape.
 function _composerScopeFromMatches(rows) {
   const stores = _noticeStoreSummary(rows || []);
-  const latest = (rows || []).reduce((acc, r) => (!acc || new Date(r.record_date) > new Date(acc)) ? r.record_date : acc, null);
+  const latest = (rows || []).filter(r => r.confidence !== 'low')
+    .reduce((acc, r) => (!acc || new Date(r.record_date) > new Date(acc)) ? r.record_date : acc, null);
   return {
     stores: stores.map(s => ({ id: s.id, name: s.name, units: s.onShelf, received: s.received, expected: s.expected, latest: null })),
     totalStores: stores.length,
