@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 import Module from 'node:module';
 
 const require = createRequire(import.meta.url);
+process.env.BATCHD_JOB_LOG = 'off'; // job_runs logging is tested in health-check.test.mjs
 
 // A small in-memory stand-in for the supabase-js builder, enough for the
 // queries this function makes. It counts round trips.

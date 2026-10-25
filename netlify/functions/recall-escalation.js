@@ -54,7 +54,7 @@ async function sendEmail(to, subject, html) {
   if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(e.message || `Resend ${res.status}`); }
 }
 
-exports.handler = async (event) => {
+const run = async (event) => {
   // Cron-singleton guard (2026-08-08): two Netlify sites deploy this
   // repo, so netlify.toml's schedule arms on BOTH — two crons racing
   // every 30 minutes can double-send escalation emails. The site with
@@ -167,3 +167,6 @@ exports.handler = async (event) => {
     return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
   }
 };
+
+// Every run is recorded in job_runs for the daily health check (migration 041).
+exports.handler = require('../lib/job-log').withJobLog('recall-escalation', run);

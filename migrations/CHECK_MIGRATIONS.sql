@@ -113,6 +113,8 @@ WITH checks AS (
   UNION ALL SELECT '030 products_public exposes the FTL columns',
          EXISTS (SELECT 1 FROM information_schema.columns
                  WHERE table_schema='public' AND table_name='products_public' AND column_name='is_ftl')
+  UNION ALL SELECT '041 job run log for monitoring',
+         to_regclass('public.job_runs') IS NOT NULL
   UNION ALL SELECT '040 recall notices and lot matching',
          to_regclass('public.recall_notices') IS NOT NULL
          AND EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'match_recall_notice')

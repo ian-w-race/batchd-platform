@@ -27,6 +27,9 @@ work. Never give Ian partial diffs or snippets to paste in by hand.
   now on"): staging first, rolled-back checks, then production, a preview
   count before any delete and a backup table in the private `backup`
   schema. Never hand Ian a script to run.
+- End-to-end tests: `npx playwright test` (local, staging) or the e2e
+  workflow on every deploy preview. Add a test in e2e/ for each new core
+  flow; they may only target localhost or a deploy preview.
 - After a change Ian should test, add a numbered check to SMOKE.md and a
   dated entry to docs/CHANGELOG.md. Keep this file to rules and current
   state; do not grow it back into a log.
@@ -410,7 +413,7 @@ docs/HISTORY.md.
   lets saves retry without it, so new columns degrade gracefully on an
   older database.
 
-## Netlify functions (14)
+## Netlify functions (15)
 | Function | Purpose | Auth |
 |---|---|---|
 | ai-analyze.js | Anthropic proxy for investigations and NL queries | requireAi (member of org, plan pov/active) |
@@ -418,6 +421,7 @@ docs/HISTORY.md.
 | notify-consumers.js | Consumer recall emails | corp_admin of the recall's org |
 | notify-event.js | recall_pushed, complaint_filed, drill_scheduled emails | INTERNAL_NOTIFY_SECRET or member JWT |
 | ocr.js | Anthropic vision; owns its prompt templates | requireAi |
+| health-check.js | Daily 07:00 UTC: reads job_runs and emails platform admins when a job has not run or failed | Scheduled only |
 | parse-recall-notice-background.js | Background function: Claude reads a supplier recall notice into recall_notices.extracted (prompt and schema in netlify/lib/recall-notice.js) | corp_admin of the notice's org, plan pov/active |
 | push-recall-email.js | Recall alert emails | INTERNAL_NOTIFY_SECRET, fails closed |
 | recall-escalation.js | 2h and 24h unacknowledged escalations | Scheduled only |
@@ -494,8 +498,9 @@ both copies.
   legacy scans.
 
 ## Open items
-- Migration 040 (recall notices, match_recall_notice) is on staging only;
-  apply it to production before merging the notice intake pull request.
+- Migration 041 (job_runs) is on staging only; apply it to production before
+  merging the monitoring pull request. The e2e workflow needs the GitHub
+  secret E2E_PASSWORD, which Ian sets from the local staging accounts file.
 - Netlify secret hygiene: keep every secret's Local development value empty
   (Netlify shows those in plain text). INTERNAL_NOTIFY_SECRET was rotated and
   recreated under the right name on both sites on 2026-10-25; the code's
