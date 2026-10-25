@@ -1,7 +1,7 @@
 // netlify/functions/triage-complaint.js
 // v2 — enriched fields, smart matching, bilingual follow-up
 
-const SUPABASE_URL = 'https://lurxucdmrugikdlvvebc.supabase.co';
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://lurxucdmrugikdlvvebc.supabase.co'; // deploy previews set this to staging
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
@@ -16,6 +16,12 @@ const S = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : null) ||
 const ONE_OF = (v, allowed) => (typeof v === 'string' && allowed.includes(v)) ? v : null;
 const ANTHROPIC_TIMEOUT_MS = 7000; // Netlify synchronous functions are killed at 10 s
 const EMAIL_TIMEOUT_MS = 4000;
+// Call notify-event on the same deploy that is handling this request, so a
+// deploy preview (staging database) never reaches the production function.
+const selfBase = (event) => {
+  const host = event?.headers?.host || '';
+  return /^[a-z0-9.-]+$/i.test(host) ? 'https://' + host : (process.env.URL || 'https://app.batchdapp.com');
+};
 // Date columns (purchase_date, incident_date, best_before_date) take only a
 // real YYYY-MM-DD; anything else would fail the whole insert.
 const D = (v) => {
@@ -626,7 +632,7 @@ exports.handler = async (event) => {
     // role scoping, default-on prefs, and Resend delivery.
     if (receiving_org_id) {
       try {
-        const notifyRes = await fetch(`${process.env.URL || 'https://app.batchdapp.com'}/.netlify/functions/notify-event`, {
+        const notifyRes = await fetch(`${selfBase(event)}/.netlify/functions/notify-event`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

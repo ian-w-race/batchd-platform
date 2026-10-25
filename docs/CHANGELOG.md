@@ -45,6 +45,30 @@ how it was verified and what is still unverified. Everything before
   "Both" feed buttons or the Norsk language button in Settings (legacy NO
   orgs still do). SMOKE.md check 18 no longer points at the retired
   "Deliveries recorded" ring.
+## 2026-10-25
+- Deploy previews now run their server functions against the staging
+  database too (the pages already did). Every function reads SUPABASE_URL
+  from the environment with production as the fallback (five had it
+  hardcoded); Netlify has SUPABASE_URL set to staging for the Deploy
+  Previews context only, on batchd-app and gentle-belekoy-be3cb7. The
+  matching staging SUPABASE_SERVICE_KEY must be pasted by Ian in Netlify
+  (Deploy Previews context only); until then preview functions fail closed.
+  triage-complaint calls notify-event on its own deploy instead of the
+  production URL. The ocr warm-up answer carries an X-Batchd-Db header
+  (staging or production) so the setting can be checked from outside.
+  scripts/check.mjs gained a check that no function hardcodes the URL.
+  Ian pasted the staging key on both sites the same day. Verified on the
+  pull request's preview: a staging-only org is found and a production org
+  is not (functions reach staging only); a full complaint through
+  triage-complaint saved every form field, AI triage returned critical, and
+  the audit log reads complaint_received, ai_triage_complete,
+  critical_alert_sent, follow_up_email_sent (both sends confirmed by Resend,
+  to Resend's delivered@resend.dev test inbox); notify-consumers sent a
+  notice for a staging manual recall and a repeat of the same request also
+  reported sent, as Resend replays an idempotent request. Not verified: that
+  Resend delivered one email, not two (needs the Resend dashboard).
+- First scheduled run of the rewritten FDA import (06:00 UTC): 200 in
+  0.7 s, 3 recalls added, 0 duplicates (7,707 to 7,710 FDA rows).
 
 ## 2026-10-24
 - Live test of migration 038 on staging with two throwaway accounts

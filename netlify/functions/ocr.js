@@ -25,7 +25,7 @@ const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const MODEL_HAIKU  = 'claude-haiku-4-5-20251001';
 const MODEL_SONNET = 'claude-sonnet-4-20250514';
 
-const SUPABASE_URL         = 'https://lurxucdmrugikdlvvebc.supabase.co';
+const SUPABASE_URL         = process.env.SUPABASE_URL || 'https://lurxucdmrugikdlvvebc.supabase.co'; // deploy previews set this to staging
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const MAX_BODY_BYTES       = 11 * 1024 * 1024;  // 11 MB JSON envelope ceiling
 const MAX_IMAGE_B64_BYTES  =  8 * 1024 * 1024;  //  8 MB base64 image
@@ -172,7 +172,9 @@ exports.handler = async (event) => {
   // it was rejected with 400 (the org was not loaded yet), which filled the
   // error logs, and when the org was loaded it cost a real Anthropic call.
   if (parsedBody && parsedBody.task === 'warmup') {
-    return { statusCode: 204, body: '' };
+    // X-Batchd-Db names the database this deploy's functions use, so a deploy
+    // preview can be checked from outside (staging) without any key.
+    return { statusCode: 204, headers: { 'X-Batchd-Db': SUPABASE_URL.includes('lurxucdmrugikdlvvebc') ? 'production' : 'staging' }, body: '' };
   }
 
   // Auth: an active member of the org named in the body, and that org must be

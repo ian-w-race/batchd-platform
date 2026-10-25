@@ -3,7 +3,7 @@
 // Authentication: X-Batchd-Api-Key header (must match org's api_key stored in organisations table)
 // Rate limit: 10 recalls/hour per org
 
-const SUPABASE_URL = 'https://lurxucdmrugikdlvvebc.supabase.co';
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://lurxucdmrugikdlvvebc.supabase.co'; // deploy previews set this to staging
 const SB_SVC_KEY   = process.env.SUPABASE_SERVICE_KEY;
 const crypto = require('crypto');
 const { internalSecret } = require('../lib/auth');

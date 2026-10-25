@@ -14,7 +14,7 @@
 // Body size cap: 200KB. nl_query schema strings can be large but never
 // approach this; anything bigger is abuse.
 
-const SUPABASE_URL         = 'https://lurxucdmrugikdlvvebc.supabase.co';
+const SUPABASE_URL         = process.env.SUPABASE_URL || 'https://lurxucdmrugikdlvvebc.supabase.co'; // deploy previews set this to staging
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const MAX_BODY_BYTES       = 200 * 1024; // 200 KB
 
