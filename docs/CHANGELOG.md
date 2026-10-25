@@ -4,6 +4,45 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-10-25 (supplier recall notices, plan B1 and B2)
+- Supplier recall notice intake. A corporate admin uploads a notice (PDF,
+  image, TXT or EML, up to 15 MB) or pastes the email from the Recalls panel
+  ("Read a supplier notice") or the dashboard ("From a supplier notice").
+  The file goes to storage under orgs/<org prefix>/recall-notices/ (the
+  scan-photos bucket is public by unguessable URL, as for photos), a
+  recall_notices row is created, and the new background function
+  parse-recall-notice-background has Claude (claude-opus-5-5, structured
+  JSON output, server-side refusal fallback) read the firm, class, reason,
+  hazard, products, GTINs, lot codes and ranges, best-by window,
+  instructions, contact and anything uncertain. Only corp admins of orgs on
+  a pov or active plan can run it (same gate as the other AI functions).
+  The review screen shows the draft, the uncertainties to check against the
+  original, and which stores received or shelved matching product; "Review
+  and push in the composer" fills the composer (product, all lots, GTIN,
+  class, hazard, reason) and pushing marks the notice pushed and links it.
+- Lot-level matching (B2). match_recall_notice (migration 040, SECURITY
+  INVOKER) matches deliveries and shelf scans by GTIN, lot code, lot range,
+  best-by window and product words, with a reason and a confidence for each
+  record. The composer's distribution check now uses it, so it sees
+  deliveries, not only shelf scans (the old scan-only check remains as a
+  fallback on an older database).
+- The composer accepts several lots separated by commas; each lot becomes
+  its own linked recalls row so the scanner's placement check, the sweep and
+  the dashboard match every lot. A barcode alone is now enough to continue.
+  The composer's Norwegian example placeholders are now US examples.
+- Migration 040 applied to STAGING only. Verified there: matcher cases
+  (GTIN plus range high, same GTIN other lot low, same lot other GTIN
+  excluded, best-by window, product-only low, shelf scans, an outsider sees
+  nothing); on the pull request's preview against staging, a pasted email
+  and a PDF were each read correctly (Class I, Salmonella, both GTINs, the
+  lot range kept as a range, best-by window, contact, notice date from the
+  PDF), the review showed 2 stores with 12 and 8 cases and left out the
+  crunchy product that shares a lot code but not the GTIN, the composer
+  pushed with no retyping (event, one linked row, 2 store tasks, notice
+  pushed and linked), and a typed two-lot recall wrote one linked row per
+  lot. tests/recall-notice.test.mjs adds 7 tests (70 in all).
+  Not verified: a real supplier's notice, and production.
+
 ## 2026-10-25 (internal secret rotated)
 - INTERNAL_NOTIFY_SECRET has a new random value (generated on Ian's machine
   straight to the clipboard; never shown in chat) on both Netlify sites, in
