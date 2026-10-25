@@ -11,9 +11,14 @@ how it was verified and what is still unverified. Everything before
   the production API log: both sites' functions and the 13:30 UTC
   recall-escalation run authenticate with the new key; the old key was last
   used at 13:00. The old key is to be deleted in Supabase.
-- Rotating the Anthropic key: new key in all contexts on batchd-app; the
-  www site still had the old one at 13:30. Ian disables the old key after
-  both sites carry the new one and a preview triage call succeeds.
+- Rotated the Anthropic key: the new key is in Production, Deploy Previews,
+  Branch deploys and Preview Server on both sites (www's variable had to be
+  deleted and recreated because edits would not save), both sites
+  redeployed at 13:37 UTC, and Ian disabled the old key. Ian also deleted
+  the old Supabase secret key. Verified after both deletions: both live
+  sites still read the production database, a staging triage call on a
+  preview returned a real AI result (serious, spoilage), and the production
+  API log shows only the new key with no failed calls.
 
 ## 2026-10-25 (internal secret name)
 - FOUND: on the batchd-app Netlify site the server-to-server secret is
