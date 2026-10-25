@@ -73,8 +73,16 @@ async function requireAi(event, orgId, roles) {
 }
 
 // Server-to-server shared secret, constant-time. Fails closed when unset.
+// The shared server-to-server secret. batchd-app stored it under the
+// misspelled key INTERNAL_NOTIFY_SECREY (found 2026-10-25), so complaint and
+// recall emails failed closed there; Netlify cannot rename a key, so the
+// misspelling is accepted as a fallback until the variable is recreated.
+function internalSecret() {
+  return process.env.INTERNAL_NOTIFY_SECRET || process.env.INTERNAL_NOTIFY_SECREY || '';
+}
+
 function internalSecretOk(given) {
-  const expected = process.env.INTERNAL_NOTIFY_SECRET || '';
+  const expected = internalSecret();
   if (!expected || typeof given !== 'string' || given.length !== expected.length) return false;
   return crypto.timingSafeEqual(Buffer.from(given, 'utf8'), Buffer.from(expected, 'utf8'));
 }
@@ -84,4 +92,4 @@ function json(statusCode, body, extraHeaders) {
 }
 
 module.exports = { SUPABASE_URL, SERVICE_KEY, SVC_HEADERS, isUuid, sbGet, verifyUser, activeMembership,
-                   isPlatformAdmin, orgAiEnabled, requireMember, requireAi, internalSecretOk, json };
+                   isPlatformAdmin, orgAiEnabled, requireMember, requireAi, internalSecret, internalSecretOk, json };

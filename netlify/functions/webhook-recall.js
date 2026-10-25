@@ -6,6 +6,7 @@
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://lurxucdmrugikdlvvebc.supabase.co'; // deploy previews set this to staging
 const SB_SVC_KEY   = process.env.SUPABASE_SERVICE_KEY;
 const crypto = require('crypto');
+const { internalSecret } = require('../lib/auth');
 const SITE_URL = process.env.URL || 'https://app.batchdapp.com';
 // recall_events.severity is NOT NULL with a CHECK of class_i/ii/iii (default
 // class_ii). 'unknown' or no value leaves the column to its default; a market
@@ -149,7 +150,7 @@ exports.handler = async (event) => {
       const emailRes = await fetch(emailUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ recall_event_id: recallEventId, internal_secret: process.env.INTERNAL_NOTIFY_SECRET }),
+        body: JSON.stringify({ recall_event_id: recallEventId, internal_secret: internalSecret() }),
       });
       // fetch() resolves on HTTP errors — surface them so a dead email leg
       // shows up in the function logs instead of failing silently.
