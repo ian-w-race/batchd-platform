@@ -166,9 +166,6 @@ today.
    butters are FDA products, but a grocery chain will expect one recall
    inbox for everything. Lower priority now that supplier notices come
    first.
-7. **Recall notice intake address:** a Batch'd address per retailer
-   (for example `recalls+<org>@batchdapp.com`) means receiving email
-   through Resend or a similar inbound service. Acceptable?
 3. **Text messages for alerts:** they cost per message (Twilio or similar).
    Push notifications are free. Start with push only?
 4. **A build step:** it changes how files are uploaded (Netlify builds them,
@@ -177,3 +174,6 @@ today.
    sections under Recalls, or park them until a customer asks?
 6. **Order:** this plan first, then the portals? Or the recall engine
    (phase 3) first because it matters most to pilots?
+7. **Recall notice intake address:** a Batch'd address per retailer
+   (for example `recalls+<org>@batchdapp.com`) means receiving email
+   through Resend or a similar inbound service. Acceptable?
