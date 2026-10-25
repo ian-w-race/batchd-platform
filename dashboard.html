@@ -4545,7 +4545,7 @@ function showDrillLauncher() {
         <div class="field"><label>Lot number</label>
           <input id="drill-lot" type="text" placeholder="e.g. DRILL-${new Date().toISOString().split('T')[0]}" value="DRILL-${new Date().toISOString().split('T')[0]}" style="font-family:'DM Mono',monospace;" /></div>
         <div class="field"><label>Drill reason (displayed to stores)</label>
-          <input id="drill-reason" type="text" value="Annual recall readiness drill — no real product affected" /></div>
+          <input id="drill-reason" type="text" value="Annual recall readiness drill; no real product affected" /></div>
         <div style="margin-bottom:12px;"><label style="font-size:var(--fs-eyebrow);font-family:'DM Mono',monospace;color:var(--muted);display:block;margin-bottom:5px;">SIMULATED SEVERITY</label>
           <select id="drill-severity" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text);padding:10px 12px;font-size:var(--fs-body);font-family:inherit;">
             <option value="class_i">Class I — serious health hazard (high urgency drill)</option>
@@ -7198,7 +7198,7 @@ const FSMA204_GAP_NOTE = 'Shelf placement only, no receiving record';
 
 function _fsmaCsvCell(v) {
   const s = v == null ? '' : String(v);
-  const safe = /^[=@]|^[+\-]\s*[A-Za-z(]/.test(s) ? "'" + s : s;   // formula-injection guard, numbers untouched
+  const safe = /^[=@+]|^-\s*[A-Za-z(]/.test(s) ? "'" + s : s;   // formula guard; a leading + (phone numbers) is quoted too, negative numbers untouched
   return /[",\n\r]/.test(safe) ? '"' + safe.replace(/"/g, '""') + '"' : safe;
 }
 function _fsmaLocalDate(d) { const dt = new Date(d); const pad = n => String(n).padStart(2, '0'); return isNaN(dt) ? '' : `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`; }
@@ -8488,8 +8488,11 @@ function rcvImportOpen() {
       }
       // 2. Header aliases.
       const map = {};
+      // The field's own label counts too: the downloadable template uses the
+      // labels as headers, so a file built from it must map without help.
       Object.entries(_RCV_IMPORT_ALIASES).forEach(([key, list]) => {
-        const wanted = list.map(norm);
+        const label = (_RCV_IMPORT_FIELDS.find(f => f.key === key) || {}).label || '';
+        const wanted = list.concat(label).map(norm);
         const hit = headers.find(h => wanted.includes(norm(h)));
         if (hit) map[key] = hit;
       });
@@ -9994,7 +9997,7 @@ function renderComplianceDashboard(el) {
       scoreText: sc.requestScore == null ? 'Not run' : sc.requestScore + '%',
       icon:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg>',
       reg:`${_CITATIONS.us.availability} · 24 hours`,
-      stats: d.rrDone ? `Last drill ${_rrFmtMinutes(Number(d.rrDone.minutes_to_produce))} · ${d.rrDone.row_count ?? 0} rows` : 'Start the clock in the drill card below',
+      stats: d.rrDone ? `Last drill ${_rrFmtMinutes(Number(d.rrDone.minutes_to_produce))} · ${d.rrDone.row_count ?? 0} row${(d.rrDone.row_count ?? 0) === 1 ? '' : 's'}` : 'Start the clock in the drill card below',
       step:null }] : []),
   ];
 
@@ -10590,7 +10593,7 @@ async function renderRecordsRequestCard() {
       <div style="background:var(--surface2);border-radius:var(--r-md);padding:10px 16px;">
         <div style="font-size:var(--fs-label);font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);">Last drill</div>
         <div style="font-size:var(--fs-h4);font-weight:800;color:${(_rrMinutes(last) || 0) <= 60 ? 'var(--accent)' : 'var(--warn)'};font-family:'Figtree',sans-serif;letter-spacing:-0.02em;">${esc(_rrFmtMinutes(_rrMinutes(last)))}</div>
-        <div style="font-size:var(--fs-label);color:var(--muted);">${esc(String(last.row_count ?? 0))} rows on ${esc(fmtDash(last.produced_at))}</div>
+        <div style="font-size:var(--fs-label);color:var(--muted);">${esc(String(last.row_count ?? 0))} row${(last.row_count ?? 0) === 1 ? '' : 's'} on ${esc(fmtDash(last.produced_at))}</div>
       </div>
       ${best != null && done.length > 1 ? `<div style="background:var(--surface2);border-radius:var(--r-md);padding:10px 16px;">
         <div style="font-size:var(--fs-label);font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);">Best</div>
@@ -11245,7 +11248,7 @@ function renderComplianceResults(el) {
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden;">
         <div style="padding:13px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
           <div style="font-size:var(--fs-meta);font-weight:700;color:var(--text);">Drill history</div>
-          <button onclick="generateDrillReport()" style="font-size:var(--fs-eyebrow);padding:5px 12px;border-radius:var(--r-xs);border:1px solid rgba(var(--accent-rgb),0.3);background:none;color:var(--accent);cursor:pointer;">↓ Drill report</button>
+          <button onclick="generateDrillReport()" style="font-size:var(--fs-eyebrow);padding:5px 12px;border-radius:var(--r-xs);border:1px solid rgba(var(--accent-rgb),0.3);background:none;color:var(--accent);cursor:pointer;">${_ico('download',12)} Drill report</button>
         </div>
         <div style="padding:0 18px;">
           ${d.drills.map(dr => `
@@ -11254,7 +11257,7 @@ function renderComplianceResults(el) {
                 <div style="font-size:var(--fs-meta);font-weight:500;color:var(--text);">${esc(dr.product_name||'Mock drill')}</div>
                 <div style="font-size:var(--fs-label);color:var(--muted);margin-top:2px;">${new Date(dr.started_at).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',year:'numeric'})}</div>
               </div>
-              <button onclick="generateDrillReport('${dr.id}')" style="font-size:var(--fs-label);padding:4px 10px;border-radius:var(--r-xs);border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;">↓ PDF</button>
+              <button onclick="generateDrillReport('${dr.id}')" style="font-size:var(--fs-label);padding:4px 10px;border-radius:var(--r-xs);border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;">${_ico('download',12)} PDF</button>
             </div>`).join('')}
         </div>
       </div>` : ''}
@@ -11804,7 +11807,7 @@ async function generateComplianceReport() {
       { label:'Recall readiness',  score:sc.recallScore,   detail:`${d.drills.length} drill${d.drills.length!==1?'s':''} · ${d.acksConfirmed} confirmed responses` },
       { label:'Operational coverage',score:sc.coverageScore, detail:`${d.storesActiveRecent}/${d.activeStores.length} stores active (30 days)` },
       // Phase 5 (2026-10-07): fifth axis when a records request drill exists
-      ...(sc.requestScore == null ? [] : [{ label:'Records request time', score:sc.requestScore, detail:`${_rrFmtMinutes(Number(d.rrDone.minutes_to_produce))} to produce ${d.rrDone.row_count ?? 0} rows` }]),
+      ...(sc.requestScore == null ? [] : [{ label:'Records request time', score:sc.requestScore, detail:`${_rrFmtMinutes(Number(d.rrDone.minutes_to_produce))} to produce ${d.rrDone.row_count ?? 0} row${(d.rrDone.row_count ?? 0) === 1 ? '' : 's'}` }]),
     ];
 
     const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Compliance Report — ${esc(org?.name||_orgName)}</title>
@@ -12063,7 +12066,7 @@ async function renderReports() {
                           style="font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);padding:6px 12px;border-radius:var(--r-xs);border:1px solid var(--glass-border);background:none;color:var(--muted);cursor:pointer;transition:all var(--dur-fast);"
                           onmouseenter="this.style.borderColor='var(--muted)';this.style.color='var(--text)'"
                           onmouseleave="this.style.borderColor='var(--glass-border)';this.style.color='var(--muted)'">
-                          ↓ CSV
+                          ${_ico('download',12)} CSV
                         </button>
                       </div>
                     </div>
@@ -12150,7 +12153,7 @@ function reportHeader(title, sub, csvKey) {
         </button>
         <button onclick="downloadReport('${csvKey}')"
           style="font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);padding:7px 14px;border-radius:var(--r-xs);border:1px solid var(--glass-border);background:var(--surface2);color:var(--text);cursor:pointer;">
-          ↓ Download CSV
+          ${_ico('download',12)} Download CSV
         </button>
       </div>
     </div>`;
@@ -12810,7 +12813,7 @@ el.innerHTML = `
         <div style="font-size:var(--fs-meta);color:var(--danger);font-weight:600;">⚠ ${matched.length} customer${matched.length!==1?'s':''} matched · ${customers.length - matched.length} not affected</div>
         <a href="${csvUrl}" download="recall-affected-customers-${new Date().toISOString().split('T')[0]}.csv"
           style="font-size:var(--fs-eyebrow);padding:6px 12px;border-radius:var(--r-xs);border:1px solid rgba(var(--danger-rgb),0.3);background:none;color:var(--danger);cursor:pointer;text-decoration:none;font-family:'DM Mono',monospace;font-weight:600;">
-          ↓ Download matched list
+          ${_ico('download',12)} Download matched list
         </a>
       </div>
       <div class="panel" style="margin:0;">
@@ -13692,10 +13695,10 @@ async function renderSettings() {
               <div style="display:flex;gap:6px;flex-wrap:wrap;">
                 <button type="button" id="org-feeds-fda" ${isAdmin?'':'disabled'} onclick="${isAdmin?`_setOrgFeeds('fda')`:''}"
                   style="flex:1;min-width:88px;font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);padding:9px 10px;border-radius:var(--r-sm);border:1.5px solid ${orgRecallSource==='fda'?'var(--accent)':'var(--border)'};background:${orgRecallSource==='fda'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${orgRecallSource==='fda'?'var(--accent)':'var(--muted)'};cursor:${isAdmin?'pointer':'not-allowed'};opacity:${isAdmin?'1':'0.7'};letter-spacing:0.04em;">🇺🇸 FDA</button>
-                <button type="button" id="org-feeds-mattilsynet" ${isAdmin?'':'disabled'} onclick="${isAdmin?`_setOrgFeeds('mattilsynet')`:''}"
+                ${_orgRegion === 'no' ? `<button type="button" id="org-feeds-mattilsynet" ${isAdmin?'':'disabled'} onclick="${isAdmin?`_setOrgFeeds('mattilsynet')`:''}"
                   style="flex:1;min-width:118px;font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);padding:9px 10px;border-radius:var(--r-sm);border:1.5px solid ${orgRecallSource==='mattilsynet'?'var(--accent)':'var(--border)'};background:${orgRecallSource==='mattilsynet'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${orgRecallSource==='mattilsynet'?'var(--accent)':'var(--muted)'};cursor:${isAdmin?'pointer':'not-allowed'};opacity:${isAdmin?'1':'0.7'};letter-spacing:0.04em;">🇳🇴 Mattilsynet</button>
                 <button type="button" id="org-feeds-both" ${isAdmin?'':'disabled'} onclick="${isAdmin?`_setOrgFeeds('both')`:''}"
-                  style="flex:1;min-width:74px;font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);padding:9px 10px;border-radius:var(--r-sm);border:1.5px solid ${orgRecallSource==='both'?'var(--accent)':'var(--border)'};background:${orgRecallSource==='both'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${orgRecallSource==='both'?'var(--accent)':'var(--muted)'};cursor:${isAdmin?'pointer':'not-allowed'};opacity:${isAdmin?'1':'0.7'};letter-spacing:0.04em;">Both</button>
+                  style="flex:1;min-width:74px;font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);padding:9px 10px;border-radius:var(--r-sm);border:1.5px solid ${orgRecallSource==='both'?'var(--accent)':'var(--border)'};background:${orgRecallSource==='both'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${orgRecallSource==='both'?'var(--accent)':'var(--muted)'};cursor:${isAdmin?'pointer':'not-allowed'};opacity:${isAdmin?'1':'0.7'};letter-spacing:0.04em;">Both</button>` : '' /* US orgs see FDA only (US-only decision 2026-09-29) */}
               </div>
               <div style="font-size:var(--fs-label);color:var(--muted);margin-top:6px;line-height:1.55;">${isAdmin
                 ? `Which regulatory feeds Batch'd ingests for the whole org. Compliance decision — all staff inherit. FDA covers US recalls; Mattilsynet (incl. RASFF) covers Norway/EU. <strong>Both</strong> is recommended for multi-region operators.`
@@ -13807,7 +13810,7 @@ async function renderSettings() {
             <label style="display:block;font-family:'DM Mono',monospace;font-size:var(--fs-label);text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">Display language</label>
             <div style="display:flex;gap:8px;">
               <button type="button" id="pref-lang-en" onclick="_setPrefLang('en')" style="flex:1;font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);padding:10px 14px;border-radius:var(--r-sm);border:1.5px solid ${userPref.language==='en'?'var(--accent)':'var(--border)'};background:${userPref.language==='en'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.language==='en'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;">🇺🇸 English</button>
-              <button type="button" id="pref-lang-no" onclick="_setPrefLang('no')" style="flex:1;font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);padding:10px 14px;border-radius:var(--r-sm);border:1.5px solid ${userPref.language==='no'?'var(--accent)':'var(--border)'};background:${userPref.language==='no'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.language==='no'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;">🇳🇴 Norsk</button>
+              ${_orgRegion === 'no' ? `<button type="button" id="pref-lang-no" onclick="_setPrefLang('no')" style="flex:1;font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);padding:10px 14px;border-radius:var(--r-sm);border:1.5px solid ${userPref.language==='no'?'var(--accent)':'var(--border)'};background:${userPref.language==='no'?'rgba(var(--accent-rgb),0.08)':'var(--surface2)'};color:${userPref.language==='no'?'var(--accent)':'var(--muted)'};cursor:pointer;letter-spacing:0.04em;">🇳🇴 Norsk</button>` : ''}
             </div>
             <div style="font-size:var(--fs-eyebrow);color:var(--muted);margin-top:6px;line-height:1.55;">The scanning app is fully translated to both languages. The corporate dashboard is English-only today; your selection persists and the dashboard will respect it once translations land.</div>
           </div>
@@ -15657,7 +15660,7 @@ async function openCSVImport(config) {
         <div id="csv-step-upload">
           <div style="background:rgba(var(--accent-rgb),0.06);border:1px solid rgba(var(--accent-rgb),0.2);border-radius:var(--r-md);padding:13px 16px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
             <div><div style="font-size:var(--fs-meta);font-weight:600;color:var(--accent);">Start with our template</div><div style="font-size:var(--fs-eyebrow);color:var(--muted);margin-top:2px;">Download a pre-formatted CSV</div></div>
-            <button onclick="csvDownloadTemplate()" style="background:var(--accent);color:var(--accent-on-primary);border:none;border-radius:var(--r-sm);padding:7px 14px;font-size:var(--fs-meta);font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;flex-shrink:0;">↓ Download template</button>
+            <button onclick="csvDownloadTemplate()" style="background:var(--accent);color:var(--accent-on-primary);border:none;border-radius:var(--r-sm);padding:7px 14px;font-size:var(--fs-meta);font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;flex-shrink:0;">${_ico('download',12)} Download template</button>
           </div>
           <div id="csv-dropzone" ondragover="event.preventDefault();this.style.borderColor='var(--accent)';this.style.background='rgba(var(--accent-rgb),0.08)';" ondragleave="this.style.borderColor='var(--border)';this.style.background='var(--surface2)';" ondrop="csvHandleDrop(event)" onclick="document.getElementById('csv-file-input').click()" style="border:2px dashed var(--border);border-radius:var(--r-lg);background:var(--surface2);padding:36px 20px;text-align:center;cursor:pointer;transition:all var(--dur-normal);">
             <div style="font-size:var(--fs-h2);margin-bottom:8px;">${_ico('file-text',28)}</div>
@@ -15752,6 +15755,15 @@ async function csvParseAndPreview(text, filename) {
   let autoMap = {};
   if (typeof config.autoMapFn === 'function') {
     autoMap = config.autoMapFn(headers) || {};
+    // The downloadable template uses the field labels as headers, so a file
+    // built from it maps every field even when the custom matcher misses one
+    // (2026-10-25 smoke check: the delivery template lost its store column).
+    const _n = h => String(h).toLowerCase().replace(/[^a-z0-9]/g, '');
+    config.fields.forEach(f => {
+      if (autoMap[f.key]) return;
+      const hit = headers.find(h => _n(h) === _n(f.label));
+      if (hit) autoMap[f.key] = hit;
+    });
   } else {
     config.fields.forEach(f => {
       const fLabel = f.label.toLowerCase().replace(/[^a-z0-9]/g,'');
@@ -17106,7 +17118,7 @@ const fmtDT      = d => d ? new Date(d).toLocaleString(_dashLocale(), {day:'nume
         { k: 'Drill initiated',    v: fmtDT(ev.published_at || ev.created_at) },
         { k: 'Last store response',v: lastConfirm ? fmtDT(lastConfirm) : '—' },
         { k: 'Regulatory basis',   v: regRef },
-        { k: 'Records produced in', v: rrDone ? `${_rrFmtMinutes(Number(rrDone.minutes_to_produce))} (${rrDone.row_count ?? 0} rows, records request drill ${fmtDate(rrDone.produced_at)})` : 'No records request drill on file' },
+        { k: 'Records produced in', v: rrDone ? `${_rrFmtMinutes(Number(rrDone.minutes_to_produce))} (${rrDone.row_count ?? 0} row${(rrDone.row_count ?? 0) === 1 ? '' : 's'}, records request drill ${fmtDate(rrDone.produced_at)})` : 'No records request drill on file' },
         { k: 'Certificate ref',    v: certRef },
       ].map(d => `<div class="detail-row">
         <span class="detail-key">${d.k}</span>

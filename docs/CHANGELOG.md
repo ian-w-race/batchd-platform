@@ -4,6 +4,30 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-10-25 (smoke checks)
+- Ran SMOKE.md 10 to 13, 17 to 20, 46 and 47 on staging from the local copy
+  as the QA corp admin (camera steps typed, function steps skipped). Passed:
+  10, 12, 13, 17, 18, 19, 46, 47; 11 partly (the "Linked to delivery" chip
+  shows; saving the shelf scan needs the camera). 20 found a bug, fixed here.
+- FIXED: a delivery file built from the app's own template lost its store,
+  reference and supplier columns at import (the matcher knew only short
+  aliases, not the template's labels), so every row was dropped while the
+  button still said "Import 2 rows". The shared import engine now maps any
+  still-unmapped field whose header equals its label, and the delivery
+  matcher includes the labels. Verified: the template maps 9 of 9 columns
+  (6 before) on staging.
+- FIXED, smaller: the scanner's "Linked to delivery" chip printed "PO
+  PO-1042"; "1 rows" on the records request card, compliance detail and
+  drill certificate; "12 case" in the expected-delivery banner (now "12
+  cases"); the drill launcher's default reason carried an em dash; six "↓"
+  text arrows became the download icon. The scanner's receiving CSV and
+  both FSMA exports share one formula guard: a leading =, @ or + is quoted
+  (phone numbers like +1 512 no longer open as a broken formula in Excel),
+  negative numbers stay plain. US orgs no longer see the Mattilsynet and
+  "Both" feed buttons or the Norsk language button in Settings (legacy NO
+  orgs still do). SMOKE.md check 18 no longer points at the retired
+  "Deliveries recorded" ring.
+
 ## 2026-10-24
 - Live test of migration 038 on staging with two throwaway accounts
   (qa-active-038 and qa-deactivated-038 @batchd-staging.test, in org "QA 038

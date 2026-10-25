@@ -13300,7 +13300,7 @@ const FSMA204_EXPORT_HEADERS = [
 const FSMA204_EXPORT_DISCLAIMER = "Prepared with Batch'd. Batch'd supports FSMA 204 record keeping; the responsibility for the records remains with the business.";
 function _fsmaCsvCell(v) {
   const s = v == null ? '' : String(v);
-  const safe = /^[=@]|^[+\-]\s*[A-Za-z(]/.test(s) ? "'" + s : s;
+  const safe = /^[=@+]|^-\s*[A-Za-z(]/.test(s) ? "'" + s : s;   // formula guard; a leading + (phone numbers) is quoted too, negative numbers untouched
   return /[",\n\r]/.test(safe) ? '"' + safe.replace(/"/g, '""') + '"' : safe;
 }
 function _fsmaLocalDate(d) { const dt = new Date(d); const pad = n => String(n).padStart(2, '0'); return isNaN(dt) ? '' : `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`; }
@@ -17602,6 +17602,13 @@ let _rcvExpectedRows = [];
 let _rcvExpected = null;
 let _rcvExpectedLoadedAt = 0;
 function _rcvDocLabel(r) { const n = r.reference_document_number || ''; const ty = r.reference_document_type || ''; return (ty && !new RegExp('^' + ty, 'i').test(n)) ? `${ty} ${n}` : n; }
+// "12 cases", "1 case", "3 lb", "2 each" (smoke check 2026-10-25 read "12 case").
+function _rcvQtyUnit(q, u) {
+  const n = Number(q); const unit = String(u || '').trim();
+  if (!unit) return String(q ?? '');
+  const plural = (n === 1 || ['each', 'lb', 'lbs', 'kg', 'oz'].includes(unit.toLowerCase()) || /s$/i.test(unit)) ? unit : unit + 's';
+  return `${q} ${plural}`;
+}
 function _rcvLotsEqual(a, b) { return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase() && !!String(a || '').trim(); }
 function _rcvGtinsEqual(a, b) { const na = String(a || '').replace(/\D/g, '').replace(/^0+/, ''); const nb = String(b || '').replace(/\D/g, '').replace(/^0+/, ''); return !na || !nb || na === nb; }
 async function rcvLoadExpected(force) {
@@ -17653,7 +17660,7 @@ function rcvCheckExpected() {
   if (_RCV_UNITS.includes(match.unit_of_measure)) rcvSetUnit(match.unit_of_measure);
   const sel = _rcvEl('rcv-supplier'); if (sel && match.supplier_id && _suppliers.some(s => s.id === match.supplier_id)) { sel.value = match.supplier_id; rcvOnSupplierChange(); }
   if (match.reference_document_number) { const dn = _rcvEl('rcv-doc-number'); if (dn && !dn.value.trim()) { dn.value = match.reference_document_number; if (_RCV_DOCS.includes(match.reference_document_type)) rcvSetDocType(match.reference_document_type); } }
-  if (text) text.innerHTML = `Expected from <strong>${esc(match.supplier_name_snapshot || 'your wholesaler')}</strong>: ${esc(String(match.quantity))} ${esc(match.unit_of_measure)} of ${esc(match.product_name)}${match.reference_document_number ? ' (' + esc(_rcvDocLabel(match)) + ')' : ''}. Adjust the quantity if the delivery is short, then confirm.`;
+  if (text) text.innerHTML = `Expected from <strong>${esc(match.supplier_name_snapshot || 'your wholesaler')}</strong>: ${esc(_rcvQtyUnit(match.quantity, match.unit_of_measure))} of ${esc(match.product_name)}${match.reference_document_number ? ' (' + esc(_rcvDocLabel(match)) + ')' : ''}. Adjust the quantity if the delivery is short, then confirm.`;
   if (banner) banner.style.display = '';
   if (!prod?.value || !_rcvFtl.source) rcvResolveFtl();
 }
@@ -17757,7 +17764,7 @@ async function rcvComputeLinkForPhase3() {
   if (!link) return;
   _pendingReceivingLink = link;
   if (box) {
-    const doc = link.reference_document_number ? ' · ' + esc(link.reference_document_type || '') + ' ' + esc(link.reference_document_number) : '';
+    const doc = link.reference_document_number ? ' · ' + esc(_rcvDocLabel(link)) : ''; // "PO-1042", never "PO PO-1042"
     box.style.display = 'block';
     box.innerHTML = `<span class="rcv-chip on">Linked to delivery from ${esc(link.supplier_name_snapshot || 'supplier not recorded')} on ${esc(fmtRegionDate(link.received_at))}${doc}</span>`;
   }
@@ -17821,7 +17828,7 @@ function rcvExportCsv() {
   if (!rows.length) { showToast('Nothing to export for this period.', 'warn'); return; }
   // Phase 3: the six location fields of the immediate previous source (21 CFR 1.1345) ride along with every row.
   const cols = ['received_at', 'store', 'supplier', 'supplier_phone', 'supplier_street', 'supplier_city', 'supplier_state', 'supplier_zip', 'product_name', 'gtin', 'traceability_lot_code', 'quantity', 'unit_of_measure', 'reference_document_type', 'reference_document_number', 'is_ftl', 'ftl_category', 'status', 'received_by', 'id'];
-  const cell = v => { const str = v == null ? '' : String(v); const safe = /^[=+\-@]/.test(str) ? "'" + str : str; return /[",\n]/.test(safe) ? '"' + safe.replace(/"/g, '""') + '"' : safe; };
+  const cell = _fsmaCsvCell; // same rule as the FSMA 204 export
   const lines = [cols.join(',')].concat(rows.map(r => [r.received_at, r.stores?.name || '', r.supplier_name_snapshot || r.suppliers?.name || '', r.suppliers?.phone || '', r.suppliers?.street_address || '', r.suppliers?.city || '', r.suppliers?.region || '', r.suppliers?.postal_code || '', r.product_name, r.gtin || '', r.traceability_lot_code || '', r.quantity, r.unit_of_measure, r.reference_document_type || '', r.reference_document_number || '', r.is_ftl ? 'yes' : 'no', r.ftl_category || '', r.status, r.received_by || '', r.id].map(cell).join(',')));
   const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
