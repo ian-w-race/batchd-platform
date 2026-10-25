@@ -40,7 +40,7 @@ how it was verified and what is still unverified. Everything before
   crunchy product that shares a lot code but not the GTIN, the composer
   pushed with no retyping (event, one linked row, 2 store tasks, notice
   pushed and linked), and a typed two-lot recall wrote one linked row per
-  lot. tests/recall-notice.test.mjs adds 7 tests (70 in all).
+  lot. tests/recall-notice.test.mjs adds 7 tests (63 in all).
   Not verified: a real supplier's notice, and production.
 
 ## 2026-10-25 (internal secret rotated)
