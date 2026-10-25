@@ -6,7 +6,7 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const crypto = require('crypto');
-const { verifyUser, activeMembership, orgAiEnabled, isUuid } = require('../lib/auth');
+const { verifyUser, activeMembership, orgAiEnabled, isUuid, internalSecret } = require('../lib/auth');
 // Decision 2026-09-20: public (unauthenticated) complaints are accepted only for
 // organisations on a POV or Paying plan. Flip to false to accept them for every org
 // (AI triage still runs only for POV/Paying; others get the manual-review fallback).
@@ -458,7 +458,7 @@ exports.handler = async (event) => {
 
     const _origin   = event.headers?.origin || event.headers?.referer || 'unknown';
     const _clientIp = ((event.headers?.['x-nf-client-connection-ip'] || event.headers?.['x-forwarded-for'] || '').split(',')[0] || '').trim() || 'unknown';
-    const ipHash = crypto.createHash('sha256').update(_clientIp + '|' + (process.env.INTERNAL_NOTIFY_SECRET || 'salt')).digest('hex').slice(0, 32);
+    const ipHash = crypto.createHash('sha256').update(_clientIp + '|' + (internalSecret() || 'salt')).digest('hex').slice(0, 32);
     console.log('[triage-complaint] request | origin:', _origin, '| ip_hash:', ipHash);
 
     // Target organisation: resolved once, server-side. Name and type come from the DB.
@@ -632,7 +632,7 @@ exports.handler = async (event) => {
           body: JSON.stringify({
             event_type: 'complaint_filed',
             org_id: receiving_org_id,
-            internal_secret: process.env.INTERNAL_NOTIFY_SECRET,
+            internal_secret: internalSecret(),
             payload: {
               complaint_number: complaint.complaint_number || null,
               product_name:     product_name || null,

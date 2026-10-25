@@ -4,6 +4,24 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-10-25 (internal secret name)
+- FOUND: on the batchd-app Netlify site the server-to-server secret is
+  stored as INTERNAL_NOTIFY_SECREY (typo). The code reads
+  INTERNAL_NOTIFY_SECRET, so on batchd-app, the scanner's canonical URL,
+  complaint emails to managers (triage-complaint to notify-event) and the
+  push-recall email were refused. www.batchdapp.com has the right name.
+  Netlify cannot rename a key, so netlify/lib/auth.js gains internalSecret(),
+  which accepts the misspelling as a fallback, and every caller uses it.
+  Verified: tests/internal-secret.test.mjs (4 tests). Ian can recreate the
+  variable under the right name later; the fallback then does nothing.
+- FOUND while reading the variable list: Netlify shows "Local development"
+  values of secret variables in full, and ANTHROPIC_API_KEY on batchd-app is
+  not marked secret. The production Supabase secret key, the internal secret
+  and the Anthropic key were therefore readable to anyone with Netlify team
+  access (and passed through a Claude session). Recommended to Ian: clear the
+  Local development values, mark the Anthropic key secret, rotate the
+  production Supabase secret key and the Anthropic key.
+
 ## 2026-10-25 (smoke checks)
 - Ran SMOKE.md 10 to 13, 17 to 20, 46 and 47 on staging from the local copy
   as the QA corp admin (camera steps typed, function steps skipped). Passed:
