@@ -491,11 +491,10 @@ both copies.
   legacy scans.
 
 ## Open items
-- Netlify secret hygiene (2026-10-25): every secret's Local development
-  value should stay empty, since Netlify shows those in plain text. The
-  batchd-app site still has INTERNAL_NOTIFY_SECREY (typo, accepted by the
-  code as a fallback); recreate it as INTERNAL_NOTIFY_SECRET when convenient
-  and rotate that value, which was readable in plain text.
+- Netlify secret hygiene: keep every secret's Local development value empty
+  (Netlify shows those in plain text). INTERNAL_NOTIFY_SECRET was rotated and
+  recreated under the right name on both sites on 2026-10-25; the code's
+  INTERNAL_NOTIFY_SECREY fallback in netlify/lib/auth.js can be removed.
 ## Open items
 Owed by Ian:
 - Three photographed case labels (romaine, nut butter, one non-GS1) to
