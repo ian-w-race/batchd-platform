@@ -291,3 +291,16 @@ not repeated here.
     both store dropdowns list your stores (this tab used to fail
     silently). Tab through the History list: cards take focus with a
     visible ring and open on Enter. Help & Terminology opens and closes.
+
+## Supplier recall notices (2026-10-25)
+
+48. Dashboard as a corporate admin, Recalls: "Got a recall notice from a
+    supplier?" shows a "Read a supplier notice" button. Upload a real
+    supplier recall PDF (or paste the email). Within about a minute the
+    review shows the firm, class, reason, products with GTINs and lots, and
+    anything to check against the original. "Your stores" lists the stores
+    whose deliveries match, with cases received. "Review and push in the
+    composer" fills every composer field; pushing lands on Live Recall and
+    the notice leaves the Supplier notices list. Needs migration 040 and an
+    org on a pilot or paid plan.
+

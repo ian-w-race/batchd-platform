@@ -4361,6 +4361,7 @@ async function renderRecalls() {
       </div>
       ${tabBar('active')}
       ${coordStrip}
+      ${_noticeStripHtml()}
       ${pushed.length === 0 && manualRecalls.length === 0 ? `
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:48px 24px;text-align:center;">
         <div style="font-size:var(--fs-h2);margin-bottom:12px;">${_ico('check-circle',32)}</div>
@@ -4463,7 +4464,7 @@ async function renderRecalls() {
           <div class="panel-body">
             <div id="add-recall-msg" style="display:none;"></div>
             <div class="field"><label>Product name</label>
-              <input id="new-recall-product" type="text" placeholder="e.g. Gilde Kjøttdeig 400g" /></div>
+              <input id="new-recall-product" type="text" placeholder="e.g. Creamy Peanut Butter 16 oz" /></div>
             <div class="field"><label>Lot / batch number</label>
               <input id="new-recall-lot" type="text" placeholder="e.g. L2026-04-01A" style="font-family:'DM Mono',monospace;" /></div>
             <div class="field"><label>Barcode (EAN/UPC)</label>
@@ -4789,6 +4790,397 @@ async function _notifyEvent(eventType, payload) {
 // data is recoverable later when a v2 migration adds proper columns.
 // ═══════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════════════
+// SUPPLIER RECALL NOTICE INTAKE (improvement plan B1 and B2, 2026-10-25)
+// A corp admin uploads or pastes a recall notice from a supplier. The file
+// goes to storage under orgs/<org prefix>/recall-notices/, a recall_notices
+// row is created, and the background function parse-recall-notice-background
+// has Claude read it. This module polls the row, shows the draft and the
+// stores whose deliveries or shelf scans match (match_recall_notice RPC,
+// migration 040), and hands the draft to the recall composer.
+// ═══════════════════════════════════════════════════════════════════════════
+let _notice = null;          // { id, status, extracted, error, matches, matchError, pollTimer, startedAt }
+const _NOTICE_MAX_BYTES = 15 * 1024 * 1024;
+const _NOTICE_TYPES = { pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', txt: 'text/plain', eml: 'message/rfc822' };
+const _NOTICE_CLASS_LABEL = { class_i: 'Class I', class_ii: 'Class II', class_iii: 'Class III', market_withdrawal: 'Market withdrawal', unknown: 'Not stated' };
+
+function _noticeStripHtml() {
+  if (_userRole !== 'corp_admin') return '';
+  setTimeout(_noticeRenderList, 0);
+  return `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:12px 16px;margin-bottom:12px;">
+      <div style="min-width:220px;flex:1;">
+        <div style="font-size:var(--fs-body);font-weight:700;color:var(--text);">Got a recall notice from a supplier?</div>
+        <div style="font-size:var(--fs-meta);color:var(--muted);margin-top:2px;line-height:1.5;">Upload the PDF or paste the email. Batch'd reads the products, GTINs and lot codes and shows which of your stores received them.</div>
+      </div>
+      <button onclick="openNoticeIntake()" style="display:inline-flex;align-items:center;gap:8px;font-family:'Figtree',sans-serif;font-weight:700;font-size:var(--fs-body);padding:9px 16px;border-radius:var(--r-md);border:1px solid var(--accent);background:rgba(var(--accent-rgb),0.08);color:var(--accent);cursor:pointer;">
+        ${_ico('download',14)} Read a supplier notice
+      </button>
+    </div>
+    <div id="notice-list"></div>`;
+}
+
+async function _noticeRenderList() {
+  const el = document.getElementById('notice-list');
+  if (!el) return;
+  const { data, error } = await sb.from('recall_notices')
+    .select('id, status, file_name, source, extracted, error, created_at')
+    .eq('organisation_id', _orgId).in('status', ['processing', 'ready', 'failed'])
+    .order('created_at', { ascending: false }).limit(8);
+  if (error) { el.innerHTML = ''; return; }   // table missing on an older database: show nothing
+  if (!data?.length) { el.innerHTML = ''; return; }
+  const label = (n) => {
+    const p = n.extracted?.products?.[0]?.description;
+    return p || n.file_name || (n.source === 'paste' ? 'Pasted notice' : 'Notice');
+  };
+  const chip = (st) => st === 'ready' ? `<span style="color:var(--accent);">Ready to review</span>`
+    : st === 'processing' ? `<span style="color:var(--muted);">Reading…</span>`
+    : `<span style="color:var(--danger);">Could not read</span>`;
+  el.innerHTML = `
+    <div style="margin-bottom:14px;">
+      <div style="font-size:var(--fs-label);font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;">Supplier notices</div>
+      ${data.map(n => `
+        <div style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);margin-bottom:6px;">
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:var(--fs-body);font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(label(n))}</div>
+            <div style="font-size:var(--fs-eyebrow);color:var(--muted);margin-top:2px;">${chip(n.status)} · ${esc(fmtDash(n.created_at))}${n.extracted?.recalling_firm ? ' · ' + esc(n.extracted.recalling_firm) : ''}</div>
+          </div>
+          <button onclick="openNoticeIntake('${n.id}')" style="font-size:var(--fs-eyebrow);padding:6px 12px;border-radius:var(--r-xs);border:1px solid var(--border);background:none;color:var(--text);cursor:pointer;">Open</button>
+        </div>`).join('')}
+    </div>`;
+}
+
+function _noticeModalShell(inner) {
+  let m = document.getElementById('notice-modal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'notice-modal';
+    m.style.cssText = 'position:fixed;inset:0;z-index:1000;background:var(--scrim, rgba(8,15,18,0.72));display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto;';
+    m.addEventListener('click', e => { if (e.target === m) closeNoticeIntake(); });
+    document.body.appendChild(m);
+  }
+  m.innerHTML = `
+    <div role="dialog" aria-modal="true" aria-labelledby="notice-title" style="width:100%;max-width:760px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-2xl);box-shadow:var(--shadow-xl);padding:24px 26px;">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px;">
+        <div id="notice-title" style="font-family:'Figtree',sans-serif;font-weight:800;font-size:var(--fs-h3);color:var(--text);">Supplier recall notice</div>
+        <button onclick="closeNoticeIntake()" aria-label="Close" style="background:none;border:none;color:var(--muted);cursor:pointer;padding:4px;">${_ico('x',16)}</button>
+      </div>
+      ${inner}
+    </div>`;
+}
+
+function closeNoticeIntake() {
+  if (_notice?.pollTimer) clearTimeout(_notice.pollTimer);
+  _notice = null;
+  document.getElementById('notice-modal')?.remove();
+  _noticeRenderList();
+}
+
+async function openNoticeIntake(noticeId) {
+  if (_userRole !== 'corp_admin') { showToast('Only corporate admins can read supplier notices.', 'error', 4000); return; }
+  if (!noticeId) { _notice = null; _noticeRenderInput(); return; }
+  _notice = { id: noticeId, status: 'processing' };
+  _noticeModalShell(`<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading the notice…</div>`);
+  await _noticePoll(true);
+}
+
+function _noticeRenderInput(errorMsg) {
+  const field = 'width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-sm);padding:10px 12px;color:var(--text);font-family:inherit;font-size:var(--fs-body);';
+  _noticeModalShell(`
+    <div style="font-size:var(--fs-body);color:var(--muted);line-height:1.6;margin-bottom:18px;">
+      Upload the notice your supplier, distributor or manufacturer sent (PDF, photo or saved email), or paste the email text. Batch'd reads it with AI into a draft recall. You review the draft before anything reaches your stores.
+    </div>
+    ${errorMsg ? `<div style="padding:10px 14px;margin-bottom:14px;border-radius:var(--r-sm);background:rgba(var(--danger-rgb),0.06);border:1px solid rgba(var(--danger-rgb),0.25);color:var(--danger);font-size:var(--fs-meta);">${esc(errorMsg)}</div>` : ''}
+    <div class="field" style="margin-bottom:14px;">
+      <label for="notice-file">Notice file</label>
+      <input id="notice-file" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,.eml,application/pdf,image/*,text/plain,message/rfc822" style="${field}" />
+      <div style="font-size:var(--fs-label);color:var(--muted);margin-top:4px;">PDF, PNG, JPG, WEBP, TXT or EML, up to 15 MB.</div>
+    </div>
+    <div class="field" style="margin-bottom:18px;">
+      <label for="notice-text">Or paste the email text</label>
+      <textarea id="notice-text" rows="7" placeholder="Paste the full recall email here, including any tables of products and lot codes." style="${field}resize:vertical;"></textarea>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;">
+      <button onclick="closeNoticeIntake()" style="font-size:var(--fs-body);padding:10px 16px;border-radius:var(--r-md);border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;">Cancel</button>
+      <button id="notice-submit" onclick="noticeSubmit()" class="btn-primary" style="display:inline-flex;align-items:center;gap:8px;">Read notice ${_ico('arrow-right',12)}</button>
+    </div>`);
+}
+
+async function noticeSubmit() {
+  const file = document.getElementById('notice-file')?.files?.[0] || null;
+  const text = (document.getElementById('notice-text')?.value || '').trim();
+  if (!file && text.length < 20) { _noticeRenderInput('Choose a file or paste the notice text.'); return; }
+  let fileType = null, path = null;
+  if (file) {
+    const ext = (file.name.split('.').pop() || '').toLowerCase();
+    fileType = _NOTICE_TYPES[ext] || (Object.values(_NOTICE_TYPES).includes(file.type) ? file.type : null);
+    if (!fileType) { _noticeRenderInput('That file type is not supported. Use a PDF, an image, a text file or a saved email.'); return; }
+    if (file.size > _NOTICE_MAX_BYTES) { _noticeRenderInput('The file is larger than 15 MB.'); return; }
+  }
+  const btn = document.getElementById('notice-submit');
+  if (btn) { btn.disabled = true; btn.textContent = 'Uploading…'; }
+  try {
+    if (file) {
+      const ext = (file.name.split('.').pop() || 'bin').toLowerCase().replace(/[^a-z0-9]/g, '');
+      path = `orgs/${String(_orgId).slice(0, 8)}/recall-notices/${crypto.randomUUID()}.${ext}`;
+      const { error: upErr } = await sb.storage.from('scan-photos').upload(path, file, { contentType: fileType, upsert: false });
+      if (upErr) throw new Error('Upload failed: ' + upErr.message);
+    }
+    const { data: row, error } = await sb.from('recall_notices').insert({
+      organisation_id: _orgId, source: file ? 'upload' : 'paste',
+      file_path: path, file_name: file ? file.name.slice(0, 200) : null, file_type: fileType,
+      raw_text: text ? text.slice(0, 100000) : null,
+    }).select('id').single();
+    if (error) {
+      if (error.code === 'PGRST205' || error.code === '42P01') throw new Error('This database does not have migration 040 yet.');
+      throw error;
+    }
+    _notice = { id: row.id, status: 'processing', startedAt: Date.now() };
+    const { data: { session } } = await sb.auth.getSession();
+    const res = await fetch('/.netlify/functions/parse-recall-notice-background', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}` },
+      body: JSON.stringify({ notice_id: row.id }),
+    });
+    if (res.status !== 202 && !res.ok) throw new Error('Could not start reading the notice (' + res.status + ').');
+    await _noticePoll(true);
+  } catch (e) {
+    _noticeRenderInput(e.message || 'Something went wrong.');
+  }
+}
+
+async function _noticePoll(first) {
+  if (!_notice) return;
+  const { data, error } = await sb.from('recall_notices').select('*').eq('id', _notice.id).single();
+  if (!_notice) return;
+  if (error) { _noticeModalShell(`<div style="color:var(--danger);">Could not load the notice: ${esc(error.message)}</div>`); return; }
+  Object.assign(_notice, { status: data.status, extracted: data.extracted, error: data.error, row: data });
+  if (data.status === 'processing') {
+    const waited = Math.round((Date.now() - (_notice.startedAt || new Date(data.created_at).getTime())) / 1000);
+    if (waited > 300) {
+      _noticeModalShell(`<div style="font-size:var(--fs-body);color:var(--muted);line-height:1.6;">This is taking longer than expected. Close this window; the notice stays in the Supplier notices list and you can open it again later.</div>`);
+      return;
+    }
+    _noticeModalShell(`
+      <div style="display:flex;align-items:center;gap:12px;padding:18px 0;">
+        <div class="spinner"></div>
+        <div>
+          <div style="font-size:var(--fs-body);font-weight:600;color:var(--text);">Reading the notice</div>
+          <div style="font-size:var(--fs-meta);color:var(--muted);margin-top:2px;">Usually under a minute. You can close this window; the result appears in the Supplier notices list.</div>
+        </div>
+      </div>`);
+    _notice.pollTimer = setTimeout(() => _noticePoll(false), 2500);
+    return;
+  }
+  if (data.status === 'failed') {
+    _noticeModalShell(`
+      <div style="padding:12px 14px;border-radius:var(--r-sm);background:rgba(var(--danger-rgb),0.06);border:1px solid rgba(var(--danger-rgb),0.25);color:var(--danger);font-size:var(--fs-body);margin-bottom:16px;">${esc(data.error || 'The notice could not be read.')}</div>
+      <div style="display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;">
+        <button onclick="noticeSetStatus('dismissed')" style="font-size:var(--fs-body);padding:10px 16px;border-radius:var(--r-md);border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;">Dismiss</button>
+        <button onclick="_notice=null;_noticeRenderInput()" style="font-size:var(--fs-body);padding:10px 16px;border-radius:var(--r-md);border:1px solid var(--border);background:none;color:var(--text);cursor:pointer;">Try another file</button>
+        <button onclick="closeNoticeIntake();openRecallComposer()" class="btn-primary">Enter it by hand ${_ico('arrow-right',12)}</button>
+      </div>`);
+    return;
+  }
+  await _noticeRunMatches();
+  _noticeRenderReview();
+}
+
+// "Example Creamy Peanut Butter, 16 oz" rather than "Example Example Creamy
+// Peanut Butter, 16 oz 16 oz": add brand and size only when the description
+// does not already contain them.
+function _noticeProductName(p) {
+  const d = (p?.description || '').trim();
+  const low = d.toLowerCase();
+  const parts = [];
+  if (p?.brand && !low.includes(p.brand.toLowerCase())) parts.push(p.brand);
+  parts.push(d);
+  if (p?.size && !low.includes(p.size.toLowerCase())) parts.push(p.size);
+  return parts.filter(Boolean).join(' ');
+}
+
+// Map the hazard named in a notice onto the composer's hazard categories.
+// A starting point only; the admin confirms it in step 2.
+function _noticeHazardType(ex) {
+  const h = `${ex?.hazard || ''} ${ex?.reason || ''}`.toLowerCase();
+  if (/salmonella|listeria|e\.?\s?coli|stec|pathogen|bacteri|cyclospora|hepatitis|norovirus|botulin|clostridium|microbial|mold|mould/.test(h)) return 'contamination';
+  if (/undeclared|allergen/.test(h)) return 'allergen';
+  if (/metal|glass|plastic|rubber|foreign (object|material|matter)|wood|stone|bone/.test(h)) return 'foreign_object';
+  if (/mislabel|wrong (label|product)|incorrect label/.test(h)) return 'mislabeling';
+  if (/lead|arsenic|cadmium|mercury|chemical|pesticide|sanitizer/.test(h)) return 'chemical';
+  return '';
+}
+
+// Lot entries the composer and the scanner understand: single codes, plus
+// each printed range as "FROM-TO" (lotsMatch and the scanner's lotMatchLevel
+// both treat that form as a range).
+function _noticeLots(ex) {
+  const out = [];
+  (ex?.products || []).forEach(p => {
+    (p.lots || []).forEach(l => out.push(l));
+    (p.lot_ranges || []).forEach(r => out.push(`${r.from}-${r.to}`));
+  });
+  return [...new Set(out)];
+}
+
+async function _noticeRunMatches() {
+  const ex = _notice?.extracted;
+  _notice.matches = []; _notice.matchError = null;
+  if (!ex?.products?.length) return;
+  const byRecord = new Map();
+  try {
+    for (const p of ex.products) {
+      const { data, error } = await sb.rpc('match_recall_notice', {
+        p_org: _orgId, p_gtins: p.gtins || [], p_lots: p.lots || [], p_lot_ranges: p.lot_ranges || [],
+        p_best_by_from: p.best_by_from || null, p_best_by_to: p.best_by_to || null, p_terms: p.match_terms || [],
+      });
+      if (error) throw error;
+      (data || []).forEach(r => {
+        const prev = byRecord.get(r.record_id);
+        const rank = { high: 0, medium: 1, low: 2 };
+        if (!prev || rank[r.confidence] < rank[prev.confidence]) byRecord.set(r.record_id, { ...r, notice_product: p.description });
+      });
+    }
+    _notice.matches = [...byRecord.values()];
+  } catch (e) {
+    _notice.matchError = e.code === 'PGRST202' ? 'This database does not have migration 040 yet.' : (e.message || 'Matching failed.');
+  }
+}
+
+function _noticeStoreSummary(matches) {
+  const stores = new Map();
+  matches.filter(m => m.confidence !== 'low').forEach(m => {
+    const key = m.store_id || m.store_name || 'unknown';
+    const s = stores.get(key) || { id: m.store_id, name: m.store_name || 'Unknown store', received: 0, expected: 0, onShelf: 0, units: new Set() };
+    if (m.kind === 'delivery' && m.status === 'received') { s.received += Number(m.quantity || 0); if (m.unit) s.units.add(m.unit); }
+    if (m.kind === 'delivery' && m.status === 'expected') s.expected += Number(m.quantity || 0);
+    if (m.kind === 'shelf_scan' && m.on_shelf) s.onShelf += 1;
+    stores.set(key, s);
+  });
+  return [...stores.values()].sort((a, b) => (b.received + b.onShelf) - (a.received + a.onShelf));
+}
+
+function _noticeRenderReview() {
+  const ex = _notice.extracted || {};
+  const products = ex.products || [];
+  const matches = _notice.matches || [];
+  const stores = _noticeStoreSummary(matches);
+  const conf = (c) => {
+    const col = c === 'high' ? 'var(--danger)' : c === 'medium' ? 'var(--warn)' : 'var(--muted)';
+    return `<span style="font-family:'DM Mono',monospace;font-size:var(--fs-label);padding:2px 7px;border-radius:var(--r-pill);border:1px solid ${col};color:${col};text-transform:uppercase;letter-spacing:0.06em;">${c}</span>`;
+  };
+  const code = (a) => (a && a.length) ? a.map(x => `<code style="font-family:'DM Mono',monospace;font-size:var(--fs-meta);background:var(--surface2);padding:1px 6px;border-radius:var(--r-xs);">${esc(x)}</code>`).join(' ') : '<span style="color:var(--muted);">None listed</span>';
+  const row = (k, v) => v ? `<div style="display:flex;gap:12px;padding:6px 0;border-bottom:1px solid var(--border);font-size:var(--fs-body);"><div style="width:140px;flex-shrink:0;color:var(--muted);">${k}</div><div style="color:var(--text);min-width:0;">${v}</div></div>` : '';
+  const kindLabel = (m) => m.kind === 'shelf_scan' ? (m.on_shelf ? 'On shelf' : 'Scanned, since removed') : (m.status === 'expected' ? 'Expected delivery' : 'Delivery received');
+
+  _noticeModalShell(`
+    ${ex.is_recall_notice === false ? `<div style="padding:10px 14px;margin-bottom:14px;border-radius:var(--r-sm);background:rgba(var(--warn-rgb),0.08);border:1px solid rgba(var(--warn-rgb),0.3);color:var(--warn);font-size:var(--fs-meta);">This document does not look like a recall notice. Check it before going further.</div>` : ''}
+    ${(ex.uncertainties || []).length ? `<div style="padding:10px 14px;margin-bottom:14px;border-radius:var(--r-sm);background:rgba(var(--warn-rgb),0.08);border:1px solid rgba(var(--warn-rgb),0.3);font-size:var(--fs-meta);color:var(--text);line-height:1.55;"><strong style="color:var(--warn);">Check against the original:</strong> ${ex.uncertainties.map(esc).join(' · ')}</div>` : ''}
+    <div style="margin-bottom:16px;">
+      ${row('Recalling firm', esc(ex.recalling_firm || ''))}
+      ${row('Classification', esc(_NOTICE_CLASS_LABEL[ex.classification] || 'Not stated'))}
+      ${row('Reason', esc([ex.reason, ex.hazard && !(ex.reason || '').toLowerCase().includes(ex.hazard.toLowerCase()) ? ex.hazard : ''].filter(Boolean).join(' · ')))}
+      ${row('Notice date', ex.notice_date ? esc(ex.notice_date) : '')}
+      ${row('Instructions', esc(ex.instructions || ''))}
+      ${row('Contact', esc(ex.contact || ''))}
+    </div>
+    <div style="font-size:var(--fs-label);font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;">Products in the notice (${products.length})</div>
+    ${products.map(p => `
+      <div style="padding:12px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-md);margin-bottom:8px;">
+        <div style="font-size:var(--fs-body);font-weight:700;color:var(--text);">${esc(_noticeProductName(p))}</div>
+        <div style="font-size:var(--fs-meta);color:var(--muted);margin-top:6px;line-height:1.9;">
+          GTIN / UPC: ${code(p.gtins)}<br>
+          Lots: ${code([...(p.lots || []), ...(p.lot_ranges || []).map(r => `${r.from} to ${r.to}`)])}
+          ${p.best_by_from || p.best_by_to ? `<br>Best by: ${esc(p.best_by_from === p.best_by_to ? p.best_by_from : `${p.best_by_from || '…'} to ${p.best_by_to || '…'}`)}` : ''}
+        </div>
+      </div>`).join('') || '<div style="font-size:var(--fs-body);color:var(--muted);margin-bottom:12px;">No products could be read from this notice.</div>'}
+
+    <div style="font-size:var(--fs-label);font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin:18px 0 8px;">Your stores</div>
+    ${_notice.matchError ? `<div style="font-size:var(--fs-meta);color:var(--danger);margin-bottom:12px;">Could not check your records: ${esc(_notice.matchError)}</div>` : stores.length ? `
+      <div style="padding:12px 14px;background:rgba(var(--danger-rgb),0.05);border:1px solid rgba(var(--danger-rgb),0.25);border-radius:var(--r-md);margin-bottom:10px;font-size:var(--fs-body);color:var(--text);line-height:1.6;">
+        <strong>${stores.length} store${stores.length === 1 ? '' : 's'}</strong> received or shelved matching product.
+        ${stores.map(s => `<div style="font-size:var(--fs-meta);color:var(--muted);">${esc(s.name)}: ${[s.received ? `${s.received} ${[...s.units].join('/') || 'units'} received` : '', s.expected ? `${s.expected} expected` : '', s.onShelf ? `${s.onShelf} on shelf` : ''].filter(Boolean).join(' · ') || 'match found'}</div>`).join('')}
+      </div>` : `<div style="font-size:var(--fs-body);color:var(--muted);margin-bottom:12px;line-height:1.55;">No delivery or shelf scan in the last two years matches this notice. The recall can still go to every store as a precaution.</div>`}
+    ${matches.length ? `
+      <details style="margin-bottom:14px;"${matches.length <= 8 ? ' open' : ''}>
+        <summary style="cursor:pointer;font-size:var(--fs-meta);color:var(--muted);margin-bottom:8px;">Why each record matched (${matches.length})</summary>
+        <div style="overflow-x:auto;">
+          <table style="width:100%;border-collapse:collapse;font-size:var(--fs-meta);">
+            <thead><tr style="text-align:left;color:var(--muted);">
+              <th style="padding:6px 8px;">Store</th><th style="padding:6px 8px;">Record</th><th style="padding:6px 8px;">Product</th><th style="padding:6px 8px;">Lot</th><th style="padding:6px 8px;">Qty</th><th style="padding:6px 8px;">Date</th><th style="padding:6px 8px;">Why</th>
+            </tr></thead>
+            <tbody>${matches.slice(0, 200).map(m => `
+              <tr style="border-top:1px solid var(--border);">
+                <td style="padding:6px 8px;">${esc(m.store_name || '')}</td>
+                <td style="padding:6px 8px;white-space:nowrap;">${kindLabel(m)}</td>
+                <td style="padding:6px 8px;">${esc(m.product_name || '')}</td>
+                <td style="padding:6px 8px;font-family:'DM Mono',monospace;">${esc(m.lot || '')}</td>
+                <td style="padding:6px 8px;">${m.quantity != null ? esc(String(m.quantity)) + ' ' + esc(m.unit || '') : ''}</td>
+                <td style="padding:6px 8px;white-space:nowrap;">${esc(fmtDash(m.record_date))}</td>
+                <td style="padding:6px 8px;">${conf(m.confidence)} ${esc(m.match_reason)}</td>
+              </tr>`).join('')}</tbody>
+          </table>
+        </div>
+      </details>` : ''}
+    <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:8px;">
+      <button onclick="noticeSetStatus('dismissed')" style="font-size:var(--fs-body);padding:10px 16px;border-radius:var(--r-md);border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;">Dismiss notice</button>
+      <button onclick="noticeToComposer()" class="btn-primary" ${products.length ? '' : 'disabled'} style="display:inline-flex;align-items:center;gap:8px;">Review and push in the composer ${_ico('arrow-right',12)}</button>
+    </div>`);
+}
+
+async function noticeSetStatus(status) {
+  if (!_notice?.id) return;
+  if (status === 'dismissed' && !(await _confirmDialog('Dismiss this notice? It leaves the Supplier notices list. Nothing is sent to your stores.', { okLabel: 'Dismiss', cancelLabel: 'Keep' }))) return;
+  const { error } = await sb.from('recall_notices').update({ status }).eq('id', _notice.id);
+  if (error) { showToast('Could not update the notice: ' + error.message, 'error', 4000); return; }
+  closeNoticeIntake();
+}
+
+function noticeToComposer() {
+  const ex = _notice?.extracted;
+  if (!ex) return;
+  const first = ex.products?.[0] || {};
+  const lots = _noticeLots(ex);
+  const gtins = [...new Set((ex.products || []).flatMap(p => p.gtins || []))];
+  const sev = ['class_i', 'class_ii', 'class_iii'].includes(ex.classification) ? ex.classification : 'unknown';
+  const productName = _noticeProductName(first)
+    + (ex.products.length > 1 ? ` and ${ex.products.length - 1} more product${ex.products.length > 2 ? 's' : ''}` : '');
+  const reason = [ex.reason, ex.recalling_firm ? `Recalling firm: ${ex.recalling_firm}` : '', ex.instructions ? `Instructions: ${ex.instructions}` : '']
+    .filter(Boolean).join(' ');
+  const noticeId = _notice.id, matches = _notice.matches || [];
+  if (_notice.pollTimer) clearTimeout(_notice.pollTimer);
+  _notice = null;
+  document.getElementById('notice-modal')?.remove();
+  openRecallComposer();
+  Object.assign(_composerState, {
+    product: productName.slice(0, 200), lot: lots.join(', '), barcode: gtins[0] || '', gtins,
+    severity: sev, hazardType: _noticeHazardType(ex), reason: reason.slice(0, 1000), noticeId, noticeProducts: ex.products || [],
+  });
+  _composerState.scope = _composerScopeFromMatches(matches);
+  renderRecallComposer();
+}
+
+// Turn match_recall_notice rows into the composer's scope shape.
+function _composerScopeFromMatches(rows) {
+  const stores = _noticeStoreSummary(rows || []);
+  const latest = (rows || []).filter(r => r.confidence !== 'low')
+    .reduce((acc, r) => (!acc || new Date(r.record_date) > new Date(acc)) ? r.record_date : acc, null);
+  return {
+    stores: stores.map(s => ({ id: s.id, name: s.name, units: s.onShelf, received: s.received, expected: s.expected, latest: null })),
+    totalStores: stores.length,
+    totalUnits: stores.reduce((n, s) => n + s.onShelf, 0),
+    totalReceived: stores.reduce((n, s) => n + s.received, 0),
+    latestScanAt: latest,
+    lowOnly: (rows || []).length > 0 && stores.length === 0,
+    fromReceiving: true,
+  };
+}
+
+// Split the composer's lot field into individual lot entries.
+function _composerLots(s) {
+  return [...new Set(String(s?.lot || '').split(/[,;\n]+/).map(x => x.trim()).filter(Boolean))].slice(0, 50);
+}
+
 let _composerState = null;
 
 function openRecallComposer() {
@@ -4883,20 +5275,21 @@ async function _composerCancel() {
 
 // ── Step 1: Identify the lot ──────────────────────────────────
 function _composerStep1Identify(s) {
-  const canContinue = !!(s.product && s.lot);
+  const canContinue = !!(s.product && (s.lot || s.barcode));
   return `
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:24px 26px;">
       <div style="font-family:'Figtree',sans-serif;font-weight:800;font-size:var(--fs-h3);color:var(--text);margin-bottom:6px;">What's being recalled?</div>
       <div style="font-size:var(--fs-body);color:var(--muted);line-height:1.6;margin-bottom:22px;max-width:60ch;">
-        Enter the product and lot details. Once a lot or barcode is entered, Batch'd checks your scan history to show how widely this lot is distributed across your stores.
+        Enter the product and lot details. Once a lot or barcode is entered, Batch'd checks your deliveries and shelf scans to show which stores received it.
       </div>
+      ${s.noticeId ? `<div style="padding:10px 14px;margin:-8px 0 18px;border-radius:var(--r-sm);background:rgba(var(--accent-rgb),0.06);border:1px solid rgba(var(--accent-rgb),0.25);font-size:var(--fs-meta);color:var(--text);line-height:1.55;">Filled in from a supplier notice. Check every field against the original before you push.</div>` : ''}
 
       <div style="display:grid;grid-template-columns:1fr;gap:14px;">
         <div>
           <label style="display:block;font-family:'DM Mono',monospace;font-size:var(--fs-label);text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:5px;">Product name</label>
           <input id="composer-product" type="text" value="${esc(s.product)}"
                  oninput="_composerState.product=this.value;_composerUpdateContinueBtn()"
-                 placeholder="e.g. Gilde Kjøttdeig 400g"
+                 placeholder="e.g. Creamy Peanut Butter 16 oz"
                  style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-sm);padding:10px 12px;color:var(--text);font-family:'Figtree',sans-serif;font-size:var(--fs-body);" />
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
@@ -4905,15 +5298,15 @@ function _composerStep1Identify(s) {
             <input id="composer-lot" type="text" value="${esc(s.lot)}"
                    oninput="_composerState.lot=this.value;_composerUpdateContinueBtn()"
                    onblur="_composerLookupDistribution()"
-                   placeholder="L2026-04-01A"
+                   placeholder="PB24105, PB24110 (commas between lots)"
                    style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-sm);padding:10px 12px;color:var(--text);font-family:'DM Mono',monospace;font-size:var(--fs-body);" />
           </div>
           <div>
             <label style="display:block;font-family:'DM Mono',monospace;font-size:var(--fs-label);text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:5px;">Barcode (EAN/UPC), optional</label>
             <input id="composer-barcode" type="text" value="${esc(s.barcode)}"
-                   oninput="_composerState.barcode=this.value"
+                   oninput="_composerState.barcode=this.value;_composerUpdateContinueBtn()"
                    onblur="_composerLookupDistribution()"
-                   placeholder="7038010054501"
+                   placeholder="081234500016"
                    style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-sm);padding:10px 12px;color:var(--text);font-family:'DM Mono',monospace;font-size:var(--fs-body);" />
           </div>
         </div>
@@ -4932,23 +5325,23 @@ function _composerStep1Identify(s) {
 function _composerScopeHtml(s) {
   if (s.scopeLoading) {
     return `<div style="padding:14px 16px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-md);font-size:var(--fs-meta);color:var(--muted);display:flex;align-items:center;gap:10px;">
-      <div class="spinner"></div> Checking your scan history…
+      <div class="spinner"></div> Checking your deliveries and scans…
     </div>`;
   }
   if (s.scopeError) {
     return `<div style="padding:14px 16px;background:rgba(var(--danger-rgb),0.05);border:1px solid rgba(var(--danger-rgb),0.2);border-radius:var(--r-md);font-size:var(--fs-meta);color:var(--danger);">
-      Couldn't check scan history: ${esc(s.scopeError)}
+      Couldn't check your records: ${esc(s.scopeError)}
     </div>`;
   }
   if (!s.scope) {
     return `<div style="padding:14px 16px;background:var(--surface2);border:1px dashed var(--border);border-radius:var(--r-md);font-size:var(--fs-meta);color:var(--muted);line-height:1.55;">
-      Enter a lot number or barcode above — Batch'd will check your scan history to show distribution scope across your store network.
+      Enter a lot number or barcode above. Batch'd checks your deliveries and shelf scans to show which stores received it.
     </div>`;
   }
   const sc = s.scope;
   if (sc.totalStores === 0) {
     return `<div style="padding:14px 16px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-md);font-size:var(--fs-meta);color:var(--muted);line-height:1.55;">
-      <strong style="color:var(--text);">No matches in scan history.</strong> The recall will still publish — Batch'd will match against future scans automatically as your team logs new products.
+      <strong style="color:var(--text);">No matching delivery or shelf scan.</strong> The recall still goes to every store, and Batch'd matches it against future deliveries and scans automatically.
     </div>`;
   }
   const latestRel = sc.latestScanAt ? _fmtElapsed(new Date(sc.latestScanAt).getTime()) : '—';
@@ -4957,10 +5350,12 @@ function _composerScopeHtml(s) {
     <div style="padding:16px 18px;background:rgba(var(--accent-alt-rgb),0.06);border:1px solid var(--accent-dim);border-radius:var(--r-md);">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12 11 14 15 10"/><circle cx="12" cy="12" r="10"/></svg>
-        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:var(--fs-body);color:var(--accent);">Match found in your scan history</div>
+        <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:var(--fs-body);color:var(--accent);">${sc.fromReceiving ? 'Match found in your deliveries and scans' : 'Match found in your scan history'}</div>
       </div>
       <div style="font-size:var(--fs-body);color:var(--text);line-height:1.7;margin-bottom:10px;">
-        This lot has been scanned at <strong>${sc.totalStores}</strong> store${sc.totalStores===1?'':'s'} · <strong>${sc.totalUnits}</strong> total scan${sc.totalUnits===1?'':'s'} on shelf · latest scan <strong>${latestRel}</strong> ago.
+        ${sc.fromReceiving
+          ? `Received or shelved at <strong>${sc.totalStores}</strong> store${sc.totalStores===1?'':'s'}${sc.totalReceived ? ` · <strong>${sc.totalReceived}</strong> received` : ''} · <strong>${sc.totalUnits}</strong> on shelf · latest record <strong>${latestRel}</strong> ago.`
+          : `This lot has been scanned at <strong>${sc.totalStores}</strong> store${sc.totalStores===1?'':'s'} · <strong>${sc.totalUnits}</strong> total scan${sc.totalUnits===1?'':'s'} on shelf · latest scan <strong>${latestRel}</strong> ago.`}
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:6px;">
         ${topStores.map(st => `<span style="font-family:'DM Mono',monospace;font-size:var(--fs-label);padding:3px 9px;border-radius:var(--r-md);background:var(--surface);border:1px solid var(--border);color:var(--muted);">${esc(st.name)}</span>`).join('')}
@@ -4978,6 +5373,35 @@ async function _composerLookupDistribution() {
 
   s.scopeLoading = true; s.scopeError = null;
   _composerRefreshScope();
+
+  // 2026-10-25 (improvement plan B2): match deliveries as well as shelf
+  // scans through match_recall_notice (migration 040). Several lots may be
+  // entered, separated by commas; "A100-A120" is a range. On a database
+  // without 040 the old scan-only check below still runs.
+  try {
+    const lots = _composerLots(s);
+    const singles = lots.filter(l => !/^[A-Z]*\d+\s*-\s*[A-Z]*\d+$/i.test(l));
+    const ranges = lots.filter(l => /^[A-Z]*\d+\s*-\s*[A-Z]*\d+$/i.test(l))
+      .map(l => { const [from, to] = l.split(/\s*-\s*/); return { from, to }; });
+    const gtins = [...new Set([barcode, ...(s.gtins || [])].filter(Boolean))];
+    const { data, error } = await sb.rpc('match_recall_notice', {
+      p_org: _orgId, p_gtins: gtins, p_lots: singles, p_lot_ranges: ranges,
+      p_best_by_from: null, p_best_by_to: null, p_terms: [],
+    });
+    if (error && error.code !== 'PGRST202') throw error;
+    if (!error) {
+      s.scope = _composerScopeFromMatches(data || []);
+      s.scopeLoading = false;
+      _composerRefreshScope();
+      return;
+    }
+  } catch (e) {
+    s.scopeError = e.message || 'unknown error';
+    s.scope = null;
+    s.scopeLoading = false;
+    _composerRefreshScope();
+    return;
+  }
 
   try {
     // Pull recent scans for this org. Filter client-side via lotsMatch so
@@ -5286,7 +5710,7 @@ function _composerUpdateContinueBtn() {
   const btn = document.getElementById('composer-continue-btn');
   if (!btn) return;
   let ok = false;
-  if (s.step === 1) ok = !!(s.product && s.lot);
+  if (s.step === 1) ok = !!(s.product && (s.lot || s.barcode));
   if (s.step === 2) ok = !!(s.severity && s.severity !== 'unknown' && s.hazardType && s.reason && s.reason.length >= 12);
   btn.onclick = ok ? _composerAdvance : null;
   btn.style.background = ok ? 'var(--accent)' : 'var(--surface2)';
@@ -5468,9 +5892,14 @@ async function _composerPushRecall() {
   if (s.publicWarning) descParts.push('Public warning: yes');
   if (s.effectiveness) descParts.push(`Effectiveness: ${s.effectiveness}`);
 
+  // Several lots (comma separated, from a supplier notice or typed) become
+  // one linked recalls row each, so every existing matcher (scanner
+  // placement check, sweep_recall_matches, dashboard) works per lot. The
+  // event keeps the full list for display. (2026-10-25, plan B1/B2)
+  const lots = _composerLots(s);
   const insertPayload = {
     product_name:  s.product,
-    lot_number:    s.lot,
+    lot_number:    lots[0] || null,
     barcode_number: s.barcode || null,
     description:   descParts.join(' · '),
     source:        'manual',
@@ -5531,9 +5960,19 @@ async function _composerPushRecall() {
       .insert({ ...insertPayload, recall_event_id: ev.id, is_pushed: true })
       .select('id').single();
     if (error) throw error;
+    const linkedIds = inserted?.id ? [inserted.id] : [];
+    if (lots.length > 1) {
+      const { data: more, error: moreErr } = await sb.from('recalls')
+        .insert(lots.slice(1).map(l => ({ ...insertPayload, lot_number: l, recall_event_id: ev.id, is_pushed: true })))
+        .select('id');
+      if (moreErr) throw moreErr;
+      (more || []).forEach(r => linkedIds.push(r.id));
+    }
 
-    // Retroactive sweep — same as saveManualRecall. Best-effort.
-    if (inserted?.id) {
+    // Retroactive sweep — same as saveManualRecall. Best-effort. One pass per
+    // linked row (one per lot).
+    for (const linkedId of linkedIds) {
+      const inserted = { id: linkedId };
       try {
         await sb.rpc('sweep_recall_matches', {
           p_recall_id:       inserted.id,
@@ -5558,8 +5997,15 @@ async function _composerPushRecall() {
       }
     }
 
-    showToast(`Recall pushed — ${stores?.length || 0} store${(stores?.length || 0) !== 1 ? 's' : ''} notified`, 'ok', 3500);
+    showToast(`Recall pushed: ${stores?.length || 0} store${(stores?.length || 0) !== 1 ? 's' : ''} notified${lots.length > 1 ? `, ${lots.length} lots` : ''}`, 'ok', 3500);
     invalidateOverviewCache();
+    // A recall that came from a supplier notice: link the two (migration 040).
+    if (s.noticeId) {
+      const { error: nErr } = await sb.from('recall_notices')
+        .update({ status: 'pushed', recall_event_id: ev.id, pushed_at: new Date().toISOString() })
+        .eq('id', s.noticeId);
+      if (nErr) console.warn('[composer push] notice link failed:', nErr.message);
+    }
 
     // Fire-and-forget notification email to opted-in users in the org
     // (corp_admins + store_managers with the pref enabled).
@@ -5581,6 +6027,8 @@ async function _composerPushRecall() {
     // and acks cascade from the event delete where FKs allow it.
     if (createdRecallEventId) {
       try {
+        // Linked recalls rows first (one per lot), then the event.
+        await sb.from('recalls').delete().eq('recall_event_id', createdRecallEventId).eq('organisation_id', _orgId);
         await sb.from('recall_events').delete().eq('id', createdRecallEventId).eq('source_org_id', _orgId);
       } catch (cleanupErr) {
         console.warn('[composer push] cleanup failed after error:', cleanupErr?.message);
@@ -7020,6 +7468,12 @@ async function renderCommandCenter() {
                   onmouseleave="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">
             Or run a drill
           </button>`}
+          ${_userRole === 'corp_admin' ? `<button onclick="openNoticeIntake()"
+                  style="font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);padding:10px 16px;border-radius:var(--r-md);border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;"
+                  onmouseenter="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'"
+                  onmouseleave="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">
+            From a supplier notice
+          </button>` : ''}
           <button onclick="openRecallComposer()"
                   style="display:inline-flex;align-items:center;gap:8px;font-family:'Figtree',sans-serif;font-weight:700;font-size:var(--fs-body-lg);padding:11px 22px;border-radius:var(--r-md);border:none;background:var(--accent);color:var(--accent-on-primary);cursor:pointer;box-shadow:0 4px 14px rgba(var(--accent-alt-rgb),0.22);transition:transform var(--dur-fast),box-shadow var(--dur-fast);"
                   onmouseenter="this.style.transform='translateY(-1px)';this.style.boxShadow='0 6px 18px rgba(var(--accent-alt-rgb),0.32)'"

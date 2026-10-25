@@ -113,6 +113,9 @@ WITH checks AS (
   UNION ALL SELECT '030 products_public exposes the FTL columns',
          EXISTS (SELECT 1 FROM information_schema.columns
                  WHERE table_schema='public' AND table_name='products_public' AND column_name='is_ftl')
+  UNION ALL SELECT '040 recall notices and lot matching',
+         to_regclass('public.recall_notices') IS NOT NULL
+         AND EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'match_recall_notice')
   UNION ALL SELECT '039 deactivated members see only their own membership row',
          EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='organisation_members' AND policyname='b39_members_own_or_active')
   UNION ALL SELECT '038 deactivated members locked out',

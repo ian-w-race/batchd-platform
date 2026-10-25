@@ -410,7 +410,7 @@ docs/HISTORY.md.
   lets saves retry without it, so new columns degrade gracefully on an
   older database.
 
-## Netlify functions (13)
+## Netlify functions (14)
 | Function | Purpose | Auth |
 |---|---|---|
 | ai-analyze.js | Anthropic proxy for investigations and NL queries | requireAi (member of org, plan pov/active) |
@@ -418,6 +418,7 @@ docs/HISTORY.md.
 | notify-consumers.js | Consumer recall emails | corp_admin of the recall's org |
 | notify-event.js | recall_pushed, complaint_filed, drill_scheduled emails | INTERNAL_NOTIFY_SECRET or member JWT |
 | ocr.js | Anthropic vision; owns its prompt templates | requireAi |
+| parse-recall-notice-background.js | Background function: Claude reads a supplier recall notice into recall_notices.extracted (prompt and schema in netlify/lib/recall-notice.js) | corp_admin of the notice's org, plan pov/active |
 | push-recall-email.js | Recall alert emails | INTERNAL_NOTIFY_SECRET, fails closed |
 | recall-escalation.js | 2h and 24h unacknowledged escalations | Scheduled only |
 | recall-feeds.js | Proxies rasff and Mattilsynet feeds | Any active session |
@@ -428,7 +429,9 @@ docs/HISTORY.md.
 | webhook-recall.js | ERP webhook for manufacturer orgs | X-Batchd-Api-Key, hashed |
 Secrets come from environment variables only. fetch-recall-feeds.js has
 a stray control character near line 143; use `grep -a` on it. Model ids
-pinned: claude-sonnet-4-20250514 and claude-haiku-4-5-20251001.
+pinned: claude-sonnet-4-20250514 and claude-haiku-4-5-20251001 (older
+functions, raw fetch); the notice reader uses claude-opus-5-5 through the
+@anthropic-ai/sdk package (pinned in package.json).
 
 ## Jurisdiction layer (frozen)
 Region resolves per user: `_orgRegion` (dashboard) and `_userRegion`
@@ -491,6 +494,8 @@ both copies.
   legacy scans.
 
 ## Open items
+- Migration 040 (recall notices, match_recall_notice) is on staging only;
+  apply it to production before merging the notice intake pull request.
 - Netlify secret hygiene: keep every secret's Local development value empty
   (Netlify shows those in plain text). INTERNAL_NOTIFY_SECRET was rotated and
   recreated under the right name on both sites on 2026-10-25; the code's
