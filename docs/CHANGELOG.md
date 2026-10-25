@@ -4,6 +4,17 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-10-25 (key rotation)
+- Rotated the production Supabase secret key: Ian created a new key and put
+  it into Production, Branch deploys and Preview Server on both Netlify
+  sites, and emptied the plain-text Local development value. Verified from
+  the production API log: both sites' functions and the 13:30 UTC
+  recall-escalation run authenticate with the new key; the old key was last
+  used at 13:00. The old key is to be deleted in Supabase.
+- Rotating the Anthropic key: new key in all contexts on batchd-app; the
+  www site still had the old one at 13:30. Ian disables the old key after
+  both sites carry the new one and a preview triage call succeeds.
+
 ## 2026-10-25 (internal secret name)
 - FOUND: on the batchd-app Netlify site the server-to-server secret is
   stored as INTERNAL_NOTIFY_SECREY (typo). The code reads
