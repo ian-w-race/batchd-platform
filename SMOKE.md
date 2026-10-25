@@ -71,8 +71,8 @@ not repeated here.
     columns are filled for a receipt from that supplier.
 18. Dashboard, Settings, Organization card: set annual food sales to
     "Under $250,000" and save. Compliance shows "Likely exempt" and the
-    exempt sentence; the Overview readiness ring reads "Deliveries
-    recorded" and can reach 100 percent. Tick the registered-facility
+    exempt sentence. (The "Deliveries recorded" readiness ring lived in the
+    retired legacy overview and is no longer shown.) Tick the registered-facility
     box and save: the FDA authority card on Compliance now names the
     Reportable Food Registry duty of a registered facility.
 19. Scanner, Shelf mode, as a manager: type "Pepperoni pizza" as the
