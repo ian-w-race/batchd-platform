@@ -25,7 +25,7 @@
 // before sending. Prevents cross-org abuse.
 
 const { internalSecretOk } = require('../lib/auth');
-const SUPABASE_URL = 'https://lurxucdmrugikdlvvebc.supabase.co';
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://lurxucdmrugikdlvvebc.supabase.co'; // deploy previews set this to staging
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const RESEND_API_KEY       = process.env.RESEND_API_KEY;
 const FROM_EMAIL           = 'alerts@batchdapp.com';

@@ -156,6 +156,15 @@ check('FSMA dollar thresholds agree in dashboard, signup and scanner', () => {
   return fmt(d);
 });
 
+// 7c. Every function reads its database from SUPABASE_URL, so deploy previews
+// can point at staging. Production stays the fallback.
+check('Functions read SUPABASE_URL from the environment', () => {
+  const files = readdirSync('netlify/functions').filter((f) => f.endsWith('.js')).map((f) => 'netlify/functions/' + f).concat('netlify/lib/auth.js');
+  const bad = files.filter((f) => /supabase\.co/.test(read(f)) && !/process\.env\.SUPABASE_URL\s*\|\|/.test(read(f)));
+  if (bad.length) throw new Error('hardcoded database URL in ' + bad.join(', '));
+  return files.length + ' files';
+});
+
 // 7. Private files and folders stay blocked on the public site.
 check('Private paths forced to 404 in netlify.toml', () => {
   const toml = read('netlify.toml');
