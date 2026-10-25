@@ -40,7 +40,7 @@ What holds it back:
 | Area | Today | Why it matters |
 |---|---|---|
 | Code shape | Two single files of about 1.2 MB each (scanner 23,144 lines, dashboard 18,021), 485 and 289 top-level functions, no shared code | Rules kept "in step" by hand across files (export columns, listed foods, citations, thresholds). Every change is slow and risky. The portals would make a third copy |
-| Recall coverage | One source: the FDA enforcement report, newest 50 entries a day | No USDA recalls (meat, poultry, egg products) at all. Enforcement reports often lag the FDA's own recall notice by days or weeks |
+| Recall intake | Recalls arrive from the manufacturer or distributor as emails and PDFs; Batch'd only sees them if someone retypes one into the composer. The only automatic source is the FDA enforcement report | The manufacturer's notice is the first and most precise signal (exact lots and GTINs). Batch'd is not in that path. The FDA report often lags by days or weeks, and USDA recalls are not read at all |
 | Recall data model | Each FDA recall copied into every organization (7,710 rows for 3 orgs), two recall tables, two match paths | The "read both sources" rule has regressed repeatedly. It will not scale to hundreds of stores |
 | Alerts | Email only | A store manager on the floor does not see an email for hours |
 | Offline | The scanner has no service worker | A phone that opens the app with no signal (back room, cooler, dock) gets nothing. The offline queue only helps if the page was already open |
@@ -67,12 +67,20 @@ weeks, L is several weeks of Claude work plus Ian's review.
 
 ### Track B. Recall engine (promise 2)
 
+Most recalls reach a retailer straight from the recalling firm (21 CFR 7.46
+and 7.49 put the duty to notify on the firm) or through the distributor
+that shipped the product, as an email, letter or PDF to head office. The
+FDA's public notice can come the same day or later, and the enforcement
+report much later. So the engine is built around the supplier's notice,
+with public feeds as a backstop.
+
 | # | Improvement | Size | Done when |
 |---|---|---|---|
-| B1 | **Add USDA FSIS recalls** (meat, poultry, egg products). FSIS publishes recalls through a public feed; verify the current endpoint when building | M | A recent FSIS recall appears for a store that received the product |
-| B2 | **Faster FDA source.** Add the FDA's recall notices (the press-release list), not just the weekly enforcement report, and link the two when the report catches up | M | Time from FDA notice to store alert is hours, not weeks |
-| B3 | **One recall catalog.** Store each public recall once, globally, with structured product, GTIN/UPC, lot and date fields. Organizations get matches, not copies. Replace the two recall paths with one database function that answers "what is active for this store right now" | L | The 7,710 copied rows become about 2,600 shared ones; every screen reads one function; the "both sources" rule disappears |
-| B4 | **Better matching.** Match on GTIN and lot first, then product text, with a confidence level. Uncertain matches go to a short review queue for the corporate admin instead of either alarming or staying silent | M | Each match shows why it matched; false alarms drop |
+| B1 | **Recall notice intake.** Each retailer gets a Batch'd address to forward supplier recall notices to (email body or PDF attachment), plus an upload button. AI reads product, GTIN, lot codes or ranges, dates, reason and the recalling firm into a draft recall; the corporate admin reviews and pushes it to stores in one tap. Gated by plan, like today's AI | M | A forwarded notice becomes a pushed recall in under 15 minutes, most of it the admin's review |
+| B2 | **Lot-level match against receiving records.** Every recall, from any source, is matched on GTIN and lot (then product text) against receiving records and shelf scans, so the draft already shows which stores received the affected lots, how many cases, and from which delivery. Uncertain matches go to a short review queue | M | The pushed recall goes only to stores that received the lots, with quantities, and each match says why it matched |
+| B3 | **Recall link for manufacturers.** A simple form a manufacturer opens from a link (no account at first) to send a structured recall to the Batch'd retailers it supplies; it arrives as a draft for each retailer's admin. The ERP webhook (`webhook-recall.js`) already covers manufacturers with their own systems. This is the bridge to the full portal | M | A manufacturer can reach its Batch'd retailers in minutes without signing up |
+| B4 | **One recall catalog.** One model for every recall: supplier notices, manufacturer pushes, the retailer's own pushes and public feed entries are kinds of the same record, each public recall stored once instead of copied per organization, and one database function answers "what is active for this store right now" | L | The 7,710 copied FDA rows become about 2,600 shared ones; every screen reads one function; the "both sources" rule disappears |
+| B5 | **Public feeds as backstop.** Keep the FDA feed, add the FDA's recall notices (faster than the enforcement report) and USDA FSIS recalls (meat, poultry, egg products; verify the current feed when building). Link a public entry to the supplier notice it repeats, and flag public recalls that match what a retailer received but that no supplier ever sent | M | A recall the supplier never sent still reaches the stores that received the product |
 
 ### Track C. Store execution (promises 2 and 3)
 
@@ -128,13 +136,13 @@ once, here:
 | Phase | Contents | Why this order |
 |---|---|---|
 | 1. Safety net | A1 backups, A4 monitoring, A3 end-to-end tests | Protects real data and catches breakage before the big changes |
-| 2. Shared code | A2, F5 | Every later change touches less code; the portals inherit it |
-| 3. Recall engine | B3, B1, B2, B4 | The core promise; biggest gap versus competitors |
+| 2. Shared code | A2, F5 | Every later change touches less code; the portals inherit it. B1 (notice intake) can run in parallel, since it is mostly a new function |
+| 3. Recall engine | B1, B2, then B4, B3, B5 | The core promise. Notice intake and lot-level matching first, because that is where the hours are lost today |
 | 4. The recall moment | C1, C2, C3, A5 | Turns faster detection into faster pulls |
-| 5. Less typing | D4, D1, D2, D3 | Makes the data complete without staff effort |
+| 5. Less typing | D4, D1, D2, D3 | Lot-level recall matching (B2) is only as good as the receiving records, so this follows straight after |
 | 6. Redesign | F1, F2, F3, F4 | Built on shared code, so it is done once for every app |
 | 7. Proof | E1 to E4 | Polishes what an inspector or insurer sees |
-| Then | Portals, starting at their Phase 2 | Phase 1 foundations are already in place from Track G |
+| Then | Portals, starting at their Phase 2 | Phase 1 foundations are already in place from Track G, and B3 has already put manufacturers in touch with their retailers |
 
 Each phase ships as small pull requests through staging and previews, as
 today.
@@ -143,7 +151,8 @@ today.
 
 | Measure | Today | Target |
 |---|---|---|
-| FDA or USDA notice to store alert | Days to weeks (enforcement report lag) | Under 1 hour |
+| Supplier notice received to stores alerted | Hours to days (retyped by hand, if at all) | Under 15 minutes |
+| Public recall published to store alert, when no supplier notice came | Days to weeks (enforcement report lag) | Under 1 day |
 | Store alert to product off shelf, confirmed | Not measured | Median under 2 hours |
 | Seconds to record a delivery | Not measured, estimated 30 to 60 | Under 10 |
 | Receiving records with every key data element | Measured per org on Compliance | 95 percent or more |
@@ -155,7 +164,11 @@ today.
 1. **Supabase Pro now?** $25 a month for backups. Recommended.
 2. **USDA FSIS recalls:** in scope for the wedge? Leafy greens and nut
    butters are FDA products, but a grocery chain will expect one recall
-   inbox for everything.
+   inbox for everything. Lower priority now that supplier notices come
+   first.
+7. **Recall notice intake address:** a Batch'd address per retailer
+   (for example `recalls+<org>@batchdapp.com`) means receiving email
+   through Resend or a similar inbound service. Acceptable?
 3. **Text messages for alerts:** they cost per message (Twilio or similar).
    Push notifications are free. Start with push only?
 4. **A build step:** it changes how files are uploaded (Netlify builds them,
