@@ -4365,7 +4365,7 @@ async function renderRecalls() {
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:48px 24px;text-align:center;">
         <div style="font-size:var(--fs-h2);margin-bottom:12px;">${_ico('check-circle',32)}</div>
         <div style="font-size:var(--fs-body-lg);font-weight:600;color:var(--text);margin-bottom:6px;">No active recalls</div>
-        <div style="font-size:var(--fs-body);color:var(--muted);">Your network is clear. Manufacturer recalls, FDA/Mattilsynet alerts that match your products, and manually entered recalls will appear here.</div>
+        <div style="font-size:var(--fs-body);color:var(--muted);">Your network is clear. ${_orgRegion === 'us' ? 'Pushed recalls, FDA alerts that match your products' : 'Manufacturer recalls, FDA/Mattilsynet alerts that match your products'}, and manually entered recalls will appear here.</div>
         <button onclick="_recallsTab='add';renderRecalls()" style="margin-top:16px;font-family:'DM Mono',monospace;font-size:var(--fs-meta);padding:8px 18px;border-radius:var(--r-sm);border:1px solid var(--glass-border);background:var(--surface2);color:var(--text);cursor:pointer;">+ Add a recall manually</button>
       </div>` : ''}
       ${pushed.map(p => recallCard(p, acks.filter(a => a.recall_event_id === p.recall_event_id))).join('')}
@@ -4491,7 +4491,7 @@ async function renderRecalls() {
           </div>
         </div>
         <div style="font-size:var(--fs-eyebrow);color:var(--muted);margin-top:12px;line-height:1.7;">
-          <strong style="color:var(--text);">Note on collaboration:</strong> If this recall was initiated jointly with a manufacturer, ask them to push it via the Batch'd manufacturer portal so it appears across the full network automatically. Manual recalls created here are internal to your organization.
+          <strong style="color:var(--text);">Note on collaboration:</strong> If a supplier initiated this recall, put their notice or recall number in the description so your stores can match it. Manual recalls created here are internal to your organization.
         </div>
       </div>`;
   }
@@ -9198,7 +9198,7 @@ async function renderTraceability(tab) {
     el.innerHTML = traceabilityHeader(activeTab) + `
       <div style="max-width:640px;">
         <div style="font-size:var(--fs-body);color:var(--muted);margin-bottom:20px;line-height:1.6;">
-          Enter any lot code to trace the full supply chain — from manufacturer shipment through store receipt, staff scanning, shelf placement, and recall status.
+          Enter any lot code to trace it from the supplier delivery through store receipt, shelf placement and recall status.
         </div>
         <div class="panel" style="margin-bottom:16px;">
           <div class="panel-body">
@@ -10274,7 +10274,7 @@ function renderComplianceStart(el) {
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px;">
             ${[
               {n:'1', label:'Record keeping', desc:'Lot codes, scan volume, documentation completeness', reg: isUS?`${_CITATIONS.us.rule}, ${_CITATIONS.us.receivingKde}`:'EU 178/2002 Art. 18'},
-              {n:'2', label:'Traceability chain', desc:'Supplier connections, one step back, manufacturer links', reg: isUS?'FSMA 204 KDEs':'EU 178/2002 Art. 18'},
+              {n:'2', label:'Traceability chain', desc:'Supplier records and one step back on every delivery', reg: isUS?'FSMA 204 KDEs':'EU 178/2002 Art. 18'},
               {n:'3', label:'Recall readiness', desc:'Drills conducted, response chain, acknowledgement speed', reg: isUS?'FDA 24h notification':'Mattilsynet §16'},
               {n:'4', label:'Operational coverage', desc:'Active stores, recent scanning, dark store detection', reg: isUS?'FSMA 204 CTEs':'EU 178/2002 Art. 3'},
             ].map(c => `
@@ -12906,7 +12906,7 @@ async function downloadReport(key) {
           return [
             d ? fmtDash(d) : '',
             r.product_name, r.lot_number, (r.barcode || r.barcode_number || ''),
-            isPushed ? 'Manufacturer push' : (r.source||'Manual'),
+            isPushed ? 'Pushed recall' : (r.source||'Manual'),
             r.severity||'', r.reason||'', r.authority_reference||'',
             isPushed ? 'Active' : (r.active ? 'Active' : 'Resolved'),
             r.is_drill ? 'Yes' : 'No',
@@ -13512,7 +13512,7 @@ function renderTerminology() {
           '')}
         ${term('Compliance score',
           'A percentage (0-100%) representing how well your organization\'s current practices meet the traceability and recall readiness requirements tracked by Batch\'d.',
-          `Calculated across four categories: Record keeping (lot code coverage), Traceability chain (manufacturer connections and supplier documentation), Recall readiness (coordinator assigned, drills run, responses completed), and Store coverage (proportion of stores actively scanning). The score is a Batch\'d internal readiness indicator — it does not constitute regulatory certification and should not be presented as such.`,
+          `Calculated across four categories: Record keeping (lot code coverage), Traceability chain (supplier location and key data on receiving records), Recall readiness (coordinator assigned, drills run, responses completed), and Store coverage (proportion of stores actively scanning). The score is a Batch\'d internal readiness indicator — it does not constitute regulatory certification and should not be presented as such.`,
           '')}
         ${term('Audit trail',
           'The automatically maintained, timestamped log of every action taken in Batch\'d related to a recall event.',
@@ -15331,7 +15331,7 @@ async function submitDashPhoneComplaint() {
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2.5"><path d="M12 2L2 19h20L12 2z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17" r="0.6" fill="var(--warn)" stroke="none"/></svg>
                 <span style="font-size:var(--fs-meta);font-weight:700;color:var(--warn);">PATTERN DETECTED: ${esc(data.pattern_alert.title.toUpperCase())}</span>
               </div>
-              <div style="font-size:var(--fs-meta);color:var(--muted);">${data.pattern_alert.count} complaints about this product in the last 7 days. Consider notifying the manufacturer.</div>
+              <div style="font-size:var(--fs-meta);color:var(--muted);">${data.pattern_alert.count} complaints about this product in the last 7 days. Consider contacting the supplier.</div>
             </div>
           ` : ''}
           <div style="display:flex;justify-content:center;gap:10px;">
@@ -16570,9 +16570,9 @@ async function generateDrillReport(drillId) {
   <p style="line-height:1.7;color:#333;">
     ${esc(org?.name || _orgName)} has conducted <strong>${drills.length} mock recall drill${drills.length!==1?'s':''}</strong>
     in the past 12 months. ${drills.length >= 1
-      ? `This satisfies the ${isUS?'FDA-recommended':'industry best practice'} requirement for at least one annual recall readiness exercise.`
-      : `This does not satisfy the ${isUS?'FDA-recommended':'industry best practice'} requirement for annual recall readiness exercises. A drill should be conducted as soon as possible.`}
-    Drills were executed using the Batch'd manufacturer recall push network, distributing simulated recall alerts to connected retail stores and tracking acknowledgement through a 5-step confirmation chain (Notified → Acknowledged → Pulled → Disposed → Confirmed).
+      ? `This meets ${isUS?'the common practice, in line with FDA recall guidance, of':'the industry best practice requirement for'} at least one annual recall readiness exercise.`
+      : `This does not meet ${isUS?'the common practice, in line with FDA recall guidance, of':'the industry best practice requirement for'} annual recall readiness exercises. A drill should be conducted as soon as possible.`}
+    Drills were run in Batch'd, distributing simulated recall alerts to the organization's stores and tracking acknowledgement through a 5-step confirmation chain (Notified → Acknowledged → Pulled → Disposed → Confirmed).
   </p>
 
   <h2>Drill Details</h2>
@@ -17096,12 +17096,12 @@ const fmtDT      = d => d ? new Date(d).toLocaleString(_dashLocale(), {day:'nume
     <div class="declaration">
       This certificate confirms that <strong>${esc(org.name || _orgName)}</strong> conducted a
       <strong>mock product recall drill</strong> on <strong>${drillDate}</strong> using the
-      Batch'd recall management platform. The drill simulated a manufacturer recall notification
+      Batch'd recall management platform. The drill simulated a recall notification
       distributed across the organization's store network, testing the full 5-step response chain:
       Notified → Acknowledged → Pulled → Disposed → Confirmed.
       ${passed
         ? `<br><br>The organization <strong>met the minimum completion threshold</strong> (80% of stores fully resolved).
-           This drill satisfies recall readiness exercise requirements under <strong>${regRef}</strong>.`
+           ${isUS ? 'This drill documents a recall readiness exercise. FDA recall guidance recommends that firms practice their recall procedures; FSMA 204 and 21 CFR Part 117 do not set a mock drill requirement for retail stores.' : `This drill satisfies recall readiness exercise requirements under <strong>${regRef}</strong>.`}`
         : `<br><br>The organization <strong>did not meet the minimum completion threshold</strong> of 80% store confirmation.
            Targeted follow-up and retraining are recommended before the next drill.`}
     </div>
@@ -17455,7 +17455,7 @@ async function renderConsumerNotification() {
                   <div style="font-size:var(--fs-body);font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(r.product_name||'—')}</div>
                   <div style="font-size:var(--fs-eyebrow);color:var(--muted);margin-top:2px;">
                     ${r.lot_number?`Lot: <span style="font-family:'DM Mono',monospace;">${esc(r.lot_number)}</span> · `:''}
-                    ${r._type==='pushed'?'Manufacturer push':'Manual'} · ${new Date(r.published_at||r.created_at).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',year:'numeric'})}
+                    ${r._type==='pushed'?'Pushed recall':'Manual'} · ${new Date(r.published_at||r.created_at).toLocaleDateString(_dashLocale(),{day:'numeric',month:'short',year:'numeric'})}
                   </div>
                 </div>
                 ${r.severity?`<span style="font-size:var(--fs-label);padding:2px 8px;border-radius:var(--r-md);background:rgba(var(--danger-rgb),0.1);color:var(--danger);white-space:nowrap;flex-shrink:0;">${esc(r.severity)}</span>`:''}
@@ -17638,7 +17638,7 @@ function cnFilterRecalls() {
         <div style="font-size:var(--fs-body);font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(r.product_name||'—')}</div>
         <div style="font-size:var(--fs-eyebrow);color:var(--muted);margin-top:2px;">
           ${r.lot_number?`Lot: <span style="font-family:'DM Mono',monospace;">${esc(r.lot_number)}</span> · `:''}
-          ${r._type==='pushed'?'Manufacturer push':'Manual'} · ${r.date}
+          ${r._type==='pushed'?'Pushed recall':'Manual'} · ${r.date}
         </div>
       </div>
       ${r.severity?`<span style="font-size:var(--fs-label);padding:2px 8px;border-radius:var(--r-md);background:rgba(var(--danger-rgb),0.1);color:var(--danger);white-space:nowrap;flex-shrink:0;">${esc(r.severity)}</span>`:''}

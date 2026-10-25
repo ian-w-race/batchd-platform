@@ -4,6 +4,25 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-10-25 (copy accuracy)
+- FIXED: the drill certificate, a document meant for an inspector, said a
+  US drill "satisfies recall readiness exercise requirements under FDA FSMA
+  Section 204 / 21 CFR 117.126". FSMA 204 is a record-keeping rule with no
+  drill requirement, and 117.126 is the food safety plan for manufacturing
+  facilities, not retail stores. The US sentence now says the drill
+  documents a readiness exercise, FDA recall guidance recommends practicing
+  recall procedures, and neither rule sets a drill requirement for stores.
+  The drill report no longer calls one drill a year an FDA "requirement".
+  The NO branch is frozen and unchanged.
+- Retailer copy that described the retired manufacturer network as current:
+  the drill certificate and report ("manufacturer recall push network"), the
+  Recalls empty state, the manual recall note (pointed at a manufacturer
+  portal that does not exist), the lot tracer subtitle, the compliance step
+  "manufacturer links", the readiness score definition, the complaint
+  pattern advice, and the "Manufacturer push" source label (composer pushes
+  are the retailer's own; now "Pushed recall"). Investigations and exposure
+  wording stay, since the manufacturer portal is being planned.
+
 ## 2026-10-25 (key rotation)
 - Rotated the production Supabase secret key: Ian created a new key and put
   it into Production, Branch deploys and Preview Server on both Netlify
