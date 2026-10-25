@@ -1,0 +1,50 @@
+# End-to-end tests (improvement plan A3). When Netlify reports that a pull
+# request's deploy preview for batchd-app is ready, sign in to that preview
+# with the staging test accounts and run the core flows in a real browser.
+# Previews use the staging database, and e2e/env.mjs refuses any host that is
+# not localhost or a deploy preview, so production is never touched.
+# Needs the repository secret E2E_PASSWORD (the staging test accounts'
+# password). Run by hand from the Actions tab with a preview URL as well.
+name: e2e
+
+on:
+  status:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: 'Deploy preview URL, for example https://deploy-preview-35--batchd-app.netlify.app'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.context == 'netlify/batchd-app/deploy-preview' && github.event.state == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      E2E_BASE_URL: ${{ github.event.target_url || inputs.base_url }}
+      E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install
+        run: npm ci --ignore-scripts && npx playwright install --with-deps chromium
+      - name: End-to-end tests against ${{ env.E2E_BASE_URL }}
+        run: npx playwright test
+      - name: Report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

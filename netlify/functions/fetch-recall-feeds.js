@@ -23,7 +23,7 @@ const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 // Netlify native scheduled function — runs daily at 06:00 UTC
 exports.schedule = '0 6 * * *';
 
-exports.handler = async (event) => {
+const run = async (event) => {
   // Same cron-singleton switch as recall-escalation.js. The FDA import below
   // is idempotent (stable ids), so running on two sites is harmless, but
   // there is no reason to do the work twice.
@@ -284,3 +284,6 @@ function parseRSSItems(xml) {
 
 // Exported for tests.
 exports._test = { fdaDescription, recallNumberFrom, stableRecallId, fetchFDA };
+
+// Every run is recorded in job_runs for the daily health check (migration 041).
+exports.handler = require('../lib/job-log').withJobLog('fetch-recall-feeds', run);

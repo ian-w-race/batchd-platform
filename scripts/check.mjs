@@ -169,7 +169,7 @@ check('Functions read SUPABASE_URL from the environment', () => {
 check('Private paths forced to 404 in netlify.toml', () => {
   const toml = read('netlify.toml');
   const must = ['/CLAUDE.md', '/SECRETS.md', '/SCHEMA.md', '/SMOKE.md', '/CHECK_MIGRATIONS.sql', '/netlify.toml',
-    '/package.json', '/migrations/*', '/docs/*', '/netlify/*', '/scripts/*', '/tests/*', '/.github/*'];
+    '/package.json', '/migrations/*', '/docs/*', '/netlify/*', '/scripts/*', '/tests/*', '/e2e/*', '/playwright.config.mjs', '/.github/*'];
   const missing = must.filter((p) => !new RegExp(`from = "${p.replace(/[.*]/g, (c) => '\\' + c)}"[\\s\\S]{0,60}status = 404`).test(toml));
   if (missing.length) throw new Error(`no forced 404 for: ${missing.join(', ')}`);
   return `${must.length} paths`;

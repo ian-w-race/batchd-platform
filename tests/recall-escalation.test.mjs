@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 import Module from 'node:module';
 
 const require = createRequire(import.meta.url);
+process.env.BATCHD_JOB_LOG = 'off'; // job_runs logging is tested in health-check.test.mjs
 
 const get = (r, c) => c.split('.').reduce((o, k) => (o == null ? undefined : o[k]), r);
 

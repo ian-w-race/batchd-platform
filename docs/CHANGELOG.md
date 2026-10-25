@@ -4,6 +4,33 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-10-25 (monitoring and end-to-end tests, plan A3 and A4)
+- Monitoring. Migration 041 adds job_runs; fetch-recall-feeds and
+  recall-escalation record every run through netlify/lib/job-log.js (job,
+  site, start, finish, ok, result). The new scheduled function health-check
+  (daily 07:00 UTC) emails Batch'd's platform admins only when something is
+  wrong: the FDA import has not completed in 26 hours or its newest recall
+  is over 21 days old, the escalation job has not completed in 2 hours, a
+  job failed in the last 24 hours, the health check skipped a day, or
+  supplier notices are stuck or failing. ALERT_EMAIL overrides the
+  recipients. It honors SCHEDULED_FUNCTIONS_DISABLED and prunes job_runs
+  older than 90 days. Verified: tests/health-check.test.mjs (8 tests on the
+  rules and the run logger). Not verified: a real alert email (first run
+  07:00 UTC after deploy).
+- End-to-end tests. Playwright (1.64.0, dev dependency) in e2e/: dashboard
+  sign-in and the Recalls notice strip; a deactivated member locked out of
+  both apps; a delivery recorded in the scanner from a typed GS1 string and
+  saved with its lot, GTIN and best-by; and, on previews only, a pasted
+  supplier notice read by AI, matched and pushed through the composer.
+  e2e/env.mjs refuses any host that is not localhost or a deploy preview,
+  so the tests can only reach staging. .github/workflows/e2e.yml runs them
+  when Netlify reports a batchd-app deploy preview ready; it needs the
+  repository secret E2E_PASSWORD. netlify.toml blocks /e2e/* and
+  /playwright.config.mjs; .gitignore keeps node_modules and test output out
+  of the repository. Verified locally against staging: 3 of 3 (the notice
+  test needs a preview); with the scanner's save deliberately broken the
+  delivery test failed.
+
 ## 2026-10-25 (supplier recall notices, plan B1 and B2)
 - Supplier recall notice intake. A corporate admin uploads a notice (PDF,
   image, TXT or EML, up to 15 MB) or pastes the email from the Recalls panel
