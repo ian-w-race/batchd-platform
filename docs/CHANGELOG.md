@@ -4,6 +4,14 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-10-25 (internal secret rotated)
+- INTERNAL_NOTIFY_SECRET has a new random value (generated on Ian's machine
+  straight to the clipboard; never shown in chat) on both Netlify sites, in
+  Production, Deploy Previews, Branch deploys and Preview Server, with Local
+  development empty. batchd-app now has it under the correct name and the
+  misspelled INTERNAL_NOTIFY_SECREY is deleted. Ian triggered production
+  deploys on both sites at about 14:11 UTC.
+
 ## 2026-10-25 (copy accuracy)
 - FIXED: the drill certificate, a document meant for an inspector, said a
   US drill "satisfies recall readiness exercise requirements under FDA FSMA
