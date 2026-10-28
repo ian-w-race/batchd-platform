@@ -155,10 +155,14 @@ assets/design-tokens.css. Note: assets/ exists in Ian's local folder but
 is not on GitHub; nothing live loads it.
 
 ## Domains and routing
-- Three Netlify sites deploy this repo (verified 2026-09-21). Every
-  environment variable the functions read must exist with the same value
-  on all three, INTERNAL_NOTIFY_SECRET above all (push-recall-email fails
-  closed without it).
+- Two Netlify sites deploy this repo: gentle-belekoy-be3cb7
+  (www.batchdapp.com and the corporate alias) and batchd-app
+  (batchd-app.netlify.app). The third team site, batchdsite, is batchd.no
+  from the batchd-website repository, with one function and no schedules
+  (checked through the Netlify connector 2026-10-28; the 2026-09-21 note
+  that said three was wrong). Every environment variable the functions
+  read must exist with the same value on both, INTERNAL_NOTIFY_SECRET
+  above all (push-recall-email fails closed without it).
 - Since 2026-10-24 recall-escalation.js claims each escalation tier with
   a conditional UPDATE (only while the column is NULL) before sending and
   releases it if the send fails, so two sites running the cron at the
@@ -166,24 +170,30 @@ is not on GitHub; nothing live loads it.
   observability: batchd-app and gentle-belekoy-be3cb7 (www) both invoke
   recall-escalation 48 times a day; only www ran fetch-recall-feeds that
   day. Site-level environment variables are not readable through the
-  Netlify connector, so whether SCHEDULED_FUNCTIONS_DISABLED is set on
-  batchd-app is still unconfirmed (its runs take about 1 s against about
-  3 s on www, which suggests it skips). The third team site, batchdsite,
-  is batchd.no, a different repo.
+  Netlify connector. CONFIRMED 2026-10-28 from job_runs instead: over two
+  days only gentle-belekoy-be3cb7 recorded runs of fetch-recall-feeds,
+  health-check and recall-escalation, and the job logger skips a site
+  whose run returns "skipped", so batchd-app has
+  SCHEDULED_FUNCTIONS_DISABLED=true and www is the one site that runs
+  the jobs. Nothing to change.
 - fetch-recall-feeds.js (rewritten 2026-10-24): one FDA request, one
   query for what the US orgs already hold, one bulk upsert with stable ids
   derived from org and FDA recall number (or product and report day when
   the feed sends "N/A" or nothing). The recall number is always kept at
   the end of the description ("... [H-0015-2027]"). Before the rewrite
   most runs were cut off at Netlify's 15 s limit and the import created
-  duplicates; scripts/cleanup-duplicate-fda-recalls.sql (preview, then a
-  commented delete) is for Ian to run. The Mattilsynet RSS URL answers 404
+  duplicates; scripts/cleanup-duplicate-fda-recalls.sql ran on production
+  on 2026-10-24 (953 rows removed, kept in
+  backup.recalls_fda_duplicates_20261024) and its read-only preview found
+  0 duplicates in 7,734 FDA rows on 2026-10-28. The Mattilsynet RSS URL answers 404
   (frozen NO path; it fails fast and is caught).
-- netlify.toml arms recall-escalation (every 30 min) and
-  fetch-recall-feeds (daily 06:00 UTC) on every site, so
-  SCHEDULED_FUNCTIONS_DISABLED=true must be set on exactly two of the
-  three. Missing on more than one sends duplicate escalation emails;
-  true on all three runs nothing. Needs verification in the Netlify UI.
+- netlify.toml arms recall-escalation (every 30 min), fetch-recall-feeds
+  (daily 06:00 UTC) and health-check (daily 07:00 UTC) on every site that
+  deploys it, so SCHEDULED_FUNCTIONS_DISABLED=true must be set on exactly
+  one of the two. Missing on both would run every job twice (the
+  escalation tiers are claimed with a conditional UPDATE, so emails would
+  still not double); true on both runs nothing. Confirmed 2026-10-28:
+  batchd-app skips, www runs.
 - Path aliases on every domain: /join, /manufacturer, /signup, /terms,
   /privacy.
 - corporate.batchdapp.com/ serves dashboard.html (forced 200);
@@ -216,12 +226,16 @@ is not on GitHub; nothing live loads it.
   exist in production (checked 2026-10-24; CHECK_MIGRATIONS reports it
   MISSING). The only writer is the retired OCR path in saveRecord, so the
   insert never runs today. Apply 007 before reviving OCR capture.
-- Migrations: 001 to 037 with 020a, no 027 (John's code_patterns slot,
+- Migrations: 001 to 041 with 020a, no 027 (John's code_patterns slot,
   applied outside the folder). CHECK_MIGRATIONS.sql reports APPLIED or
   MISSING per migration; Ian ran it 2026-10-11 and every row was APPLIED.
-  031 to 037 were applied 2026-10-24 through the Supabase connector,
-  which also records them in supabase_migrations. 001 to 030 were run by hand in the
-  SQL editor and are not recorded there.
+  031 to 041 were applied through the Supabase connector (031 to 039 on
+  2026-10-24, 040 and 041 on 2026-10-25), which records them in
+  supabase_migrations; confirmed there 2026-10-28, with job_runs and
+  recall_notices present and match_recall_notice identical on staging and
+  production (staging's 040b best-by fix is folded into production's
+  040). 001 to 030 were run by hand in the SQL editor and are not
+  recorded there.
 - Claude has the Supabase connector (since 2026-10-24) on org Batch'd,
   free plan, one project. Read-only SQL and advisors are fine to run;
   any write, migration or new project waits for Ian's yes on the exact
@@ -238,6 +252,19 @@ is not on GitHub; nothing live loads it.
   the dashboard; no connector tool for auth settings). Nothing points at
   staging yet. Any schema change must go to staging first, then
   production, and the fingerprint comparison rerun.
+- Security advisor, run 2026-10-28 on production: one ERROR, the
+  products_public view is SECURITY DEFINER (deliberate since migration
+  001 and kept by 030; anon reads published product names by GTIN
+  through it); WARN on SECURITY DEFINER functions callable by anon and by
+  signed-in users (all checked: create_organisation_with_admin requires a
+  signed-in caller, get_org_member_emails requires an active corp_admin
+  of the org, get_my_organisation_ids and the batchd_user_* helpers
+  return nothing without a session, the invitation readers are token
+  gated for the join page); WARN that leaked-password protection is off
+  in Auth (Ian's toggle, no connector tool); INFO that
+  organisation_api_keys and scan_queue have RLS and no policies (closed
+  to clients on purpose). Revoking anon EXECUTE on the functions that
+  never need it would be hygiene, not a fix.
 - Before running SQL, confirm the editor is on lurxucdmrugikdlvvebc.
   Migrations 022 to 026 once reported PASS against a different project.
 - Schema reference: docs/SCHEMA-REFERENCE.md, generated from production
@@ -498,14 +525,12 @@ both copies.
   legacy scans.
 
 ## Open items
-- Migration 041 (job_runs) is on staging only; apply it to production before
-  merging the monitoring pull request. The e2e workflow needs the GitHub
-  secret E2E_PASSWORD, which Ian sets from the local staging accounts file.
+- The e2e workflow needs the GitHub secret E2E_PASSWORD, which Ian sets
+  from the local staging accounts file.
 - Netlify secret hygiene: keep every secret's Local development value empty
   (Netlify shows those in plain text). INTERNAL_NOTIFY_SECRET was rotated and
   recreated under the right name on both sites on 2026-10-25; the code's
   INTERNAL_NOTIFY_SECREY fallback in netlify/lib/auth.js can be removed.
-## Open items
 Owed by Ian:
 - Three photographed case labels (romaine, nut butter, one non-GS1) to
   test the GS1 parser.
@@ -515,8 +540,10 @@ Owed by Ian:
 - Live smoke checks never run on the deployed apps: SMOKE.md 10 to 13,
   17 to 20, 46 and 47.
 - Rotate the demo account password (in public git history).
-- Check SCHEDULED_FUNCTIONS_DISABLED and the shared secrets on all three
-  Netlify sites.
+- Confirm the shared secrets match on both Netlify sites (the connector
+  cannot read site-level variables). SCHEDULED_FUNCTIONS_DISABLED is
+  settled: batchd-app skips, www runs (2026-10-28).
+- Turn on leaked-password protection in Supabase Auth (advisor warning).
 Security, found 2026-10-24 while cloning to staging: all fixed (032
 storage bucket, 033 cross-org rules, 034 anon table writes and store
 names, 035 view user_accessible_stores, search paths and trigger

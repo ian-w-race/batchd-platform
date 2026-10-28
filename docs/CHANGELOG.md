@@ -4,6 +4,23 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-10-28 (connector checks)
+- Verified through the GitHub, Netlify and Supabase connectors, read-only.
+  Only two Netlify sites deploy this repo (www and batchd-app, both on the
+  2026-10-25 merge commit); batchdsite is batchd.no from another
+  repository with no schedules. job_runs over two days shows every
+  scheduled job recorded by www alone, so batchd-app has
+  SCHEDULED_FUNCTIONS_DISABLED set and the duplicate-run question is
+  closed. Production records migrations 031 to 041 in
+  supabase_migrations; job_runs and recall_notices exist; staging and
+  production have byte-identical match_recall_notice definitions.
+  Security advisor on production: the products_public definer view
+  (deliberate), definer functions callable by anon (each guards itself),
+  leaked-password protection off (an Auth toggle), two tables with RLS
+  and no policies (closed on purpose). CLAUDE.md corrected accordingly.
+  Not verified: site-level Netlify variables themselves (the connector
+  refuses to list them), and the smoke checks still owed.
+
 ## 2026-10-25 (monitoring and end-to-end tests, plan A3 and A4)
 - Monitoring. Migration 041 adds job_runs; fetch-recall-feeds and
   recall-escalation record every run through netlify/lib/job-log.js (job,
