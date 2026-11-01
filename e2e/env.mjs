@@ -52,9 +52,14 @@ export async function centralSignIn(page, email, app) {
 export async function scannerSignIn(page, email, storeName = 'QA Store 1') {
   await centralSignIn(page, email, 'scan');
   if (storeName) {
-    // The store picker overlay; the same names also exist as hidden <option>s.
-    await page.getByText(storeName, { exact: true }).filter({ visible: true }).first().click();
-    await expect.poll(() => page.evaluate(() => (typeof _currentStoreId !== 'undefined' ? _currentStoreId : null) || null)).not.toBeNull();
+    // Since the central sign-in the scanner opens with a restored session,
+    // which may preselect the person's store; the store picker overlay only
+    // shows when none is chosen. The same names also exist as hidden <option>s.
+    const pick = page.getByText(storeName, { exact: true }).filter({ visible: true });
+    await expect.poll(async () => {
+      if (await pick.count()) await pick.first().click().catch(() => {});
+      return page.evaluate(() => (typeof _currentStoreId !== 'undefined' ? _currentStoreId : null) || null);
+    }, { timeout: 30_000 }).not.toBeNull();
     // A recall alert may open after sign-in on staging; close it if it does.
     const dismiss = page.getByRole('button', { name: 'Dismiss' }).filter({ visible: true });
     if (await dismiss.count()) await dismiss.first().click();
