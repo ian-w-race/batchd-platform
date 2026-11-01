@@ -304,9 +304,42 @@ not repeated here.
     the notice leaves the Supplier notices list. Needs migration 040 and an
     org on a pilot or paid plan.
 
+## Central sign-in (2026-11-01)
+
+49. On the pull request's preview (staging database), open /login. Sign
+    in as a store staff member: you land straight in the scanner at /scan
+    with no second sign-in. Sign out, sign in as a corporate admin: a
+    chooser offers Retail and Scanner. Pick Retail: the dashboard opens at
+    /retail already signed in. Open /scan in the same browser: the scanner
+    opens signed in too. Back at /login, the chooser lists Scanner or
+    Retail first with "Last used", whichever you picked last. A deactivated
+    account sees "Account deactivated". "Forgot password" sends an email
+    whose link opens "Set a new password" on /login (needs the Supabase
+    redirect URL, see the changelog). After merge, app.batchdapp.com opens
+    the same sign-in page, and corporate.batchdapp.com and
+    batchd-app.netlify.app still work exactly as before.
+
+## One address and the Retail rename (2026-11-01)
+
+50. On the preview: open /retail?panel=recalls signed out. You land on
+    /login; after signing in you are back on Recalls in the Retail app.
+    The topbar has "Switch app" (opens the chooser) and "Open scanning
+    app" (opens /scan, already signed in). The page title and sidebar say
+    Retail, not Corporate. Sign out: you land on /login. Sign in again: the
+    app you used last opens directly. In the scanner, the drawer has
+    "Switch app" above Sign out, and the dashboard shortcut says "Open
+    Retail". /retail?legacy=1 and /scan?legacy=1 still show the old
+    sign-in forms. After merge, on production: corporate.batchdapp.com
+    and corporate.batchdapp.com/?panel=recalls land on
+    app.batchdapp.com/retail (with the panel); www.batchdapp.com lands on
+    app.batchdapp.com; batchd-app.netlify.app shows "Batch'd has moved"
+    with a button to app.batchdapp.com/scan (a test phone with scans
+    waiting offline sees "Sending N saved scans first" until they sync).
+    Reinstall the scanner on the test phones from app.batchdapp.com/scan.
+
 ## Misspelled secret fallback removed (2026-11-01)
 
-49. On the live scanner (batchd-app.netlify.app), as a manager, log a
+51. On the live scanner (app.batchdapp.com/scan), as a manager, log a
     phone complaint. The store manager's complaint email arrives (the
     scanner's function hands the complaint to the email function with the
     shared secret). On the dashboard, push a drill recall: the recall

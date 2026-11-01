@@ -204,7 +204,7 @@ exports.handler = async (event) => {
 
       const html = buildRecallEmailHtml({
         org, recallData, exposure, isDrill, isNO,
-        dashboardUrl: `https://app.batchdapp.com`,
+        dashboardUrl: `https://app.batchdapp.com/retail`,
       });
 
       const res = await fetch('https://api.resend.com/emails', {
