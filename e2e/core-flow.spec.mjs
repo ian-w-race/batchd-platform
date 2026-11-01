@@ -1,7 +1,8 @@
 // The core flow (improvement plan A3, "done when"): receive a delivery,
 // shelf-scan it, push a recall, see it in the store, produce the records.
 // One chain, in order, on one fresh lot code per run; every step reads the
-// staging database as the app does. The camera is not available in the test
+// staging database as the app does. The last step also saves a scan of the
+// recalled lot after the push and checks its scan_recall_matches row. The camera is not available in the test
 // browser, so the label photo is a tiny stand-in blob (the scanner uploads
 // it like any photo) and the lot code is typed, as staff can on a phone.
 // The recall is closed again at the end so staging does not fill up with
@@ -127,7 +128,8 @@ test('3. the admin pushes a recall for the lot and produces the FSMA 204 records
   expect(errors).toEqual([]);
 });
 
-test('4. the store sees the recall at sign-in and when the lot is scanned again', async ({ page }) => {
+test('4. the store sees the recall at sign-in, and a scan of the lot after the push is matched to it', async ({ page }) => {
+  const errors = watchErrors(page);
   await centralSignIn(page, ACTIVE, 'scan');
   // The sign-in alert lists the recall because the shelf scan is still on shelf.
   const overlay = page.locator('#login-recall-overlay');
@@ -145,7 +147,31 @@ test('4. the store sees the recall at sign-in and when the lot is scanned again'
   await startShelfScan(page);
   await expect(page.locator('#pre-placement-recall-alert')).toBeVisible({ timeout: 20_000 });
   await expect(page.locator('#pre-placement-recall-text')).toContainText(PRODUCT);
-  await page.evaluate(() => cancelScan());
+
+  // Staff log the item anyway (the red state relabels the save button).
+  // A scan made after the push gets its own match row: recall_id is the
+  // linked recalls row (the foreign key), recall_event_id the event, so
+  // Live Recall, the export and the scanner's ack strip find it. Before
+  // 2026-11-01 this write put the event id in recall_id and failed with a
+  // 409 that staff never saw.
+  await page.fill('#field-quantity', '1');
+  // The same lot was placed at this store in step 2, so the scanner asks
+  // "Log again anyway?" in a confirm() dialog; the test browser would
+  // dismiss it and the save would stop there.
+  page.once('dialog', (d) => d.accept());
+  await page.click('#btn-save');
+  const linked = await page.evaluate(async (id) => (await sb.from('recalls').select('id').eq('recall_event_id', id)).data.map((r) => r.id), recallEventId);
+  expect(linked, 'one linked recalls row per lot').toHaveLength(1);
+  await expect.poll(async () => page.evaluate(async (id) => {
+    const { data } = await sb.from('scan_recall_matches').select('scan_id, recall_id, recall_event_id, recall_source, scans!inner(lot_number)').eq('recall_event_id', id);
+    return (data || []).map((m) => ({ recall_id: m.recall_id, recall_source: m.recall_source, lot: m.scans.lot_number }));
+  }, recallEventId), { timeout: 30_000 }).toEqual([
+    { recall_id: linked[0], recall_source: 'manufacturer_push', lot: LOT },
+    { recall_id: linked[0], recall_source: 'manufacturer_push', lot: LOT },
+  ]);
+  const scanIds = await page.evaluate(async (id) => (await sb.from('scan_recall_matches').select('scan_id').eq('recall_event_id', id)).data.map((m) => m.scan_id), recallEventId);
+  expect(new Set(scanIds).size, 'the shelf scan from step 2 and the one just saved').toBe(2);
+  expect(errors).toEqual([]);
 });
 
 // Close the test recall so it does not stay live on staging.
