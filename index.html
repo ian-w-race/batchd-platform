@@ -5958,6 +5958,7 @@ function _logRecallMatch(scan, recall, matchType, matchedOn) {
 let activeStoreFilter = null;
 let recallMode = false;
 let currentUser = null;
+let _appInitUserId = null; // showApp start-up ran for this user id (see showApp)
 let _currentOrgId = null;
 let _currentUserRole = null;
 let _currentStoreId = null; // UUID of selected store — set when store dropdown changes
@@ -6000,6 +6001,7 @@ async function initAuth() {
         showLogin();
       }
       currentUser = null;
+      _appInitUserId = null;
     } else if (session) {
       document.getElementById('session-expired').style.display = 'none';
       // Check active flag BEFORE showing app — block immediately with a flag
@@ -6042,8 +6044,14 @@ async function showApp(user) {
     || user.email;
   fetchUserProfile();
 
-  // Prevent double-fire from onAuthStateChange
-  if (currentUser._appInitDone) return;
+  // Prevent double-fire from onAuthStateChange. Fixed 2026-11-01: the flag
+  // used to live on the user object, but initAuth and the auth listener each
+  // pass a fresh copy of the user, so a page opened with a saved session ran
+  // the start-up twice and stacked two "Where are you working today?"
+  // pickers (taps landed on the hidden one). Since the central sign-in every
+  // scanner visit opens with a saved session, so the guard is by user id.
+  if (_appInitUserId === user.id) return;
+  _appInitUserId = user.id;
   currentUser._appInitDone = true;
 
   // ── NETLIFY FUNCTION WARM-UP ─────────────────────────────────
@@ -6727,6 +6735,7 @@ async function signOut() {
   try { stopAutoCapture(); } catch (e) {}
   try { stopSharedStream(); } catch (e) {}
   currentUser = null; // so the SIGNED_OUT handler does not show "Session expired"
+  _appInitUserId = null;
   await sb.auth.signOut();
   if (!_batchdLegacyLogin) location.replace('/login');
 }
@@ -6997,6 +7006,8 @@ async function enforceSessionStoreSelection() {
 async function _showSessionStorePicker() {
   return new Promise(async (resolve) => {
     if (!_currentOrgId) { resolve(); return; }
+    // Never stack a second picker over an open one.
+    if (document.getElementById('session-store-modal')) { resolve(); return; }
 
     // Fetch active stores in the org and the user's primary store.
     const [storesRes, memberRes] = await Promise.all([
