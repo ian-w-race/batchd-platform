@@ -22,7 +22,7 @@ const check = (name, fn) => {
   }
 };
 
-const APP_PAGES = ['index.html', 'dashboard.html', 'signup.html', 'join.html', 'admin.html'];
+const APP_PAGES = ['index.html', 'dashboard.html', 'signup.html', 'join.html', 'admin.html', 'login.html'];
 const htmlFiles = readdirSync(ROOT).filter((f) => f.endsWith('.html'));
 
 // Inline <script> blocks (no src, not JSON-LD) of an HTML file.

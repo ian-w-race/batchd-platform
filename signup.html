@@ -361,7 +361,7 @@
       </svg>
       <span class="logo-text">Batch'd</span>
     </a>
-    <a href="https://app.batchdapp.com" class="topbar-link" id="signup-login-link">Already have an account? Log in →</a>
+    <a href="/login" class="topbar-link" id="signup-login-link">Already have an account? Log in →</a>
   </div>
 
   <!-- Card -->
@@ -657,6 +657,9 @@ if (BATCHD_ENV === 'staging') {
         ['https://corporate.batchdapp.com/', '/dashboard.html'],
         ['https://app.batchdapp.com/dashboard.html', '/dashboard.html'],
         ['https://app.batchdapp.com/manufacturer.html', '/manufacturer.html'],
+        ['https://app.batchdapp.com/retail', '/retail'],
+        ['https://app.batchdapp.com/scan', '/scan'],
+        ['https://app.batchdapp.com/login', '/login'],
         ['https://app.batchdapp.com/signup', '/signup'],
         ['https://batchd-app.netlify.app', '/']
       ];
@@ -1029,13 +1032,13 @@ async function submitFinal() {
 // On staging hosts the "Log in" link stays on this preview (2026-10-24).
 document.addEventListener('DOMContentLoaded', function () {
   var l = document.getElementById('signup-login-link');
-  if (l) l.href = batchdLink('https://app.batchdapp.com', '/');
+  if (l) l.href = '/login';
 });
 
 function launchApp() {
   // Retailers always land in the corporate dashboard — not the scanning app.
   // The scanning app is for staff invited BY the corp admin, not the admin themselves.
-  window.location.href = batchdLink('https://app.batchdapp.com/dashboard.html', '/dashboard.html');
+  window.location.href = '/retail';
 }
 
 // ── Handle existing session (already logged in) ───────────────
@@ -1052,15 +1055,8 @@ async function checkExistingSession() {
 
   if (member) {
     // Has an org — send to the right place
-    const role = member.role;
-    if (role === 'mfr_admin' || role === 'mfr_qa') {
-      window.location.href = batchdLink('https://app.batchdapp.com/manufacturer.html', '/manufacturer.html');
-    } else if (role === 'staff' || role === 'store_manager') {
-      window.location.href = batchdLink('https://batchd-app.netlify.app', '/');
-    } else {
-      // corp_admin → corporate dashboard
-      window.location.href = batchdLink('https://app.batchdapp.com/dashboard.html', '/dashboard.html');
-    }
+    // Central sign-in (2026-11-01): the router sends each role to its app.
+    window.location.href = '/login';
     return;
   }
 

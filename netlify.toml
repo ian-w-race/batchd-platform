@@ -1,3 +1,87 @@
+# ── One address (2026-11-01, Phase 2a step 2) ───────────────
+# Every app lives on app.batchdapp.com: / is the sign-in page, /retail the
+# Retail app (dashboard.html), /scan the scanner (index.html). The browser
+# keeps a sign-in per address, so one address means one sign-in.
+# Old addresses forward with the path's query string kept (Netlify appends
+# it to a 301), so old links and links in sent emails still land:
+# - corporate.batchdapp.com: the root and /dashboard go to /retail; any
+#   other path goes to the same path on app.batchdapp.com.
+# - /dashboard(.html) on app., www. and batchd-app.netlify.app go to /retail.
+# - www.batchdapp.com/ goes to app.batchdapp.com/. Other www paths stay:
+#   complaint-widget.js posts to www's triage function.
+# - batchd-app.netlify.app keeps serving the scanner: phones that installed
+#   it from there sync their offline queue first, then index.html shows a
+#   "Batch'd has moved" screen pointing at app.batchdapp.com/scan.
+# This block sits first because Netlify uses the first matching rule: the
+# path aliases below (/retail, /join and so on) must not answer on the old
+# hosts. Rules are host-exact, so deploy previews (name--site.netlify.app) serve
+# index.html at / and use /login, /retail and /scan from the rules above.
+[[redirects]]
+  from = "https://corporate.batchdapp.com/"
+  to = "https://app.batchdapp.com/retail"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "https://corporate.batchdapp.com/dashboard.html"
+  to = "https://app.batchdapp.com/retail"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "https://corporate.batchdapp.com/dashboard"
+  to = "https://app.batchdapp.com/retail"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "https://corporate.batchdapp.com/*"
+  to = "https://app.batchdapp.com/:splat"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "https://app.batchdapp.com/dashboard.html"
+  to = "/retail"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "https://app.batchdapp.com/dashboard"
+  to = "/retail"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "https://batchd-app.netlify.app/dashboard.html"
+  to = "https://app.batchdapp.com/retail"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "https://batchd-app.netlify.app/dashboard"
+  to = "https://app.batchdapp.com/retail"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "https://www.batchdapp.com/"
+  to = "https://app.batchdapp.com/"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "https://www.batchdapp.com/dashboard.html"
+  to = "https://app.batchdapp.com/retail"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "https://www.batchdapp.com/dashboard"
+  to = "https://app.batchdapp.com/retail"
+  status = 301
+  force = true
+
 [[redirects]]
   from = "/join"
   to = "/join.html"
@@ -26,77 +110,32 @@
   to = "/privacy.html"
   status = 200
 
-# ── Domain hygiene (2026-08-06) ─────────────────────────────
-# One Netlify site serves every domain, so by default every file is
-# reachable on every domain. These HOST-SCOPED rules give each domain
-# one job: corporate.batchdapp.com is the dashboard (clean root URL),
-# app.batchdapp.com / batchd-app.netlify.app are the scanner. Rules are
-# host-exact, so staging-- and deploy-preview-- subdomains are
-# unaffected. The JS domain-detection at the top of index.html still
-# handles the retired manufacturer/admin/supplier stubs.
-
-# corporate root serves the dashboard without /dashboard.html in the URL
+# ── Central sign-in on one address (2026-11-01) ─────────────
+# docs/PORTALS-PLAN.md, Phase 2a, step 1. /login is the sign-in page and
+# app router on every host (deploy previews included). /retail and /scan
+# open the dashboard and the scanner under the same address, so one
+# sign-in serves both: the browser keeps the session per address. On
+# app.batchdapp.com the root is the sign-in page. The old addresses are
+# forwarded in the "One address" block below.
 [[redirects]]
-  from = "https://corporate.batchdapp.com/"
+  from = "/login"
+  to = "/login.html"
+  status = 200
+
+[[redirects]]
+  from = "/retail"
   to = "/dashboard.html"
   status = 200
-  force = true
-
-# canonicalise the file path on corporate to the clean root
-[[redirects]]
-  from = "https://corporate.batchdapp.com/dashboard.html"
-  to = "https://corporate.batchdapp.com/"
-  status = 301
-  force = true
-
-# the dashboard is only presented on corporate.*
-[[redirects]]
-  from = "https://app.batchdapp.com/dashboard.html"
-  to = "https://corporate.batchdapp.com/"
-  status = 301
-  force = true
 
 [[redirects]]
-  from = "https://batchd-app.netlify.app/dashboard.html"
-  to = "https://corporate.batchdapp.com/"
-  status = 301
-  force = true
-
-# Extensionless paths (2026-09-13). Netlify's Pretty URLs setting (asset
-# optimization in the Netlify UI, not in this file) serves every page at
-# its extensionless path and rewrites links in the deployed HTML to match.
-# Verified 2026-09-13: /dashboard.html 301'd correctly, but /dashboard
-# served the dashboard on the scanner domains, and www.batchdapp.com had
-# no rule at all. These five rules close both gaps. Netlify passes the
-# query string through on these 301s, so ?panel=recalls survives.
-[[redirects]]
-  from = "https://corporate.batchdapp.com/dashboard"
-  to = "https://corporate.batchdapp.com/"
-  status = 301
-  force = true
+  from = "/scan"
+  to = "/index.html"
+  status = 200
 
 [[redirects]]
-  from = "https://app.batchdapp.com/dashboard"
-  to = "https://corporate.batchdapp.com/"
-  status = 301
-  force = true
-
-[[redirects]]
-  from = "https://batchd-app.netlify.app/dashboard"
-  to = "https://corporate.batchdapp.com/"
-  status = 301
-  force = true
-
-[[redirects]]
-  from = "https://www.batchdapp.com/dashboard.html"
-  to = "https://corporate.batchdapp.com/"
-  status = 301
-  force = true
-
-[[redirects]]
-  from = "https://www.batchdapp.com/dashboard"
-  to = "https://corporate.batchdapp.com/"
-  status = 301
+  from = "https://app.batchdapp.com/"
+  to = "/login.html"
+  status = 200
   force = true
 
 # ── Functions bundler (2026-09-20) ───────────────────────────────────

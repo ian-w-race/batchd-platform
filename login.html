@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Sign in to Batch'd</title>
+  <meta name="robots" content="noindex" />
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <meta name="theme-color" content="#34d399" />
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800;900&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+  <!-- Sentry error reporting: browser loader, EU-hosted (js-de). Lazy: the SDK downloads only when an error fires. -->
+  <script src="https://js-de.sentry-cdn.com/e4ba75304d1e9453ebc99a13d632d9c7.min.js" crossorigin="anonymous"></script>
+  <script>window.Sentry && Sentry.onLoad(function () { Sentry.setTag('app', 'login'); });</script>
+  <!-- Pinned with SRI, same version and hash as the other app pages. -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.1/dist/umd/supabase.js" integrity="sha384-0x8XPoHt08aHZj+RHs8ojmhZ5IDsTLjPgblgWdriayWriqv9dic3Vkv1K2+UqgZV" crossorigin="anonymous"></script>
+  <script>
+    // Theme is an operator choice saved by the apps (never prefers-color-scheme).
+    (function () {
+      var t = 'dark';
+      try { t = localStorage.getItem('batchd-theme') || 'dark'; } catch (_) {}
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+    // A password recovery link carries type=recovery in the hash. Note it
+    // before the Supabase client reads and clears the hash.
+    window._batchdRecovery = /type=recovery/.test(location.hash);
+  </script>
+  <style>
+    /* Design tokens: copied from dashboard.html (source of truth
+       assets/design-tokens.css). Keep in step with the other copies. */
+    @font-face {
+      font-family: 'Figtree';
+      font-style: normal;
+      font-weight: 800;
+      font-display: swap;
+      src: url('/fonts/Figtree-ExtraBold.ttf') format('truetype');
+    }
+
+    :root,
+    [data-theme="dark"] {
+      /* ── BACKGROUND / ELEVATION (dark elevates with lighter surface fills) ── */
+      --background-base:      #080f12;
+      --background-surface:   #0d1e1c;
+      --background-elevated:  #13302b;
+      --background-overlay:   rgba(8,15,18,0.85);
+      --background-input:     #13302b;
+      --background-disabled:  #0d1e1c;
+
+      /* ── TEXT (off-white primary, never pure #FFFFFF) ── */
+      --text-primary:    #EAF6F0;
+      --text-secondary:  #C3E0D4;
+      --text-muted:      #6AAF9E;
+      --text-disabled:   #486C63;
+      --text-on-accent:  #052E16;
+      --text-link:       var(--accent-primary);
+
+      /* ── BORDERS / RINGS ── */
+      --border-subtle:   rgba(234,246,240,0.08);
+      --border-default:  #163d37;
+      --border-strong:   rgba(52,211,153,0.35);
+      --border-focus:    #34D399;
+
+      /* ── ACCENT (mint — desaturated emerald) ── */
+      --accent-primary:           #34D399;
+      --accent-primary-hover:     #6EE7B7;
+      --accent-primary-active:    #1FA37A;
+      --accent-primary-disabled:  #1C3A31;
+      --accent-on-primary:        var(--text-on-accent);
+      --accent-soft:              rgba(52,211,153,0.10);
+      --accent-soft-strong:       rgba(52,211,153,0.18);
+
+      /* ── SEMANTIC ── */
+      --semantic-danger:       #FF6B6B;
+      --semantic-danger-hover: #FF8E8E;
+      --semantic-danger-tint:  rgba(255,107,107,0.10);
+      --semantic-warn:         #F5A623;
+      --semantic-warn-hover:   #FFC264;
+      --semantic-warn-tint:    rgba(245,166,35,0.10);
+      --semantic-info:         #5BC9F8;
+      --semantic-info-hover:   #8AD9FA;
+      --semantic-info-tint:    rgba(91,201,248,0.10);
+      --semantic-success:      var(--accent-primary);
+      --semantic-success-tint: var(--accent-soft);
+
+      /* ── ELEVATION (dark: surfaces step up, shadows nearly invisible) ── */
+      --shadow-xs: none;
+      --shadow-sm: 0 1px 4px rgba(0,0,0,0.35);
+      --shadow-md: 0 4px 16px rgba(0,0,0,0.40);
+      --shadow-lg: 0 16px 48px rgba(0,0,0,0.50), 0 4px 16px rgba(0,0,0,0.35);
+      --shadow-xl: 0 32px 80px rgba(0,0,0,0.55);
+      --shadow-accent: 0 4px 24px rgba(52,211,153,0.35);
+      /* Recall stage colors with no semantic neighbor (Live Recall map and ack rows). 2026-10-18. */
+      --stage-pulled-rgb:   249,213,110;
+      --stage-disposed-rgb: 139,233,196;
+
+      /* ── FOCUS RING (halo: 2px base offset + 2px accent ≥ 3:1 vs any surface) ── */
+      --ring-focus: 0 0 0 2px var(--background-base), 0 0 0 4px var(--accent-primary);
+
+      /* ── RGB triples for translucent tints — used by inline rgba(var(--*-rgb), α) ── */
+      --accent-rgb:        52, 211, 153;
+      --accent-deep-rgb:   31, 163, 122;
+      --accent-alt-rgb:    52, 211, 153;
+      --accent-muted-rgb:  106, 175, 158;
+      --danger-rgb:        255, 107, 107;
+      --warn-rgb:          245, 166, 35;
+      --info-rgb:          91, 201, 248;
+      --info-light-rgb:    56, 189, 248;
+      --info-soft-rgb:     123, 169, 255;
+      --surface-tint-rgb:  22, 61, 55;
+
+      color-scheme: dark;
+    }
+
+    /* ── LIGHT — not an inversion; hues darkened/desaturated to hold AA on white ── */
+    [data-theme="light"] {
+      --background-base:      #F5F7F6;
+      --background-surface:   #FFFFFF;
+      --background-elevated:  #FFFFFF;
+      --background-overlay:   rgba(245,247,246,0.85);
+      --background-input:     #FFFFFF;
+      --background-disabled:  #ECEFED;
+
+      --text-primary:    #0E1F1A;
+      --text-secondary:  #2C3D37;
+      --text-muted:      #56756B;
+      --text-disabled:   #9FB5AC;
+      --text-on-accent:  #FFFFFF;
+
+      --border-subtle:   rgba(14,31,26,0.06);
+      --border-default:  rgba(7,122,85,0.22);
+      --border-strong:   rgba(7,122,85,0.45);
+      --border-focus:    #077A55;
+
+      --accent-primary:           #077A55;
+      --accent-primary-hover:     #066644;
+      --accent-primary-active:    #054F36;
+      --accent-primary-disabled:  #B5D5CA;
+      --accent-on-primary:        #FFFFFF;
+      --accent-soft:              rgba(7,122,85,0.08);
+      --accent-soft-strong:       rgba(7,122,85,0.14);
+
+      --semantic-danger:       #DC2626;
+      --semantic-danger-hover: #B91C1C;
+      --semantic-danger-tint:  rgba(220,38,38,0.10);
+      --semantic-warn:         #BE5A0E;
+      --semantic-warn-hover:   #92400E;
+      --semantic-warn-tint:    rgba(190,90,14,0.10);
+      --semantic-info:         #057AAB;
+      --semantic-info-hover:   #036186;
+      --semantic-info-tint:    rgba(5,122,171,0.10);
+      --semantic-success:      #08825C;
+      --semantic-success-tint: var(--accent-soft);
+
+      /* Light elevation = soft layered shadows */
+      --shadow-xs: 0 1px 1px rgba(7,30,25,0.04);
+      --shadow-sm: 0 1px 2px rgba(7,30,25,0.06), 0 1px 3px rgba(7,30,25,0.08);
+      --shadow-md: 0 4px 6px rgba(7,30,25,0.04), 0 10px 15px rgba(7,30,25,0.08);
+      --shadow-lg: 0 10px 15px rgba(7,30,25,0.05), 0 20px 25px rgba(7,30,25,0.10);
+      --shadow-xl: 0 25px 50px rgba(7,30,25,0.16);
+      --shadow-accent: 0 4px 14px rgba(7,122,85,0.28);
+      /* Light stage colors: darkened amber and green so stage text holds 4.5:1 on white (Claude's picks, 2026-10-18; designer to confirm). */
+      --stage-pulled-rgb:   138,106,0;
+      --stage-disposed-rgb: 46,125,79;
+
+      --ring-focus: 0 0 0 2px var(--background-base), 0 0 0 4px var(--accent-primary);
+
+      --accent-rgb:        7, 122, 85;
+      --accent-deep-rgb:   5, 94, 64;
+      --accent-alt-rgb:    7, 122, 85;
+      --accent-muted-rgb:  20, 90, 65;
+      --danger-rgb:        220, 38, 38;
+      --warn-rgb:          190, 90, 14;
+      --info-rgb:          5, 122, 171;
+      --info-light-rgb:    14, 165, 233;
+      --info-soft-rgb:     59, 130, 246;
+      --surface-tint-rgb:  220, 240, 230;
+
+      color-scheme: light;
+    }
+
+    /* ── Shared scale tokens (typography, spacing, radii, motion) ── */
+    :root {
+      --font-display: 'Figtree', system-ui, -apple-system, Segoe UI, sans-serif;
+      --font-body:    'Figtree', system-ui, -apple-system, Segoe UI, sans-serif;
+      --font-mono:    'DM Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+      --fs-eyebrow: 11px; --fs-label: 10px; --fs-meta: 12px;
+      --fs-body: 13px; --fs-body-lg: 15px;
+      --fs-h4: 17px; --fs-h3: 22px; --fs-h2: 28px; --fs-h1: 46px;
+      --fs-hero: clamp(40px, 7vw, 80px);
+
+      --lh-tight: 1.05; --lh-snug: 1.20; --lh-body: 1.65; --lh-loose: 1.75;
+      --ls-tight: -0.04em; --ls-tightish: -0.025em; --ls-mono: 0.06em; --ls-wide: 0.12em;
+
+      --fw-regular: 400; --fw-medium: 500; --fw-semibold: 600;
+      --fw-bold: 700; --fw-extrabold: 800; --fw-black: 900;
+
+      --r-xs: 6px; --r-sm: 8px; --r-md: 10px; --r-lg: 12px;
+      --r-xl: 16px; --r-2xl: 20px; --r-pill: 999px;
+
+      --s-1: 4px;  --s-2: 8px;   --s-3: 12px; --s-4: 16px;
+      --s-5: 20px; --s-6: 24px;  --s-8: 32px; --s-10: 40px;
+      --s-12: 48px; --s-16: 64px; --s-20: 80px; --s-24: 96px; --s-32: 128px;
+
+      --ease-out:    cubic-bezier(0, 0, 0.2, 1);
+      --ease-snap:   cubic-bezier(0.4, 0, 0.2, 1);
+      --dur-fast:    0.15s;
+      --dur-normal:  0.20s;
+      --dur-slow:    0.40s;
+    }
+
+
+
+    /* ── Sign-in page (2026-11-01) ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { min-height: 100%; }
+    body {
+      background: var(--background-base);
+      color: var(--text-primary);
+      font-family: var(--font-body);
+      font-size: var(--fs-body);
+      line-height: var(--lh-body);
+      display: flex; flex-direction: column; min-height: 100vh;
+    }
+    .page { flex: 1; display: flex; align-items: center; justify-content: center; padding: var(--s-6) var(--s-4); }
+    .card {
+      width: 100%; max-width: 420px;
+      background: var(--background-surface);
+      border: 1px solid var(--border-default);
+      border-radius: var(--r-xl);
+      padding: var(--s-10) var(--s-8);
+      box-shadow: var(--shadow-lg);
+    }
+    .brand { display: flex; align-items: center; gap: var(--s-3); margin-bottom: var(--s-8); }
+    .brand-mark { width: 34px; height: 34px; flex-shrink: 0; }
+    .brand-name { font-family: var(--font-display); font-weight: var(--fw-extrabold); font-size: var(--fs-h4); color: var(--text-primary); line-height: var(--lh-snug); }
+    .brand-sub { font-family: var(--font-mono); font-size: var(--fs-label); letter-spacing: var(--ls-wide); text-transform: uppercase; color: var(--text-muted); }
+    h1 { font-family: var(--font-display); font-weight: var(--fw-extrabold); font-size: var(--fs-h3); line-height: var(--lh-snug); margin-bottom: var(--s-2); }
+    .lede { color: var(--text-muted); margin-bottom: var(--s-6); }
+    .field { margin-bottom: var(--s-4); }
+    .field label {
+      display: block; margin-bottom: var(--s-2);
+      font-family: var(--font-mono); font-size: var(--fs-label); letter-spacing: var(--ls-mono);
+      text-transform: uppercase; color: var(--text-muted);
+    }
+    .field input {
+      width: 100%; padding: 11px 14px;
+      background: var(--background-input); color: var(--text-primary);
+      border: 1px solid var(--border-default); border-radius: var(--r-md);
+      font-family: var(--font-mono); font-size: 16px; /* 16px keeps iOS from zooming on focus */
+      transition: border-color var(--dur-fast) var(--ease-out);
+    }
+    .field input:focus { outline: none; border-color: var(--border-focus); box-shadow: var(--ring-focus); }
+    .btn {
+      width: 100%; display: flex; align-items: center; justify-content: center; gap: var(--s-2);
+      padding: 13px; border: none; border-radius: var(--r-md);
+      background: var(--accent-primary); color: var(--accent-on-primary);
+      font-family: var(--font-body); font-weight: var(--fw-bold); font-size: var(--fs-body-lg);
+      cursor: pointer; transition: background var(--dur-fast) var(--ease-out);
+    }
+    .btn:hover { background: var(--accent-primary-hover); }
+    .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .btn-ghost {
+      background: none; border: none; color: var(--text-muted); cursor: pointer;
+      font-family: var(--font-mono); font-size: var(--fs-meta); padding: var(--s-2);
+    }
+    .btn-ghost:hover { color: var(--accent-primary); }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); margin-top: var(--s-4); flex-wrap: wrap; }
+    :focus-visible { outline: none; box-shadow: var(--ring-focus); border-radius: var(--r-xs); }
+    .msg { display: none; font-size: var(--fs-meta); padding: 10px 12px; border-radius: var(--r-sm); margin-bottom: var(--s-4); line-height: 1.5; }
+    .msg.error { display: block; background: var(--semantic-danger-tint); color: var(--semantic-danger); border: 1px solid rgba(var(--danger-rgb), 0.3); }
+    .msg.info { display: block; background: var(--accent-soft); color: var(--accent-primary); border: 1px solid var(--border-strong); }
+    .apps { display: flex; flex-direction: column; gap: var(--s-3); margin-bottom: var(--s-4); }
+    .app {
+      display: flex; align-items: center; gap: var(--s-4); width: 100%; text-align: left;
+      padding: var(--s-4); border-radius: var(--r-lg); cursor: pointer;
+      background: var(--background-elevated); border: 1px solid var(--border-default); color: var(--text-primary);
+      font-family: var(--font-body);
+      transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+    }
+    .app:hover { border-color: var(--border-strong); background: var(--accent-soft); }
+    .app-icon {
+      width: 40px; height: 40px; flex-shrink: 0; border-radius: var(--r-md);
+      display: flex; align-items: center; justify-content: center;
+      background: var(--accent-soft-strong); color: var(--accent-primary);
+    }
+    .app-name { font-weight: var(--fw-bold); font-size: var(--fs-body-lg); display: flex; align-items: center; gap: var(--s-2); }
+    .app-desc { color: var(--text-muted); font-size: var(--fs-meta); line-height: 1.45; }
+    .app-arrow { margin-left: auto; color: var(--text-muted); flex-shrink: 0; }
+    .tag {
+      font-family: var(--font-mono); font-size: var(--fs-label); letter-spacing: var(--ls-mono); text-transform: uppercase;
+      padding: 2px 8px; border-radius: var(--r-pill); background: var(--accent-soft-strong); color: var(--accent-primary); font-weight: var(--fw-medium);
+    }
+    .who { color: var(--text-muted); font-size: var(--fs-meta); word-break: break-all; }
+    .center { text-align: center; }
+    .spinner { width: 22px; height: 22px; border: 2px solid var(--border-default); border-top-color: var(--accent-primary); border-radius: 50%; animation: spin 0.7s linear infinite; margin: 0 auto var(--s-4); }
+    .btn .spinner { width: 16px; height: 16px; margin: 0; border-color: rgba(var(--accent-rgb), 0.3); border-top-color: var(--accent-on-primary); }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .otp { text-align: center; letter-spacing: 0.3em; font-size: var(--fs-h3) !important; }
+    .theme-toggle { position: fixed; top: var(--s-4); right: var(--s-4); }
+    footer { text-align: center; padding: var(--s-5); font-size: var(--fs-meta); color: var(--text-muted); }
+    footer a { color: var(--text-muted); text-decoration: none; margin: 0 var(--s-2); }
+    footer a:hover { color: var(--accent-primary); }
+    @media (max-width: 480px) { .card { padding: var(--s-8) var(--s-5); border-radius: var(--r-lg); } }
+    @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation-duration: 0.01s !important; } }
+
+  </style>
+</head>
+<body>
+<button type="button" class="btn-ghost theme-toggle" id="theme-btn" aria-label="Switch between dark and light theme">Theme</button>
+<main class="page">
+  <div class="card">
+    <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 34 34" aria-hidden="true"><rect x="2" y="2" width="13" height="13" rx="3" fill="var(--accent-primary)"/><rect x="19" y="2" width="13" height="13" rx="3" fill="var(--accent-primary)" opacity="0.55"/><rect x="2" y="19" width="13" height="13" rx="3" fill="var(--accent-primary)" opacity="0.55"/><rect x="19" y="19" width="13" height="13" rx="3" fill="var(--accent-primary)"/></svg>
+        <div><div class="brand-name">Batch'd</div><div class="brand-sub">Food traceability</div></div>
+      </div>
+
+    <section id="view-busy">
+      <div class="center" style="padding:var(--s-6) 0;">
+        <div class="spinner"></div>
+        <div id="busy-text" class="who">Loading…</div>
+      </div>
+    </section>
+
+    <section id="view-signin" hidden>
+      <h1>Sign in</h1>
+      <p class="lede">One sign-in for every Batch'd app. You go straight to the ones your account uses.</p>
+      <div id="signin-msg" class="msg" role="alert"></div>
+      <form id="signin-form" novalidate>
+        <div class="field"><label for="email">Email</label><input id="email" type="email" autocomplete="username" inputmode="email" /></div>
+        <div class="field"><label for="password">Password</label><input id="password" type="password" autocomplete="current-password" /></div>
+        <button type="submit" class="btn" id="signin-btn">Sign in <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg></button>
+      </form>
+      <div class="row">
+        <button type="button" class="btn-ghost" id="forgot-btn">Forgot password</button>
+        <a class="btn-ghost" href="/signup" style="text-decoration:none;">Create an account</a>
+      </div>
+    </section>
+
+    <section id="view-mfa" hidden>
+      <h1>Two-factor verification</h1>
+      <p class="lede">Enter the 6-digit code from your authenticator app.</p>
+      <div id="mfa-msg" class="msg" role="alert"></div>
+      <form id="mfa-form" novalidate>
+        <div class="field"><label for="mfa-code">Code</label><input id="mfa-code" class="otp" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*" maxlength="6" placeholder="000000" /></div>
+        <button type="submit" class="btn" id="mfa-btn">Verify <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg></button>
+      </form>
+      <div class="row"><button type="button" class="btn-ghost" data-signout>Use a different account</button></div>
+    </section>
+
+    <section id="view-choose" hidden>
+      <h1>Choose an app</h1>
+      <p class="lede">Your account can open more than one Batch'd app.</p>
+      <div class="apps" id="apps"></div>
+      <div class="row">
+        <span class="who" id="choose-who"></span>
+        <button type="button" class="btn-ghost" data-signout>Sign out</button>
+      </div>
+    </section>
+
+    <section id="view-deactivated" hidden>
+      <h1>Account deactivated</h1>
+      <p class="lede">Your organization's administrator has deactivated your account. Contact them to restore access.</p>
+      <button type="button" class="btn" data-signout>Sign out</button>
+    </section>
+
+    <section id="view-reset" hidden>
+      <h1>Set a new password</h1>
+      <p class="lede">Choose a new password for your Batch'd account.</p>
+      <div id="reset-msg" class="msg" role="alert"></div>
+      <form id="reset-form" novalidate>
+        <div class="field"><label for="new-pw">New password</label><input id="new-pw" type="password" autocomplete="new-password" /></div>
+        <div class="field"><label for="new-pw2">Repeat it</label><input id="new-pw2" type="password" autocomplete="new-password" /></div>
+        <button type="submit" class="btn" id="reset-btn">Save password <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg></button>
+      </form>
+    </section>
+  </div>
+</main>
+<footer><a href="/privacy">Privacy</a><a href="/terms">Terms</a></footer>
+
+<script>
+// Database selection (2026-10-24). The real domains use production.
+// Netlify deploy previews and branch deploys (any "name--site.netlify.app"
+// host) and the local test server use the staging project, so testing a
+// pull request never touches customer data. See CLAUDE.md, "How we work".
+const BATCHD_ENV = (function () {
+  var h = location.hostname;
+  if (h === 'localhost' || h === '127.0.0.1' || /--[a-z0-9-]+\.netlify\.app$/.test(h)) return 'staging';
+  return 'production';
+})();
+const SUPABASE_URL = BATCHD_ENV === 'staging'
+  ? 'https://tiwrrocdwljazweveeth.supabase.co'
+  : 'https://lurxucdmrugikdlvvebc.supabase.co';
+const SUPABASE_KEY = BATCHD_ENV === 'staging'
+  ? 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRpd3Jyb2Nkd2xqYXp3ZXZlZXRoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI4MzQ4ODcsImV4cCI6MjEwODQxMDg4N30.OfjEU4oprGZmvm2dLmUnZDD7k7KP9bycS7FwXqhgIjc'
+  : 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1cnh1Y2RtcnVnaWtkbHZ2ZWJjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTU5NTQsImV4cCI6MjA4OTgzMTk1NH0.ewNhBbF8nUzpF9Ve822D9t8VLwB_hjk27KuFFEXct0A';
+// Same-origin links on staging hosts; the production URL everywhere else.
+function batchdLink(productionUrl, stagingPath) {
+  return BATCHD_ENV === 'staging' ? stagingPath : productionUrl;
+}
+if (BATCHD_ENV === 'staging') {
+  (function () {
+    function addBadge() {
+      var b = document.createElement('div');
+      b.id = 'batchd-staging-badge';
+      b.textContent = 'Staging database · test data only';
+      b.setAttribute('role', 'status');
+      b.setAttribute('style', "position:fixed;left:12px;bottom:12px;z-index:2147483000;pointer-events:none;"
+        + "font-family:'DM Mono',monospace;font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;"
+        + "padding:5px 10px;border-radius:999px;background:var(--warn, #F5A623);color:var(--background-base, #080F12);");
+      document.body.appendChild(b);
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', addBadge);
+    else addBadge();
+    // Links and window.open calls that point at the production apps are
+    // rewritten to this preview's own origin, so a click never leaves
+    // staging. location.replace cannot be intercepted; those call sites
+    // use batchdLink() directly.
+    window.batchdPreviewUrl = function (u) {
+      if (typeof u !== 'string') return u;
+      var map = [
+        ['https://corporate.batchdapp.com/dashboard.html', '/dashboard.html'],
+        ['https://corporate.batchdapp.com/', '/dashboard.html'],
+        ['https://app.batchdapp.com/dashboard.html', '/dashboard.html'],
+        ['https://app.batchdapp.com/manufacturer.html', '/manufacturer.html'],
+        ['https://app.batchdapp.com/retail', '/retail'],
+        ['https://app.batchdapp.com/scan', '/scan'],
+        ['https://app.batchdapp.com/login', '/login'],
+        ['https://app.batchdapp.com/signup', '/signup'],
+        ['https://batchd-app.netlify.app', '/']
+      ];
+      for (var i = 0; i < map.length; i++) {
+        if (u.indexOf(map[i][0]) === 0) {
+          var rest = u.slice(map[i][0].length);
+          if (map[i][1] === '/' && rest.charAt(0) === '/') rest = rest.slice(1);
+          return location.origin + map[i][1] + rest;
+        }
+      }
+      return u;
+    };
+    var _open = window.open;
+    window.open = function (u) {
+      var args = Array.prototype.slice.call(arguments);
+      args[0] = window.batchdPreviewUrl(u);
+      return _open.apply(window, args);
+    };
+    document.addEventListener('click', function (e) {
+      var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+      if (a) { var r = window.batchdPreviewUrl(a.getAttribute('href')); if (r !== a.getAttribute('href')) a.setAttribute('href', r); }
+    }, true);
+  })();
+}
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+</script>
+<script>
+
+// ── Central sign-in and app router (2026-11-01, docs/PORTALS-PLAN.md Phase 2a) ──
+// Everyone signs in here. After sign-in the page reads the person's
+// memberships and sends them to the one app they use, or shows a short
+// chooser when they have more than one. Every app still checks the person
+// itself; this routing is a convenience, and RLS stays the real boundary.
+// The apps sit on the same address (app.batchdapp.com/retail, /scan), so
+// the session saved here is the one they read.
+
+// ROUTER START (pure; tests/login-router.test.mjs loads this block)
+const BATCHD_APPS = {
+  retail:       { path: '/retail',           name: 'Retail',       desc: 'Recalls, stores, deliveries and compliance for your organization.' },
+  scan:         { path: '/scan',             name: 'Scanner',      desc: 'Scan shelves and record deliveries in the store.' },
+  manufacturer: { path: '/manufacturer.html', name: 'Manufacturer', desc: 'The manufacturer portal is being rebuilt.' },
+  admin:        { path: '/admin.html',       name: 'Admin',        desc: "Batch'd staff tools." },
+};
+const BATCHD_APP_ORDER = ['retail', 'scan', 'manufacturer', 'admin'];
+
+// memberships: rows of organisation_members with { role, active,
+// is_batched_admin, organisations: { type } | null }.
+// Returns { kind: 'signup' } | { kind: 'deactivated' } | { kind: 'apps', apps: [...] }.
+function batchdRoute(memberships) {
+  const rows = Array.isArray(memberships) ? memberships : [];
+  if (!rows.length) return { kind: 'signup' };
+  const active = rows.filter((m) => m && m.active !== false);
+  if (!active.length) return { kind: 'deactivated' };
+  const set = new Set();
+  for (const m of active) {
+    const type = m.organisations && m.organisations.type;
+    if (type === 'manufacturer' || m.role === 'mfr_admin' || m.role === 'mfr_qa') {
+      set.add('manufacturer');
+    } else if (m.role === 'staff') {
+      set.add('scan');
+    } else if (m.role === 'store_manager' || m.role === 'corp_admin' || m.role === 'platform_admin') {
+      set.add('retail'); set.add('scan');
+    }
+    if (m.is_batched_admin === true) set.add('admin');
+  }
+  const apps = BATCHD_APP_ORDER.filter((k) => set.has(k));
+  if (!apps.length) return { kind: 'deactivated' };
+  return { kind: 'apps', apps };
+}
+
+// The chooser lists the last app used on this device first.
+function batchdOrderApps(apps, last) {
+  if (!last || apps.indexOf(last) < 0) return apps.slice();
+  return [last].concat(apps.filter((a) => a !== last));
+}
+
+// Where to go once the apps are known (decision Q17, 2026-11-01):
+// - one app: straight there;
+// - ?app=X for an app the person may open: there;
+// - otherwise the app last used on this device, unless ?choose=1 (the
+//   "Switch app" link) asks for the chooser;
+// - otherwise the chooser.
+// ?next= carries a deep link such as /retail?panel=recalls. Only its query
+// string is kept, appended to the app's own path, so it can never send the
+// person to another site or another app.
+function batchdPick(apps, search, last) {
+  const params = new URLSearchParams(search || '');
+  let query = '';
+  const next = params.get('next');
+  if (next && next.charAt(0) === '/' && next.charAt(1) !== '/') {
+    const q = next.indexOf('?');
+    if (q >= 0) query = next.slice(q);
+  }
+  const want = params.get('app');
+  if (apps.length === 1) return { go: apps[0], query: want === apps[0] ? query : '' };
+  if (want && apps.indexOf(want) >= 0) return { go: want, query };
+  if (!params.has('choose') && last && apps.indexOf(last) >= 0) return { go: last, query: '' };
+  return { choose: batchdOrderApps(apps, last) };
+}
+// ROUTER END
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const ICONS = {
+  retail: '<path d="M3 9l1-5h16l1 5"/><path d="M4 9v11h16V9"/><path d="M9 20v-6h6v6"/>',
+  scan: '<path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 8v8M11 8v8M15 8v8M18 8v8"/>',
+  manufacturer: '<path d="M2 20h20"/><path d="M4 20V10l6 4V10l6 4V6l4-2v16"/>',
+  admin: '<path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/>',
+  arrow: '<path d="M5 12h14"/><path d="m13 6 6 6-6 6"/>',
+};
+const svg = (name, size) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
+const lastKey = (uid) => 'batchd_last_app:' + uid;
+function readLast(uid) { try { return localStorage.getItem(lastKey(uid)); } catch (_) { return null; } }
+function saveLast(uid, app) { try { localStorage.setItem(lastKey(uid), app); } catch (_) {} }
+
+function show(view) {
+  ['view-signin', 'view-busy', 'view-mfa', 'view-choose', 'view-deactivated', 'view-reset'].forEach((v) => {
+    const el = $(v); if (el) el.hidden = v !== view;
+  });
+}
+function setMsg(id, text, type) {
+  const el = $(id);
+  if (!text) { el.className = 'msg'; el.textContent = ''; return; }
+  el.className = 'msg ' + (type || 'error');
+  el.textContent = text;
+}
+function busy(text) { $('busy-text').textContent = text; show('view-busy'); }
+
+let _user = null;
+let _inRecovery = false;
+
+function go(app, query) {
+  if (_user) saveLast(_user.id, app);
+  busy('Opening ' + BATCHD_APPS[app].name + '…');
+  location.replace(BATCHD_APPS[app].path + (query || ''));
+}
+
+async function loadMemberships(uid) {
+  const { data, error } = await sb.from('organisation_members')
+    .select('role, active, is_batched_admin, organisations(type)')
+    .eq('user_id', uid);
+  if (error) throw error;
+  return data || [];
+}
+
+// After a sign-in (or a restored session): finish two-factor if the account
+// has it, then route.
+async function afterSignIn(user) {
+  _user = user;
+  try {
+    const aal = await sb.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (aal && aal.data && aal.data.nextLevel === 'aal2' && aal.data.currentLevel === 'aal1') {
+      show('view-mfa');
+      setTimeout(() => $('mfa-code').focus(), 50);
+      return; // verifyMfa() continues to route()
+    }
+  } catch (_) { /* MFA API unavailable: continue */ }
+  await route();
+}
+
+async function route() {
+  busy('Signing you in…');
+  let rows;
+  try { rows = await loadMemberships(_user.id); }
+  catch (e) {
+    show('view-signin');
+    setMsg('signin-msg', 'Could not load your account. Check your connection and try again.');
+    return;
+  }
+  const r = batchdRoute(rows);
+  if (r.kind === 'signup') { location.replace('/signup'); return; }
+  if (r.kind === 'deactivated') { show('view-deactivated'); return; }
+  const last = readLast(_user.id);
+  const pick = batchdPick(r.apps, location.search, last);
+  if (pick.go) { go(pick.go, pick.query); return; }
+  renderChooser(pick.choose, last);
+}
+
+function renderChooser(apps, last) {
+  $('choose-who').textContent = 'Signed in as ' + (_user.email || '');
+  $('apps').innerHTML = apps.map((a) => {
+    const app = BATCHD_APPS[a];
+    const tag = a === last ? '<span class="tag">Last used</span>' : '';
+    return `<button type="button" class="app" data-app="${a}">
+      <span class="app-icon">${svg(a, 20)}</span>
+      <span><span class="app-name">${esc(app.name)} ${tag}</span><span class="app-desc">${esc(app.desc)}</span></span>
+      <span class="app-arrow">${svg('arrow', 16)}</span>
+    </button>`;
+  }).join('');
+  $('apps').querySelectorAll('.app').forEach((b) => b.addEventListener('click', () => go(b.dataset.app)));
+  show('view-choose');
+  const first = $('apps').querySelector('.app');
+  if (first) first.focus();
+}
+
+async function signIn(ev) {
+  ev.preventDefault();
+  const email = $('email').value.trim();
+  const pw = $('password').value;
+  setMsg('signin-msg', '');
+  if (!email || !pw) { setMsg('signin-msg', 'Enter your email and password.'); return; }
+  const btn = $('signin-btn');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Signing in…';
+  try {
+    const { data, error } = await sb.auth.signInWithPassword({ email, password: pw });
+    if (error) throw error;
+    await afterSignIn(data.user);
+  } catch (e) {
+    const m = (e && e.message) || '';
+    setMsg('signin-msg', /confirm/i.test(m)
+      ? 'Confirm your email address first. Check your inbox for the link.'
+      : /invalid/i.test(m) ? 'Incorrect email or password.' : (m || 'Sign-in failed. Try again.'));
+  } finally {
+    btn.disabled = false; btn.innerHTML = 'Sign in ' + svg('arrow', 14);
+  }
+}
+
+async function verifyMfa(ev) {
+  ev.preventDefault();
+  const code = $('mfa-code').value.replace(/\s/g, '');
+  setMsg('mfa-msg', '');
+  if (!/^\d{6}$/.test(code)) { setMsg('mfa-msg', 'Enter the 6-digit code.'); return; }
+  const btn = $('mfa-btn');
+  btn.disabled = true; btn.textContent = 'Verifying…';
+  try {
+    const { data: f } = await sb.auth.mfa.listFactors();
+    const totp = ((f && f.totp) || []).find((x) => x.status === 'verified');
+    if (!totp) throw new Error('No authenticator is set up on this account.');
+    const { data: ch, error: chErr } = await sb.auth.mfa.challenge({ factorId: totp.id });
+    if (chErr) throw chErr;
+    const { error: vErr } = await sb.auth.mfa.verify({ factorId: totp.id, challengeId: ch.id, code });
+    if (vErr) throw vErr;
+    await route();
+  } catch (e) {
+    setMsg('mfa-msg', (e && e.message) || 'Code rejected. Try again.');
+    $('mfa-code').select();
+  } finally {
+    btn.disabled = false; btn.innerHTML = 'Verify ' + svg('arrow', 14);
+  }
+}
+
+async function forgotPassword() {
+  const email = $('email').value.trim();
+  if (!email) { setMsg('signin-msg', 'Enter your email address above first, then choose Forgot password.'); return; }
+  // The recovery link returns here. This address must be listed under
+  // Supabase Auth, URL Configuration, Redirect URLs, or Supabase falls back
+  // to the project's Site URL.
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + '/login' });
+  if (error) setMsg('signin-msg', error.message);
+  else setMsg('signin-msg', 'If an account exists for ' + email + ', a reset link is on its way. Check your inbox.', 'info');
+}
+
+async function saveNewPassword(ev) {
+  ev.preventDefault();
+  const a = $('new-pw').value, b = $('new-pw2').value;
+  setMsg('reset-msg', '');
+  if (a.length < 8) { setMsg('reset-msg', 'Use at least 8 characters.'); return; }
+  if (a !== b) { setMsg('reset-msg', 'The two passwords do not match.'); return; }
+  const btn = $('reset-btn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  const { data, error } = await sb.auth.updateUser({ password: a });
+  btn.disabled = false; btn.innerHTML = 'Save password ' + svg('arrow', 14);
+  if (error) { setMsg('reset-msg', error.message); return; }
+  _inRecovery = false;
+  history.replaceState({}, '', location.pathname);
+  await afterSignIn(data.user);
+}
+
+async function signOutHere() {
+  await sb.auth.signOut();
+  _user = null;
+  $('password').value = '';
+  show('view-signin');
+  setMsg('signin-msg', '');
+}
+
+function toggleTheme() {
+  const next = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', next);
+  try { localStorage.setItem('batchd-theme', next); } catch (_) {}
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+  $('signin-form').addEventListener('submit', signIn);
+  $('mfa-form').addEventListener('submit', verifyMfa);
+  $('reset-form').addEventListener('submit', saveNewPassword);
+  $('forgot-btn').addEventListener('click', forgotPassword);
+  $('theme-btn').addEventListener('click', toggleTheme);
+  document.querySelectorAll('[data-signout]').forEach((b) => b.addEventListener('click', signOutHere));
+
+  sb.auth.onAuthStateChange((event) => {
+    if (event === 'PASSWORD_RECOVERY') {
+      _inRecovery = true;
+      show('view-reset');
+      setTimeout(() => $('new-pw').focus(), 50);
+    }
+  });
+
+  if (window._batchdRecovery) _inRecovery = true;
+  const { data: { session } } = await sb.auth.getSession();
+  if (_inRecovery) { show('view-reset'); $('new-pw').focus(); return; }
+  if (session) await afterSignIn(session.user);
+  else { show('view-signin'); $('email').focus(); }
+});
+
+</script>
+</body>
+</html>

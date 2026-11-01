@@ -41,7 +41,7 @@ work. Never give Ian partial diffs or snippets to paste in by hand.
   database" badge, rewrite links and window.open calls aimed at the
   production apps to the preview's own origin (batchdPreviewUrl), and
   use batchdLink(productionUrl, stagingPath) for redirects. Keep the
-  block identical in all five files.
+  block identical in all six files (login.html since 2026-11-01).
 - Netlify FUNCTIONS on previews still run with the production
   environment variables, so anything that calls /.netlify/functions/
   from a preview (invite emails, AI, reminders, complaint intake) talks
@@ -61,7 +61,7 @@ work. Never give Ian partial diffs or snippets to paste in by hand.
   scripts/check.mjs` and `node --test tests/*.test.mjs` on every pull
   request and push to main (.github/workflows/checks.yml). check.mjs
   covers syntax of every inline script and function, the identical
-  database selection block in the five app pages, anon-only keys in
+  database selection block in the six app pages, anon-only keys in
   pages, identical FSMA204_EXPORT_HEADERS, agreeing citation tables, the
   supplier completeness fields, the FSMA dollar thresholds across
   dashboard, signup and scanner, and forced 404s for private paths. The
@@ -127,16 +127,27 @@ manufacturer partners.
 
 ## The files
 Live surfaces:
-- index.html (about 23,000 lines): staff scanner PWA. Canonical URL
-  https://batchd-app.netlify.app/ (Ian, 2026-09-13). app. and
-  www.batchdapp.com serve the same file but nothing links there. Moving
-  stores to another origin orphans the per-origin PWA install and offline
-  queue, so settle that before the first design partner installs.
-- dashboard.html (about 17,900 lines): corporate retailer dashboard,
-  served at the root of corporate.batchdapp.com.
+- index.html (about 23,000 lines): staff scanner PWA. Since 2026-11-01
+  (Phase 2a step 2) its address is https://app.batchdapp.com/scan
+  (manifest start_url /scan). Only Batch'd's test phones had it installed
+  (Ian, 2026-11-01). On the old address, batchd-app.netlify.app, it still
+  runs until the offline queue is empty, then shows "Batch'd has moved"
+  (tests/scanner-move.test.mjs). The install and offline queue belong to
+  the address, so do not move it again once stores install it.
+- dashboard.html (about 17,900 lines): the Retail app (renamed from
+  "corporate dashboard" 2026-11-01), served at app.batchdapp.com/retail.
+  Role names such as corp_admin and "Corporate admin" are unchanged.
 - signup.html (self-serve, retailer only), join.html (invitation
   acceptance), admin.html (internal, gated on
   organisation_members.is_batched_admin, linked from nowhere).
+- login.html (2026-11-01): central sign-in and app router at /login and
+  at the root of app.batchdapp.com. Routing rules live in batchdRoute and
+  batchdPick (tests/login-router.test.mjs): one app goes straight there,
+  ?app= picks one, otherwise the app last used on the device, and
+  ?choose=1 (the "Switch app" links) shows the chooser. ?next= keeps only
+  its query string. Retail and the scanner send signed-out visitors to
+  /login; ?legacy=1 shows their old sign-in forms (fallback for one
+  release, then remove). Sign-out in either app returns to /login.
 - lot-code-guide.html, privacy.html, terms.html.
 - complaint.html and complaint-widget.js: public complaint intake to
   triage-complaint.js. The widget hardcodes www.batchdapp.com.
@@ -195,13 +206,21 @@ is not on GitHub; nothing live loads it.
   still not double); true on both runs nothing. Confirmed 2026-10-28:
   batchd-app skips, www runs.
 - Path aliases on every domain: /join, /manufacturer, /signup, /terms,
-  /privacy.
-- corporate.batchdapp.com/ serves dashboard.html (forced 200);
-  /dashboard.html and /dashboard on corporate, app., www. and
-  batchd-app.netlify.app 301 to the corporate root.
+  /privacy, /login (login.html), /retail (dashboard.html) and /scan
+  (index.html). app.batchdapp.com/ serves login.html (forced 200).
+- One address (2026-11-01): everything lives on app.batchdapp.com.
+  corporate.batchdapp.com/ and /dashboard(.html) 301 to
+  app.batchdapp.com/retail and any other corporate path to the same path
+  on app.; /dashboard(.html) on app., www. and batchd-app.netlify.app 301
+  to /retail; www.batchdapp.com/ 301s to app.batchdapp.com/ (other www
+  paths stay, because complaint-widget.js posts to www's triage
+  function). These rules sit at the top of netlify.toml because Netlify
+  uses the first match and the path aliases must not answer on old hosts.
+  Supabase Auth must list https://app.batchdapp.com/login as a redirect
+  URL for password reset (Ian's to add; needs verification).
 - Host rules are host-exact, so deploy-preview-- and other netlify.app
-  names serve index.html at / and dashboard.html at /dashboard.html with
-  no canonical redirects.
+  names serve index.html at / and use /login, /retail and /scan with no
+  canonical redirects.
 - Forced 404s keep CLAUDE.md, SECRETS.md, SCHEMA.md, SMOKE.md, README.md,
   the roadmap and design docs, CHECK_MIGRATIONS.sql, netlify.toml,
   package files, /migrations/*, /docs/* and /netlify/* off the public
@@ -211,8 +230,9 @@ is not on GitHub; nothing live loads it.
   `dashboard?panel=` in the served scanner, so the live index.html
   differs from the file by a few lines. Expected.
 - index.html's top script redirects the retired manufacturer., admin.
-  and supplier. hostnames client-side. The scanner's own "Open dashboard"
-  buttons point at app.batchdapp.com/dashboard.html, which 301s.
+  and supplier. hostnames client-side. Links between the apps are
+  same-origin paths (/retail, /scan, /login), never absolute URLs, so
+  they also stay on a deploy preview.
 
 ## Supabase
 - Project: lurxucdmrugikdlvvebc.supabase.co. Ian's org

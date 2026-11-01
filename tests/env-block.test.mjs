@@ -72,6 +72,9 @@ test('staging rewrites links to production apps onto the preview origin', () => 
   assert.equal(f('https://app.batchdapp.com/dashboard.html?panel=recalls'), o + '/dashboard.html?panel=recalls');
   assert.equal(f('https://corporate.batchdapp.com/'), o + '/dashboard.html');
   assert.equal(f('https://app.batchdapp.com/signup'), o + '/signup');
+  assert.equal(f('https://app.batchdapp.com/retail?panel=recalls'), o + '/retail?panel=recalls');
+  assert.equal(f('https://app.batchdapp.com/scan'), o + '/scan');
+  assert.equal(f('https://app.batchdapp.com/login?choose=1'), o + '/login?choose=1');
   assert.equal(f('https://www.fda.gov/recalls'), 'https://www.fda.gov/recalls');
   r.window.open('https://batchd-app.netlify.app', '_blank');
   r.window.open('', '_blank');
