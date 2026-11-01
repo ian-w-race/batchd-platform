@@ -72,13 +72,13 @@ async function requireAi(event, orgId, roles) {
   return gate;
 }
 
-// Server-to-server shared secret, constant-time. Fails closed when unset.
-// The shared server-to-server secret. batchd-app stored it under the
-// misspelled key INTERNAL_NOTIFY_SECREY (found 2026-10-25), so complaint and
-// recall emails failed closed there; Netlify cannot rename a key, so the
-// misspelling is accepted as a fallback until the variable is recreated.
+// The shared server-to-server secret, read from INTERNAL_NOTIFY_SECRET only.
+// From 2026-10-25 to 2026-11-01 a misspelled key (INTERNAL_NOTIFY_SECREY) that
+// batchd-app once stored it under was accepted as a fallback; the variable was
+// recreated under the right name on both sites on 2026-10-25, so the fallback
+// is gone. Fails closed when unset.
 function internalSecret() {
-  return process.env.INTERNAL_NOTIFY_SECRET || process.env.INTERNAL_NOTIFY_SECREY || '';
+  return process.env.INTERNAL_NOTIFY_SECRET || '';
 }
 
 function internalSecretOk(given) {

@@ -304,3 +304,11 @@ not repeated here.
     the notice leaves the Supplier notices list. Needs migration 040 and an
     org on a pilot or paid plan.
 
+## Misspelled secret fallback removed (2026-11-01)
+
+49. On the live scanner (batchd-app.netlify.app), as a manager, log a
+    phone complaint. The store manager's complaint email arrives (the
+    scanner's function hands the complaint to the email function with the
+    shared secret). On the dashboard, push a drill recall: the recall
+    email arrives. If either email is missing, the secret is not set under
+    INTERNAL_NOTIFY_SECRET on that site.

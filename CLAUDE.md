@@ -530,7 +530,7 @@ both copies.
 - Netlify secret hygiene: keep every secret's Local development value empty
   (Netlify shows those in plain text). INTERNAL_NOTIFY_SECRET was rotated and
   recreated under the right name on both sites on 2026-10-25; the code's
-  INTERNAL_NOTIFY_SECREY fallback in netlify/lib/auth.js can be removed.
+  misspelled-key fallback was removed on 2026-11-01.
 Owed by Ian:
 - Three photographed case labels (romaine, nut butter, one non-GS1) to
   test the GS1 parser.
