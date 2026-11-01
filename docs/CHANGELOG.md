@@ -4,6 +4,37 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-11-01 (staging cleanup of end-to-end test rows)
+- The end-to-end tests run on every deploy preview and had filled the
+  staging QA org ("QA 038 Grocer"): 61 test recall chains (21 "E2E Peanut
+  Butter" recalls from the core flow, closed, and 40 live "Example Creamy
+  Peanut Butter" recalls that the supplier-notice test pushed and never
+  closed), 65 deliveries, 42 scans, 33 match rows and 57 "STAGING TEST"
+  notices. The Recalls panel on previews had slowed down enough for the
+  notice test to time out once.
+- New scripts/cleanup-staging-e2e-data.sql: the rule for what counts as a
+  test row is written at the top (lots and products starting with E2E,
+  the automatic closed note, STAGING TEST notices and the recalls pushed
+  from them, with children following their parent in foreign-key order).
+  Step 1 previews the counts; step 2 copies every row into
+  backup.e2e_cleanup_<date>_<table> and deletes it, keeping the last 24
+  hours so a run in progress on a preview is never cut. It refuses to run
+  on a database that holds the production org.
+- First run, staging only, 2026-11-01 around 21:00 UTC: 25 rows older than
+  24 hours removed (3 recall events with 3 linked recalls, 3 distributions
+  and 6 acknowledgements, 6 deliveries, 4 notices), all in backup.
+  Everything from the same day stays until the next run. Kept on purpose:
+  the QA stores, members, suppliers and both accounts, the FDA feed rows,
+  the manual "QA Baby spinach 5 oz" recall (lot QA038LOT, still live;
+  closing it waits for Ian's word), the hand-pasted notice.pdf and its
+  recall, the QA smoke scans and the two QA10LOT drill records requests.
+- e2e/recall-notice.spec.mjs now closes the recall it pushed, the way the
+  core flow does, so previews stop adding one live recall per run. Not
+  verified locally (that spec only runs on a deploy preview); the e2e
+  workflow on this pull request's preview is the check.
+- CLAUDE.md, end-to-end tests bullet: what each run leaves behind and when
+  to run the cleanup.
+
 ## 2026-11-01 (A2 part 1: the build step and the shared database module)
 - The site now has a build. `npm run build` (scripts/build.mjs) copies the
   public pages and static files into dist/ from an allowlist (pages,
