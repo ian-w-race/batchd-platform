@@ -58,6 +58,7 @@ export async function scannerSignIn(page, email, storeName = 'QA Store 1') {
     const pick = page.getByText(storeName, { exact: true }).filter({ visible: true });
     await expect.poll(async () => {
       if (await pick.count()) await pick.first().click().catch(() => {});
+      else await page.selectOption('#field-store', { label: storeName }).catch(() => {});
       return page.evaluate(() => (typeof _currentStoreId !== 'undefined' ? _currentStoreId : null) || null);
     }, { timeout: 30_000 }).not.toBeNull();
     // A recall alert may open after sign-in on staging; close it if it does.
