@@ -3479,45 +3479,16 @@
 
 <!-- LOGIN SCREEN -->
 <div class="login-screen" id="login-screen">
+  <!-- Central sign-in (2026-11-01): signed-out visitors are sent to /login at
+       once, so this screen only shows for a moment, or carries the deactivated
+       and "not linked" screens (showApp replaces its content). The old sign-in
+       and sign-up form and its ?legacy=1 fallback were removed on 2026-11-01. -->
   <div class="login-box">
     <div>
       <div class="login-logo">
         Batch'd
       </div>
-      <div class="login-sub" style="margin-top:6px;">Recall Tracking System</div>
-    </div>
-
-    <!-- Sign in / Sign up tab toggle -->
-    <div style="display:flex;background:var(--surface2);border-radius:var(--r-md);padding:4px;gap:4px;">
-      <button id="tab-signin" onclick="setLoginTab('signin')" style="flex:1;padding:8px;border:none;border-radius:var(--r-sm);font-family:'DM Mono',monospace;font-size:var(--fs-meta);letter-spacing:0.04em;cursor:pointer;transition:all var(--dur-fast);background:var(--accent);color:var(--accent-on-primary);font-weight:600;">Sign in</button>
-      <button id="tab-signup" onclick="setLoginTab('signup')" style="flex:1;padding:8px;border:none;border-radius:var(--r-sm);font-family:'DM Mono',monospace;font-size:var(--fs-meta);letter-spacing:0.04em;cursor:pointer;transition:all var(--dur-fast);background:transparent;color:var(--muted);">Create account</button>
-    </div>
-
-    <div class="field">
-      <label data-i18n="login.email">Email</label>
-      <input type="email" id="login-email" placeholder="your@email.com" autocomplete="email" />
-    </div>
-    <div class="field">
-      <label data-i18n="login.password">Password</label>
-      <input type="password" id="login-password" placeholder="••••••••" onkeydown="if(event.key==='Enter')handleLoginSubmit()" autocomplete="current-password" />
-    </div>
-
-    <!-- Confirm password — sign up only -->
-    <div class="field" id="login-confirm-wrap" style="display:none;">
-      <label data-i18n="login.confirmPassword">Confirm Password</label>
-      <input type="password" id="login-confirm" placeholder="••••••••" onkeydown="if(event.key==='Enter')handleLoginSubmit()" autocomplete="new-password" />
-    </div>
-
-    <div class="login-error" id="login-error"></div>
-
-    <div id="login-success" style="display:none;font-size:var(--fs-body);color:var(--accent);background:rgba(var(--accent-rgb),0.08);border:1px solid rgba(var(--accent-rgb),0.25);border-radius:var(--r-sm);padding:12px 14px;line-height:1.6;"></div>
-
-    <button class="btn btn-primary" style="width:100%;justify-content:center;" onclick="handleLoginSubmit()" id="btn-signin">
-      Sign In
-    </button>
-
-    <div style="text-align:center;font-size:var(--fs-meta);color:var(--muted);" id="login-tab-hint">
-      New to Batch'd? <button onclick="setLoginTab('signup')" style="background:none;border:none;color:var(--accent);font-family:'DM Mono',monospace;font-size:var(--fs-meta);cursor:pointer;padding:0;text-decoration:underline;">Create an account</button>
+      <div class="login-sub" style="margin-top:6px;">Taking you to sign-in…</div>
     </div>
   </div>
 </div>
@@ -4617,7 +4588,7 @@
             </div>
             <div class="field">
               <label><span data-i18n="recall.fieldManufacturer">Manufacturer / Brand</span> <span style="font-size:var(--fs-label);color:var(--muted);" data-i18n="lbl.optional">optional</span></label>
-              <input type="text" id="mgr-recall-manufacturer" placeholder="e.g. Tine, Gilde, Lerøy" />
+              <input type="text" id="mgr-recall-manufacturer" placeholder="The brand or packer named on the label" />
             </div>
           </div>
 
@@ -5967,9 +5938,8 @@ let offlineQueue = [];
 let autoRecallCode = null; // active recall code from recalls table
 
 // ── AUTH ─────────────────────────────────────────────────────
-// Central sign-in (2026-11-01): people sign in once at /login. ?legacy=1
-// keeps this app's own sign-in form as a fallback for one release.
-const _batchdLegacyLogin = new URLSearchParams(location.search).has('legacy');
+// Central sign-in (2026-11-01): people sign in once at /login. The app's own
+// sign-in form and its ?legacy=1 fallback were removed on 2026-11-01.
 function _toCentralLogin() {
   if (window._batchdMoved) return; // old address: the "has moved" screen is showing
   location.replace('/login?app=scan&next=' + encodeURIComponent(location.pathname + location.search));
@@ -5986,11 +5956,9 @@ async function initAuth() {
       return;
     }
     showApp(session.user);
-  } else if (!_batchdLegacyLogin) {
+  } else {
     _toCentralLogin();
     return;
-  } else {
-    document.getElementById('login-screen').classList.remove('hidden');
   }
   sb.auth.onAuthStateChange(async (event, session) => {
     if (event === 'TOKEN_REFRESHED') return;
@@ -6093,10 +6061,6 @@ async function showApp(user) {
     // override an admin-assigned region.
     updateDrawerAccount(currentUser._displayName || user.email, _userRegion || 'us');
   }
-
-  // Reset sign-in button in case it's stuck in loading state
-  const signinBtn = document.getElementById('btn-signin');
-  if (signinBtn) { signinBtn.innerHTML = 'Sign in'; signinBtn.disabled = false; }
 
   try {
     // Load organisation membership — also checks active flag
@@ -6267,146 +6231,7 @@ function handleAppDeepLink() {
 }
 
 function showLogin() {
-  if (!_batchdLegacyLogin) { _toCentralLogin(); return; }
-  document.getElementById('login-screen').classList.remove('hidden');
-  document.getElementById('user-email').textContent = '';
-}
-
-function renderLoginHint(isSignup) {
-  const hint = document.getElementById('login-tab-hint');
-  if (!hint) return;
-  const btn = document.createElement('button');
-  btn.style.background = 'none';
-  btn.style.border = 'none';
-  btn.style.color = 'var(--accent)';
-  btn.style.fontFamily = '"DM Mono", monospace';
-  btn.style.fontSize = '12px';
-  btn.style.cursor = 'pointer';
-  btn.style.padding = '0';
-  btn.style.textDecoration = 'underline';
-  if (isSignup) {
-    btn.textContent = currentLang==='no'?'Logg inn':'Sign in';
-    btn.onclick = () => setLoginTab('signin');
-    hint.textContent = currentLang==='no'?'Har du allerede en konto? ':'Already have an account? ';
-  } else {
-    btn.textContent = currentLang==='no'?'Opprett konto':'Create an account';
-    btn.onclick = () => setLoginTab('signup');
-    hint.textContent = "New to Batch'd? ";
-  }
-  hint.appendChild(btn);
-}
-
-let _loginTab = 'signin';
-
-function setLoginTab(tab) {
-  _loginTab = tab;
-  const isSignup = tab === 'signup';
-
-  // Tab button styles
-  const signinTab = document.getElementById('tab-signin');
-  const signupTab = document.getElementById('tab-signup');
-  if (signinTab) {
-    signinTab.style.background = isSignup ? 'transparent' : 'var(--accent)';
-    signinTab.style.color      = isSignup ? 'var(--muted)'  : 'var(--accent-on-primary)';
-    signinTab.style.fontWeight = isSignup ? '400' : '600';
-  }
-  if (signupTab) {
-    signupTab.style.background = isSignup ? 'var(--accent)' : 'transparent';
-    signupTab.style.color      = isSignup ? 'var(--accent-on-primary)' : 'var(--muted)';
-    signupTab.style.fontWeight = isSignup ? '600' : '400';
-  }
-
-  // Show/hide confirm password field
-  const confirmWrap = document.getElementById('login-confirm-wrap');
-  if (confirmWrap) confirmWrap.style.display = isSignup ? '' : 'none';
-
-  // Update submit button label
-  const btn = document.getElementById('btn-signin');
-  if (btn) btn.textContent = isSignup ? 'Create account' : 'Sign in';
-
-  // Update bottom hint
-  const hint = document.getElementById('login-tab-hint');
-  if (hint) renderLoginHint(isSignup);
-
-  // Reset error/success states
-  const errEl = document.getElementById('login-error');
-  const sucEl = document.getElementById('login-success');
-  if (errEl) { errEl.textContent = ''; errEl.classList.remove('visible'); }
-  if (sucEl) sucEl.style.display = 'none';
-
-  // Update password autocomplete hint
-  const pwEl = document.getElementById('login-password');
-  if (pwEl) pwEl.autocomplete = isSignup ? 'new-password' : 'current-password';
-}
-
-function handleLoginSubmit() {
-  if (_loginTab === 'signup') signUp();
-  else signIn();
-}
-
-async function signIn() {
-  const email = document.getElementById('login-email').value.trim();
-  const password = document.getElementById('login-password').value;
-  const errEl = document.getElementById('login-error');
-  const btn = document.getElementById('btn-signin');
-  errEl.classList.remove('visible');
-  btn.innerHTML = '<span class="spinner"></span> Signing in…';
-  btn.disabled = true;
-  const { error } = await sb.auth.signInWithPassword({ email, password });
-  if (error) {
-    errEl.textContent = error.message;
-    errEl.classList.add('visible');
-    btn.innerHTML = 'Sign in';
-    btn.disabled = false;
-  }
-}
-
-async function signUp() {
-  const email    = document.getElementById('login-email').value.trim();
-  const password = document.getElementById('login-password').value;
-  const confirm  = document.getElementById('login-confirm').value;
-  const errEl    = document.getElementById('login-error');
-  const sucEl    = document.getElementById('login-success');
-  const btn      = document.getElementById('btn-signin');
-
-  errEl.classList.remove('visible');
-  sucEl.style.display = 'none';
-
-  if (!email) {
-    errEl.textContent = currentLang==='no'?'Vennligst oppgi e-postadressen din.':'Please enter your email address.';
-    errEl.classList.add('visible'); return;
-  }
-  if (password.length < 6) {
-    errEl.textContent = currentLang==='no'?'Passordet må være minst 6 tegn.':'Password must be at least 6 characters.';
-    errEl.classList.add('visible'); return;
-  }
-  if (password !== confirm) {
-    errEl.textContent = currentLang==='no'?'Passordene stemmer ikke overens.':'Passwords do not match.';
-    errEl.classList.add('visible'); return;
-  }
-
-  btn.innerHTML = '<span class="spinner"></span> Creating account…';
-  btn.disabled = true;
-
-  const { data, error } = await sb.auth.signUp({ email, password });
-
-  if (error) {
-    errEl.textContent = error.message;
-    errEl.classList.add('visible');
-    btn.textContent = currentLang==='no'?'Opprett konto':'Create account';
-    btn.disabled = false;
-    return;
-  }
-
-  // Supabase may auto-confirm or require email verification
-  const needsConfirm = !data.session;
-  if (needsConfirm) {
-    btn.textContent = currentLang==='no'?'Opprett konto':'Create account';
-    btn.disabled = false;
-    sucEl.innerHTML = '✓ Account created! Check your email to confirm your address, then sign in.';
-    sucEl.style.display = 'block';
-  }
-  // If session exists, onAuthStateChange fires and logs the user in automatically
+  _toCentralLogin();
 }
 
 // ── TERMINOLOGY OVERLAY ───────────────────────────────────────
@@ -6737,7 +6562,7 @@ async function signOut() {
   currentUser = null; // so the SIGNED_OUT handler does not show "Session expired"
   _appInitUserId = null;
   await sb.auth.signOut({ scope: 'local' });
-  if (!_batchdLegacyLogin) location.replace('/login');
+  location.replace('/login');
 }
 
 // ── STORES FROM DB ───────────────────────────────────────────
@@ -21676,7 +21501,7 @@ function openRecallActionSheet(scanId) {
     const rec = matchedR?.recall;
     if (rec) {
       const src = (rec.source || 'manual').toUpperCase();
-      const srcLabel = src === 'FDA' ? 'FDA Recall' : src === 'RASFF' ? 'Mattilsynet' : src === 'MATTILSYNET' ? 'Mattilsynet' : src === 'MANUFACTURER_PUSH' ? 'Manufacturer Alert' : 'Manual Recall';
+      const srcLabel = src === 'FDA' ? 'FDA Recall' : src === 'RASFF' ? 'Mattilsynet' : src === 'MATTILSYNET' ? 'Mattilsynet' : src === 'MANUFACTURER_PUSH' ? 'Pushed Recall' : 'Manual Recall';
       if (srcEl) srcEl.textContent = srcLabel + (rec.lot_number ? ' · Lot: ' + rec.lot_number : '');
       if (reasonEl2) reasonEl2.textContent = rec.reason_for_recall || rec.reason || rec.description?.split('[')[0]?.trim() || '';
       // Description may contain the reason — show remaining detail
@@ -23173,7 +22998,7 @@ async function loadRecallsView() {
 
     container.innerHTML = matched.map(r => {
       const srcLabel = r._type === 'pushed'
-        ? 'MANUFACTURER PUSH'
+        ? 'PUSHED RECALL'
         : (r.source || '').toLowerCase().includes('fda') ? 'FDA' : (r.source || 'MANUAL').toUpperCase();
       const dateStr = (r.published_at || r.created_at)
         ? fmtRegionDate(r.published_at || r.created_at) : '';
