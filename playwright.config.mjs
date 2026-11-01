@@ -18,5 +18,5 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
-  webServer: local ? { command: 'node e2e/static-server.mjs', url: 'http://localhost:8788/index.html', reuseExistingServer: true } : undefined,
+  webServer: local ? { command: 'npm run build && node e2e/static-server.mjs', url: 'http://localhost:8788/login', reuseExistingServer: true, timeout: 120_000 } : undefined,
 });

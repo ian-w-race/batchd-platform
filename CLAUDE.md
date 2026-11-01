@@ -43,15 +43,25 @@ work. Never give Ian partial diffs or snippets to paste in by hand.
 - After a change Ian should test, add a numbered check to SMOKE.md and a
   dated entry to docs/CHANGELOG.md. Keep this file to rules and current
   state; do not grow it back into a log.
+- Build step (improvement plan A2, since 2026-11-01): `npm run build`
+  (scripts/build.mjs) copies the public pages and static files into
+  `dist/` and bundles `src/shared/` with esbuild into
+  `dist/assets/batchd-shared.js`, a classic script every app page loads
+  before it creates its Supabase client. Netlify runs the build and
+  publishes `dist/` (netlify.toml [build]), so a failed build stops the
+  deploy and private files are never published. Shared rules live once
+  in `src/shared/` and are exposed on `window.Batchd` plus the globals
+  the pages already read; never copy a rule back into a page. The local
+  test server and `.claude/serve.js` serve `dist/`, so build first.
 - Since 2026-10-24 every page picks its database from the host
-  (BATCHD_ENV, set next to SUPABASE_URL in index, dashboard, signup, join
-  and admin): any "name--site.netlify.app" host (deploy previews, branch
-  deploys) and localhost or 127.0.0.1 use STAGING (tiwrrocdwljazweveeth);
-  everything else uses production. Staging pages show a "Staging
-  database" badge, rewrite links and window.open calls aimed at the
-  production apps to the preview's own origin (batchdPreviewUrl), and
-  use batchdLink(productionUrl, stagingPath) for redirects. Keep the
-  block identical in all six files (login.html since 2026-11-01).
+  (BATCHD_ENV): any "name--site.netlify.app" host (deploy previews,
+  branch deploys) and localhost or 127.0.0.1 use STAGING
+  (tiwrrocdwljazweveeth); everything else uses production. Staging pages
+  show a "Staging database" badge, rewrite links and window.open calls
+  aimed at the production apps to the preview's own origin
+  (batchdPreviewUrl), and use batchdLink(productionUrl, stagingPath) for
+  redirects. Since 2026-11-01 this is one module, `src/shared/env.js`
+  (tests/env-block.test.mjs); the six inline copies are gone.
 - Netlify FUNCTIONS on previews still run with the production
   environment variables, so anything that calls /.netlify/functions/
   from a preview (invite emails, AI, reminders, complaint intake) talks
@@ -70,9 +80,11 @@ work. Never give Ian partial diffs or snippets to paste in by hand.
 - Automatic checks (2026-10-24): GitHub Actions runs `node
   scripts/check.mjs` and `node --test tests/*.test.mjs` on every pull
   request and push to main (.github/workflows/checks.yml). check.mjs
-  covers syntax of every inline script and function, the identical
-  database selection block in the six app pages, anon-only keys in
-  pages, identical FSMA204_EXPORT_HEADERS, agreeing citation tables, the
+  covers syntax of every inline script and function, that every app page
+  loads the shared bundle before its Supabase client and keeps no local
+  database block, that the site builds into dist/ with no private file,
+  anon-only keys in pages and src/shared, identical
+  FSMA204_EXPORT_HEADERS, agreeing citation tables, the
   supplier completeness fields, the FSMA dollar thresholds across
   dashboard, signup and scanner, and forced 404s for private paths. The
   tests cover the database switch, the escalation job's duplicate
@@ -171,11 +183,16 @@ landing.html and recall-roi-calculator.html were removed 2026-10-24 (no
 visits in the week before, per Netlify observability); netlify.toml 301s
 both to batchd.no. Check observability traffic before removing any other
 page.
+Shared code (A2, since 2026-11-01): `src/shared/env.js` (database
+selection, links, staging badge) and `src/shared/index.js` (the bundle
+entry), built by `scripts/build.mjs` into `dist/assets/batchd-shared.js`.
+`dist/` is build output, ignored by git.
 Not app files: README.md, SCHEMA.md, SECRETS.md, SMOKE.md, docs/,
 migrations/, fonts/, netlify/, netlify.toml, package.json (pins
-@supabase/supabase-js 2.112.1 for the functions).
-Both big apps are single files with no shared JS module. Only esc,
-showToast and signOut share names between them. Design tokens are
+@supabase/supabase-js 2.112.1 for the functions, esbuild 0.28.2 for the
+build and @playwright/test for the end-to-end tests).
+Both big apps are still single files; apart from the shared bundle only
+esc, showToast and signOut share names between them. Design tokens are
 duplicated by design in index.html, dashboard.html and
 assets/design-tokens.css. Note: assets/ exists in Ian's local folder but
 is not on GitHub; nothing live loads it.
@@ -239,8 +256,11 @@ is not on GitHub; nothing live loads it.
 - Forced 404s keep CLAUDE.md, SECRETS.md, SCHEMA.md, SMOKE.md, README.md,
   the roadmap and design docs, CHECK_MIGRATIONS.sql, netlify.toml,
   package files, /migrations/*, /docs/* and /netlify/* off the public
-  site. Any new private doc at the root needs its own rule (or goes in
-  docs/). Function calls use /.netlify/functions/, a different prefix.
+  site. Since 2026-11-01 Netlify publishes `dist/`, which the build fills
+  from an allowlist (pages, images, robots.txt, complaint-widget.js,
+  fonts/), so those files are not deployed at all; the rules stay as a
+  second line of defense. Function calls use /.netlify/functions/, a
+  different prefix.
 - Netlify's Pretty URLs rewrites `dashboard.html?panel=` links to
   `dashboard?panel=` in the served scanner, so the live index.html
   differs from the file by a few lines. Expected.

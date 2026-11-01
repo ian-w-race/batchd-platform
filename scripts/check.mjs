@@ -5,7 +5,7 @@
 // No dependencies. Each check prints PASS or FAIL; the script exits 1 if any
 // check fails. Add a check here whenever CLAUDE.md says "keep X in step".
 
-import { readFileSync, readdirSync, writeFileSync, mkdtempSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync, mkdtempSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -67,36 +67,46 @@ check('Netlify functions parse (node --check)', () => {
   return `${files.length} files`;
 });
 
-// 3. The database selection block (BATCHD_ENV) is identical in the five app pages.
-check('Database selection block identical in all app pages', () => {
-  const blocks = APP_PAGES.map((f) => {
+// 3. Every app page loads the shared bundle (src/shared, built by
+// scripts/build.mjs) before it creates its Supabase client, and keeps no
+// local copy of the database selection block it replaced (A2, 2026-11-01).
+check('App pages load the shared bundle and keep no local database block', () => {
+  const TAG = '<script src="/assets/batchd-shared.js"></script>';
+  const LOCAL = ['const BATCHD_ENV', 'const SUPABASE_URL', 'const SUPABASE_KEY', 'function batchdLink', 'Database selection (2026-10-24)'];
+  for (const f of APP_PAGES) {
     const s = read(f);
-    const a = s.indexOf('// Database selection (2026-10-24).');
-    const b = s.indexOf('supabase.createClient(SUPABASE_URL, SUPABASE_KEY)');
-    if (a < 0 || b < 0 || b < a) throw new Error(`${f}: block or client creation not found`);
-    // index.html has unrelated code between the block and createClient; compare up to
-    // the end of the staging IIFE, which closes with the click listener.
-    const end = s.indexOf('}, true);\n  })();\n}\n', a);
-    if (end < 0) throw new Error(`${f}: end of block not found`);
-    return s.slice(a, end);
-  });
-  const ref = blocks[0];
-  const diff = APP_PAGES.filter((f, i) => blocks[i] !== ref);
-  if (diff.length) throw new Error(`differs from index.html: ${diff.join(', ')}`);
+    const tags = s.split(TAG).length - 1;
+    if (tags !== 1) throw new Error(`${f}: expected the shared bundle tag once, found ${tags}`);
+    const client = s.indexOf('supabase.createClient(SUPABASE_URL, SUPABASE_KEY)');
+    if (client < 0 || s.indexOf(TAG) > client) throw new Error(`${f}: the shared bundle must load before supabase.createClient`);
+    for (const l of LOCAL) if (s.includes(l)) throw new Error(`${f}: still defines "${l}" locally; it belongs in src/shared/env.js`);
+  }
   return `${APP_PAGES.length} pages`;
 });
 
-// 4. Only public (anon) Supabase keys are embedded in pages.
-check('Only anon Supabase keys in pages', () => {
+// 3b. The shared bundle builds, parses, and the build publishes only public files.
+check('Site builds into dist/ (scripts/build.mjs)', () => {
+  execFileSync(process.execPath, [join(ROOT, 'scripts/build.mjs')], { stdio: 'pipe' });
+  execFileSync(process.execPath, ['--check', join(ROOT, 'dist/assets/batchd-shared.js')], { stdio: 'pipe' });
+  const out = readdirSync(join(ROOT, 'dist'));
+  for (const f of APP_PAGES) if (!out.includes(f)) throw new Error(`dist/ is missing ${f}`);
+  const leaked = out.filter((f) => /\.(md|toml|sql|mjs|json|lock)$/i.test(f) || ['netlify', 'migrations', 'docs', 'tests', 'e2e', 'scripts', 'src', 'node_modules'].includes(f));
+  if (leaked.length) throw new Error(`dist/ contains private files: ${leaked.join(', ')}`);
+  return `${out.length} entries, shared bundle ${statSync(join(ROOT, 'dist/assets/batchd-shared.js')).size} bytes`;
+});
+
+// 4. Only public (anon) Supabase keys are embedded in pages and shared modules.
+check('Only anon Supabase keys in pages and src/shared', () => {
   const found = new Map();
-  for (const f of htmlFiles) {
+  const sharedFiles = readdirSync(join(ROOT, 'src/shared')).map((f) => 'src/shared/' + f);
+  for (const f of [...htmlFiles, ...sharedFiles]) {
     for (const jwt of read(f).match(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g) || []) {
       const payload = JSON.parse(Buffer.from(jwt.split('.')[1], 'base64url').toString());
       if (payload.role !== 'anon') throw new Error(`${f}: embedded JWT has role "${payload.role}"`);
       found.set(payload.ref, (found.get(payload.ref) || 0) + 1);
     }
   }
-  for (const f of htmlFiles) if (/service_role|sb_secret_/.test(read(f))) throw new Error(`${f}: mentions a secret key type`);
+  for (const f of [...htmlFiles, ...sharedFiles]) if (/service_role|sb_secret_/.test(read(f))) throw new Error(`${f}: mentions a secret key type`);
   return [...found].map(([ref, n]) => `${ref} x${n}`).join(', ');
 });
 

@@ -1,13 +1,10 @@
-// Tests for the database selection block (BATCHD_ENV) shared by the five app
-// pages. Run: node --test tests/
+// Tests for the database selection module shared by every page
+// (src/shared/env.js, bundled into /assets/batchd-shared.js by
+// scripts/build.mjs). Until 2026-11-01 the same block lived inline in six
+// pages and this test cut it out of dashboard.html. Run: node --test tests/
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-
-const html = readFileSync(new URL('../dashboard.html', import.meta.url), 'utf8');
-const start = html.indexOf('// Database selection (2026-10-24).');
-const end = html.indexOf('const sb = supabase.createClient');
-const CODE = html.slice(start, end);
+import { install, detectEnv, previewUrlFor, PRODUCTION_ANON_KEY, STAGING_ANON_KEY } from '../src/shared/env.js';
 
 function load(host) {
   const opened = [];
@@ -19,8 +16,7 @@ function load(host) {
     addEventListener() {},
   };
   const window = { open: (u) => { opened.push(u); } };
-  const r = new Function('location', 'document', 'window',
-    CODE + '; return { BATCHD_ENV, SUPABASE_URL, SUPABASE_KEY, batchdLink };')(location, document, window);
+  const r = install({ location, document, window });
   return { ...r, badges: body.children.length, window, opened };
 }
 
@@ -51,16 +47,16 @@ test('previews, branch deploys and localhost use staging with a badge', () => {
 
 test('look-alike hosts outside netlify.app stay on production', () => {
   for (const h of ['deploy-preview-1--evil.example.com', 'batchdapp.com.evil.example', 'x--y.netlify.app.evil.example']) {
-    assert.equal(load(h).BATCHD_ENV, 'production', h);
+    assert.equal(detectEnv(h), 'production', h);
   }
 });
 
-test('keys match their projects', () => {
+test('keys match their projects and are anon keys', () => {
   const ref = (jwt) => JSON.parse(Buffer.from(jwt.split('.')[1], 'base64url').toString());
-  const p = ref(load('corporate.batchdapp.com').SUPABASE_KEY);
-  const s = ref(load('localhost').SUPABASE_KEY);
-  assert.deepEqual([p.ref, p.role], ['lurxucdmrugikdlvvebc', 'anon']);
-  assert.deepEqual([s.ref, s.role], ['tiwrrocdwljazweveeth', 'anon']);
+  assert.deepEqual([ref(PRODUCTION_ANON_KEY).ref, ref(PRODUCTION_ANON_KEY).role], ['lurxucdmrugikdlvvebc', 'anon']);
+  assert.deepEqual([ref(STAGING_ANON_KEY).ref, ref(STAGING_ANON_KEY).role], ['tiwrrocdwljazweveeth', 'anon']);
+  assert.equal(load('corporate.batchdapp.com').SUPABASE_KEY, PRODUCTION_ANON_KEY);
+  assert.equal(load('localhost').SUPABASE_KEY, STAGING_ANON_KEY);
 });
 
 test('staging rewrites links to production apps onto the preview origin', () => {
@@ -76,6 +72,7 @@ test('staging rewrites links to production apps onto the preview origin', () => 
   assert.equal(f('https://app.batchdapp.com/scan'), o + '/scan');
   assert.equal(f('https://app.batchdapp.com/login?choose=1'), o + '/login?choose=1');
   assert.equal(f('https://www.fda.gov/recalls'), 'https://www.fda.gov/recalls');
+  assert.equal(previewUrlFor(42, o), 42);
   r.window.open('https://batchd-app.netlify.app', '_blank');
   r.window.open('', '_blank');
   assert.deepEqual(r.opened, [o + '/', '']);
