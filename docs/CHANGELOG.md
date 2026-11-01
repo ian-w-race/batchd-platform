@@ -35,6 +35,31 @@ how it was verified and what is still unverified. Everything before
   cancels, Enter closes with the toast. SMOKE.md 55 and 56 cover it on a
   deploy preview. check.mjs 10 of 10, node --test 89 pass.
 
+## 2026-11-01 (end-to-end tests on deploy previews)
+- The e2e workflow failed twice on pull request 44's preview while the
+  same suite passed locally: Netlify's "Collaborate on this Deploy
+  Preview" drawer (a script injected as /.netlify/scripts/cdp on previews
+  only) sits across the bottom of the viewport and covered the composer's
+  Continue button, so the core-flow chain and the supplier notice test
+  timed out on that click. e2e/env.mjs now blocks that one script for
+  every test page, which makes the preview behave like production.
+- The serial core-flow chain mints a fresh lot and a fresh product name
+  per attempt, so a retry (Playwright retries once on the workflow) does
+  not reuse the previous attempt's lot, and a live recall pushed by another
+  preview's run on the shared staging org (several pull requests run this
+  suite at the same time) cannot make the pre-placement warning show for a
+  lot it never named. Seen on pull request 48's first preview run.
+- The scanner sign-in helper now waits for the "Active Recall Alert" that
+  the shared staging org raises after sign-in (a leftover QA recall, or
+  another run's) and closes it before and after the store picker, with a
+  Playwright locator handler as a second line of defense; the old
+  one-shot check raced the alert and the mode switch stayed covered.
+- Verified: the whole suite locally against staging (11 passed, 1 skipped)
+  and the drawer block on pull request 48's first preview run, where the
+  supplier notice test passed for the first time since the central
+  sign-in. Not verified until this pull request's preview runs again: the
+  two concurrency fixes on a real preview.
+
 ## 2026-11-01 (safety net, improvement plan Phase 1)
 - End-to-end core flow (plan A3 "done when"). e2e/core-flow.spec.mjs runs
   the whole chain on one fresh lot per run: a delivery recorded from a

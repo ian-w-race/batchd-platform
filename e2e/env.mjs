@@ -40,8 +40,20 @@ export async function dashboardSignIn(page, email) {
   await centralSignIn(page, email, 'retail');
 }
 
+// Netlify injects <script src="/.netlify/scripts/cdp"> into every deploy
+// preview page. It draws the "Collaborate on this Deploy Preview" drawer
+// across the bottom of the viewport, which covered the composer's Continue
+// button in the workflow runs of 2026-11-01 (local runs have no drawer).
+// Blocking that one request keeps the preview identical to production.
+export async function blockNetlifyDrawer(page) {
+  if (page._batchdDrawerBlocked) return;
+  page._batchdDrawerBlocked = true;
+  await page.route('**/.netlify/scripts/cdp', (route) => route.abort());
+}
+
 // Signs in at /login and asks for one app; the router opens it.
 export async function centralSignIn(page, email, app) {
+  await blockNetlifyDrawer(page);
   await page.goto('/login' + (app ? '?app=' + app : ''));
   await expect(page.locator('text=STAGING DATABASE').first()).toBeVisible();
   await page.locator('#email').fill(email);
@@ -61,19 +73,37 @@ export async function centralSignIn(page, email, app) {
 // True when the page is on that app's path (ignores ?app= on /login).
 export const onPath = (path) => (u) => new URL(u).pathname === path;
 
+// The "Active Recall Alert" opens after sign-in whenever the org has a live
+// recall matching an on-shelf scan, which on the shared staging org is often
+// true because other previews' runs push recalls at the same time. It can
+// open before or after the store picker, so close it at both points.
+async function dismissRecallAlert(page, waitMs) {
+  const overlay = page.locator('#login-recall-overlay');
+  try { await overlay.waitFor({ state: 'visible', timeout: waitMs }); } catch { return false; }
+  await page.evaluate(() => dismissLoginRecall());
+  await expect(overlay).toBeHidden();
+  return true;
+}
+
 export async function scannerSignIn(page, email, storeName = 'QA Store 1') {
   await centralSignIn(page, email, 'scan');
+  // Whenever the alert is up and a later click or check waits on something
+  // behind it, Playwright runs this handler first (the alert can open a few
+  // seconds after sign-in, when the recall check finishes).
+  await page.addLocatorHandler(page.locator('#login-recall-overlay'), async () => {
+    await page.evaluate(() => dismissLoginRecall());
+  });
   if (storeName) {
     // The scanner asks "Where are you working today?" whenever no store
     // was chosen on this device in the last 12 hours, which is always true
     // in a fresh test browser. Pick the store there (by role: a text match
     // also finds the hidden dropdown <option>) and wait for the modal to go.
+    await dismissRecallAlert(page, 1500);
     await page.getByRole('button', { name: storeName, exact: true }).filter({ visible: true }).first().click({ timeout: 60_000 });
     await expect(page.locator('#session-store-modal')).toBeHidden();
     await expect.poll(() => page.evaluate(() => (typeof _currentStoreId !== 'undefined' ? _currentStoreId : null) || null)).not.toBeNull();
-    // A recall alert may open after sign-in on staging; close it if it does.
-    const dismiss = page.getByRole('button', { name: 'Dismiss' }).filter({ visible: true });
-    if (await dismiss.count()) await dismiss.first().click();
+    await dismissRecallAlert(page, 4000);
+    await expect(page.locator('#scan-mode-switch')).toBeVisible();
   }
 }
 
