@@ -13,13 +13,15 @@ import { PASSWORD, ACTIVE, ORG_NAME, centralSignIn, scannerSignIn, watchErrors, 
 
 test.skip(!PASSWORD, 'E2E_PASSWORD is not set');
 test.describe.configure({ mode: 'serial' });
+let recallEventId = null;
 
-const TAG = Date.now().toString(36).toUpperCase();
-const LOT = 'E2E' + TAG;
+// A fresh lot per attempt: on a retry the whole serial chain reruns, and a
+// reused lot would hit the duplicate-scan prompt and an existing recall.
+let LOT = '';
+test.beforeAll(() => { LOT = 'E2E' + Date.now().toString(36).toUpperCase(); recallEventId = null; });
 const GTIN = '00812345000016';
 const PRODUCT = 'E2E Creamy Peanut Butter 16 oz';
 const STORE = 'QA Store 1';
-let recallEventId = null;
 
 // Stand in for the camera: a label photo blob, then the product name typed.
 async function startShelfScan(page) {
