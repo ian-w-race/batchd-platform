@@ -25,9 +25,12 @@ how it was verified and what is still unverified. Everything before
   and 6 acknowledgements, 6 deliveries, 4 notices), all in backup.
   Everything from the same day stays until the next run. Kept on purpose:
   the QA stores, members, suppliers and both accounts, the FDA feed rows,
-  the manual "QA Baby spinach 5 oz" recall (lot QA038LOT, still live;
-  closing it waits for Ian's word), the hand-pasted notice.pdf and its
-  recall, the QA smoke scans and the two QA10LOT drill records requests.
+  the hand-pasted notice.pdf and its recall, the QA smoke scans and the
+  two QA10LOT drill records requests. The manual "QA Baby spinach 5 oz"
+  recall (lot QA038LOT), which had shown in the scanner's sign-in alert on
+  every run since 2026-10-25, was marked resolved on Ian's word the same
+  evening (active false, resolved_at set, the row copied to the backup
+  table first); it is not deleted.
 - e2e/recall-notice.spec.mjs now closes the recall it pushed, the way the
   core flow does, so previews stop adding one live recall per run. Not
   verified locally (that spec only runs on a deploy preview); the e2e
