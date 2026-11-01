@@ -9664,6 +9664,43 @@ function stopStream(stream) {
 // inside the Postgres sweep function.
 // ═══════════════════════════════════════════════════════════════
 
+// Pushed recalls and scan_recall_matches (2026-11-01). The recall_events row
+// is what staff see, but scan_recall_matches.recall_id has a foreign key to
+// recalls(id), so a match row for a pushed recall must be keyed to the
+// LINKED recalls row the composer writes next to the event (one per lot
+// since 2026-10-25; is_pushed = true, recall_event_id = the event), with
+// recall_event_id = the event. Writing the event id into recall_id failed
+// with 23503 (a 409 in devtools) and was swallowed, so a shelf scan made
+// after a push never got a match row. _attachLinkedRecalls hangs the linked
+// rows on each pushed recall object when the cache is built;
+// _pushedMatchRecallId picks the row for a scan (the lot the scan carries
+// when there are several, else the first). Both are tested in
+// tests/scanner-pushed-match.test.mjs.
+function _attachLinkedRecalls(pushedRecalls, recallRows) {
+  const byEvent = {};
+  (recallRows || []).forEach(r => {
+    if (!r || !r.recall_event_id || !r.id) return;
+    (byEvent[r.recall_event_id] = byEvent[r.recall_event_id] || []).push({
+      id: r.id, lot_number: r.lot_number || null, barcode_number: r.barcode_number || null,
+    });
+  });
+  (pushedRecalls || []).forEach(p => { if (p && p.id) p._linkedRecalls = byEvent[p.id] || []; });
+  return pushedRecalls;
+}
+function _pushedMatchRecallId(recall, scanRecord) {
+  const linked = (recall && recall._linkedRecalls) || [];
+  if (!linked.length) return null;
+  if (linked.length > 1) {
+    const raw = ((scanRecord && (scanRecord.raw_capture || scanRecord.lot_number)) || '').toLowerCase();
+    const byLot = raw ? linked.find(l => l.lot_number && raw.includes(l.lot_number.toLowerCase().trim())) : null;
+    if (byLot) return byLot.id;
+    const bc = ((scanRecord && scanRecord.barcode_number) || '').toLowerCase().trim();
+    const byBc = bc ? linked.find(l => l.barcode_number && l.barcode_number.toLowerCase().trim() === bc) : null;
+    if (byBc) return byBc.id;
+  }
+  return linked[0].id;
+}
+
 // Called after a scan is saved. Checks all active recalls and writes a
 // match row for each hit. Non-blocking — fires and forgets.
 //
@@ -9694,24 +9731,21 @@ async function matchScanAgainstRecalls(scanId, scanData) {
     if (level !== 'exact') continue; // only red hits get persisted
 
     seenRecallIds.add(r.id);
+    // Path A (manual and feed): recall_id = recalls.id, recall_event_id NULL.
+    // Path B (pushed): recall_id = the linked recalls row for this lot,
+    // recall_event_id = recall_events.id (see _attachLinkedRecalls above).
+    // A pushed recall without a linked row cannot get a match row (the
+    // foreign key refuses the event id); staff still see the alert.
+    const isPushed = r.source === 'manufacturer_push';
+    const linkedRecallId = isPushed ? _pushedMatchRecallId(r, scanRecord) : null;
+    if (isPushed && !linkedRecallId) {
+      console.warn('[cross-ref] pushed recall has no linked recalls row; match not recorded:', r.id);
+      continue;
+    }
     rows.push({
       scan_id:          scanId,
-      // Path A (manual / feed recalls): recall_id holds recalls.id.
-      // recall_event_id is intentionally NOT set — these matches don't link
-      // to a recall_events row (Path B is the only one that does). When
-      // querying scan_recall_matches for a manual or feed recall, use
-      // recall_id; for a manufacturer-pushed recall, use recall_event_id.
-      // Audit fix #6 added this convention to disambiguate the polymorphic
-      // recall_id column. See sweep_recall_matches RPC (DB-side) for the
-      // server-side equivalent of this insert path.
-      recall_id:        r.id,
-      // Path B (manufacturer-pushed): recall_id AND recall_event_id both
-      // hold recall_events.id per the audit-fix-#6 convention — dashboard
-      // queries by recall_event_id and the FK CASCADE cleanup only work
-      // when the column is populated. Without this, a scan-time match on
-      // a pushed recall wrote a recall_id-only row that permanently
-      // blocked the correct Path B row (unique index + ignoreDuplicates).
-      recall_event_id:  r.source === 'manufacturer_push' ? r.id : null,
+      recall_id:        isPushed ? linkedRecallId : r.id,
+      recall_event_id:  isPushed ? r.id : null,
       recall_source:    r.source || 'manual',
       recall_product:   r.product_name || null,
       recall_lot:       r.lot_number   || null,
@@ -10655,6 +10689,9 @@ async function checkRecallsOnLogin(silent = false) {
       source:         'manufacturer_push',
       active:         true,
     }));
+    // The linked recalls rows are dropped from the cache below, but the
+    // match writers need their ids (2026-11-01): keep them on the event.
+    _attachLinkedRecalls(pushedRecalls, recallsRes.data);
 
     // 2026-09-09 audit fix: composer/legacy-pushed recalls have BOTH a
     // linked recalls-table row (is_pushed / recall_event_id set) AND a
@@ -10693,7 +10730,7 @@ async function checkRecallsOnLogin(silent = false) {
     // an active-recall alert — already-pulled lots should not trigger a login warning.
     const cutoff = new Date(Date.now() - recallLookbackDays * 24 * 60 * 60 * 1000).toISOString();
     const { data: recentScans } = await sb.from('scans')
-      .select('id,product_name,lot_number,batch_number,barcode_number,raw_capture,store_name,created_at')
+      .select('id,product_name,lot_number,batch_number,barcode_number,raw_capture,store_name,store_id,quantity,created_at')
       .eq('organisation_id', _currentOrgId)
       .is('removed_from_shelf_at', null)
       .gte('created_at', cutoff)
@@ -10784,15 +10821,15 @@ async function checkRecallsOnLogin(silent = false) {
             .map(s => {
               const { level, matched_on } = recallMatchLevel(s, m.recall);
               if (level !== 'exact') return null;
+              // Path B: recall_id is the LINKED recalls row for this lot
+              // (foreign key to recalls), recall_event_id the event. See
+              // _attachLinkedRecalls. Without a linked row the foreign key
+              // refuses the insert, so the scan is skipped here.
+              const linkedRecallId = _pushedMatchRecallId(m.recall, s);
+              if (!linkedRecallId) return null;
               return {
                 scan_id:         s.id,
-                // Path B (manufacturer-push): recall_id holds the recall_events.id
-                // for backward compat with existing reads; recall_event_id is the
-                // new typed column with an FK to recall_events. Audit fix #6 added
-                // recall_event_id so consumers can disambiguate Path A (manual /
-                // feed → recalls.id) from Path B (manufacturer-push →
-                // recall_events.id) without relying on recall_source filtering.
-                recall_id:       m.recall.id,
+                recall_id:       linkedRecallId,
                 recall_event_id: m.recall.id,
                 recall_source:   'manufacturer_push',
                 recall_product:  m.recall.product_name || null,
@@ -10801,6 +10838,7 @@ async function checkRecallsOnLogin(silent = false) {
                 match_confidence:'high',
                 organisation_id: _currentOrgId,
                 store_name:      s.store_name || null,
+                store_id:        s.store_id   || null,
                 scanned_by:      s.scanned_by || null,
                 placed_at:       s.created_at || null,
                 quantity:        s.quantity || 1,
@@ -10809,9 +10847,12 @@ async function checkRecallsOnLogin(silent = false) {
             .filter(Boolean);
 
           if (rowsToInsert.length) {
-            await sb.from('scan_recall_matches').upsert(rowsToInsert, {
+            // Rows the composer's sweep already wrote for these scans are
+            // skipped by the (scan_id, recall_id) unique index.
+            const { error: sweepErr } = await sb.from('scan_recall_matches').upsert(rowsToInsert, {
               onConflict: 'scan_id,recall_id', ignoreDuplicates: true,
             });
+            if (sweepErr) throw sweepErr;
           }
         }
       } catch(e) { console.warn('[cross-ref] pushed recall sweep failed:', e.message); }
@@ -11492,6 +11533,8 @@ async function loadHistory() {
       active:         true,
       source:         'manufacturer_push',
     }));
+    // Linked recalls rows ride on the event for the match writers (2026-11-01).
+    _attachLinkedRecalls(pushedRecalls, recallsRes.data);
   }
   // Guarded on query success (verify-fix 2026-08-05, mirrors the
   // checkRecallsOnLogin guard): a transient failure of the recalls or
@@ -19255,7 +19298,7 @@ async function loadMgrData() {
         // scan_recall_matches: confirmed scan↔recall pairings. Used as source of truth
         // for feed-sourced recalls (FDA, Mattilsynet) in the stat tile count.
         orgId
-          ? sb.from('scan_recall_matches').select('scan_id, recall_id').eq('organisation_id', orgId).limit(1000)
+          ? sb.from('scan_recall_matches').select('scan_id, recall_id, recall_event_id').eq('organisation_id', orgId).limit(1000)
           : Promise.resolve({ data: [] }),
       ]),
       10000
@@ -19600,7 +19643,7 @@ function renderMgrStatTiles() {
   const _confirmedRecallIds = new Set(
     _mgrScanRecallMatches
       .filter(m => _onShelfScanIds.has(m.scan_id))
-      .map(m => m.recall_id)
+      .flatMap(m => [m.recall_id, m.recall_event_id])
       .filter(Boolean)
   );
 
@@ -20207,10 +20250,13 @@ async function autoEscalateForComplaintRecallMatch(scanId, recall) {
 async function checkPriorComplaintsForRecall(recallId) {
   if (!recallId || !_currentOrgId) return 0;
   try {
+    // recallId is a recalls.id (manual recall) or a recall_events.id
+    // (pushed); match rows carry the former in recall_id and the latter in
+    // recall_event_id (2026-11-01).
     const { data, error } = await sb
       .from('scan_recall_matches')
       .select('scan_id, scans!inner(complaint_filed)')
-      .eq('recall_id', recallId)
+      .or(`recall_id.eq.${recallId},recall_event_id.eq.${recallId}`)
       .eq('organisation_id', _currentOrgId)
       .eq('scans.complaint_filed', true);
     if (error) throw error;
@@ -20221,7 +20267,7 @@ async function checkPriorComplaintsForRecall(recallId) {
       const { data: matchData } = await sb
         .from('scan_recall_matches')
         .select('scan_id')
-        .eq('recall_id', recallId)
+        .or(`recall_id.eq.${recallId},recall_event_id.eq.${recallId}`)
         .eq('organisation_id', _currentOrgId);
       if (!matchData?.length) return 0;
       const scanIds = matchData.map(m => m.scan_id);
@@ -21732,17 +21778,17 @@ function openRecallActionSheet(scanId) {
   (async () => {
     try {
       // Find if this scan has a match against a manufacturer-pushed recall.
-      // Audit fix 2026-09-05. Pushed recalls should be read via
-      // recall_event_id, the unambiguous Path B column. Legacy rows from
-      // before the backfill may still have it NULL, so recall_id stays as
-      // the fallback. Both hold recall_events.id on these rows.
+      // Pushed recalls are read via recall_event_id, the one column that
+      // holds the event id; recall_id is the linked recalls row since
+      // 2026-11-01 (and before that the row could not be written at all),
+      // so it is never a stand-in for the event.
       const { data: matchRows } = await sb.from('scan_recall_matches')
         .select('recall_id, recall_event_id, recall_source')
         .eq('scan_id', _recallActionId)
-        .eq('recall_source', 'manufacturer_push')
+        .not('recall_event_id', 'is', null)
         .limit(1);
       if (!matchRows?.length) return;
-      const recallEventId = matchRows[0].recall_event_id || matchRows[0].recall_id;
+      const recallEventId = matchRows[0].recall_event_id;
 
       // Find the ack row for this org + this recall event.
       // 2026-09-09 audit fix: acks are per-store — without a store filter,
@@ -23094,10 +23140,15 @@ async function loadRecallsView() {
         // (pullFromShelf writes to scans.removed_from_shelf_at, not scan_recall_matches).
         // Selecting it would cause a silent Supabase error, returning data:null and
         // leaving exposureByRecall empty so the drawer shows the "Calculating…" stub forever.
+        // recallIds mixes recalls.id (manual and feed) with recall_events.id
+        // (pushed); match rows hold the former in recall_id and the latter in
+        // recall_event_id (2026-11-01), so read both columns and key the
+        // result by whichever one the drawer knows the recall by.
+        const _idList = `(${recallIds.join(',')})`;
         const { data: matchRows } = await sb
           .from('scan_recall_matches')
-          .select('recall_id, scan_id, store_name, quantity, placed_at, scanned_by, match_type')
-          .in('recall_id', recallIds)
+          .select('recall_id, recall_event_id, scan_id, store_name, quantity, placed_at, scanned_by, match_type')
+          .or(`recall_id.in.${_idList},recall_event_id.in.${_idList}`)
           .eq('organisation_id', _currentOrgId);
         if (matchRows) {
           // 2026-09-09 audit fix: match rows alone say nothing about pulls
@@ -23109,10 +23160,12 @@ async function loadRecallsView() {
             const { data: _scs } = await sb.from('scans').select('id, removed_from_shelf_at').in('id', _expScanIds.slice(i, i + 200));
             (_scs || []).forEach(s => { _removedByScan[s.id] = s.removed_from_shelf_at || null; });
           }
+          const _wanted = new Set(recallIds);
           matchRows.forEach(m => {
             m._removedAt = m.scan_id ? (_removedByScan[m.scan_id] || null) : null;
-            if (!exposureByRecall[m.recall_id]) exposureByRecall[m.recall_id] = [];
-            exposureByRecall[m.recall_id].push(m);
+            const key = (m.recall_event_id && _wanted.has(m.recall_event_id)) ? m.recall_event_id : m.recall_id;
+            if (!exposureByRecall[key]) exposureByRecall[key] = [];
+            exposureByRecall[key].push(m);
           });
         }
       } catch(e) { console.warn('[exposure] Failed to load match rows:', e.message); }
