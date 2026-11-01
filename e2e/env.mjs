@@ -36,18 +36,21 @@ export function watchErrors(page) {
 }
 
 export async function dashboardSignIn(page, email) {
-  await page.goto('/dashboard.html');
+  // Central sign-in (2026-11-01): the apps send signed-out visitors to /login.
+  await centralSignIn(page, email, 'retail');
+}
+
+// Signs in at /login and asks for one app; the router opens it.
+export async function centralSignIn(page, email, app) {
+  await page.goto('/login' + (app ? '?app=' + app : ''));
   await expect(page.locator('text=STAGING DATABASE').first()).toBeVisible();
-  await page.getByPlaceholder('you@company.com').fill(email);
-  await page.locator('input[type=password]').first().fill(PASSWORD);
-  await page.getByRole('button', { name: /^Sign in/ }).last().click();
+  await page.locator('#email').fill(email);
+  await page.locator('#password').fill(PASSWORD);
+  await page.locator('#signin-btn').click();
 }
 
 export async function scannerSignIn(page, email, storeName = 'QA Store 1') {
-  await page.goto('/index.html');
-  await page.locator('input[type=email]').first().fill(email);
-  await page.locator('input[type=password]').first().fill(PASSWORD);
-  await page.click('#btn-signin');
+  await centralSignIn(page, email, 'scan');
   if (storeName) {
     // The store picker overlay; the same names also exist as hidden <option>s.
     await page.getByText(storeName, { exact: true }).filter({ visible: true }).first().click();

@@ -33,8 +33,11 @@ test('an admin signs in once and opens both Retail and the scanner', async ({ pa
   await page.goto('/scan');
   await expect(page.locator('#login-screen')).toBeHidden();
 
-  // Back at the sign-in page the last app used is listed first.
+  // Back at the sign-in page the last app used opens directly...
   await page.goto('/login');
+  await expect(page).toHaveURL(/\/retail/);
+  // ...and "Switch app" (?choose=1) shows the chooser with it listed first.
+  await page.goto('/login?choose=1');
   await expect(page.locator('#apps .app').first()).toHaveAttribute('data-app', 'retail');
   await expect(page.locator('#apps .tag')).toHaveText('Last used');
 
@@ -58,3 +61,25 @@ test('a deactivated member sees the deactivated screen at sign-in', async ({ pag
   await page.getByRole('button', { name: 'Sign out' }).click();
   await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
 });
+
+test('a signed-out visit to Retail goes through sign-in and keeps the link', async ({ page }) => {
+  await page.goto('/retail?panel=recalls');
+  await expect(page).toHaveURL(/\/login\?app=retail/);
+  await page.locator('#email').fill(ACTIVE);
+  await page.locator('#password').fill(PASSWORD);
+  await page.locator('#signin-btn').click();
+  await expect(page).toHaveURL(/\/retail\?panel=recalls/);
+  await expect(page.getByText('Got a recall notice from a supplier?')).toBeVisible();
+});
+
+test('signing out of Retail returns to the sign-in page', async ({ page }) => {
+  await page.goto('/login?app=retail');
+  await page.locator('#email').fill(ACTIVE);
+  await page.locator('#password').fill(PASSWORD);
+  await page.locator('#signin-btn').click();
+  await expect(page).toHaveURL(/\/retail/);
+  await page.evaluate(() => signOut());
+  await expect(page).toHaveURL(/\/login/);
+  await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+});
+

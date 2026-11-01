@@ -423,6 +423,9 @@ if (BATCHD_ENV === 'staging') {
         ['https://corporate.batchdapp.com/', '/dashboard.html'],
         ['https://app.batchdapp.com/dashboard.html', '/dashboard.html'],
         ['https://app.batchdapp.com/manufacturer.html', '/manufacturer.html'],
+        ['https://app.batchdapp.com/retail', '/retail'],
+        ['https://app.batchdapp.com/scan', '/scan'],
+        ['https://app.batchdapp.com/login', '/login'],
         ['https://app.batchdapp.com/signup', '/signup'],
         ['https://batchd-app.netlify.app', '/']
       ];
@@ -499,6 +502,30 @@ function batchdOrderApps(apps, last) {
   if (!last || apps.indexOf(last) < 0) return apps.slice();
   return [last].concat(apps.filter((a) => a !== last));
 }
+
+// Where to go once the apps are known (decision Q17, 2026-11-01):
+// - one app: straight there;
+// - ?app=X for an app the person may open: there;
+// - otherwise the app last used on this device, unless ?choose=1 (the
+//   "Switch app" link) asks for the chooser;
+// - otherwise the chooser.
+// ?next= carries a deep link such as /retail?panel=recalls. Only its query
+// string is kept, appended to the app's own path, so it can never send the
+// person to another site or another app.
+function batchdPick(apps, search, last) {
+  const params = new URLSearchParams(search || '');
+  let query = '';
+  const next = params.get('next');
+  if (next && next.charAt(0) === '/' && next.charAt(1) !== '/') {
+    const q = next.indexOf('?');
+    if (q >= 0) query = next.slice(q);
+  }
+  const want = params.get('app');
+  if (apps.length === 1) return { go: apps[0], query: want === apps[0] ? query : '' };
+  if (want && apps.indexOf(want) >= 0) return { go: want, query };
+  if (!params.has('choose') && last && apps.indexOf(last) >= 0) return { go: last, query: '' };
+  return { choose: batchdOrderApps(apps, last) };
+}
 // ROUTER END
 
 const $ = (id) => document.getElementById(id);
@@ -531,10 +558,10 @@ function busy(text) { $('busy-text').textContent = text; show('view-busy'); }
 let _user = null;
 let _inRecovery = false;
 
-function go(app) {
+function go(app, query) {
   if (_user) saveLast(_user.id, app);
   busy('Opening ' + BATCHD_APPS[app].name + '…');
-  location.replace(BATCHD_APPS[app].path);
+  location.replace(BATCHD_APPS[app].path + (query || ''));
 }
 
 async function loadMemberships(uid) {
@@ -572,11 +599,10 @@ async function route() {
   const r = batchdRoute(rows);
   if (r.kind === 'signup') { location.replace('/signup'); return; }
   if (r.kind === 'deactivated') { show('view-deactivated'); return; }
-  const params = new URLSearchParams(location.search);
-  if (r.apps.length === 1) { go(r.apps[0]); return; }
-  const want = params.get('app');
-  if (want && r.apps.indexOf(want) >= 0) { go(want); return; }
-  renderChooser(batchdOrderApps(r.apps, readLast(_user.id)), readLast(_user.id));
+  const last = readLast(_user.id);
+  const pick = batchdPick(r.apps, location.search, last);
+  if (pick.go) { go(pick.go, pick.query); return; }
+  renderChooser(pick.choose, last);
 }
 
 function renderChooser(apps, last) {

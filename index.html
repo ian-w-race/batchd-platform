@@ -3,7 +3,7 @@
   <script>
 (function(){
   var h = window.location.hostname;
-  if (h === 'corporate.batchdapp.com') { window.location.replace('/dashboard.html'); }
+  if (h === 'corporate.batchdapp.com') { window.location.replace('https://app.batchdapp.com/retail'); }
   else if (h === 'manufacturer.batchdapp.com') { window.location.replace('https://app.batchdapp.com/manufacturer.html'); }
   else if (h === 'admin.batchdapp.com') { window.location.replace('/admin.html'); }
   else if (h === 'supplier.batchdapp.com') { window.location.replace('/supplier.html'); }
@@ -27,7 +27,7 @@
 <meta name="description" content="Retail food recall tracking — scan products, extract lot numbers, get instant recall alerts." />
 
 <!-- PWA manifest -->
-<link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22Batch%27d%20%E2%80%94%20Recall%20Tracker%22%2C%22short_name%22%3A%22Batch%27d%22%2C%22start_url%22%3A%22%2F%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23040c0e%22%2C%22theme_color%22%3A%22%2334d399%22%2C%22orientation%22%3A%22portrait%22%2C%22icons%22%3A%5B%7B%22src%22%3A%22%2Ficon-192.png%22%2C%22sizes%22%3A%22192x192%22%2C%22type%22%3A%22image%2Fpng%22%7D%2C%7B%22src%22%3A%22%2Ficon-512.png%22%2C%22sizes%22%3A%22512x512%22%2C%22type%22%3A%22image%2Fpng%22%2C%22purpose%22%3A%22any%20maskable%22%7D%5D%7D" />
+<link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22Batch%27d%20%E2%80%94%20Recall%20Tracker%22%2C%22short_name%22%3A%22Batch%27d%22%2C%22start_url%22%3A%22%2Fscan%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23040c0e%22%2C%22theme_color%22%3A%22%2334d399%22%2C%22orientation%22%3A%22portrait%22%2C%22icons%22%3A%5B%7B%22src%22%3A%22%2Ficon-192.png%22%2C%22sizes%22%3A%22192x192%22%2C%22type%22%3A%22image%2Fpng%22%7D%2C%7B%22src%22%3A%22%2Ficon-512.png%22%2C%22sizes%22%3A%22512x512%22%2C%22type%22%3A%22image%2Fpng%22%2C%22purpose%22%3A%22any%20maskable%22%7D%5D%7D" />
 <!-- Favicon + Apple touch icon -->
 <link rel="icon" type="image/png" href="/favicon.png" />
 <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
@@ -3414,6 +3414,67 @@
 </style>
 </head>
 <body>
+<script>
+// One address (2026-11-01, Phase 2a step 2): the scanner moved from
+// batchd-app.netlify.app to app.batchdapp.com/scan. A sign-in and the
+// offline queue belong to the address they were made on, so on the old
+// address the app keeps running until every saved scan has synced, and
+// only then shows where to go. Nothing queued is lost.
+(function () {
+  if (location.hostname !== 'batchd-app.netlify.app') return;
+  var NEW_URL = 'https://app.batchdapp.com/scan';
+  function queued() {
+    try {
+      var q = JSON.parse(localStorage.getItem('batched_offline_queue') || '[]');
+      return Array.isArray(q) ? q.length : 0;
+    } catch (e) { return 0; }
+  }
+  function banner(n) {
+    var b = document.getElementById('batchd-move-banner');
+    if (!b) {
+      b = document.createElement('div');
+      b.id = 'batchd-move-banner';
+      b.setAttribute('role', 'status');
+      b.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:99998;padding:10px 16px;text-align:center;'
+        + 'font-family:var(--font-body);font-size:var(--fs-meta);background:rgba(var(--warn-rgb),0.15);color:var(--text-primary);'
+        + 'border-bottom:1px solid rgba(var(--warn-rgb),0.4);';
+      document.body.appendChild(b);
+    }
+    b.textContent = 'Batch\u2019d is moving to a new address. Sending ' + n + ' saved scan' + (n === 1 ? '' : 's') + ' first. Keep this open and online.';
+  }
+  function moved() {
+    window._batchdMoved = true;
+    var b = document.getElementById('batchd-move-banner');
+    if (b) b.remove();
+    var o = document.createElement('div');
+    o.id = 'batchd-moved';
+    o.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;padding:24px;'
+      + 'background:var(--background-base);color:var(--text-primary);font-family:var(--font-body);';
+    o.innerHTML = '<div style="max-width:360px;text-align:center;">'
+      + '<div style="font-family:var(--font-display);font-weight:800;font-size:var(--fs-h3);margin-bottom:12px;">Batch\u2019d has moved</div>'
+      + '<p style="color:var(--text-muted);font-size:var(--fs-body);line-height:1.6;margin-bottom:20px;">The scanner now lives at app.batchdapp.com. '
+      + 'Open it, sign in, then add it to your home screen again. You can remove this old icon afterward.</p>'
+      + '<a href="' + NEW_URL + '" style="display:inline-block;padding:13px 22px;border-radius:var(--r-md);background:var(--accent-primary);'
+      + 'color:var(--accent-on-primary);font-weight:700;text-decoration:none;">Open the new address</a></div>';
+    document.body.appendChild(o);
+  }
+  function check() {
+    var n = queued();
+    if (n === 0) { moved(); return true; }
+    banner(n);
+    return false;
+  }
+  // Decided now, before the app's own start-up, so it does not send a
+  // signed-out visitor to the old address's sign-in page first.
+  window._batchdMoved = queued() === 0;
+  function start() {
+    if (check()) return;
+    var t = setInterval(function () { if (check()) clearInterval(t); }, 5000);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+  else start();
+})();
+</script>
 <div id="app-shell">
 
 <!-- LOGIN SCREEN -->
@@ -3514,6 +3575,10 @@
     <button onclick="closeDrawer();openTerminologyOverlay();" style="display:flex;align-items:center;gap:14px;padding:13px 12px;background:none;border:none;color:var(--muted);font-family:'Figtree',sans-serif;font-size:var(--fs-body-lg);font-weight:600;border-radius:var(--r-md);cursor:pointer;text-align:left;width:100%;transition:background var(--dur-fast);letter-spacing:0;">
       <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex-shrink:0;"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
       <span data-i18n="drawer.help">Help &amp; Terminology</span>
+    </button>
+    <button onclick="closeDrawer();location.href='/login?choose=1';" style="display:flex;align-items:center;gap:14px;padding:13px 12px;background:none;border:none;color:var(--muted);font-family:'Figtree',sans-serif;font-size:var(--fs-body-lg);font-weight:600;border-radius:var(--r-md);cursor:pointer;text-align:left;width:100%;transition:background var(--dur-fast);letter-spacing:0;">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex-shrink:0;"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      <span>Switch app</span>
     </button>
     <button onclick="closeDrawer();signOut();" style="display:flex;align-items:center;gap:14px;padding:13px 12px;background:none;border:none;color:var(--danger);font-family:'Figtree',sans-serif;font-size:var(--fs-body-lg);font-weight:600;border-radius:var(--r-md);cursor:pointer;text-align:left;width:100%;transition:background var(--dur-fast);letter-spacing:0;">
       <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex-shrink:0;"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg><span data-i18n="drawer.signout">Sign out</span>
@@ -4942,10 +5007,10 @@
   <!-- Corporate Dashboard shortcut — corp_admin and store_manager only -->
   <div id="corp-admin-banner" style="display:none;margin:24px 0 8px;background:rgba(var(--accent-rgb),0.07);border:1px solid rgba(var(--accent-rgb),0.25);border-radius:var(--r-lg);padding:14px 18px;align-items:center;justify-content:space-between;gap:12px;">
     <div>
-      <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:var(--fs-body);color:var(--accent);">Corporate Dashboard</div>
+      <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:var(--fs-body);color:var(--accent);">Retail</div>
       <div style="font-size:var(--fs-eyebrow);color:var(--muted);margin-top:2px;">Access recalls, compliance, stores and staff management</div>
     </div>
-    <button onclick="window.open('https://app.batchdapp.com/dashboard.html','_blank')" style="font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);font-weight:700;padding:8px 14px;border-radius:var(--r-sm);background:var(--accent);color:var(--accent-on-primary);border:none;cursor:pointer;white-space:nowrap;">Open dashboard →</button>
+    <button onclick="window.open('/retail','_blank')" style="font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);font-weight:700;padding:8px 14px;border-radius:var(--r-sm);background:var(--accent);color:var(--accent-on-primary);border:none;cursor:pointer;white-space:nowrap;">Open Retail →</button>
   </div>
 
 </div>
@@ -5051,7 +5116,7 @@
             <div style="font-size:var(--fs-label);font-weight:700;letter-spacing:0.07em;text-transform:uppercase;color:var(--warn);margin-bottom:5px;" id="recall-sheet-info-source"></div>
             <div style="font-size:var(--fs-meta);color:var(--text);font-weight:600;margin-bottom:3px;" id="recall-sheet-info-reason"></div>
             <div style="font-size:var(--fs-eyebrow);color:var(--muted);line-height:1.5;" id="recall-sheet-info-desc"></div>
-          <a href="https://app.batchdapp.com/dashboard.html?panel=recalls" target="_blank"
+          <a href="/retail?panel=recalls" target="_blank"
             style="display:inline-flex;align-items:center;gap:5px;margin-top:8px;font-size:var(--fs-eyebrow);color:var(--warn);text-decoration:none;font-family:'DM Mono',monospace;font-weight:600;"
             onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--warn)'">
             View full recall details on dashboard →
@@ -5632,7 +5697,7 @@
     <div style="display:flex;gap:10px;flex-wrap:wrap;">
       <button class="btn btn-primary" onclick="goToRecallsFromLogin()" style="flex:1;justify-content:center;background:var(--danger);border-color:var(--danger);">Review affected scans</button>
       <button class="btn btn-ghost" onclick="dismissLoginRecall()" style="flex:1;justify-content:center;">Dismiss</button>
-      <button class="btn btn-ghost" onclick="window.open('https://app.batchdapp.com/dashboard.html?panel=recalls','_blank')" style="flex:1;justify-content:center;font-size:var(--fs-meta);display:flex;align-items:center;gap:5px;">
+      <button class="btn btn-ghost" onclick="window.open('/retail?panel=recalls','_blank')" style="flex:1;justify-content:center;font-size:var(--fs-meta);display:flex;align-items:center;gap:5px;">
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
         View on dashboard
       </button>
@@ -5704,6 +5769,9 @@ if (BATCHD_ENV === 'staging') {
         ['https://corporate.batchdapp.com/', '/dashboard.html'],
         ['https://app.batchdapp.com/dashboard.html', '/dashboard.html'],
         ['https://app.batchdapp.com/manufacturer.html', '/manufacturer.html'],
+        ['https://app.batchdapp.com/retail', '/retail'],
+        ['https://app.batchdapp.com/scan', '/scan'],
+        ['https://app.batchdapp.com/login', '/login'],
         ['https://app.batchdapp.com/signup', '/signup'],
         ['https://batchd-app.netlify.app', '/']
       ];
@@ -5898,6 +5966,13 @@ let offlineQueue = [];
 let autoRecallCode = null; // active recall code from recalls table
 
 // ── AUTH ─────────────────────────────────────────────────────
+// Central sign-in (2026-11-01): people sign in once at /login. ?legacy=1
+// keeps this app's own sign-in form as a fallback for one release.
+const _batchdLegacyLogin = new URLSearchParams(location.search).has('legacy');
+function _toCentralLogin() {
+  if (window._batchdMoved) return; // old address: the "has moved" screen is showing
+  location.replace('/login?app=scan&next=' + encodeURIComponent(location.pathname + location.search));
+}
 async function initAuth() {
   const { data: { session } } = await sb.auth.getSession();
   if (session) {
@@ -5910,6 +5985,9 @@ async function initAuth() {
       return;
     }
     showApp(session.user);
+  } else if (!_batchdLegacyLogin) {
+    _toCentralLogin();
+    return;
   } else {
     document.getElementById('login-screen').classList.remove('hidden');
   }
@@ -6181,6 +6259,7 @@ function handleAppDeepLink() {
 }
 
 function showLogin() {
+  if (!_batchdLegacyLogin) { _toCentralLogin(); return; }
   document.getElementById('login-screen').classList.remove('hidden');
   document.getElementById('user-email').textContent = '';
 }
@@ -6647,7 +6726,9 @@ async function signOut() {
   // powered for the next user.
   try { stopAutoCapture(); } catch (e) {}
   try { stopSharedStream(); } catch (e) {}
+  currentUser = null; // so the SIGNED_OUT handler does not show "Session expired"
   await sb.auth.signOut();
+  if (!_batchdLegacyLogin) location.replace('/login');
 }
 
 // ── STORES FROM DB ───────────────────────────────────────────

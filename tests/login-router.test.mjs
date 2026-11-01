@@ -7,8 +7,8 @@ import { readFileSync } from 'node:fs';
 const html = readFileSync(new URL('../login.html', import.meta.url), 'utf8');
 const a = html.indexOf('// ROUTER START');
 const b = html.indexOf('// ROUTER END');
-const { batchdRoute, batchdOrderApps, BATCHD_APPS } = new Function(
-  html.slice(a, b) + '; return { batchdRoute, batchdOrderApps, BATCHD_APPS };')();
+const { batchdRoute, batchdOrderApps, batchdPick, BATCHD_APPS } = new Function(
+  html.slice(a, b) + '; return { batchdRoute, batchdOrderApps, batchdPick, BATCHD_APPS };')();
 
 const m = (role, extra = {}) => ({ role, active: true, is_batched_admin: false, organisations: { type: 'retailer' }, ...extra });
 
@@ -65,3 +65,28 @@ test('every app path is same-origin and served by netlify.toml or a file', () =>
   assert.ok(toml.includes('from = "/login"'));
   assert.ok(/from = "https:\/\/app\.batchdapp\.com\/"\s+to = "\/login\.html"/.test(toml));
 });
+
+test('one app goes straight there; a deep link for that app keeps its query', () => {
+  assert.deepEqual(batchdPick(['scan'], '', null), { go: 'scan', query: '' });
+  assert.deepEqual(batchdPick(['scan'], '?app=scan&next=%2Fscan%3Fview%3Dhistory%26lot%3DA1', null), { go: 'scan', query: '?view=history&lot=A1' });
+  // A Retail deep link does not leak into the scanner for a staff member.
+  assert.deepEqual(batchdPick(['scan'], '?app=retail&next=%2Fretail%3Fpanel%3Drecalls', null), { go: 'scan', query: '' });
+});
+
+test('?app= picks an allowed app and keeps the deep link query', () => {
+  assert.deepEqual(batchdPick(['retail', 'scan'], '?app=retail&next=%2Fretail%3Fpanel%3Drecalls', 'scan'), { go: 'retail', query: '?panel=recalls' });
+  assert.deepEqual(batchdPick(['retail', 'scan'], '?app=admin', null), { choose: ['retail', 'scan'] });
+});
+
+test('the last app used is opened directly unless the chooser is asked for', () => {
+  assert.deepEqual(batchdPick(['retail', 'scan'], '', 'scan'), { go: 'scan', query: '' });
+  assert.deepEqual(batchdPick(['retail', 'scan'], '?choose=1', 'scan'), { choose: ['scan', 'retail'] });
+  assert.deepEqual(batchdPick(['retail', 'scan'], '', 'admin'), { choose: ['retail', 'scan'] });
+  assert.deepEqual(batchdPick(['retail', 'scan'], '', null), { choose: ['retail', 'scan'] });
+});
+
+test('next can never point at another site', () => {
+  assert.deepEqual(batchdPick(['retail', 'scan'], '?app=retail&next=%2F%2Fevil.example%2F%3Fx%3D1', null), { go: 'retail', query: '' });
+  assert.deepEqual(batchdPick(['retail', 'scan'], '?app=retail&next=https%3A%2F%2Fevil.example%2F%3Fx', null), { go: 'retail', query: '' });
+});
+
