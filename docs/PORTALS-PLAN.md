@@ -2,7 +2,8 @@
 
 Written 2026-10-25, revised 2026-11-01 (recall notices go to
 distributors too, store matching research, two citations verified,
-migration numbers moved past the ones now taken). Planning only. No app code and no migrations come with
+migration numbers moved past the ones now taken; central sign-in on one
+address, and "Corporate" renamed "Retail"). Planning only. No app code and no migrations come with
 this document. Facts about the database come from
 `docs/SCHEMA-REFERENCE.md` (generated from production on 2026-10-24),
 migrations 020, 038 and 039, `CLAUDE.md`, `docs/HISTORY.md`, and a
@@ -509,6 +510,88 @@ chooses to forward.
   whether portal orgs only arrive by partner invite or by Batch'd creating
   them in admin.html.
 
+### Central sign-in and one address (Ian, 2026-11-01)
+
+Everyone signs in at one place, and Batch'd sends them to the right app.
+The apps are:
+- **Retail**: today's corporate dashboard, renamed. "Corporate" stops
+  meaning anything once there are three company types.
+- **Manufacturer** and **Distributor**: the new portal (one page, two
+  modes, per Q1).
+- **Scanner**: the staff app for stores.
+- **Admin**: Batch'd staff only, shown to platform admins.
+
+How the sign-in page decides:
+1. After sign-in it reads the person's active memberships: which company,
+   what type, which role.
+2. If that adds up to exactly one app, it goes straight there. Store staff
+   go to the scanner. A packer goes to Manufacturer. Most people never see
+   a choice.
+3. Only someone with more than one real option sees a short chooser. A
+   retail admin or store manager can open Retail or the scanner. A platform
+   admin also sees Admin. The chooser remembers the last pick on that
+   device, so the second visit is one tap.
+4. It never shows an app the person cannot use. Each app still checks the
+   person itself and sends them back to sign-in if they open the wrong one
+   by hand. The routing is a convenience; the database rules remain the
+   real boundary.
+
+Why everything has to sit on one web address:
+- A sign-in is stored by the browser per address (the Supabase session
+  lives in that address's local storage). Today the scanner is on
+  batchd-app.netlify.app and Retail is on corporate.batchdapp.com, so a
+  login on one does not carry to the other, and a separate login site
+  would sign you in to neither.
+- So all apps move under one domain with paths. Recommended (Q15):
+  - `app.batchdapp.com/` the sign-in page and router (new file
+    `login.html`)
+  - `app.batchdapp.com/retail` today's dashboard.html
+  - `app.batchdapp.com/manufacturer` and `/distributor` the portal
+  - `app.batchdapp.com/scan` today's index.html
+  - `/join`, `/signup`, `/terms`, `/privacy` stay as they are
+- app.batchdapp.com already points at this Netlify site and has a
+  certificate, so this needs no DNS work. Only netlify.toml rules change.
+- One address also means signing out in one app signs you out of all of
+  them on that device. That is the expected behavior for a single sign-in.
+- Deploy previews are already one address per preview, so the whole flow
+  (sign-in, chooser, every app) can be tested on one preview.
+
+What the move costs, and why now:
+- The scanner is installed on phones. Its install and its offline queue
+  (`batched_offline_queue`, scans saved while offline) belong to its
+  current address. Its manifest is inline in index.html with start_url
+  "/", and there is no service worker.
+- Moving it means each phone reinstalls the scanner once, and any scans
+  waiting offline must sync before the switch. The old address keeps
+  serving the scanner during a transition: on load it syncs the queue,
+  and only when the queue is empty does it send the person to the new
+  address with a short "Batch'd has moved, add it to your home screen
+  again" screen. Nothing queued is lost.
+- CLAUDE.md already says to settle the scanner's address before the first
+  design partner installs it. How many phones have it installed today
+  needs verification with Ian (Q16). If the answer is "only ours", this is
+  the cheapest the move will ever be.
+
+What the rename touches (labels and links, never identifiers):
+- Visible text that says "corporate dashboard" or "Corporate" in the
+  dashboard, the scanner's "Open dashboard" buttons, signup, join, admin,
+  emails and SMOKE.md.
+- Links to corporate.batchdapp.com: 12 lines in netlify.toml and a few in
+  join.html, admin.html, index.html, dashboard.html, signup.html,
+  notify-event.js, send-invite.js, triage-complaint.js and
+  tests/env-block.test.mjs (counted 2026-11-01).
+- corporate.batchdapp.com keeps working: it 301s to
+  app.batchdapp.com/retail, with the path and query string kept, so old
+  bookmarks and links in sent emails still land.
+- Not renamed: the role corp_admin, the organisations table, file names
+  (dashboard.html stays dashboard.html behind the /retail path), and any
+  column.
+
+Known limit for later: the apps assume one company per person (signup
+refuses a second, and several helpers pick "the" org). The chooser covers
+"several apps, one company" now. "Several companies" needs an active-org
+switch in every app and comes after the portals ship.
+
 ### Roles
 
 Recommended (Q3): use the same two roles everywhere, `corp_admin` and
@@ -520,8 +603,8 @@ legacy orgs, and the legacy policies that name them are retired in the
 cleanup phase.
 
 Invitations reuse `send_invitation`, `accept_invitation` and
-send-invite.js. join.html routes by org type: retailer roles go to the
-dashboard and scanner as today, portal orgs go to the portal.
+send-invite.js. After accepting, join.html hands the person to the
+central sign-in router, which sends them to the right app.
 
 ### The US-only decision
 
@@ -586,30 +669,90 @@ before writing each file.
   policy can recurse (keep the helpers SECURITY DEFINER); performance of
   `IN (SELECT helper())` on large tables (same pattern as today, so low).
 
-### Phase 2. Portal shell and signup
+### Phase 2a. Central sign-in, one address, Retail rename
 
-- New `portal.html`: sign-in, org-type gate (retailers are sent to the
-  dashboard), a Getting started page, Settings (organization profile,
-  team and invites, locations for distributors), the design tokens, the
-  `_ico` icon set and `_confirmDialog` copied from the dashboard. No data
-  sharing yet.
+Done before any portal screen, so the portals are born on the new address.
+Can run alongside Phase 1 (no shared files).
+- New `login.html` at app.batchdapp.com/: sign-in, password reset, the
+  two-factor challenge, the "account deactivated" screen, and the router
+  and chooser described in section 4. It reads memberships with the
+  existing helpers; no migration.
+- netlify.toml: on app.batchdapp.com, `/` serves login.html, `/retail`
+  serves dashboard.html, `/scan` serves index.html; corporate.batchdapp.com
+  and its /dashboard paths 301 to app.batchdapp.com/retail with the query
+  kept; www.batchdapp.com 301s to app.batchdapp.com. The private-path 404
+  rules stay.
+- dashboard.html and index.html: when there is no session, send the
+  person to the sign-in page instead of showing their own login form (the
+  forms stay in the files for one release as a fallback, then go). The
+  scanner's manifest start_url becomes "/scan". Every "corporate" label
+  becomes "Retail".
+- The old scanner address (batchd-app.netlify.app) keeps serving the
+  scanner and runs the move flow: sync the offline queue, then forward
+  with the "add it to your home screen again" screen once the queue is
+  empty.
+- The database selection block (BATCHD_ENV, batchdPreviewUrl,
+  batchdLink) is updated identically in all pages, login.html included,
+  so previews and localhost still use staging and links stay on the
+  preview.
+- Emails and functions: links in notify-event.js, send-invite.js and
+  triage-complaint.js point at the new paths. join.html and signup.html
+  send people to the sign-in page's router instead of hardcoded
+  destinations.
+- Files: login.html (new), dashboard.html, index.html, join.html,
+  signup.html, admin.html, netlify.toml, netlify/functions/notify-event.js,
+  send-invite.js, triage-complaint.js, scripts/check.mjs (six pages share
+  the database block; forced 404s unchanged), tests/env-block.test.mjs,
+  CLAUDE.md (domains section), SMOKE.md, docs/CHANGELOG.md. No migration.
+- Acceptance, on a preview against staging and then on production:
+  - store staff sign in and land in the scanner with no chooser;
+  - a retail admin sees Retail and Scanner, picks Retail, and on the next
+    visit the last pick is preselected;
+  - signing in once opens both Retail and the scanner without a second
+    login; signing out of one signs out of both;
+  - a staff member who types /retail is sent back to the router;
+  - a deactivated member sees the deactivated screen;
+  - an old corporate.batchdapp.com link with ?panel=recalls lands on the
+    same panel under /retail;
+  - on a phone with the old scanner installed and two scans queued
+    offline, both scans sync before the move screen shows, and the
+    reinstalled scanner opens at /scan;
+  - invitation emails and recall emails link to the new paths;
+  - no console errors in both themes at phone width.
+- Risks: this touches how every user gets in, so a mistake locks people
+  out. Mitigations: ship the router first while the apps keep their own
+  forms, switch the apps over in a second step, keep every old address
+  working by redirect, and test the offline queue hand-off on a real
+  phone before production. Netlify's Pretty URLs rewriting (noted in
+  CLAUDE.md) must be checked against the new paths.
+
+### Phase 2b. Portal shell and signup
+
+- New `portal.html`, served at /manufacturer and /distributor: org-type
+  gate (anyone else goes back to the router), a Getting started page,
+  Settings (organization profile, team and invites, locations for
+  distributors), the design tokens, the `_ico` icon set and
+  `_confirmDialog` copied from the dashboard. Sign-in is the central page
+  from Phase 2a. No data sharing yet.
 - Migration 044: create_organisation_with_admin accepts manufacturer and
   distributor (same signature).
 - Files: portal.html, signup.html (type cards, step 3 questions, routing),
-  join.html (route portal orgs and the mfr roles to the portal),
-  manufacturer.html and supplier.html (link to the portal),
-  index.html (subdomain redirect targets), netlify.toml (a `/portal`
-  alias), admin.html (type filter and org type on create),
+  login.html (the router learns the two portal apps),
+  manufacturer.html and supplier.html (link to the sign-in page),
+  index.html (subdomain redirect targets), netlify.toml (/manufacturer
+  and /distributor serve portal.html; today /manufacturer rewrites to the
+  retired stub, so that rule changes), admin.html (type filter and org
+  type on create),
   send-invite.js (role wording), scripts/check.mjs (six-page database
   block, US-only check on portal.html), SMOKE.md, CHANGELOG.md.
 - Acceptance: on a preview, sign up a manufacturer and a distributor
   against staging, land in the portal, invite a teammate, the teammate
   joins and lands in the portal; a retailer sign-up still lands in the
-  dashboard; a retailer opening /portal is sent to the dashboard; no
-  console errors in both themes at phone width.
+  Retail app; a retail user opening /manufacturer is sent back to the
+  router; no console errors in both themes at phone width.
 - Risks: the signup file is shared with retailers, so a mistake breaks
-  retailer onboarding (test the retailer path first on every preview);
-  Q2 (where the portal lives) must be settled before this phase.
+  retailer onboarding (test the retailer path first on every preview).
+  Needs Phase 2a live first.
 
 ### Phase 3. Partners screen on both sides
 
@@ -753,6 +896,8 @@ before writing each file.
 
 ### Rough order of value
 
+Phase 2a pays off even with no portal: one sign-in for Retail and the
+scanner, and the scanner's address settled before stores install it.
 Phases 1 to 4 deliver the first sellable thing: a manufacturer can send a
 recall to its retailers and distributors at once, see which distributors
 have stopped shipping and which stores have pulled. Phase 5 is the biggest
@@ -762,17 +907,18 @@ daily-use win for distributors. Phases 6 to 8 complete the chain.
 
 ## 6. Decisions Ian must make
 
-Each one has a recommendation. Building waits on Q1 to Q5 at minimum.
+Each one has a recommendation. Building waits on Q1, Q3, Q4 and Q5 at
+minimum, and Phase 2a also waits on Q15 and Q16.
 
 1. **One portal or two?** One page, `portal.html`, that shows manufacturer
    or distributor screens by org type, or two separate pages.
    Recommended: one page. Most screens are shared (recalls, shipments,
    partners, records).
-2. **Where does the portal live?** A path such as
-   corporate.batchdapp.com/portal (no DNS work), or a new subdomain such as
-   partners.batchdapp.com (DNS and a Netlify domain alias). Recommended:
-   the path first, a subdomain later if sales want it. Unlike the scanner,
-   moving it later is easy because it is not an installed app.
+2. **Where does the portal live?** SETTLED 2026-11-01 (Ian): a central
+   sign-in that routes everyone to Retail (renamed from Corporate),
+   Manufacturer, Distributor or the scanner, with all of them on one
+   address. Details in section 4, build in Phase 2a. Q15 to Q17 are the
+   follow-up choices.
 3. **Which roles do portal users get?** Reuse corp_admin, store_manager
    and staff with portal labels, or bring back mfr_admin and mfr_qa and
    add distributor roles. Recommended: reuse, because every security
@@ -819,6 +965,20 @@ Each one has a recommendation. Building waits on Q1 to Q5 at minimum.
     lot on hold, the portal either refuses a shipment of it or warns and
     lets it through. Recommended: refuse, with an admin override that
     records a written reason (some holds are released after testing).
+15. **Which address do all the apps share?** app.batchdapp.com (already
+    attached to the site, no DNS work), or a new name such as
+    my.batchdapp.com. Recommended: app.batchdapp.com.
+16. **How many phones have the scanner installed today, and whose?** If
+    it is only Batch'd's own test phones, the move in Phase 2a costs
+    nothing. If a store already uses it, the move needs a date agreed with
+    that store and someone on site to reinstall.
+17. **Should the chooser remember the last pick?** A retail admin who
+    always opens Retail could skip the chooser after the first time.
+    Recommended: remember it per device, with a "Switch app" link in every
+    app's menu.
+
+Also settled 2026-11-01 (Ian): one central sign-in on one address (Q2),
+and "Corporate" becomes "Retail" in everything people see.
 
 Settled 2026-11-01 (Ian): manufacturers send recall notices to retailers
 and to distributors; distributors receive them to halt shipments. Store
