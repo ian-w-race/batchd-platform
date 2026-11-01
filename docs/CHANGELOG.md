@@ -7,8 +7,8 @@ how it was verified and what is still unverified. Everything before
 ## 2026-11-01 (smoke checks 48 and 51 on production)
 - SMOKE.md 48 and 51 run by Claude in the built-in browser on
   app.batchdapp.com after Ian signed in (org Batch'd Admin, plan active,
-  7 stores). Both pass on the server evidence; Ian still has to confirm
-  the emails arrived in his inbox.
+  7 stores). Both pass. Ian confirmed the same evening that all three
+  emails (drill alert, complaint notice, recall alert) arrived.
 - 51: the drill (lot DRILL-2026-11-01-SMOKE51, Run drill on the Retail
   dashboard) called notify-event, which answered sent 3, failed 0 for
   drill_scheduled. The phone complaint logged from a History card in the
