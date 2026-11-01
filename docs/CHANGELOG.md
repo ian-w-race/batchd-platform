@@ -4,6 +4,40 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-11-01 (A2 part 2: the FSMA rules in one module)
+- src/shared/fsma.js now holds, once, the rules that dashboard.html,
+  index.html and signup.html carried as hand-kept copies: the 27 export
+  columns and the export disclaimer, the US citation table, the sales
+  bands with their labels, applicability, copy, closing line and threshold
+  note, the $250,000 and $1 million thresholds (THRESHOLDS), the supplier
+  completeness rule and the CSV cell guard with the local date and time
+  helpers. The bundle exposes it as window.Batchd.fsma; the pages keep
+  their old names (_CITATIONS, _FSMA_APPLICABILITY, FSMA204_EXPORT_HEADERS,
+  _fsmaCsvCell, supplierIsComplete and so on) as aliases, so the thousands
+  of call sites did not change.
+- Wording that differs by audience stays per page but flows through the
+  module: each page passes its own "not yet answered" sentence to
+  applicabilityTable(), and the scanner passes the store-staff version of
+  the registered-facility sentence (RFR_FACILITY_STORE) to citationTable().
+  Generating the module from the three copies showed they were otherwise
+  identical, which is what the old checks guaranteed.
+- signup.html renders its "Annual food sales" options from the shared band
+  list instead of five hard-coded options, and the dashboard's Terminology
+  sentence takes the $1 million figure from THRESHOLDS, so no page carries
+  a dollar amount any more.
+- scripts/check.mjs: the four copy-comparison checks (export headers,
+  citations, supplier fields, dollar thresholds) are replaced by one check
+  that the rules exist only in the module, that the pages read Batchd.fsma
+  and carry no dollar literal, and that the module has 27 columns.
+  tests/shared-fsma.test.mjs (6 tests) covers the module. src/package.json
+  marks src/ as ES modules so Node imports them without a warning.
+- Verified: node scripts/check.mjs (8 of 8); node --test (106 tests); the
+  end-to-end suite locally against the built dist/ on staging (first run 9
+  passed, 1 skipped, one failure that was a single 404 for the font file
+  while another session's test server shared port 8788; the core-flow chain
+  passed 4 of 4 on a clean rerun); the built signup page in the browser
+  pane lists the five shared bands and shows the applicability sentence.
+
 ## 2026-11-01 (A2 part 1: the build step and the shared database module)
 - The site now has a build. `npm run build` (scripts/build.mjs) copies the
   public pages and static files into dist/ from an allowlist (pages,
