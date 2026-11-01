@@ -29,7 +29,10 @@ work. Never give Ian partial diffs or snippets to paste in by hand.
   schema. Never hand Ian a script to run.
 - End-to-end tests: `npx playwright test` (local, staging) or the e2e
   workflow on every deploy preview. Add a test in e2e/ for each new core
-  flow; they may only target localhost or a deploy preview.
+  flow; they may only target localhost or a deploy preview. The workflow
+  signs in to the shared staging test account on every push, so a local
+  session on that account can be ended mid-test (the apps' own sign-out
+  is global; the test's sign-out is local since 2026-11-01).
 - After a change Ian should test, add a numbered check to SMOKE.md and a
   dated entry to docs/CHANGELOG.md. Keep this file to rules and current
   state; do not grow it back into a log.
@@ -246,11 +249,11 @@ is not on GitHub; nothing live loads it.
   exist in production (checked 2026-10-24; CHECK_MIGRATIONS reports it
   MISSING). The only writer is the retired OCR path in saveRecord, so the
   insert never runs today. Apply 007 before reviving OCR capture.
-- Migrations: 001 to 041 with 020a, no 027 (John's code_patterns slot,
+- Migrations: 001 to 042 with 020a, no 027 (John's code_patterns slot,
   applied outside the folder). CHECK_MIGRATIONS.sql reports APPLIED or
   MISSING per migration; Ian ran it 2026-10-11 and every row was APPLIED.
-  031 to 041 were applied through the Supabase connector (031 to 039 on
-  2026-10-24, 040 and 041 on 2026-10-25), which records them in
+  031 to 042 were applied through the Supabase connector (031 to 039 on
+  2026-10-24, 040 and 041 on 2026-10-25, 042 on 2026-11-01), which records them in
   supabase_migrations; confirmed there 2026-10-28, with job_runs and
   recall_notices present and match_recall_notice identical on staging and
   production (staging's 040b best-by fix is folded into production's
@@ -281,10 +284,13 @@ is not on GitHub; nothing live loads it.
   of the org, get_my_organisation_ids and the batchd_user_* helpers
   return nothing without a session, the invitation readers are token
   gated for the join page); WARN that leaked-password protection is off
-  in Auth (Ian's toggle, no connector tool); INFO that
+  in Auth (a Pro plan feature; the project is on the free plan, so the
+  warning is accepted until the plan changes, Ian 2026-11-01); INFO that
   organisation_api_keys and scan_queue have RLS and no policies (closed
-  to clients on purpose). Revoking anon EXECUTE on the functions that
-  never need it would be hygiene, not a fix.
+  to clients on purpose). Migration 042 (applied to staging and production
+  2026-11-01) revoked anon EXECUTE on the three that never need it; the
+  advisor's anon list is now the invitation readers and the batchd_user_*
+  RLS helpers, both kept on purpose.
 - Before running SQL, confirm the editor is on lurxucdmrugikdlvvebc.
   Migrations 022 to 026 once reported PASS against a different project.
 - Schema reference: docs/SCHEMA-REFERENCE.md, generated from production
@@ -545,8 +551,6 @@ both copies.
   legacy scans.
 
 ## Open items
-- The e2e workflow needs the GitHub secret E2E_PASSWORD, which Ian sets
-  from the local staging accounts file.
 - Netlify secret hygiene: keep every secret's Local development value empty
   (Netlify shows those in plain text). INTERNAL_NOTIFY_SECRET was rotated and
   recreated under the right name on both sites on 2026-10-25; the code's
@@ -557,13 +561,20 @@ Owed by Ian:
 - One real wholesaler delivery file, with permission, for the import.
 - Brand ownership of the suggested supplier seeds, and lot code formats
   for those brands before any lot hints are added.
-- Live smoke checks never run on the deployed apps: SMOKE.md 10 to 13,
-  17 to 20, 46 and 47.
-- Rotate the demo account password (in public git history).
+- Smoke checks 10 to 13, 17 to 20, 46 and 47 were run by Claude on
+  2026-11-01 on the local static server against the staging database and
+  passed (docs/CHANGELOG.md has the detail). They have still not been run
+  on the deployed production apps. 48 and 51 need Netlify functions, so
+  they wait for a deploy preview with staging function variables or a
+  live run.
+- Rotate the demo account password (in public git history). Claude's
+  attempt on 2026-11-01 was blocked by the app's permission layer, so it
+  stays Ian's: Supabase, Authentication, Users, demo@batchdapp.com.
 - Confirm the shared secrets match on both Netlify sites (the connector
   cannot read site-level variables). SCHEDULED_FUNCTIONS_DISABLED is
   settled: batchd-app skips, www runs (2026-10-28).
-- Turn on leaked-password protection in Supabase Auth (advisor warning).
+- Leaked-password protection in Supabase Auth needs the Pro plan; turn it
+  on if the project is ever upgraded.
 Security, found 2026-10-24 while cloning to staging: all fixed (032
 storage bucket, 033 cross-org rules, 034 anon table writes and store
 names, 035 view user_accessible_stores, search paths and trigger

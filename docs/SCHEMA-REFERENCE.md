@@ -1,8 +1,8 @@
 # Batch'd database reference
 
-Generated 2026-10-24 18:44 UTC from the production project (lurxucdmrugikdlvvebc) by scripts/schema-reference.sql. Do not edit by hand; regenerate after every migration.
+Generated 2026-11-01 12:04 UTC from the production project (lurxucdmrugikdlvvebc) by scripts/schema-reference.sql. Do not edit by hand; regenerate after every migration.
 
-45 tables, 2 views, 42 functions, 148 policies.
+47 tables, 2 views, 47 functions, 185 policies.
 
 # Tables
 
@@ -45,8 +45,8 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 **Other indexes**
 
 - `CREATE INDEX code_patterns_product_name_idx ON public.code_patterns USING btree (product_name)`
-- `CREATE INDEX idx_code_patterns_scan_count ON public.code_patterns USING btree (scan_count DESC)`
 - `CREATE INDEX idx_code_patterns_barcode ON public.code_patterns USING btree (barcode_number) WHERE (barcode_number IS NOT NULL)`
+- `CREATE INDEX idx_code_patterns_scan_count ON public.code_patterns USING btree (scan_count DESC)`
 
 **Policies**
 
@@ -82,6 +82,7 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Policies**
 
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
 - `b33_audit_member_insert` INSERT to authenticated check `(complaint_id IN ( SELECT c.id
    FROM complaints c
   WHERE ((c.receiving_org_id IN ( SELECT batchd_my_active_org_ids() AS batchd_my_active_org_ids)) OR (c.manufacturer_id IN ( SELECT batchd_my_active_org_ids() AS batchd_my_active_org_ids)))))`
@@ -122,6 +123,7 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Policies**
 
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
 - `esc_retailer_manage` ALL to public using `(from_org_id IN ( SELECT organisation_members.organisation_id
    FROM organisation_members
   WHERE (organisation_members.user_id = auth.uid())))`
@@ -160,6 +162,7 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Policies**
 
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
 - `Orgs view complaint messages` SELECT to public using `(complaint_id IN ( SELECT complaints.id
    FROM complaints
   WHERE ((complaints.receiving_org_id IN ( SELECT organisation_members.organisation_id
@@ -236,6 +239,7 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Policies**
 
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
 - `Orgs view own complaints` SELECT to public using `((receiving_org_id IN ( SELECT organisation_members.organisation_id
    FROM organisation_members
   WHERE (organisation_members.user_id = auth.uid()))) OR (manufacturer_id IN ( SELECT organisation_members.organisation_id
@@ -318,6 +322,7 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 - `Manufacturers manage ingredient receipts` ALL to public using `(manufacturer_id IN ( SELECT organisation_members.organisation_id
    FROM organisation_members
   WHERE (organisation_members.user_id = auth.uid())))`
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
 
 ## investigation_requests
 
@@ -354,6 +359,7 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 - `Manufacturers manage own investigations` ALL to public using `(manufacturer_id IN ( SELECT organisation_members.organisation_id
    FROM organisation_members
   WHERE (organisation_members.user_id = auth.uid())))`
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
 - `Retailers read investigations from partners` SELECT to public using `(manufacturer_id IN ( SELECT trading_partners.manufacturer_id
    FROM trading_partners
   WHERE ((trading_partners.retailer_id IN ( SELECT organisation_members.organisation_id
@@ -399,6 +405,7 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 - `Retailers manage own responses` ALL to public using `(retailer_org_id IN ( SELECT organisation_members.organisation_id
    FROM organisation_members
   WHERE (organisation_members.user_id = auth.uid())))`
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
 - `Manufacturers read responses to their investigations` SELECT to public using `(investigation_id IN ( SELECT investigation_requests.id
    FROM investigation_requests
   WHERE (investigation_requests.manufacturer_id IN ( SELECT organisation_members.organisation_id
@@ -447,10 +454,40 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 - `Admins can manage invitations` ALL to authenticated using `(EXISTS ( SELECT 1
    FROM organisation_members om
   WHERE ((om.user_id = auth.uid()) AND (om.organisation_id = invitations.organisation_id) AND (om.role = ANY (ARRAY['corp_admin'::text, 'mfr_admin'::text, 'platform_admin'::text])))))`
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
 - `b20_inv_admin_delete` DELETE to public using `(batchd_is_corp_admin_of(organisation_id) OR batchd_is_platform_admin())`
 - `b20_inv_admin_insert` INSERT to public check `((batchd_is_corp_admin_of(organisation_id) OR batchd_is_platform_admin()) AND (role = ANY (ARRAY['staff'::text, 'store_manager'::text, 'corp_admin'::text])) AND (COALESCE(accepted, false) = false) AND (token IS NOT NULL))`
 - `b20_inv_admin_select` SELECT to public using `(batchd_is_corp_admin_of(organisation_id) OR batchd_is_platform_admin())`
 - `b20_inv_admin_update` UPDATE to public using `((batchd_is_corp_admin_of(organisation_id) OR batchd_is_platform_admin()) AND (COALESCE(accepted, false) = false))` check `((batchd_is_corp_admin_of(organisation_id) OR batchd_is_platform_admin()) AND (role = ANY (ARRAY['staff'::text, 'store_manager'::text, 'corp_admin'::text])))`
+
+## job_runs
+
+Row security: on · Approximate rows: 309
+Table access: authenticated: select; service_role: delete, insert, references, select, trigger, truncate, update
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | uuid | not null | gen_random_uuid() |
+| `job` | text | not null |  |
+| `site` | text |  |  |
+| `started_at` | timestamp with time zone | not null | now() |
+| `finished_at` | timestamp with time zone |  |  |
+| `ok` | boolean |  |  |
+| `status_code` | integer |  |  |
+| `detail` | jsonb |  |  |
+
+**Constraints**
+
+- Check: `CHECK (((length(job) >= 1) AND (length(job) <= 60)))`
+- Primary key: `PRIMARY KEY (id)`
+
+**Other indexes**
+
+- `CREATE INDEX job_runs_job_started_idx ON public.job_runs USING btree (job, started_at DESC)`
+
+**Policies**
+
+- `b41_job_runs_platform_admin` SELECT to authenticated using `batchd_is_platform_admin()`
 
 ## mock_recall_drills
 
@@ -481,6 +518,7 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 - `Initiating org can manage their drills` ALL to authenticated using `(EXISTS ( SELECT 1
    FROM organisation_members om
   WHERE ((om.user_id = auth.uid()) AND (om.organisation_id = mock_recall_drills.initiated_by_org) AND (om.role = ANY (ARRAY['mfr_admin'::text, 'mfr_qa'::text, 'corp_admin'::text, 'platform_admin'::text])))))`
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
 - `Target retailers can view drills aimed at them` SELECT to authenticated using `(EXISTS ( SELECT 1
    FROM organisation_members om
   WHERE ((om.user_id = auth.uid()) AND (om.organisation_id = mock_recall_drills.target_retailer_id))))`
@@ -551,11 +589,11 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 **Other indexes**
 
 - `CREATE UNIQUE INDEX organisation_members_user_org_unique ON public.organisation_members USING btree (user_id, organisation_id)`
-- `CREATE INDEX organisation_members_primary_store_idx ON public.organisation_members USING btree (primary_store_id) WHERE (primary_store_id IS NOT NULL)`
-- `CREATE INDEX organisation_members_active_role_idx ON public.organisation_members USING btree (organisation_id, role, active)`
 - `CREATE INDEX org_members_user_idx ON public.organisation_members USING btree (user_id)`
+- `CREATE INDEX organisation_members_primary_store_idx ON public.organisation_members USING btree (primary_store_id) WHERE (primary_store_id IS NOT NULL)`
 - `CREATE INDEX org_members_org_idx ON public.organisation_members USING btree (organisation_id)`
 - `CREATE INDEX idx_org_members_active ON public.organisation_members USING btree (organisation_id, active)`
+- `CREATE INDEX organisation_members_active_role_idx ON public.organisation_members USING btree (organisation_id, role, active)`
 
 **Triggers**
 
@@ -566,6 +604,7 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 - `b20_members_platform_admin` ALL to public using `batchd_is_platform_admin()` check `batchd_is_platform_admin()`
 - `Org members can view org memberships` SELECT to authenticated using `(organisation_id IN ( SELECT get_my_organisation_ids() AS get_my_organisation_ids))`
+- `b39_members_own_or_active` SELECT to authenticated using `((user_id = auth.uid()) OR ( SELECT batchd_has_active_membership() AS batchd_has_active_membership))`
 - `organisation_members_corp_admin_update` UPDATE to public using `batchd_is_corp_admin_of(organisation_id)` check `batchd_is_corp_admin_of(organisation_id)`
 - `organisation_members_manager_update` UPDATE to public using `(batchd_is_manager_of(organisation_id) AND (role = ANY (ARRAY['store_manager'::text, 'staff'::text])) AND ((primary_store_id IS NULL) OR (EXISTS ( SELECT 1
    FROM store_manager_stores s
@@ -630,6 +669,7 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 **Policies**
 
 - `b20_orgs_platform_admin` ALL to public using `batchd_is_platform_admin()` check `batchd_is_platform_admin()`
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
 - `Members can view their organisation` SELECT to authenticated using `(EXISTS ( SELECT 1
    FROM organisation_members om
   WHERE ((om.user_id = auth.uid()) AND (om.organisation_id = organisations.id))))`
@@ -664,14 +704,15 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Other indexes**
 
-- `CREATE INDEX product_lots_product_idx ON public.product_lots USING btree (product_id)`
 - `CREATE INDEX product_lots_lot_idx ON public.product_lots USING btree (lot_number)`
+- `CREATE INDEX product_lots_product_idx ON public.product_lots USING btree (product_id)`
 
 **Policies**
 
 - `Manufacturers can manage their product lots` ALL to authenticated using `(EXISTS ( SELECT 1
    FROM organisation_members om
   WHERE ((om.user_id = auth.uid()) AND (om.organisation_id = product_lots.manufacturer_id) AND (om.role = ANY (ARRAY['mfr_admin'::text, 'mfr_qa'::text, 'platform_admin'::text])))))`
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
 - `Manufacturers can insert product_lots` INSERT to authenticated check `(manufacturer_id = ( SELECT organisation_members.organisation_id
    FROM organisation_members
   WHERE (organisation_members.user_id = auth.uid())
@@ -720,10 +761,10 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Other indexes**
 
-- `CREATE INDEX products_published_lookup ON public.products USING btree (barcode_normalized) WHERE ((published = true) AND (barcode_normalized IS NOT NULL))`
+- `CREATE UNIQUE INDEX products_barcode_normalized_unique ON public.products USING btree (barcode_normalized) WHERE (barcode_normalized IS NOT NULL)`
 - `CREATE INDEX products_barcode_idx ON public.products USING btree (barcode)`
 - `CREATE INDEX products_manufacturer_idx ON public.products USING btree (manufacturer_id)`
-- `CREATE UNIQUE INDEX products_barcode_normalized_unique ON public.products USING btree (barcode_normalized) WHERE (barcode_normalized IS NOT NULL)`
+- `CREATE INDEX products_published_lookup ON public.products USING btree (barcode_normalized) WHERE ((published = true) AND (barcode_normalized IS NOT NULL))`
 
 **Triggers**
 
@@ -859,6 +900,7 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
   WHERE ((om.user_id = auth.uid()) AND (om.organisation_id = recall_acknowledgements.organisation_id) AND (om.role = ANY (ARRAY['corp_admin'::text, 'store_manager'::text, 'staff'::text, 'platform_admin'::text])))))`
 - `b20_acks_member_all` ALL to public using `(organisation_id IN ( SELECT batchd_my_active_org_ids() AS batchd_my_active_org_ids))` check `(organisation_id IN ( SELECT batchd_my_active_org_ids() AS batchd_my_active_org_ids))`
 - `b20_acks_platform_admin` ALL to public using `batchd_is_platform_admin()` check `batchd_is_platform_admin()`
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
 - `Manufacturers can view acknowledgements for their recalls` SELECT to authenticated using `(EXISTS ( SELECT 1
    FROM (recall_events re
      JOIN organisation_members om ON ((om.organisation_id = re.source_org_id)))
@@ -895,6 +937,7 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 - `Org members manage consumer notifications` ALL to public using `(organisation_id IN ( SELECT organisation_members.organisation_id
    FROM organisation_members
   WHERE (organisation_members.user_id = auth.uid())))`
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
 
 ## recall_distributions
 
@@ -919,6 +962,7 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 **Policies**
 
 - `b20_dist_platform_admin` ALL to public using `batchd_is_platform_admin()` check `batchd_is_platform_admin()`
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
 - `b20_dist_insert` INSERT to public check `((retailer_org_id IN ( SELECT batchd_my_active_org_ids() AS batchd_my_active_org_ids)) AND (recall_event_id IN ( SELECT batchd_my_source_event_ids() AS batchd_my_source_event_ids)))`
 - `b20_dist_select` SELECT to public using `((retailer_org_id IN ( SELECT batchd_my_active_org_ids() AS batchd_my_active_org_ids)) OR (recall_event_id IN ( SELECT batchd_my_source_event_ids() AS batchd_my_source_event_ids)))`
 
@@ -956,6 +1000,7 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 - `Org members manage effectiveness checks` ALL to public using `(organisation_id IN ( SELECT organisation_members.organisation_id
    FROM organisation_members
   WHERE (organisation_members.user_id = auth.uid())))`
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
 
 ## recall_events
 
@@ -994,9 +1039,9 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Other indexes**
 
-- `CREATE INDEX recall_events_source_idx ON public.recall_events USING btree (source_org_id)`
-- `CREATE INDEX recall_events_barcode_idx ON public.recall_events USING btree (barcode)`
 - `CREATE INDEX recall_events_lot_idx ON public.recall_events USING btree (lot_number)`
+- `CREATE INDEX recall_events_barcode_idx ON public.recall_events USING btree (barcode)`
+- `CREATE INDEX recall_events_source_idx ON public.recall_events USING btree (source_org_id)`
 
 **Policies**
 
@@ -1005,6 +1050,7 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
   WHERE ((om.user_id = auth.uid()) AND (om.organisation_id = recall_events.source_org_id) AND (om.role = ANY (ARRAY['mfr_admin'::text, 'mfr_qa'::text, 'platform_admin'::text])))))`
 - `b20_events_source_admin_write` ALL to public using `batchd_is_corp_admin_of(source_org_id)` check `batchd_is_corp_admin_of(source_org_id)`
 - `b20_events_source_manager_drill` ALL to public using `((is_drill = true) AND batchd_is_manager_of(source_org_id))` check `((is_drill = true) AND batchd_is_manager_of(source_org_id))`
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
 - `Orgs can insert drill recall events` INSERT to authenticated check `((is_drill = true) AND (source_org_id IN ( SELECT organisation_members.organisation_id
    FROM organisation_members
   WHERE (organisation_members.user_id = auth.uid()))))`
@@ -1021,9 +1067,57 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
   WHERE (organisation_members.user_id = auth.uid())))`
 - `b20_events_platform_admin` SELECT to public using `batchd_is_platform_admin()`
 
+## recall_notices
+
+Row security: on · Approximate rows: 0
+Table access: authenticated: insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | uuid | not null | gen_random_uuid() |
+| `organisation_id` | uuid | not null |  |
+| `source` | text | not null | 'upload'::text |
+| `status` | text | not null | 'processing'::text |
+| `file_path` | text |  |  |
+| `file_name` | text |  |  |
+| `file_type` | text |  |  |
+| `raw_text` | text |  |  |
+| `extracted` | jsonb |  |  |
+| `error` | text |  |  |
+| `model` | text |  |  |
+| `recall_event_id` | uuid |  |  |
+| `created_by` | uuid |  | auth.uid() |
+| `created_at` | timestamp with time zone | not null | now() |
+| `updated_at` | timestamp with time zone | not null | now() |
+| `pushed_at` | timestamp with time zone |  |  |
+
+**Constraints**
+
+- Check: `CHECK (((raw_text IS NULL) OR (length(raw_text) <= 100000)))`
+- Check: `CHECK ((source = ANY (ARRAY['upload'::text, 'paste'::text, 'email'::text, 'manufacturer_link'::text])))`
+- Check: `CHECK ((status = ANY (ARRAY['processing'::text, 'ready'::text, 'failed'::text, 'pushed'::text, 'dismissed'::text])))`
+- Links: `FOREIGN KEY (organisation_id) REFERENCES organisations(id) ON DELETE CASCADE`
+- Links: `FOREIGN KEY (recall_event_id) REFERENCES recall_events(id) ON DELETE SET NULL`
+- Primary key: `PRIMARY KEY (id)`
+
+**Other indexes**
+
+- `CREATE INDEX recall_notices_org_created_idx ON public.recall_notices USING btree (organisation_id, created_at DESC)`
+
+**Triggers**
+
+- `recall_notices_touch`: BEFORE UPDATE ON recall_notices FOR EACH ROW EXECUTE FUNCTION batchd_touch_updated_at()
+
+**Policies**
+
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
+- `b40_notices_insert` INSERT to authenticated check `(batchd_is_corp_admin_of(organisation_id) AND (status = 'processing'::text) AND (extracted IS NULL) AND (recall_event_id IS NULL))`
+- `b40_notices_select` SELECT to authenticated using `(batchd_is_manager_of(organisation_id) OR batchd_is_platform_admin())`
+- `b40_notices_update` UPDATE to authenticated using `batchd_is_corp_admin_of(organisation_id)` check `batchd_is_corp_admin_of(organisation_id)`
+
 ## recalls
 
-Row security: on · Approximate rows: 9534
+Row security: on · Approximate rows: 9154
 Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
@@ -1064,6 +1158,7 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 **Policies**
 
 - `b20_recalls_platform_admin` ALL to public using `batchd_is_platform_admin()` check `batchd_is_platform_admin()`
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
 - `Org members can insert recalls` INSERT to authenticated check `(organisation_id IN ( SELECT organisation_members.organisation_id
    FROM organisation_members
   WHERE (organisation_members.user_id = auth.uid())))`
@@ -1127,8 +1222,8 @@ Table access: authenticated: delete, insert, select, update; service_role: delet
 
 **Other indexes**
 
-- `CREATE INDEX receiving_events_org_lot_idx ON public.receiving_events USING btree (organisation_id, traceability_lot_code)`
 - `CREATE INDEX receiving_events_org_store_received_idx ON public.receiving_events USING btree (organisation_id, store_id, received_at DESC)`
+- `CREATE INDEX receiving_events_org_lot_idx ON public.receiving_events USING btree (organisation_id, traceability_lot_code)`
 - `CREATE INDEX receiving_events_org_store_status_idx ON public.receiving_events USING btree (organisation_id, store_id, status)`
 
 **Triggers**
@@ -1240,16 +1335,17 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Other indexes**
 
+- `CREATE INDEX idx_srm_placed ON public.scan_recall_matches USING btree (placed_at DESC)`
+- `CREATE INDEX idx_srm_recall ON public.scan_recall_matches USING btree (recall_id)`
+- `CREATE INDEX idx_srm_org ON public.scan_recall_matches USING btree (organisation_id)`
+- `CREATE INDEX idx_srm_store ON public.scan_recall_matches USING btree (organisation_id, store_name)`
 - `CREATE INDEX idx_srm_scan ON public.scan_recall_matches USING btree (scan_id)`
 - `CREATE INDEX scan_recall_matches_recall_event_id_idx ON public.scan_recall_matches USING btree (recall_event_id)`
-- `CREATE INDEX idx_srm_store ON public.scan_recall_matches USING btree (organisation_id, store_name)`
-- `CREATE INDEX idx_srm_org ON public.scan_recall_matches USING btree (organisation_id)`
 - `CREATE UNIQUE INDEX scan_recall_matches_scan_recall_unique ON public.scan_recall_matches USING btree (scan_id, recall_id)`
-- `CREATE INDEX idx_srm_recall ON public.scan_recall_matches USING btree (recall_id)`
-- `CREATE INDEX idx_srm_placed ON public.scan_recall_matches USING btree (placed_at DESC)`
 
 **Policies**
 
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
 - `Authenticated can insert matches` INSERT to authenticated check `(organisation_id IN ( SELECT organisation_members.organisation_id
    FROM organisation_members
   WHERE (organisation_members.user_id = auth.uid())))`
@@ -1296,8 +1392,8 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Other indexes**
 
-- `CREATE INDEX scan_telemetry_org_idx ON public.scan_telemetry USING btree (organisation_id, created_at DESC)`
 - `CREATE INDEX scan_telemetry_path_created_idx ON public.scan_telemetry USING btree (created_at DESC, path)`
+- `CREATE INDEX scan_telemetry_org_idx ON public.scan_telemetry USING btree (organisation_id, created_at DESC)`
 
 **Policies**
 
@@ -1361,13 +1457,13 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Other indexes**
 
-- `CREATE INDEX idx_scans_org_store_created ON public.scans USING btree (organisation_id, store_name, created_at DESC)`
-- `CREATE INDEX scans_barcode_normalized_for_promotion ON public.scans USING btree (normalize_barcode(barcode_number), product_name) WHERE ((barcode_number IS NOT NULL) AND (organisation_id IS NOT NULL))`
-- `CREATE INDEX scans_org_idx ON public.scans USING btree (organisation_id)`
-- `CREATE INDEX scans_store_id_idx ON public.scans USING btree (store_id)`
-- `CREATE INDEX idx_scans_label_text ON public.scans USING gin (to_tsvector('simple'::regconfig, COALESCE(label_text, ''::text)))`
-- `CREATE INDEX scans_receiving_event_idx ON public.scans USING btree (receiving_event_id)`
 - `CREATE INDEX idx_scans_complaint_filed ON public.scans USING btree (organisation_id, complaint_filed) WHERE (complaint_filed = true)`
+- `CREATE INDEX scans_receiving_event_idx ON public.scans USING btree (receiving_event_id)`
+- `CREATE INDEX scans_org_idx ON public.scans USING btree (organisation_id)`
+- `CREATE INDEX scans_barcode_normalized_for_promotion ON public.scans USING btree (normalize_barcode(barcode_number), product_name) WHERE ((barcode_number IS NOT NULL) AND (organisation_id IS NOT NULL))`
+- `CREATE INDEX idx_scans_label_text ON public.scans USING gin (to_tsvector('simple'::regconfig, COALESCE(label_text, ''::text)))`
+- `CREATE INDEX scans_store_id_idx ON public.scans USING btree (store_id)`
+- `CREATE INDEX idx_scans_org_store_created ON public.scans USING btree (organisation_id, store_name, created_at DESC)`
 
 **Triggers**
 
@@ -1379,6 +1475,7 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 **Policies**
 
 - `b20_scans_platform_admin` ALL to public using `batchd_is_platform_admin()` check `batchd_is_platform_admin()`
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
 - `scans_no_delete` DELETE to authenticated using `false`
 - `Staff update org scans` INSERT to authenticated check `(organisation_id IN ( SELECT organisation_members.organisation_id
    FROM organisation_members
@@ -1428,11 +1525,12 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Other indexes**
 
-- `CREATE INDEX scans_audit_log_changed_by_idx ON public.scans_audit_log USING btree (changed_by, changed_at DESC) WHERE (changed_by IS NOT NULL)`
 - `CREATE INDEX scans_audit_log_scan_idx ON public.scans_audit_log USING btree (scan_id, changed_at DESC)`
+- `CREATE INDEX scans_audit_log_changed_by_idx ON public.scans_audit_log USING btree (changed_by, changed_at DESC) WHERE (changed_by IS NOT NULL)`
 
 **Policies**
 
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
 - `scans_audit_log_select` SELECT to public using `(EXISTS ( SELECT 1
    FROM scans s
   WHERE ((s.id = scans_audit_log.scan_id) AND (s.organisation_id = batchd_user_org_id()) AND (batchd_user_is_corp_admin() OR batchd_user_manages_store(s.store_id)))))`
@@ -1469,16 +1567,17 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Other indexes**
 
+- `CREATE INDEX shipments_barcode_idx ON public.shipments USING btree (barcode)`
+- `CREATE INDEX shipments_retailer_idx ON public.shipments USING btree (retailer_id)`
 - `CREATE INDEX shipments_lot_idx ON public.shipments USING btree (lot_number)`
 - `CREATE INDEX shipments_mfr_idx ON public.shipments USING btree (manufacturer_id)`
-- `CREATE INDEX shipments_retailer_idx ON public.shipments USING btree (retailer_id)`
-- `CREATE INDEX shipments_barcode_idx ON public.shipments USING btree (barcode)`
 
 **Policies**
 
 - `Manufacturers can manage their shipments` ALL to authenticated using `(EXISTS ( SELECT 1
    FROM organisation_members om
   WHERE ((om.user_id = auth.uid()) AND (om.organisation_id = shipments.manufacturer_id) AND (om.role = ANY (ARRAY['mfr_admin'::text, 'mfr_qa'::text, 'platform_admin'::text])))))`
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
 - `Manufacturers can insert shipments` INSERT to authenticated check `(manufacturer_id = ( SELECT organisation_members.organisation_id
    FROM organisation_members
   WHERE (organisation_members.user_id = auth.uid())
@@ -1513,6 +1612,7 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Policies**
 
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
 - `corp_admin_manage_group_members` ALL to public using `(store_group_id IN ( SELECT store_groups.id
    FROM store_groups
   WHERE (store_groups.organisation_id IN ( SELECT organisation_members.organisation_id
@@ -1542,6 +1642,7 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Policies**
 
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
 - `corp_admin_manage_groups` ALL to public using `(organisation_id IN ( SELECT organisation_members.organisation_id
    FROM organisation_members
   WHERE ((organisation_members.user_id = auth.uid()) AND (organisation_members.role = 'corp_admin'::text))))`
@@ -1579,6 +1680,7 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Policies**
 
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
 - `store_manager_stores_corp_admin_all` ALL to public using `batchd_is_corp_admin_of(organisation_id)` check `batchd_is_corp_admin_of(organisation_id)`
 - `store_manager_stores_self_select` SELECT to public using `(user_id = auth.uid())`
 
@@ -1618,9 +1720,9 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Other indexes**
 
+- `CREATE INDEX stores_org_external_code_idx ON public.stores USING btree (organisation_id, external_code) WHERE (external_code IS NOT NULL)`
 - `CREATE UNIQUE INDEX stores_org_name_uidx ON public.stores USING btree (organisation_id, lower(btrim(name)))`
 - `CREATE INDEX stores_org_idx ON public.stores USING btree (organisation_id)`
-- `CREATE INDEX stores_org_external_code_idx ON public.stores USING btree (organisation_id, external_code) WHERE (external_code IS NOT NULL)`
 
 **Policies**
 
@@ -1629,6 +1731,7 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
   WHERE ((om.user_id = auth.uid()) AND (om.organisation_id = stores.organisation_id) AND (om.role = ANY (ARRAY['corp_admin'::text, 'store_manager'::text, 'platform_admin'::text])))))`
 - `b20_stores_admin_write` ALL to public using `batchd_is_corp_admin_of(organisation_id)` check `batchd_is_corp_admin_of(organisation_id)`
 - `b20_stores_platform_admin` ALL to public using `batchd_is_platform_admin()` check `batchd_is_platform_admin()`
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
 - `Members can view their org stores` SELECT to authenticated using `(EXISTS ( SELECT 1
    FROM organisation_members om
   WHERE ((om.user_id = auth.uid()) AND (om.organisation_id = stores.organisation_id))))`
@@ -1665,6 +1768,7 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 - `Manufacturers manage supplier connections` ALL to public using `(manufacturer_id IN ( SELECT organisation_members.organisation_id
    FROM organisation_members
   WHERE (organisation_members.user_id = auth.uid())))`
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
 - `Suppliers view their connections` SELECT to public using `(supplier_id IN ( SELECT organisation_members.organisation_id
    FROM organisation_members
   WHERE (organisation_members.user_id = auth.uid())))`
@@ -1699,6 +1803,7 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 - `Suppliers manage own ingredients` ALL to public using `(supplier_org_id IN ( SELECT organisation_members.organisation_id
    FROM organisation_members
   WHERE (organisation_members.user_id = auth.uid())))`
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
 - `Manufacturers view linked supplier ingredients` SELECT to public using `(supplier_org_id IN ( SELECT supplier_manufacturer_links.supplier_org_id
    FROM supplier_manufacturer_links
   WHERE ((supplier_manufacturer_links.manufacturer_org_id IN ( SELECT organisation_members.organisation_id
@@ -1730,14 +1835,15 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Other indexes**
 
-- `CREATE INDEX idx_supplier_lot_codes_org ON public.supplier_lot_codes USING btree (supplier_org_id)`
 - `CREATE INDEX idx_supplier_lot_codes_ingredient ON public.supplier_lot_codes USING btree (ingredient_id)`
+- `CREATE INDEX idx_supplier_lot_codes_org ON public.supplier_lot_codes USING btree (supplier_org_id)`
 
 **Policies**
 
 - `Suppliers manage own lot codes` ALL to public using `(supplier_org_id IN ( SELECT organisation_members.organisation_id
    FROM organisation_members
   WHERE (organisation_members.user_id = auth.uid())))`
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
 - `Manufacturers view linked supplier lot codes` SELECT to public using `(supplier_org_id IN ( SELECT supplier_manufacturer_links.supplier_org_id
    FROM supplier_manufacturer_links
   WHERE ((supplier_manufacturer_links.manufacturer_org_id IN ( SELECT organisation_members.organisation_id
@@ -1769,11 +1875,12 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Other indexes**
 
-- `CREATE INDEX idx_supplier_links_mfr ON public.supplier_manufacturer_links USING btree (manufacturer_org_id)`
 - `CREATE INDEX idx_supplier_links_supplier ON public.supplier_manufacturer_links USING btree (supplier_org_id)`
+- `CREATE INDEX idx_supplier_links_mfr ON public.supplier_manufacturer_links USING btree (manufacturer_org_id)`
 
 **Policies**
 
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
 - `Manufacturers can create supplier links` INSERT to public check `(manufacturer_org_id IN ( SELECT organisation_members.organisation_id
    FROM organisation_members
   WHERE (organisation_members.user_id = auth.uid())))`
@@ -1814,14 +1921,15 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Other indexes**
 
-- `CREATE INDEX idx_supplier_shipments_org ON public.supplier_shipments USING btree (supplier_org_id)`
 - `CREATE INDEX idx_supplier_shipments_mfr ON public.supplier_shipments USING btree (manufacturer_org_id)`
+- `CREATE INDEX idx_supplier_shipments_org ON public.supplier_shipments USING btree (supplier_org_id)`
 
 **Policies**
 
 - `Suppliers manage own shipments` ALL to public using `(supplier_org_id IN ( SELECT organisation_members.organisation_id
    FROM organisation_members
   WHERE (organisation_members.user_id = auth.uid())))`
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
 - `Manufacturers view incoming supplier shipments` SELECT to public using `(manufacturer_org_id IN ( SELECT organisation_members.organisation_id
    FROM organisation_members
   WHERE (organisation_members.user_id = auth.uid())))`
@@ -1935,6 +2043,7 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Policies**
 
+- `b38_active_members_only` ALL to authenticated using `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)` check `( SELECT batchd_has_active_membership() AS batchd_has_active_membership)`
 - `Manufacturers can insert trading partners` INSERT to authenticated check `(manufacturer_id = ( SELECT organisation_members.organisation_id
    FROM organisation_members
   WHERE (organisation_members.user_id = auth.uid())
@@ -2066,12 +2175,16 @@ Options: security_invoker=true
 | `batchd_guard_member_self_update()` | trigger | invoker | service_role |
 | `batchd_guard_org_commercial_columns()` | trigger | invoker | service_role |
 | `batchd_guard_profile_update()` | trigger | invoker | service_role |
+| `batchd_has_active_membership()` | boolean | definer | authenticated, service_role |
 | `batchd_is_corp_admin_of(uuid)` | boolean | definer | authenticated, service_role |
 | `batchd_is_manager_of(uuid)` | boolean | definer | authenticated, service_role |
 | `batchd_is_platform_admin()` | boolean | definer | authenticated, service_role |
+| `batchd_lot_in_range(text,text,text)` | boolean | invoker | authenticated, service_role |
 | `batchd_my_active_org_ids()` | SETOF uuid | definer | authenticated, service_role |
 | `batchd_my_partner_source_org_ids()` | SETOF uuid | definer | authenticated, service_role |
 | `batchd_my_source_event_ids()` | SETOF uuid | definer | authenticated, service_role |
+| `batchd_norm_gtin(text)` | text | invoker | authenticated, service_role |
+| `batchd_norm_lot(text)` | text | invoker | authenticated, service_role |
 | `batchd_org_ai_enabled(uuid)` | boolean | definer | authenticated, service_role |
 | `batchd_receiving_set_retention()` | trigger | invoker | service_role |
 | `batchd_touch_updated_at()` | trigger | invoker | service_role |
@@ -2083,15 +2196,16 @@ Options: security_invoker=true
 | `batchd_user_role()` | text | definer | PUBLIC, anon, authenticated, service_role |
 | `bootstrap_products_pending()` | TABLE(rows_staged_from_code_patterns integer, rows_staged_from_scans integer, rows_skipped_already_in_products integer, conflicts_flagged integer) | definer | service_role |
 | `create_organisation(text,text,text,text)` | uuid | definer | service_role |
-| `create_organisation_with_admin(text,text,text,text,text[])` | uuid | definer | anon, authenticated, service_role |
+| `create_organisation_with_admin(text,text,text,text,text[])` | uuid | definer | authenticated, service_role |
 | `enforce_scan_immutability()` | trigger | invoker | service_role |
 | `get_invitation_by_token(text)` | TABLE(email text, role text, organisation_id uuid, organisation_name text, store_name text, manager_store_ids uuid[], accepted boolean, expired boolean, full_name text, phone_number text, store_role text, employee_id text, hire_date date, region text) | definer | anon, authenticated, service_role |
 | `get_invitation_store_names(text)` | text[] | definer | anon, authenticated, service_role |
-| `get_my_organisation_ids()` | SETOF uuid | definer | PUBLIC, anon, authenticated, service_role |
-| `get_org_member_emails(uuid)` | TABLE(user_id uuid, email text, full_name text) | definer | PUBLIC, authenticated, service_role |
+| `get_my_organisation_ids()` | SETOF uuid | definer | authenticated, service_role |
+| `get_org_member_emails(uuid)` | TABLE(user_id uuid, email text, full_name text) | definer | authenticated, service_role |
 | `get_retailer_emails(uuid)` | text[] | definer | service_role |
 | `handle_new_user()` | trigger | definer | service_role |
 | `log_scan_change()` | trigger | definer | service_role |
+| `match_recall_notice(uuid,text[],text[],jsonb,date,date,text[],timestamp with time zone)` | TABLE(kind text, record_id uuid, store_id uuid, store_name text, product_name text, gtin text, lot text, quantity numeric, unit text, record_date timestamp with time zone, best_by date, supplier_name text, status text, on_shelf boolean, match_reason text, confidence text) | invoker | authenticated, service_role |
 | `normalize_barcode(text)` | text | invoker | PUBLIC, anon, authenticated, service_role |
 | `products_normalize_barcode_trigger()` | trigger | invoker | service_role |
 | `promote_pending_to_products(uuid)` | uuid | definer | service_role |

@@ -4,6 +4,64 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-11-01 (smoke checks on staging)
+- SMOKE.md 10 to 13, 17 to 20, 46 and 47 run by Claude in the built-in
+  browser on `node e2e/static-server.mjs` (localhost:8788, staging
+  database, account qa-active-038). All pass: receiving a typed GS1 label
+  with the new supplier and its row in the manager Receiving tab (10); a
+  shelf scan of the same lot saved with receiving_event_id (11, phase 3
+  reached by setting the photo blob in the console, camera blocked); the
+  records request drill produced a 27-column CSV with the cover block and
+  recorded the time (12); the traceability plan regenerated to version 3
+  with the contact and both active stores in the document (13); a complete
+  supplier shows the green dot, appears in the scanner picker without
+  "(address incomplete)" and fills the five supplier address columns of
+  the manager CSV (17); the sales band shows "Likely exempt" and the
+  registered-facility box switches the Compliance authority card to the
+  Reportable Food Registry sentence (18); Pepperoni pizza and Eggplant
+  give no badge, Bell peppers gives Peppers, and the org's "Not a listed
+  food" decision from 2026-10-25 shows in Settings, Listed foods (19); the
+  delivery-file import created two expected lines, the scanner chip and
+  banner matched lot RM261101, Confirm delivery moved it to received with
+  source wholesaler_import, and the dashboard export carries "From
+  wholesaler delivery file" (20); dashboard icons, the styled delete
+  dialog (Cancel focused, red confirm, Escape cancels), the triage form,
+  the audit-trail chevron, keyboard tagging and toast ink (46); scanner
+  views, light-theme inputs, the manager Audit tab store dropdowns and the
+  Help overlay (47). `npx playwright test` also passed locally (3 passed,
+  1 skipped: it needs a preview). Not run: 48 and 51 (Netlify functions
+  are not served locally). Also noticed: `/.netlify/functions/ocr` warm-up
+  posts answer 404 locally, expected; the receiving form's listed-food
+  chip resolves about a second after typing, so a receipt recorded
+  immediately after typing the product name can save is_ftl false.
+- e2e/sign-in.spec.mjs signs out with scope 'local'. The default global
+  sign-out revoked every session of the shared staging account, which
+  ended Claude's local smoke session twice while the workflow ran.
+- E2E_PASSWORD has been set on GitHub since 2026-10-25 (the open item was
+  stale). The demo password rotation and the pull request merges were
+  blocked by the app's permission layer and stay with Ian.
+
+## 2026-11-01 (migration 042 applied)
+- migrations/042_revoke_anon_definer_execute.sql revokes anon EXECUTE on
+  create_organisation_with_admin, get_org_member_emails and
+  get_my_organisation_ids (advisor finding of 2026-10-28; each guards
+  itself, so this is hygiene). Applied with Ian's go-ahead to staging and
+  then production through the Supabase connector (recorded in
+  supabase_migrations as 20261101115507). Verified on both: anon false,
+  signed-in true, service true on all three; accept_invitation and
+  get_invitation_by_token unchanged; the CHECK_MIGRATIONS 042 row reads
+  true. The production security advisor now lists seven anon-callable
+  definer functions, all intentional (the three invitation RPCs and four
+  batchd_user_* RLS helpers).
+- docs/SCHEMA-REFERENCE.md regenerated from production (it had not been
+  regenerated after 040 and 041: 47 tables, 2 views, 47 functions, 185
+  policies, up from 45, 2, 42, 148). Pulled in six chunks through the
+  connector; each chunk's md5 matched the server-side md5 of the same text.
+- Leaked-password protection (advisor warning) is a Supabase Pro plan
+  feature and the project is on the free plan. Ian checked the Auth
+  settings on 2026-11-01; the warning stays and is accepted until the
+  plan changes.
+
 ## 2026-11-01 (misspelled secret fallback removed)
 - netlify/lib/auth.js reads the server-to-server secret from
   INTERNAL_NOTIFY_SECRET only. The fallback that accepted the misspelled
