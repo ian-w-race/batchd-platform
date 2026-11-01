@@ -261,7 +261,8 @@ is not on GitHub; nothing live loads it.
   of the org, get_my_organisation_ids and the batchd_user_* helpers
   return nothing without a session, the invitation readers are token
   gated for the join page); WARN that leaked-password protection is off
-  in Auth (Ian's toggle, no connector tool); INFO that
+  in Auth (a Pro plan feature; the project is on the free plan, so the
+  warning is accepted until the plan changes, Ian 2026-11-01); INFO that
   organisation_api_keys and scan_queue have RLS and no policies (closed
   to clients on purpose). Migration 042 (applied to staging and production
   2026-11-01) revoked anon EXECUTE on the three that never need it; the
@@ -545,7 +546,8 @@ Owed by Ian:
 - Confirm the shared secrets match on both Netlify sites (the connector
   cannot read site-level variables). SCHEDULED_FUNCTIONS_DISABLED is
   settled: batchd-app skips, www runs (2026-10-28).
-- Turn on leaked-password protection in Supabase Auth (advisor warning).
+- Leaked-password protection in Supabase Auth needs the Pro plan; turn it
+  on if the project is ever upgraded.
 Security, found 2026-10-24 while cloning to staging: all fixed (032
 storage bucket, 033 cross-org rules, 034 anon table writes and store
 names, 035 view user_accessible_stores, search paths and trigger

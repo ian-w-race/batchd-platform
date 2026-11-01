@@ -20,6 +20,10 @@ how it was verified and what is still unverified. Everything before
   regenerated after 040 and 041: 47 tables, 2 views, 47 functions, 185
   policies, up from 45, 2, 42, 148). Pulled in six chunks through the
   connector; each chunk's md5 matched the server-side md5 of the same text.
+- Leaked-password protection (advisor warning) is a Supabase Pro plan
+  feature and the project is on the free plan. Ian checked the Auth
+  settings on 2026-11-01; the warning stays and is accepted until the
+  plan changes.
 
 ## 2026-11-01 (misspelled secret fallback removed)
 - netlify/lib/auth.js reads the server-to-server secret from
