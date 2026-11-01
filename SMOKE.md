@@ -351,3 +351,7 @@ not repeated here.
 - 2026-11-01, Claude, local static server against the staging database:
   10, 11, 12, 13, 17, 18, 19, 20, 46, 47 pass. 48 and 51 not run (no
   functions locally). Detail in docs/CHANGELOG.md.
+- 2026-11-01, Claude in the built-in browser on the production apps
+  (app.batchdapp.com, org Batch'd Admin, Ian signed in): 48 and 51 pass.
+  Email arrival in the inbox still to be confirmed by Ian. Detail in
+  docs/CHANGELOG.md.
