@@ -113,6 +113,15 @@ WITH checks AS (
   UNION ALL SELECT '030 products_public exposes the FTL columns',
          EXISTS (SELECT 1 FROM information_schema.columns
                  WHERE table_schema='public' AND table_name='products_public' AND column_name='is_ftl')
+  UNION ALL SELECT '043 recall catalog, per-org state, catalog matches and the one active list',
+         to_regclass('public.recall_catalog') IS NOT NULL
+         AND to_regclass('public.recall_catalog_org') IS NOT NULL
+         AND EXISTS (SELECT 1 FROM information_schema.columns
+                     WHERE table_schema='public' AND table_name='scan_recall_matches' AND column_name='catalog_id')
+         AND EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'batchd_active_recalls')
+         AND EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'sweep_catalog_matches')
+         AND NOT has_function_privilege('anon', 'public.batchd_active_recalls(uuid)', 'EXECUTE')
+         AND NOT has_function_privilege('authenticated', 'public.sweep_catalog_matches(uuid,integer)', 'EXECUTE')
   UNION ALL SELECT '042 anon cannot execute the three definer RPCs',
          NOT has_function_privilege('anon', 'public.get_org_member_emails(uuid)', 'EXECUTE')
          AND NOT has_function_privilege('anon', 'public.get_my_organisation_ids()', 'EXECUTE')
