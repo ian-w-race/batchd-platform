@@ -37,14 +37,8 @@ how it was verified and what is still unverified. Everything before
   reminder and escalation buttons). The database selection block maps the
   new app.batchdapp.com paths onto a preview's own origin, identically in
   all six pages.
-- FIXED, found by the end-to-end tests on this preview: the scanner ran its
-  start-up twice whenever it opened with a saved sign-in, because the
-  "already started" flag lived on the user object and initAuth and the auth
-  listener each pass a fresh copy. With no store chosen in the last 12
-  hours it stacked two "Where are you working today?" pickers, and taps
-  landed on the hidden one. This was already possible when reopening the
-  scanner; with the central sign-in every visit opens with a saved
-  session. The guard is now by user id, and the picker never opens twice.
+- The scanner start-up fix listed under step 1 below was found by this
+  pull request's end-to-end tests.
 - Verified: check.mjs 10 of 10; node --test 89 tests (new: deep-link and
   last-app picking, the preview link map, the old-address hand-off with
   an empty, a draining and a corrupt queue); a local copy on staging: a
@@ -74,6 +68,14 @@ how it was verified and what is still unverified. Everything before
   batchd-app.netlify.app). Because /retail and /scan share one address, one
   sign-in opens both. Nothing else moved: corporate.batchdapp.com and
   batchd-app.netlify.app behave as before until step 2.
+- FIXED (scanner): it ran its start-up twice whenever it opened with a
+  saved sign-in, because the "already started" flag lived on the user
+  object and initAuth and the auth listener each pass a fresh copy; with no
+  store chosen in the last 12 hours it stacked two "Where are you working
+  today?" pickers and taps landed on the hidden one. Already possible when
+  reopening the scanner, and every visit through the sign-in page opens
+  with a saved session. The guard is now by user id and the picker never
+  opens twice. Found by the end-to-end tests on pull request 40.
 - scripts/check.mjs counts login.html as a sixth page with the identical
   database selection block; tests/login-router.test.mjs (10 tests) covers
   the routing rules and checks that every app path has a rule.
