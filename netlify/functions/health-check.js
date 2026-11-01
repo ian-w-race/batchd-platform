@@ -13,6 +13,13 @@
 // ALERT_EMAIL (comma separated) adds or replaces recipients when set.
 // Honors SCHEDULED_FUNCTIONS_DISABLED, so only the site that runs the
 // scheduled jobs sends alerts. Deletes job_runs rows older than 90 days.
+//
+// Weekly all clear (2026-11-01): an alert path that never fires is never
+// proven. Once a week, on Monday's run, a healthy check sends a short
+// "all clear" with the week's run counts, so Ian sees the email path work.
+// HEALTH_HEARTBEAT=off turns it off; any other value keeps Monday.
+// The on-demand email functions record failed sends in job_runs too
+// (netlify/lib/job-log.js logFailure), so they appear in "failed" below.
 
 const { SUPABASE_URL, SVC_HEADERS } = require('../lib/auth');
 const { withJobLog } = require('../lib/job-log');
@@ -76,6 +83,34 @@ function evaluate(now, { runs, stuck, failedNotices, newestFdaAt }) {
   return problems;
 }
 
+// Monday (UTC) and healthy: send the weekly all clear. Pure, for the tests.
+function shouldHeartbeat(now, problems, env = process.env) {
+  if (env.HEALTH_HEARTBEAT === 'off') return false;
+  if (problems.length) return false;
+  return new Date(now).getUTCDay() === 1;
+}
+
+// Pure: the all-clear text from the last 7 days of runs.
+function heartbeatText(now, runs) {
+  const weekAgo = now - 7 * 24 * HOUR;
+  const week = runs.filter((r) => Date.parse(r.started_at) >= weekAgo);
+  const count = (job) => week.filter((r) => r.job === job && r.ok).length;
+  const fdaAdded = week.filter((r) => r.job === 'fetch-recall-feeds' && r.ok)
+    .reduce((n, r) => n + (Number(r.detail?.fda_added) || 0), 0);
+  const failed = week.filter((r) => r.ok === false).length;
+  return [
+    "The daily Batch'd health check found nothing wrong this week.",
+    '',
+    `FDA recall import: ${count('fetch-recall-feeds')} runs, ${fdaAdded} recall${fdaAdded === 1 ? '' : 's'} added.`,
+    `Recall escalation: ${count('recall-escalation')} runs.`,
+    `Health check: ${count('health-check')} runs.`,
+    `Failed runs or sends: ${failed}.`,
+    '',
+    'This all clear is sent once a week so you know the alert emails work.',
+    'Any other email from this address means something needs attention.',
+  ].join('\n');
+}
+
 async function recipients() {
   if (process.env.ALERT_EMAIL) {
     return process.env.ALERT_EMAIL.split(',').map((s) => s.trim()).filter((s) => /@/.test(s));
@@ -90,20 +125,21 @@ async function recipients() {
   return [...new Set(emails)];
 }
 
-async function sendAlert(to, problems) {
-  const lines = problems.map((p, i) => `${i + 1}. ${p}`).join('\n');
+async function sendEmail(to, subject, text) {
   const r = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.RESEND_API_KEY}` },
-    body: JSON.stringify({
-      from: "Batch'd Monitoring <alerts@batchdapp.com>",
-      to,
-      subject: `Batch'd health check: ${problems.length} problem${problems.length === 1 ? '' : 's'}`,
-      text: `The daily Batch'd health check found:\n\n${lines}\n\nDetails are in the job_runs table and the Netlify function logs.\nThis email is sent only when something needs attention.`,
-    }),
+    body: JSON.stringify({ from: "Batch'd Monitoring <alerts@batchdapp.com>", to, subject, text }),
     signal: AbortSignal.timeout(5000),
   });
   if (!r.ok) throw new Error('Alert email refused: ' + r.status);
+}
+
+async function sendAlert(to, problems) {
+  const lines = problems.map((p, i) => `${i + 1}. ${p}`).join('\n');
+  await sendEmail(to,
+    `Batch'd health check: ${problems.length} problem${problems.length === 1 ? '' : 's'}`,
+    `The daily Batch'd health check found:\n\n${lines}\n\nDetails are in the job_runs table and the Netlify function logs.\nThis email is sent only when something needs attention, plus one all clear a week.`);
 }
 
 async function prune(now) {
@@ -118,15 +154,20 @@ const run = async () => {
     return { statusCode: 200, body: JSON.stringify({ skipped: 'scheduled functions disabled on this site' }) };
   }
   const now = Date.now();
-  const problems = evaluate(now, await gather(now));
+  const data = await gather(now);
+  const problems = evaluate(now, data);
   let alerted = [];
+  let heartbeat = false;
   if (problems.length) {
     alerted = await recipients();
     if (alerted.length) await sendAlert(alerted, problems);
+  } else if (shouldHeartbeat(now, problems)) {
+    alerted = await recipients();
+    if (alerted.length) { await sendEmail(alerted, "Batch'd health check: all clear this week", heartbeatText(now, data.runs)); heartbeat = true; }
   }
   await prune(now);
-  return { statusCode: 200, body: JSON.stringify({ problems, alerted: alerted.length }) };
+  return { statusCode: 200, body: JSON.stringify({ problems, alerted: alerted.length, heartbeat }) };
 };
 
 exports.handler = withJobLog('health-check', run);
-exports._test = { evaluate, run, LIMITS };
+exports._test = { evaluate, run, LIMITS, shouldHeartbeat, heartbeatText };

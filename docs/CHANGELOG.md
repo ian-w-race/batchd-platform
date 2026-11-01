@@ -4,6 +4,62 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-11-01 (safety net, improvement plan Phase 1)
+- End-to-end core flow (plan A3 "done when"). e2e/core-flow.spec.mjs runs
+  the whole chain on one fresh lot per run: a delivery recorded from a
+  typed GS1 string; a shelf scan of the same lot that shows "Linked to
+  delivery" and saves with the store and the receiving_event_id; the
+  composer finds the store that received the lot in its scope preview, the
+  recall is pushed and lands on Live Recall, and "Produce records" downloads
+  a CSV with the 27-column header, the lot and the store; the scanner then
+  shows the sign-in recall alert for the product and the red pre-placement
+  warning when the lot is scanned again. The test closes the recall at the
+  end (closed_at, linked recalls row inactive). The camera is not available
+  in the test browser, so the label photo is a tiny stand-in blob and the
+  lot is typed. e2e/receiving.spec.mjs is folded into it.
+- Sign-out is local (known follow-up). Every sb.auth.signOut() in the
+  scanner, Retail, the sign-in page and admin now passes { scope: 'local' },
+  so signing out on one device no longer ends the account's sessions on
+  every other device (a shared store phone, or the end-to-end workflow's
+  session). On one device /retail and /scan share the stored session, so
+  signing out of one still signs out of both there.
+- Monitoring (plan A4, the gaps). The on-demand email functions
+  (push-recall-email, notify-event, recall-reminder, send-invite,
+  notify-consumers) record a failed send as an ok=false job_runs row
+  (netlify/lib/job-log.js logFailure), so the daily health check reports
+  "<function> failed N times in the last 24 hours". The health check also
+  sends one "all clear" every Monday with the week's run counts, because an
+  alert email that has never fired is not proven: production job_runs shows
+  7 health-check runs since 2026-10-26, zero problems, zero emails sent.
+  HEALTH_HEARTBEAT=off turns the Monday email off.
+- FOUND by the new test, FIXED in the dashboard: after a composer push the
+  "convert matches to the event id" update wrote recall_id = the
+  recall_events id, but scan_recall_matches.recall_id has a foreign key to
+  recalls(id), so the update failed every time (23503, a 409 in devtools,
+  swallowed by a console.warn) and the match rows stayed invisible to the
+  Live Recall page, the export and the scanner's ack strip, which read by
+  recall_event_id. Production has 0 match rows with an event out of 2
+  rows, so nothing relied on the old shape. The update now sets only
+  recall_event_id and recall_source; recall_id stays the linked recalls
+  row. Confirmed on staging with a rolled-back probe (23503) before the
+  fix and by the test's new assertion after it. Still open: the scanner's
+  two match writers have the same defect (CLAUDE.md, open items).
+- FOUND by the new test, FIXED in the scanner: "Cancel and start over" on
+  steps 2 and 3 (cancelScan) called hideRegionConfirmation, which read two
+  elements that left with the OCR flow and threw on the first line, so the
+  cameras stopped but the form never reset and never returned to step 1.
+  Both reads are now null-guarded. Verified by the test's last step and
+  SMOKE.md 54.
+- Verified: node scripts/check.mjs (10 of 10); node --test (93 tests, 4 new
+  for the heartbeat rule, the all-clear text and the failure row); the
+  whole end-to-end suite locally against staging: 11 passed, 1 skipped (the
+  supplier notice test needs a preview), the core-flow chain green end to
+  end with every test recall closed again afterwards. The suite also runs
+  on the pull request's deploy preview. Not verified: a real failed send recorded on production, and the
+  Monday email itself (first one 2026-11-02 07:00 UTC; SMOKE.md 53).
+- Not done from Phase 1: A1 Supabase Pro (daily backups, leaked-password
+  protection). Ian decided "not now" on 2026-11-01; the free plan stays.
+
 ## 2026-11-01 (smoke checks 48 and 51 on production)
 - SMOKE.md 48 and 51 run by Claude in the built-in browser on
   app.batchdapp.com after Ian signed in (org Batch'd Admin, plan active,

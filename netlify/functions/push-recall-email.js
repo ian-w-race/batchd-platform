@@ -42,6 +42,7 @@ exports.handler = async (event) => {
   }
 
   const { internalSecretOk } = require('../lib/auth');
+const { logFailure } = require('../lib/job-log');   // A4: failed sends show up in the health check
   const { recall_event_id, recall_id, internal_secret } = body;
   // Server-to-server only. The single caller is webhook-recall.js, which
   // sends INTERNAL_NOTIFY_SECRET (the variable notify-event.js already uses).
@@ -227,6 +228,7 @@ exports.handler = async (event) => {
       } else {
         errors.push({ org: org.name, error: resData.message || 'Resend error' });
         console.error(`[push-recall-email] Failed to send to ${org.contact_email}:`, resData);
+        await logFailure('push-recall-email', { error: resData.message || 'Resend error', org: org.name }, res.status);
       }
     }
 
@@ -241,6 +243,7 @@ exports.handler = async (event) => {
 
   } catch (err) {
     console.error('[push-recall-email] Unexpected error:', err);
+    await logFailure('push-recall-email', { error: err.message });
     return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
   }
 };
