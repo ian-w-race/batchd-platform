@@ -1,0 +1,60 @@
+// Central sign-in (docs/PORTALS-PLAN.md, Phase 2a): one sign-in at /login,
+// then the router sends the person to their app. /retail and /scan share
+// the address, so one sign-in opens both.
+import { test, expect } from '@playwright/test';
+import { PASSWORD, ACTIVE, DEACTIVATED, ORG_NAME, watchErrors } from './env.mjs';
+
+test.skip(!PASSWORD, 'E2E_PASSWORD is not set');
+
+async function loginPage(page, email) {
+  await page.goto('/login');
+  await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+  await page.locator('#email').fill(email);
+  await page.locator('#password').fill(PASSWORD);
+  await page.locator('#signin-btn').click();
+}
+
+test('an admin signs in once and opens both Retail and the scanner', async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.goto('/login');
+  await page.evaluate(() => { try { localStorage.clear(); } catch (_) {} });
+  await loginPage(page, ACTIVE);
+
+  // A corporate admin may open two apps, so the chooser shows both.
+  await expect(page.getByRole('heading', { name: 'Choose an app' })).toBeVisible();
+  await expect(page.locator('#apps .app')).toHaveCount(2);
+  await page.locator('#apps .app[data-app="retail"]').click();
+
+  // Retail opens already signed in: no dashboard sign-in form.
+  await expect(page).toHaveURL(/\/retail/);
+  await expect(page.getByText(ORG_NAME).first()).toBeVisible();
+
+  // The scanner on the same address reads the same session.
+  await page.goto('/scan');
+  await expect(page.locator('#login-screen')).toBeHidden();
+
+  // Back at the sign-in page the last app used is listed first.
+  await page.goto('/login');
+  await expect(page.locator('#apps .app').first()).toHaveAttribute('data-app', 'retail');
+  await expect(page.locator('#apps .tag')).toHaveText('Last used');
+
+  // ?app= skips the chooser for an app the person may open.
+  await page.goto('/login?app=scan');
+  await expect(page).toHaveURL(/\/scan/);
+  expect(errors).toEqual([]);
+});
+
+test('a wrong password is refused with a plain message', async ({ page }) => {
+  await page.goto('/login');
+  await page.locator('#email').fill(ACTIVE);
+  await page.locator('#password').fill('not-the-password-' + Date.now());
+  await page.locator('#signin-btn').click();
+  await expect(page.locator('#signin-msg')).toHaveText('Incorrect email or password.');
+});
+
+test('a deactivated member sees the deactivated screen at sign-in', async ({ page }) => {
+  await loginPage(page, DEACTIVATED);
+  await expect(page.getByRole('heading', { name: 'Account deactivated' })).toBeVisible();
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+});
