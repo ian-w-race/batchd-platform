@@ -23,7 +23,12 @@ how it was verified and what is still unverified. Everything before
 - First run, staging only, 2026-11-01 around 21:00 UTC: 25 rows older than
   24 hours removed (3 recall events with 3 linked recalls, 3 distributions
   and 6 acknowledgements, 6 deliveries, 4 notices), all in backup.
-  Everything from the same day stays until the next run. Kept on purpose:
+  Second run the same evening on Ian's word, keep window 1 hour so a run
+  on this pull request's preview was not cut: 435 more rows (53 recall
+  chains with 106 acknowledgements, 56 deliveries, 36 scans, 27 match
+  rows, 51 notices). The org went from 61 test recall chains to 14, all
+  from the last hour. Both runs together: 460 rows, all in
+  backup.e2e_cleanup_20261101_<table>. Kept on purpose:
   the QA stores, members, suppliers and both accounts, the FDA feed rows,
   the hand-pasted notice.pdf and its recall, the QA smoke scans and the
   two QA10LOT drill records requests. The manual "QA Baby spinach 5 oz"
