@@ -4,14 +4,22 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
-## 2026-11-01 (migration 042 written)
+## 2026-11-01 (migration 042 applied)
 - migrations/042_revoke_anon_definer_execute.sql revokes anon EXECUTE on
   create_organisation_with_admin, get_org_member_emails and
   get_my_organisation_ids (advisor finding of 2026-10-28; each guards
-  itself, so this is hygiene). CHECK_MIGRATIONS has a 042 row. Verified: a
-  rolled-back dry run on staging gave anon false, signed-in true, service
-  true on all three. NOT applied anywhere; staging then production after
-  Ian's yes.
+  itself, so this is hygiene). Applied with Ian's go-ahead to staging and
+  then production through the Supabase connector (recorded in
+  supabase_migrations as 20261101115507). Verified on both: anon false,
+  signed-in true, service true on all three; accept_invitation and
+  get_invitation_by_token unchanged; the CHECK_MIGRATIONS 042 row reads
+  true. The production security advisor now lists seven anon-callable
+  definer functions, all intentional (the three invitation RPCs and four
+  batchd_user_* RLS helpers).
+- docs/SCHEMA-REFERENCE.md regenerated from production (it had not been
+  regenerated after 040 and 041: 47 tables, 2 views, 47 functions, 185
+  policies, up from 45, 2, 42, 148). Pulled in six chunks through the
+  connector; each chunk's md5 matched the server-side md5 of the same text.
 
 ## 2026-11-01 (misspelled secret fallback removed)
 - netlify/lib/auth.js reads the server-to-server secret from

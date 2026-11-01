@@ -19,7 +19,9 @@
 -- reads into 42501 errors).
 --
 -- Dry run on staging 2026-11-01 (rolled back): anon false, signed_in true,
--- service true on all three. Apply: staging first, then production.
+-- service true on all three. Applied the same day to staging and then
+-- production through the Supabase connector (supabase_migrations
+-- 20261101115507); the acceptance query below passed on both.
 --
 -- Rollback (restores the old open grants; do not run without a reason):
 --   grant execute on function public.create_organisation_with_admin(text,text,text,text,text[]) to anon;

@@ -226,11 +226,11 @@ is not on GitHub; nothing live loads it.
   exist in production (checked 2026-10-24; CHECK_MIGRATIONS reports it
   MISSING). The only writer is the retired OCR path in saveRecord, so the
   insert never runs today. Apply 007 before reviving OCR capture.
-- Migrations: 001 to 041 with 020a, no 027 (John's code_patterns slot,
+- Migrations: 001 to 042 with 020a, no 027 (John's code_patterns slot,
   applied outside the folder). CHECK_MIGRATIONS.sql reports APPLIED or
   MISSING per migration; Ian ran it 2026-10-11 and every row was APPLIED.
-  031 to 041 were applied through the Supabase connector (031 to 039 on
-  2026-10-24, 040 and 041 on 2026-10-25), which records them in
+  031 to 042 were applied through the Supabase connector (031 to 039 on
+  2026-10-24, 040 and 041 on 2026-10-25, 042 on 2026-11-01), which records them in
   supabase_migrations; confirmed there 2026-10-28, with job_runs and
   recall_notices present and match_recall_notice identical on staging and
   production (staging's 040b best-by fix is folded into production's
@@ -263,10 +263,10 @@ is not on GitHub; nothing live loads it.
   gated for the join page); WARN that leaked-password protection is off
   in Auth (Ian's toggle, no connector tool); INFO that
   organisation_api_keys and scan_queue have RLS and no policies (closed
-  to clients on purpose). Migration 042 (written 2026-11-01, dry run on
-  staging rolled back, NOT yet applied) revokes anon EXECUTE on the three
-  that never need it; the invitation readers and the RLS helpers keep
-  anon access on purpose.
+  to clients on purpose). Migration 042 (applied to staging and production
+  2026-11-01) revoked anon EXECUTE on the three that never need it; the
+  advisor's anon list is now the invitation readers and the batchd_user_*
+  RLS helpers, both kept on purpose.
 - Before running SQL, confirm the editor is on lurxucdmrugikdlvvebc.
   Migrations 022 to 026 once reported PASS against a different project.
 - Schema reference: docs/SCHEMA-REFERENCE.md, generated from production
