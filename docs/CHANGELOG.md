@@ -4,6 +4,42 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-11-01 (Phase 2 cleanup: legacy sign-in forms and manufacturer-era copy)
+- The scanner's and Retail's own sign-in forms are gone, with the ?legacy=1
+  fallback that showed them for one release after the central sign-in
+  shipped. login.html is now the only sign-in form. Both apps still send a
+  signed-out visitor to /login with the link kept; their old sign-in
+  containers remain only as the brief "Taking you to sign-in" hand-off and
+  as the frame for the deactivated and "not linked" screens, whose content
+  is written in by the apps. Removed with the forms: the scanner's sign-up
+  tab (signup belongs to signup.html), Retail's sign-in two-factor modal
+  and old forgot-password handler (both live in login.html now).
+- Manufacturer-era copy in retailer screens (plan F5): the manual-recall
+  card no longer says "not pushed by a manufacturer via the network"; the
+  recall history labels a pushed recall "Pushed" instead of
+  "Manufacturer"; the terminology entries for Step 1 Notified and the
+  Shelf impact score describe the retailer's own push and receiving
+  records instead of a manufacturer's shipment records; the recall audit
+  report and its timeline say "Recall initiator" instead of
+  "Manufacturer", which is also right for the retailer's own pushes; the
+  Investigations toast no longer tells the admin to "connect a
+  manufacturer"; the scanner's recall labels read "Pushed Recall" instead
+  of "Manufacturer Alert" and "Manufacturer push", and the manual recall
+  form's brand placeholder no longer lists Norwegian dairies.
+- Not removed, on purpose: the three retired stubs (manufacturer.html,
+  supplier.html, manufacturer-signup.html), which login.html, signup.html
+  and Retail still route legacy mfr_admin and mfr_qa members to until the
+  portals replace them; docs.html, which Netlify observability shows with
+  11 requests in the last 7 days; the Investigations panel (decision
+  2026-10-18) and its copy; the lot tracer's legacy shipment chain and
+  every read of trading_partners and shipments (legacy data).
+- Verified: node scripts/check.mjs (10 of 10); node --test (100 tests);
+  the end-to-end suite locally against staging: 11 passed, 1 skipped, and
+  the deactivated-member test runs through the stripped containers.
+  Not verified: a legacy manufacturer member's routing (no such account on
+  staging), and the deactivated screen inside the stripped containers on a
+  real preview (SMOKE.md 58).
+
 ## 2026-11-01 (scanner match rows for pushed recalls)
 - FIXED in the scanner, the open item from the safety-net entry below:
   both scanner writers of scan_recall_matches for pushed recalls (the

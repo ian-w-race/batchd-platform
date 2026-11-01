@@ -1028,34 +1028,21 @@
     document.documentElement.setAttribute('data-theme', t);
   })();
 </script>
-<style>
-  /* Central sign-in (2026-11-01): the old form only shows with ?legacy=1. */
-  html:not(.batchd-legacy-login) #auth-gate .auth-card { visibility: hidden; }
-</style>
-<script>
-  if (new URLSearchParams(location.search).has('legacy')) document.documentElement.classList.add('batchd-legacy-login');
-</script>
 </head>
 <body>
 
 <!-- ── Auth gate ── -->
 <div class="auth-gate" id="auth-gate">
+  <!-- Central sign-in (2026-11-01): signed-out visitors are sent to /login at
+       once, so this gate only shows for a moment, or carries the deactivated
+       screen (initDashboard replaces its content). The old sign-in form and
+       its ?legacy=1 fallback were removed on 2026-11-01. -->
   <div class="auth-card">
     <div class="auth-logo">
       <span style="font-family:'Figtree',sans-serif;font-weight:800;font-size:var(--fs-h4);color:var(--accent);">Batch'd</span>
     </div>
     <div class="auth-title">Retail</div>
-    <div class="auth-sub">Sign in to access your organization's food safety command center.</div>
-    <div id="auth-msg" style="display:none;" class="auth-msg error"></div>
-    <div class="field"><label>Email</label><input id="auth-email" type="email" placeholder="you@company.com" autocomplete="email" onkeydown="if(event.key==='Enter')doAuth()" /></div>
-    <div class="field"><label>Password</label><input id="auth-pw" type="password" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')doAuth()" /></div>
-    <button class="auth-btn" id="auth-btn" onclick="doAuth()">Sign in <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:inline-block;vertical-align:-1px;"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></button>
-    <div style="text-align:center;margin-top:12px;">
-      <button onclick="doPasswordReset()" style="background:none;border:none;color:var(--muted);font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);cursor:pointer;padding:4px 8px;transition:color 0.15s;" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--muted)'">
-        Forgot password?
-      </button>
-    </div>
-    <div class="auth-link">Don't have an account? <a href="https://batchdapp.com">Sign up at batchdapp.com</a></div>
+    <div class="auth-sub">Taking you to sign-in…</div>
   </div>
 </div>
 
@@ -1913,7 +1900,7 @@ async function createInvestigationFromPattern(productName, lots, complaintCount,
       .eq('retailer_id', _orgId).eq('status', 'active');
 
     if (!partners?.length) {
-      showToast('No manufacturer partners connected — connect a manufacturer first', 'warn', 4000);
+      showToast('No manufacturer partners are linked to your organization yet.', 'warn', 4000);
       if (btn) { btn.disabled = false; btn.textContent = 'Create investigation'; }
       return;
     }
@@ -2016,44 +2003,6 @@ document.addEventListener('DOMContentLoaded', function() {
   const theme = localStorage.getItem('batchd-theme') || 'dark';
   updateThemeIcon(theme);
 });
-
-async function doAuth() {
-  const email = document.getElementById('auth-email').value.trim();
-  const pw    = document.getElementById('auth-pw').value;
-  const msg   = document.getElementById('auth-msg');
-  const btn   = document.getElementById('auth-btn');
-  msg.style.display = 'none';
-  if (!email || !pw) { showAuthMsg('Please enter your email and password.'); return; }
-  btn.disabled = true; btn.innerHTML = '<div class="spinner"></div> Signing in…';
-  try {
-    const { data, error } = await sb.auth.signInWithPassword({ email, password: pw });
-    if (error) throw error;
-    _session = data.session;
-
-    // 2FA gate (migration 013-era, 2026-05). If the user has any verified
-    // TOTP factor on their account, Supabase signs them in at AAL1 only —
-    // they need to complete a TOTP challenge before reaching AAL2. The
-    // dashboard's RLS doesn't currently require AAL2, but we challenge
-    // anyway so the elevated-trust intent of enabling 2FA is enforced.
-    // Floor staff don't use the dashboard so they're never prompted here.
-    try {
-      const aalRes = await sb.auth.mfa.getAuthenticatorAssuranceLevel();
-      if (aalRes?.data?.nextLevel === 'aal2' && aalRes.data.currentLevel === 'aal1') {
-        btn.innerHTML = 'Sign in ' + _ico('arrow-right',12);
-        btn.disabled = false;
-        await _showMfaChallengeModal();
-        // After successful verify, _session is fresh; continue.
-        const { data: { session } } = await sb.auth.getSession();
-        _session = session;
-      }
-    } catch(_) { /* MFA API unavailable — fall through to dashboard init */ }
-
-    await initDashboard(data.user);
-  } catch(e) {
-    showAuthMsg(e.message || 'Incorrect email or password.');
-    btn.disabled = false; btn.innerHTML = 'Sign in ' + _ico('arrow-right',12);
-  }
-}
 
 // ──────────────────────────────────────────────────────────────
 // 2FA / TOTP (Supabase MFA) — Settings backlog item #3, 2026-05.
@@ -2163,87 +2112,10 @@ async function _disableMfa() {
   }
 }
 
-// Modal: 6-digit OTP challenge after sign-in for users with an
-// enrolled factor. Returns when verify succeeds; throws on cancel.
-async function _showMfaChallengeModal() {
-  // Find the user's first verified TOTP factor
-  const { data: factors } = await sb.auth.mfa.listFactors();
-  const totp = (factors?.totp || []).find(f => f.status === 'verified');
-  if (!totp) return;  // shouldn't happen if AAL check said aal2 needed, but guard anyway
-
-  return new Promise((resolve, reject) => {
-    document.getElementById('mfa-challenge-modal')?.remove();
-    const m = document.createElement('div');
-    m.id = 'mfa-challenge-modal';
-    m.style.cssText = 'position:fixed;inset:0;background:var(--background-overlay);z-index:9700;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(4px);';
-    m.innerHTML = `
-      <div style="background:var(--background-surface);border:1px solid var(--border);border-radius:var(--r-xl);padding:24px;max-width:380px;width:100%;font-family:'Figtree',sans-serif;">
-        <div style="font-weight:800;font-size:var(--fs-h4);color:var(--text);margin-bottom:6px;">Two-factor verification</div>
-        <div style="font-size:var(--fs-body);color:var(--muted);margin-bottom:18px;line-height:1.55;">Enter the 6-digit code from your authenticator app.</div>
-        <input id="mfa-otp-input" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*" maxlength="6" placeholder="000000" style="width:100%;font-family:'DM Mono',monospace;font-size:var(--fs-h3);letter-spacing:0.3em;text-align:center;padding:14px;border-radius:var(--r-md);border:1.5px solid var(--border);background:var(--input-bg);color:var(--text);margin-bottom:6px;" />
-        <div id="mfa-otp-err" style="display:none;font-size:var(--fs-eyebrow);color:var(--danger);margin-bottom:10px;"></div>
-        <button id="mfa-otp-btn" class="btn-primary" style="width:100%;margin-top:8px;">Verify ${_ico('arrow-right',12)}</button>
-      </div>`;
-    document.body.appendChild(m);
-    const input = document.getElementById('mfa-otp-input');
-    const btn   = document.getElementById('mfa-otp-btn');
-    const err   = document.getElementById('mfa-otp-err');
-    setTimeout(() => input.focus(), 60);
-
-    const setErr = (txt) => { err.textContent = txt; err.style.display = 'block'; };
-    const submit = async () => {
-      const code = (input.value || '').replace(/\s/g,'');
-      if (!/^\d{6}$/.test(code)) { setErr('Enter the 6-digit code.'); return; }
-      btn.disabled = true; btn.textContent = 'Verifying…';
-      try {
-        const { data: ch, error: chErr } = await sb.auth.mfa.challenge({ factorId: totp.id });
-        if (chErr) throw chErr;
-        const { error: vErr } = await sb.auth.mfa.verify({ factorId: totp.id, challengeId: ch.id, code });
-        if (vErr) throw vErr;
-        m.remove();
-        resolve();
-      } catch(e) {
-        setErr(e.message || 'Code rejected. Try again.');
-        btn.disabled = false; btn.innerHTML = 'Verify ' + _ico('arrow-right',12);
-        input.select();
-      }
-    };
-    btn.addEventListener('click', submit);
-    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
-  });
-}
-
-async function doPasswordReset() {
-  const email = document.getElementById('auth-email').value.trim();
-  if (!email) {
-    showAuthMsg('Enter your email address above first, then click Forgot password.');
-    return;
-  }
-  const { error } = await sb.auth.resetPasswordForEmail(email, {
-    // Domain hygiene (2026-08-06): recovery links land on the clean
-    // corporate domain. NOTE: this URL must be in Supabase Auth →
-    // URL Configuration → Redirect URLs, or Supabase silently falls
-    // back to the project's Site URL.
-    redirectTo: location.origin + '/login',
-  });
-  if (error) {
-    showAuthMsg(error.message);
-  } else {
-    showAuthMsg(`Password reset email sent to ${email}. Check your inbox.`, 'info');
-  }
-}
-
-function showAuthMsg(txt, type = 'error') {
-  const el = document.getElementById('auth-msg');
-  el.textContent = txt;
-  el.className = `auth-msg ${type}`;
-  el.style.display = 'block';
-}
-
 async function signOut() {
   await sb.auth.signOut({ scope: 'local' });
   // Central sign-in (2026-11-01): back to the sign-in page on this address.
-  if (_batchdLegacyLogin) location.reload(); else location.replace('/login');
+  location.replace('/login');
 }
 
 // ── Init ───────────────────────────────────────────────────────
@@ -4488,7 +4360,7 @@ async function renderRecalls() {
           <div class="panel-header">
             <div>
               <div class="panel-title">Add a recall manually</div>
-              <div class="panel-sub">For recalls you are initiating or co-ordinating directly — not pushed by a manufacturer via the network</div>
+              <div class="panel-sub">For a recall you log yourself from a supplier, distributor or FDA notice. To alert your stores, use Push a Recall instead.</div>
             </div>
           </div>
           <div class="panel-body">
@@ -12010,7 +11882,7 @@ async function generateJointRecallReport(recallEventId) {
 
     // ── Build timeline ─────────────────────────────────────────
     const timelineRows = [];
-    timelineRows.push({ t: ev.published_at || ev.created_at, actor: mfrOrg.name || 'Manufacturer', event: 'Recall event published and distributed to retail partner', type: 'push' });
+    timelineRows.push({ t: ev.published_at || ev.created_at, actor: mfrOrg.name || 'Recall initiator', event: 'Recall event published and distributed to the stores', type: 'push' });
     if (dist[0]?.distributed_at) timelineRows.push({ t: dist[0].distributed_at, actor: org.name, event: 'Recall received and logged in Batch\'d', type: 'received' });
     acks.forEach(a => {
       if (a.created_at)        timelineRows.push({ t: a.created_at,        actor: a.stores?.name || org.name, event: 'Store notified', type: 'notified' });
@@ -12100,7 +11972,7 @@ ${ev.description ? `<div style="background:#f9fafb;border:1px solid #e5e7eb;bord
 <h2>Parties</h2>
 <div class="meta-grid">
   <div class="meta-box">
-    <div class="meta-label">Manufacturer (recall initiator)</div>
+    <div class="meta-label">Recall initiator</div>
     <div class="meta-val">${esc(mfrOrg.name || ev.source_org_id || '—')}</div>
     ${mfrOrg.recall_coordinator_name ? `<div class="meta-sub">Coordinator: ${esc(mfrOrg.recall_coordinator_name)}</div>` : ''}
     ${mfrOrg.recall_coordinator_contact || mfrOrg.contact_email ? `<div class="meta-sub">${esc(mfrOrg.recall_coordinator_contact || mfrOrg.contact_email)}</div>` : ''}
@@ -12175,7 +12047,7 @@ ${allDone ? `
 <h2>Authorization</h2>
 <div class="sig-box">
   <div>
-    <h3>Manufacturer — ${esc(mfrOrg.name || '—')}</h3>
+    <h3>Recall initiator: ${esc(mfrOrg.name || '—')}</h3>
     <div class="sig-line">Recall coordinator signature &amp; date</div>
     ${mfrOrg.recall_coordinator_name ? `<div style="font-size:11px;color:#6b7280;margin-top:6px;">${esc(mfrOrg.recall_coordinator_name)}${mfrOrg.recall_coordinator_contact?' · '+esc(mfrOrg.recall_coordinator_contact):''}</div>` : ''}
   </div>
@@ -13019,7 +12891,7 @@ const fmtDT   = d => d ? new Date(d).toLocaleString(_dashLocale(),{day:'numeric'
                 </td>
                 <td style="font-size:var(--fs-eyebrow);color:var(--muted);font-family:'DM Mono',monospace;">${esc(r.lot_number||'—')}</td>
                 <td><span style="font-size:var(--fs-label);padding:2px 8px;border-radius:var(--r-md);${isPushed?'background:rgba(var(--info-light-rgb),0.1);color:var(--info);':'background:rgba(var(--accent-muted-rgb),0.1);color:var(--muted);'}">
-                  ${isPushed?'Manufacturer':(r.source||'Manual')}</span></td>
+                  ${isPushed?'Pushed':(r.source||'Manual')}</span></td>
                 <td style="font-size:var(--fs-eyebrow);color:${sevColor};">${esc(r.severity?formatSeverity(r.severity).label:'—')}</td>
                 <td style="font-size:var(--fs-eyebrow);color:var(--muted);max-width:180px;">${esc(r.reason||'—')}</td>
                 <td><span style="font-size:var(--fs-label);padding:2px 8px;border-radius:var(--r-md);background:${(isPushed||r.active)?'rgba(var(--danger-rgb),0.12)':'rgba(var(--accent-rgb),0.12)'};color:${(isPushed||r.active)?'var(--danger)':'var(--accent)'};">${(isPushed||r.active)?'Active':'Resolved'}</span></td>
@@ -13885,7 +13757,7 @@ function renderTerminology() {
       ${section('Recall response chain', 'The five mandatory steps each store completes when a recall is active. Every step is timestamped and attributed to a named staff member.')}
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:0 18px;margin-top:8px;">
         ${term('Step 1 · Notified',
-          'The store has received the recall alert. This status is set automatically the moment a manufacturer pushes a recall and the store is included in the distribution list.',
+          'The store has received the recall alert. This status is set automatically the moment a recall is pushed to your organization and the store is on the distribution list.',
           'Notified does <strong>not</strong> mean any staff member has seen the alert. It confirms only that the alert was delivered to the store\'s Batch\'d account. The timestamp of this step is the legal record of when the store was informed.',
           isUS ? 'FDA 21 CFR 7.46' : 'Matloven §16')}
         ${term('Step 2 · Acknowledged',
@@ -14015,8 +13887,8 @@ function renderTerminology() {
           'Contains: the date of the drill, the participating stores, average response time per store, confirmation rate, and the time from alert to final confirmation. Presented to regulators as evidence of preparedness planning.',
           isUS ? 'FDA 21 CFR 7.49' : 'Mattilsynet beredskapsplan')}
         ${term('Shelf impact score',
-          'A figure calculated by Batch\'d before a manufacturer pushes a recall, showing how many stores have the affected lot on shelf and in what estimated quantities.',
-          'Calculated by cross-referencing the manufacturer\'s shipment records (which stores received the lot and when) with the retailer\'s scan records (which of those stores scanned that lot onto a shelf and how many units). The score is shown to the manufacturer before the recall is pushed, so the impact is understood before any store is notified.',
+          'A figure calculated by Batch\'d before a recall is pushed, showing how many stores have the affected lot on shelf and in what estimated quantities.',
+          'Calculated by cross-referencing receiving records (which stores received the lot and when) with shelf scans (which of those stores placed that lot on a shelf and how many units). The composer shows it before the recall is pushed, so the impact is understood before any store is notified.',
           '')}
         ${term('Record retention',
           `The length of time Batch\'d stores your traceability records.${isUS ? ' Receiving records carry a retain-until date of two years from receipt automatically.' : ''}`,
@@ -16091,14 +15963,12 @@ function renderComingSoon(name) {
 // (legacy data display) but no UI exposes the table now.
 
 // ── Boot ───────────────────────────────────────────────────────
-// ?legacy=1 keeps this app's own sign-in form (fallback for one release, 2026-11-01).
-const _batchdLegacyLogin = new URLSearchParams(location.search).has('legacy');
 (async () => {
   const { data: { session } } = await sb.auth.getSession();
   if (session) {
     _session = session;
     await initDashboard(session.user);
-  } else if (!_batchdLegacyLogin) {
+  } else {
     // Central sign-in (2026-11-01): sign in once at /login, which sends the
     // person back here with any ?panel= link intact.
     location.replace('/login?app=retail&next=' + encodeURIComponent(location.pathname + location.search));

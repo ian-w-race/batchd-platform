@@ -389,6 +389,22 @@ not repeated here.
     no 409 on scan_recall_matches. Before this change the save answered
     409 (swallowed) and the second scan never appeared under the recall.
 
+## Phase 2 cleanup: legacy sign-in forms and manufacturer-era copy (2026-11-01)
+
+58. On the preview, signed out: open /retail?legacy=1 and /scan?legacy=1.
+    Neither shows an old sign-in form any more; both land on /login and
+    come back to the app after sign-in. Sign in as the deactivated
+    staging account: both apps still show "Account deactivated" (the
+    screen is drawn inside the stripped sign-in container). In Retail,
+    Recalls, History tab: a pushed recall's source pill reads "Pushed",
+    not "Manufacturer"; the "Add a recall manually" card's subtitle no
+    longer mentions a manufacturer network; Terminology & Help, Step 1
+    Notified and Shelf impact score describe the retailer's own push and
+    receiving records. In the scanner, a scan matching a pushed recall
+    shows "Pushed Recall" in its recall sheet and "PUSHED RECALL" in the
+    manager's exposure list; the manual recall form's brand field has a
+    neutral placeholder.
+
 ## Run log
 
 - 2026-11-01, Claude, local static server against the staging database:

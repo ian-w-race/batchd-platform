@@ -156,16 +156,21 @@ Live surfaces:
   ?app= picks one, otherwise the app last used on the device, and
   ?choose=1 (the "Switch app" links) shows the chooser. ?next= keeps only
   its query string. Retail and the scanner send signed-out visitors to
-  /login; ?legacy=1 shows their old sign-in forms (fallback for one
-  release, then remove). Sign-out in either app returns to /login.
+  /login; their own sign-in forms and the ?legacy=1 fallback were removed
+  on 2026-11-01 (Phase 2 cleanup), so login.html is the only sign-in
+  form. Sign-out in either app returns to /login.
 - lot-code-guide.html, privacy.html, terms.html.
 - complaint.html and complaint-widget.js: public complaint intake to
   triage-complaint.js. The widget hardcodes www.batchdapp.com.
 - trace.html: retired notice; the trace function answers 410.
-Dormant: the three retired stubs. landing.html and
-recall-roi-calculator.html were removed 2026-10-24 (no visits in the week
-before, per Netlify observability); netlify.toml 301s both to batchd.no.
-Check observability traffic before removing any other page.
+Dormant: the three retired stubs (kept: login.html, signup.html and the
+Retail app still send legacy mfr_admin and mfr_qa members to
+manufacturer.html until the portals replace it). docs.html is unlinked
+but still had 11 requests in the week to 2026-11-01, so it stays for now.
+landing.html and recall-roi-calculator.html were removed 2026-10-24 (no
+visits in the week before, per Netlify observability); netlify.toml 301s
+both to batchd.no. Check observability traffic before removing any other
+page.
 Not app files: README.md, SCHEMA.md, SECRETS.md, SMOKE.md, docs/,
 migrations/, fonts/, netlify/, netlify.toml, package.json (pins
 @supabase/supabase-js 2.112.1 for the functions).
