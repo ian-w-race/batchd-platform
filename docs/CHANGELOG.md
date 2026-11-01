@@ -4,6 +4,38 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-11-01 (A2 part 4: the design tokens as one stylesheet)
+- src/shared/design-tokens.css is the one source of truth for the design
+  tokens: the semantic dark palette on :root and [data-theme="dark"], the
+  light palette on [data-theme="light"], the type, radius, spacing and
+  motion ladders on :root, and the 24 legacy aliases both apps read
+  (--bg, --surface, --text, --muted, --accent and so on). scripts/build.mjs
+  copies it to dist/assets/design-tokens.css and index.html, dashboard.html
+  and login.html link it in <head> before their own styles. Until now the
+  three pages carried identical inline copies and CLAUDE.md named a
+  canonical file, assets/design-tokens.css, that had never been committed.
+  The scanner's theme-invariant camera scrim token (--scrim-rgb) and
+  Retail's four extra rgb triples are in the shared file, so every page has
+  the full set.
+- Retail keeps the 30 aliases only it uses (sidebar, topbar, auth
+  background, elevation steps, tints, glows, blur) in its own first
+  <style>. signup.html, join.html and admin.html are untouched: they use
+  an older, smaller color set of their own, not copies of the design
+  system.
+- scripts/check.mjs: a new check that the three pages link the stylesheet
+  before their own <style> and declare none of the shared tokens inline,
+  and that the built copy exists. tests/design-tokens.test.mjs (5 tests)
+  holds the design rules: no pure black and no pure white text in dark,
+  mint then emerald accents, every light token overriding a dark one, the
+  documented ladders, aliases pointing at semantic tokens.
+- The print window still gets the ladder: _printLadderCss reads the
+  computed values, which now come from the linked stylesheet.
+- Verified: node scripts/check.mjs (10 of 10); node --test (123 tests);
+  the built sign-in page in the browser pane with the stylesheet loaded
+  (4 rule blocks) and the tokens resolving to #34D399 on #080f12 in dark
+  and #077A55 on #F5F7F6 in light, screenshots in both; the end-to-end
+  suite locally against the built dist/ on staging (11 passed, 1 skipped).
+
 ## 2026-11-01 (A2 part 3: the GS1 parser, the listed-food table and the recall matcher in src/shared)
 - Three more modules, moved verbatim out of index.html so behavior does not
   change: src/shared/gs1.js (parseGS1, parseGS1DigitalLink, gs1ParseDate,

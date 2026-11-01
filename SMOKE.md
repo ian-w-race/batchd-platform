@@ -443,6 +443,18 @@ not repeated here.
     greens", "Bivalve mollusks", "Soft and semi-soft cheese" and so on,
     the same words as the scanner badges and the signup focus chips.
 
+## Shared design tokens stylesheet (2026-11-01, A2 part 4)
+
+62. On the preview: /login, /retail and /scan look exactly as before in
+    dark and in light (toggle the theme in Retail's topbar and in the
+    scanner's drawer): mint accent, off-white text and the dark green
+    surfaces in dark; emerald accent on light surfaces in light. No flash
+    of unstyled content on load or reload. Devtools Network shows one
+    request for /assets/design-tokens.css (200) before the page's own
+    styles. Print a report from Retail: the type and radius ladder still
+    carries into the print window. /signup, /join and the admin page are
+    unchanged (they keep their own small color sets).
+
 ## Run log
 
 - 2026-11-01, Claude, local static server against the staging database:

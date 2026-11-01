@@ -5,7 +5,7 @@
 // No dependencies. Each check prints PASS or FAIL; the script exits 1 if any
 // check fails. Add a check here whenever CLAUDE.md says "keep X in step".
 
-import { readFileSync, readdirSync, writeFileSync, mkdtempSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync, mkdtempSync, statSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -163,6 +163,25 @@ check('Parsers, listed-food table and recall matcher come only from src/shared',
   if (labels.length !== 17) throw new Error(`src/shared/ftl.js: ${labels.length} category labels, expected 17`);
   for (const l of labels) if (/\b(Molluscs|Semi-Soft)\b/.test(l) || /^    label: '[A-Z][a-z]+ [A-Z]/.test(l)) throw new Error(`src/shared/ftl.js: label not in house style: ${l.trim()}`);
   return `3 pages, ${labels.length} categories`;
+});
+
+// 6b. The design tokens live only in src/shared/design-tokens.css (A2 part 4,
+// 2026-11-01); the scanner, Retail and the sign-in page link the built copy
+// before their own styles and declare none of the shared tokens inline.
+check('Design tokens come only from src/shared/design-tokens.css', () => {
+  const LINK = '<link rel="stylesheet" href="/assets/design-tokens.css">';
+  const SHARED = ['--background-base:', '--text-primary:', '--accent-primary:', '--fs-body:', '--r-md:', '--dur-fast:', '--bg:', '--surface:', '--muted:', '--accent:'];
+  for (const f of ['index.html', 'dashboard.html', 'login.html']) {
+    const s = read(f);
+    const link = s.indexOf(LINK), style = s.indexOf('<style');
+    if (link < 0) throw new Error(`${f}: does not link /assets/design-tokens.css`);
+    if (link > style) throw new Error(`${f}: the tokens stylesheet must come before the page's own <style>`);
+    for (const t of SHARED) if (new RegExp('^\\s*' + t.replace(/-/g, '\\-'), 'm').test(s)) throw new Error(`${f}: still declares ${t.slice(0, -1)} inline; it belongs in src/shared/design-tokens.css`);
+  }
+  const css = read('src/shared/design-tokens.css');
+  for (const sel of [':root,\n[data-theme="dark"] {', '[data-theme="light"] {', '\n:root {', ':root, [data-theme] {']) if (!css.includes(sel)) throw new Error(`design-tokens.css: block ${JSON.stringify(sel)} missing`);
+  if (!existsSync(join(ROOT, 'dist/assets/design-tokens.css'))) throw new Error('dist/assets/design-tokens.css missing after the build');
+  return `3 pages, ${(css.match(/--[a-z0-9-]+\s*:/g) || []).length} declarations`;
 });
 
 // 7c. Every function reads its database from SUPABASE_URL, so deploy previews

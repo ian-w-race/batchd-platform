@@ -5,6 +5,8 @@
 //      netlify.toml's forced 404s stay as a second line of defense).
 //   2. Bundles src/shared/index.js with esbuild into dist/assets/batchd-shared.js,
 //      a classic script every page loads before it creates its Supabase client.
+//   3. Copies src/shared/design-tokens.css to dist/assets/design-tokens.css, the
+//      stylesheet the scanner, Retail and the sign-in page link (A2 part 4).
 // Run: npm run build. The e2e static server and scripts/check.mjs run it too.
 import { build } from 'esbuild';
 import { cpSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -43,6 +45,7 @@ const result = await build({
 });
 if (result.errors.length) { console.error(result.errors); process.exit(1); }
 
+cpSync(join(ROOT, 'src/shared/design-tokens.css'), join(DIST, 'assets/design-tokens.css'));
 writeFileSync(join(DIST, '.built-at'), new Date().toISOString() + '\n');
 const size = statSync(join(DIST, 'assets/batchd-shared.js')).size;
-console.log(`built dist/: ${copied.length} files and folders copied, assets/batchd-shared.js ${size} bytes`);
+console.log(`built dist/: ${copied.length} files and folders copied, assets/batchd-shared.js ${size} bytes, assets/design-tokens.css ${statSync(join(DIST, 'assets/design-tokens.css')).size} bytes`);
