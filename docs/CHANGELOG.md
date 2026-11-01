@@ -4,6 +4,119 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-11-01 (one address, checked on production)
+- #30, #39 and #40 merged and deployed. Checked by HTTP right after:
+  app.batchdapp.com/ and /login serve the sign-in page; /retail serves the
+  Retail app and /scan the scanner (manifest start_url /scan);
+  app.batchdapp.com/dashboard(.html) 301 to /retail with the query kept;
+  corporate.batchdapp.com/, /?panel=recalls, /dashboard and
+  /dashboard.html?panel=triage 301 to app.batchdapp.com/retail with the
+  query kept, and /signup and /join?token= to the same path on app.;
+  www.batchdapp.com/ 301s to app.batchdapp.com/ and /dashboard to /retail;
+  batchdapp.com still 301s to www (two hops to the sign-in page);
+  batchd-app.netlify.app/dashboard.html 301s to app.batchdapp.com/retail.
+  Private files still answer 404 (CLAUDE.md, netlify/lib/auth.js,
+  tests/). Functions are not redirected: the ocr warm-up answers 204 on
+  app. and on corporate., and www's triage-complaint answers OPTIONS 200,
+  so complaint-widget.js keeps working.
+- In a browser: batchd-app.netlify.app shows "Batch'd has moved" with a
+  button to app.batchdapp.com/scan (no queued scans in that browser), and a
+  signed-out app.batchdapp.com/retail?panel=recalls lands on /login with
+  the link kept; no console errors.
+- Still owed by Ian: add https://app.batchdapp.com/login to Supabase Auth
+  redirect URLs (production and staging), and reinstall the scanner on the
+  test phones from app.batchdapp.com/scan.
+
+## 2026-11-01 (one address and the Retail rename, Phase 2a step 2)
+- Every app now lives on app.batchdapp.com: / is the sign-in page,
+  /retail the Retail app (dashboard.html), /scan the scanner. One sign-in
+  opens both apps; signing out of either signs out of both and returns to
+  /login.
+- Retail and the scanner send signed-out visitors to /login with the link
+  they asked for (/retail?panel=recalls comes back to Recalls after
+  sign-in). ?legacy=1 shows their old sign-in forms as a fallback for one
+  release. Both apps link to each other by same-origin paths, and both
+  have a "Switch app" link (dashboard topbar, scanner drawer).
+- The sign-in page now opens the app last used on the device directly
+  (decision Q17), unless ?choose=1 asks for the chooser. ?next= keeps only
+  its query string, appended to the app's own path, so it cannot point at
+  another site.
+- netlify.toml: corporate.batchdapp.com and every /dashboard path 301 to
+  app.batchdapp.com/retail (any other corporate path to the same path on
+  app.), www.batchdapp.com/ to app.batchdapp.com/. The block sits first
+  because Netlify uses the first matching rule.
+- The scanner moved from batchd-app.netlify.app (manifest start_url is now
+  /scan). On the old address it keeps running while scans wait in the
+  offline queue ("Sending N saved scans first"), then shows "Batch'd has
+  moved" with a button to app.batchdapp.com/scan. Only Batch'd's test
+  phones had it installed (Ian, 2026-11-01).
+- Rename: "Corporate Dashboard" and "corporate dashboard" became Retail in
+  the dashboard title, sign-in card, sidebar and help text, and in the
+  scanner's dashboard shortcut. Role names (corp_admin, "Corporate admin")
+  did not change.
+- Links: join.html and signup.html hand everyone to /login (the router);
+  email links point at app.batchdapp.com/retail (notify-event,
+  triage-complaint, push-recall-email) and app.batchdapp.com/scan (recall
+  reminder and escalation buttons). The database selection block maps the
+  new app.batchdapp.com paths onto a preview's own origin, identically in
+  all six pages.
+- The scanner start-up fix listed under step 1 below was found by this
+  pull request's end-to-end tests.
+- Verified: check.mjs 10 of 10; node --test 89 tests (new: deep-link and
+  last-app picking, the preview link map, the old-address hand-off with
+  an empty, a draining and a corrupt queue); a local copy on staging: a
+  signed-out /retail?panel=recalls and /scan?view=history&lot=A1 land on
+  /login with the link kept, ?legacy=1 shows both old forms, titles read
+  Retail, no console errors. The end-to-end tests now sign in through
+  /login (the existing dashboard and scanner tests included) and add a
+  deep-link and a sign-out test; they run on the pull request's preview.
+  Not verifiable before merge: the production host rules (corporate,
+  www, batchd-app), checked by HTTP after merge.
+
+## 2026-11-01 (central sign-in, Phase 2a step 1)
+- New login.html: one sign-in page for every Batch'd app
+  (docs/PORTALS-PLAN.md, Phase 2a). After sign-in it reads the person's
+  memberships and sends store staff straight to the scanner, legacy
+  manufacturer members to the manufacturer page, and shows a short chooser
+  to anyone with more than one app (retail admins and store managers:
+  Retail and Scanner; platform admins also Admin). The chooser lists the
+  last app used on that device first. It handles two-factor codes, the
+  deactivated screen, and password recovery with a real "Set a new
+  password" form (the dashboard's reset link signed people in without
+  asking for a new password). ?app=retail or ?app=scan skips the chooser
+  when the person may open that app.
+- netlify.toml: /login, /retail (the dashboard) and /scan (the scanner)
+  on every host, and app.batchdapp.com/ now opens the sign-in page instead
+  of the scanner (nothing linked there; the scanner's address is
+  batchd-app.netlify.app). Because /retail and /scan share one address, one
+  sign-in opens both. Nothing else moved: corporate.batchdapp.com and
+  batchd-app.netlify.app behave as before until step 2.
+- FIXED (scanner): it ran its start-up twice whenever it opened with a
+  saved sign-in, because the "already started" flag lived on the user
+  object and initAuth and the auth listener each pass a fresh copy; with no
+  store chosen in the last 12 hours it stacked two "Where are you working
+  today?" pickers and taps landed on the hidden one. Already possible when
+  reopening the scanner, and every visit through the sign-in page opens
+  with a saved session. The guard is now by user id and the picker never
+  opens twice. Found by the end-to-end tests on pull request 40.
+- scripts/check.mjs counts login.html as a sixth page with the identical
+  database selection block; tests/login-router.test.mjs (10 tests) covers
+  the routing rules and checks that every app path has a rule.
+- Verified: node scripts/check.mjs (10 of 10), node --test (81 tests), and
+  a local copy on staging with a stubbed client driven through staff,
+  corporate admin, platform admin, deactivated, no membership, signed out,
+  wrong password, two-factor (wrong then right code), forgot password, the
+  last-used order and ?app=; dark and light, phone width with no sideways
+  scroll; /retail and /scan load the real apps with no console errors.
+  Not verified: a real sign-in on staging (the staging test password could
+  not be read in this session), and the app.batchdapp.com root rule, which
+  only exists on production (check it after merge).
+- Owed by Ian: add https://app.batchdapp.com/login (and, for previews,
+  https://*--gentle-belekoy-be3cb7.netlify.app/login and
+  https://*--batchd-app.netlify.app/login) to Supabase Auth, URL
+  Configuration, Redirect URLs, in production and staging. Without it the
+  reset link falls back to the project's Site URL.
+
 ## 2026-10-28 (connector checks)
 - Verified through the GitHub, Netlify and Supabase connectors, read-only.
   Only two Netlify sites deploy this repo (www and batchd-app, both on the

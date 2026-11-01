@@ -30,11 +30,10 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const RESEND_API_KEY       = process.env.RESEND_API_KEY;
 const FROM_EMAIL           = 'alerts@batchdapp.com';
 const FROM_NAME            = "Batch'd Alerts";
-// Domain hygiene (2026-08-06): dashboard links point at the corporate
-// domain. If the APP_BASE_URL env var is still set to app.batchdapp.com,
-// links keep working via the 301 in netlify.toml — but update the env
-// var to https://corporate.batchdapp.com to skip the extra hop.
-const APP_BASE_URL         = process.env.APP_BASE_URL || 'https://corporate.batchdapp.com';
+// Links open the Retail app at app.batchdapp.com/retail (central sign-in,
+// 2026-11-01). An APP_BASE_URL still set to corporate.batchdapp.com keeps
+// working through the 301s in netlify.toml.
+const APP_BASE_URL         = process.env.APP_BASE_URL || 'https://app.batchdapp.com';
 
 // ── Supabase REST helpers ──────────────────────────────────────
 
@@ -182,7 +181,7 @@ async function verifyCallerOrgMembership(jwt, orgId) {
 // can identify the source without opening the email body.
 
 function tmplRecallPushed(p, orgName) {
-  const url = `${APP_BASE_URL}/dashboard.html`;
+  const url = `${APP_BASE_URL}/retail`;
   const subject = `Recall pushed — ${p.product_name || 'Unnamed product'} (${orgName})`;
   const html = `<!DOCTYPE html><html><body style="font-family:Helvetica,Arial,sans-serif;max-width:560px;margin:0 auto;padding:20px;color:#1a201d;line-height:1.6;">
   <div style="font-weight:800;font-size:20px;color:#077A55;letter-spacing:-0.01em;">Batch'd</div>
@@ -210,7 +209,7 @@ Open dashboard: ${url}
 }
 
 function tmplComplaintFiled(p, orgName) {
-  const url = `${APP_BASE_URL}/dashboard.html`;
+  const url = `${APP_BASE_URL}/retail`;
   const subject = `Complaint filed — ${p.product_name || 'product'} (${p.complaint_number || 'new complaint'})`;
   const html = `<!DOCTYPE html><html><body style="font-family:Helvetica,Arial,sans-serif;max-width:560px;margin:0 auto;padding:20px;color:#1a201d;line-height:1.6;">
   <div style="font-weight:800;font-size:20px;color:#077A55;letter-spacing:-0.01em;">Batch'd</div>
@@ -238,7 +237,7 @@ Open dashboard: ${url}
 }
 
 function tmplDrillScheduled(p, orgName) {
-  const url = `${APP_BASE_URL}/dashboard.html`;
+  const url = `${APP_BASE_URL}/retail`;
   const subject = `Mock drill launched — ${p.product_name || 'recall readiness drill'} (${orgName})`;
   const html = `<!DOCTYPE html><html><body style="font-family:Helvetica,Arial,sans-serif;max-width:560px;margin:0 auto;padding:20px;color:#1a201d;line-height:1.6;">
   <div style="font-weight:800;font-size:20px;color:#077A55;letter-spacing:-0.01em;">Batch'd</div>

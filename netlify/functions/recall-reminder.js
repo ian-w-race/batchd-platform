@@ -60,7 +60,7 @@ function buildReminderHtml({ store, retailerName, product, lot, severity, coord,
           ${coordTel?`<div style="font-size:12px;color:#666;">${esc(coordTel)}</div>`:''}
         </div>`:''}
         <div style="text-align:center;padding:8px 0 16px;">
-          <a href="https://batchd-app.netlify.app" style="background:#34d399;color:#052e16;text-decoration:none;font-weight:700;font-size:14px;padding:13px 26px;border-radius:8px;display:inline-block;">
+          <a href="https://app.batchdapp.com/scan" style="background:#34d399;color:#052e16;text-decoration:none;font-weight:700;font-size:14px;padding:13px 26px;border-radius:8px;display:inline-block;">
             Open Batch'd — Continue the response
           </a>
         </div>
