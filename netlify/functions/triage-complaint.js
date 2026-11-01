@@ -399,7 +399,7 @@ Original complaint:
 Customer: ${complaint.customer_name || 'Anonymous'}${complaint.customer_email ? ' | ' + complaint.customer_email : ''}${complaint.customer_phone ? ' | ' + complaint.customer_phone : ''}
 
 ${matchSummary.length ? 'BATCH\'D MATCHES FOUND:\n' + matchSummary.join('\n') + '\n' : ''}
-Review and take action: https://corporate.batchdapp.com/?panel=triage
+Review and take action: https://app.batchdapp.com/retail?panel=triage
 Reference: ${complaint.complaint_number}`;
 
   await sendEmail({

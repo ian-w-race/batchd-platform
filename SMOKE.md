@@ -319,3 +319,21 @@ not repeated here.
     the same sign-in page, and corporate.batchdapp.com and
     batchd-app.netlify.app still work exactly as before.
 
+## One address and the Retail rename (2026-11-01)
+
+50. On the preview: open /retail?panel=recalls signed out. You land on
+    /login; after signing in you are back on Recalls in the Retail app.
+    The topbar has "Switch app" (opens the chooser) and "Open scanning
+    app" (opens /scan, already signed in). The page title and sidebar say
+    Retail, not Corporate. Sign out: you land on /login. Sign in again: the
+    app you used last opens directly. In the scanner, the drawer has
+    "Switch app" above Sign out, and the dashboard shortcut says "Open
+    Retail". /retail?legacy=1 and /scan?legacy=1 still show the old
+    sign-in forms. After merge, on production: corporate.batchdapp.com
+    and corporate.batchdapp.com/?panel=recalls land on
+    app.batchdapp.com/retail (with the panel); www.batchdapp.com lands on
+    app.batchdapp.com; batchd-app.netlify.app shows "Batch'd has moved"
+    with a button to app.batchdapp.com/scan (a test phone with scans
+    waiting offline sees "Sending N saved scans first" until they sync).
+    Reinstall the scanner on the test phones from app.batchdapp.com/scan.
+

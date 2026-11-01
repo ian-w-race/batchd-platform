@@ -4,6 +4,52 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-11-01 (one address and the Retail rename, Phase 2a step 2)
+- Every app now lives on app.batchdapp.com: / is the sign-in page,
+  /retail the Retail app (dashboard.html), /scan the scanner. One sign-in
+  opens both apps; signing out of either signs out of both and returns to
+  /login.
+- Retail and the scanner send signed-out visitors to /login with the link
+  they asked for (/retail?panel=recalls comes back to Recalls after
+  sign-in). ?legacy=1 shows their old sign-in forms as a fallback for one
+  release. Both apps link to each other by same-origin paths, and both
+  have a "Switch app" link (dashboard topbar, scanner drawer).
+- The sign-in page now opens the app last used on the device directly
+  (decision Q17), unless ?choose=1 asks for the chooser. ?next= keeps only
+  its query string, appended to the app's own path, so it cannot point at
+  another site.
+- netlify.toml: corporate.batchdapp.com and every /dashboard path 301 to
+  app.batchdapp.com/retail (any other corporate path to the same path on
+  app.), www.batchdapp.com/ to app.batchdapp.com/. The block sits first
+  because Netlify uses the first matching rule.
+- The scanner moved from batchd-app.netlify.app (manifest start_url is now
+  /scan). On the old address it keeps running while scans wait in the
+  offline queue ("Sending N saved scans first"), then shows "Batch'd has
+  moved" with a button to app.batchdapp.com/scan. Only Batch'd's test
+  phones had it installed (Ian, 2026-11-01).
+- Rename: "Corporate Dashboard" and "corporate dashboard" became Retail in
+  the dashboard title, sign-in card, sidebar and help text, and in the
+  scanner's dashboard shortcut. Role names (corp_admin, "Corporate admin")
+  did not change.
+- Links: join.html and signup.html hand everyone to /login (the router);
+  email links point at app.batchdapp.com/retail (notify-event,
+  triage-complaint, push-recall-email) and app.batchdapp.com/scan (recall
+  reminder and escalation buttons). The database selection block maps the
+  new app.batchdapp.com paths onto a preview's own origin, identically in
+  all six pages.
+- The scanner start-up fix listed under step 1 below was found by this
+  pull request's end-to-end tests.
+- Verified: check.mjs 10 of 10; node --test 89 tests (new: deep-link and
+  last-app picking, the preview link map, the old-address hand-off with
+  an empty, a draining and a corrupt queue); a local copy on staging: a
+  signed-out /retail?panel=recalls and /scan?view=history&lot=A1 land on
+  /login with the link kept, ?legacy=1 shows both old forms, titles read
+  Retail, no console errors. The end-to-end tests now sign in through
+  /login (the existing dashboard and scanner tests included) and add a
+  deep-link and a sign-out test; they run on the pull request's preview.
+  Not verifiable before merge: the production host rules (corporate,
+  www, batchd-app), checked by HTTP after merge.
+
 ## 2026-11-01 (central sign-in, Phase 2a step 1)
 - New login.html: one sign-in page for every Batch'd app
   (docs/PORTALS-PLAN.md, Phase 2a). After sign-in it reads the person's

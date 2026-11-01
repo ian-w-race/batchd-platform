@@ -194,6 +194,9 @@ if (BATCHD_ENV === 'staging') {
         ['https://corporate.batchdapp.com/', '/dashboard.html'],
         ['https://app.batchdapp.com/dashboard.html', '/dashboard.html'],
         ['https://app.batchdapp.com/manufacturer.html', '/manufacturer.html'],
+        ['https://app.batchdapp.com/retail', '/retail'],
+        ['https://app.batchdapp.com/scan', '/scan'],
+        ['https://app.batchdapp.com/login', '/login'],
         ['https://app.batchdapp.com/signup', '/signup'],
         ['https://batchd-app.netlify.app', '/']
       ];
@@ -230,31 +233,13 @@ const ROLE_LABELS = {
   mfr_qa:        'Manufacturer QA',
 };
 
+// Central sign-in (2026-11-01): after accepting, everyone goes to the
+// sign-in router on this same address, which already holds the new session
+// and sends each role to its app (staff to the scanner, managers and admins
+// to Retail or the chooser). Same-origin, so it also works on previews.
 const ROLE_DESTINATIONS = {
-  staff:         'https://batchd-app.netlify.app',
-  // Store managers land on the corporate dashboard (store-scoped view
-  // via renderStoreManagerOverview + the per-panel scoping wired in
-  // Chunk B). Updated 2026-05-26 — previously sent to the scanner
-  // along with floor staff. Managers can still open the scanner via
-  // the "Open scanning app ↗" button in the dashboard topbar.
-  // Domain hygiene (2026-08-06): dashboard roles land on the clean
-  // corporate domain directly — the session-token hash arrives at the
-  // origin that will actually store it, instead of relying on the
-  // app.* → corporate.* redirect preserving the fragment.
-  store_manager: 'https://corporate.batchdapp.com/',
-  corp_admin:    'https://corporate.batchdapp.com/',
-  mfr_admin:     'https://app.batchdapp.com/manufacturer.html',
-  mfr_qa:        'https://app.batchdapp.com/manufacturer.html',
+  staff: '/login', store_manager: '/login', corp_admin: '/login', mfr_admin: '/login', mfr_qa: '/login',
 };
-// On staging hosts (deploy previews) every destination stays on this
-// preview's own origin, so a staging session never lands on production.
-if (BATCHD_ENV === 'staging') {
-  ROLE_DESTINATIONS.staff         = '/';
-  ROLE_DESTINATIONS.store_manager = '/dashboard.html';
-  ROLE_DESTINATIONS.corp_admin    = '/dashboard.html';
-  ROLE_DESTINATIONS.mfr_admin     = '/manufacturer.html';
-  ROLE_DESTINATIONS.mfr_qa        = '/manufacturer.html';
-}
 
 // Helper: HTML-escape any string we interpolate (defence against weird names).
 // Module scope so every screen on this page can use it, not just showForm.
