@@ -53,12 +53,14 @@ export async function scannerSignIn(page, email, storeName = 'QA Store 1') {
   await centralSignIn(page, email, 'scan');
   if (storeName) {
     // Since the central sign-in the scanner opens with a restored session,
-    // which may preselect the person's store; the store picker overlay only
-    // shows when none is chosen. The same names also exist as hidden <option>s.
-    const pick = page.getByText(storeName, { exact: true }).filter({ visible: true });
+    // so its store dropdown is already filled when the "Where are you
+    // working today?" picker shows.
+    // Target the picker's button by role: a text match also finds the
+    // store dropdown's <option>, which cannot be clicked.
+    const pick = page.getByRole('button', { name: storeName, exact: true }).filter({ visible: true });
     await expect.poll(async () => {
-      if (await pick.count()) await pick.first().click().catch(() => {});
-      else await page.selectOption('#field-store', { label: storeName }).catch(() => {});
+      if (await pick.count()) await pick.first().click({ timeout: 5_000 }).catch(() => {});
+      else await page.selectOption('#field-store', { label: storeName }, { timeout: 5_000 }).catch(() => {});
       return page.evaluate(() => (typeof _currentStoreId !== 'undefined' ? _currentStoreId : null) || null);
     }, { timeout: 30_000 }).not.toBeNull();
     // A recall alert may open after sign-in on staging; close it if it does.
