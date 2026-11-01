@@ -584,8 +584,8 @@ Owed by Ian:
   arrived (docs/CHANGELOG.md has the detail).
   10 to 13, 17 to 20, 46 and 47 have not been run on production. The
   three defects from that run (prompt() in Mark complete, closed recalls
-  in the Active tab, the slow Recalls deep link) were fixed the same day;
-  the deep-link timing on the live site is still unmeasured.
+  in the Active tab, the slow Recalls deep link) were fixed the same day
+  and the deep link now loads in about 3 s on the live site.
 - Rotate the demo account password (in public git history). Claude's
   attempt on 2026-11-01 was blocked by the app's permission layer, so it
   stays Ian's: Supabase, Authentication, Users, demo@batchdapp.com.
