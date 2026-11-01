@@ -4,6 +4,15 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-11-01 (migration 042 written)
+- migrations/042_revoke_anon_definer_execute.sql revokes anon EXECUTE on
+  create_organisation_with_admin, get_org_member_emails and
+  get_my_organisation_ids (advisor finding of 2026-10-28; each guards
+  itself, so this is hygiene). CHECK_MIGRATIONS has a 042 row. Verified: a
+  rolled-back dry run on staging gave anon false, signed-in true, service
+  true on all three. NOT applied anywhere; staging then production after
+  Ian's yes.
+
 ## 2026-11-01 (misspelled secret fallback removed)
 - netlify/lib/auth.js reads the server-to-server secret from
   INTERNAL_NOTIFY_SECRET only. The fallback that accepted the misspelled

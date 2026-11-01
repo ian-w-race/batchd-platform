@@ -263,8 +263,10 @@ is not on GitHub; nothing live loads it.
   gated for the join page); WARN that leaked-password protection is off
   in Auth (Ian's toggle, no connector tool); INFO that
   organisation_api_keys and scan_queue have RLS and no policies (closed
-  to clients on purpose). Revoking anon EXECUTE on the functions that
-  never need it would be hygiene, not a fix.
+  to clients on purpose). Migration 042 (written 2026-11-01, dry run on
+  staging rolled back, NOT yet applied) revokes anon EXECUTE on the three
+  that never need it; the invitation readers and the RLS helpers keep
+  anon access on purpose.
 - Before running SQL, confirm the editor is on lurxucdmrugikdlvvebc.
   Migrations 022 to 026 once reported PASS against a different project.
 - Schema reference: docs/SCHEMA-REFERENCE.md, generated from production
