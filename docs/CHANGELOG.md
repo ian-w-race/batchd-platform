@@ -45,6 +45,37 @@ how it was verified and what is still unverified. Everything before
   of the whole list, so the scanner's event-based matcher only fires on a
   scan carrying the whole list (CLAUDE.md, code known and not fixed).
 
+## 2026-11-01 (closing a recall: dialog, Active tab, deep link)
+- Mark complete on Live Recall used prompt(), which the dashboard
+  convention forbids and some embedded browsers refuse, so the button did
+  nothing there. _confirmDialog now takes an optional input
+  (opts.input = { placeholder, value }) and resolves with the text, or
+  null on Cancel or Escape; markRecallComplete uses it for the closing
+  note. No other prompt() is left in the dashboard; the one confirm()
+  left is in the generated standalone document (saveAsPdf), where the
+  dialog helper does not exist.
+- An administratively closed recall (recall_events.closed_at) stayed in
+  the Recalls Active tab as ACTION REQUIRED, with its stores counted in
+  "stores awaiting action" and the red pill, while the header said 0
+  active. renderRecalls now reads closed_at on the acknowledgements join,
+  keeps closed events out of the Active tab, the nav badge and both
+  counts, and lists them in History with a CLOSED badge and a summary
+  line (closed date, stores complete, closing note). "1 store require
+  action" also reads "requires" now.
+- renderRecalls awaited an unused sb.auth.getUser() before its queries: a
+  round trip to the auth server that also waits for the client's auth
+  lock, held during the token refresh at page load. Removed. This is the
+  likely cause of "Loading recalls" sitting for 10 to 18 s when
+  /retail?panel=recalls was opened straight after sign-in; the deep link
+  was quick in the stubbed preview, and after the deploy Ian measured
+  the live one at about 3 s, down from 10 to 18 s.
+- Verified in the stubbed local preview (.claude/app-preview.html built
+  from this branch, with a closed, unfinished recall added to the stub
+  data): Active hides it and counts 1 store, History shows the CLOSED
+  card and summary, the Mark complete dialog focuses the field, Escape
+  cancels, Enter closes with the toast. SMOKE.md 55 and 56 cover it on a
+  deploy preview. check.mjs 10 of 10, node --test 89 pass.
+
 ## 2026-11-01 (safety net, improvement plan Phase 1)
 - End-to-end core flow (plan A3 "done when"). e2e/core-flow.spec.mjs runs
   the whole chain on one fresh lot per run: a delivery recorded from a
@@ -104,8 +135,8 @@ how it was verified and what is still unverified. Everything before
 ## 2026-11-01 (smoke checks 48 and 51 on production)
 - SMOKE.md 48 and 51 run by Claude in the built-in browser on
   app.batchdapp.com after Ian signed in (org Batch'd Admin, plan active,
-  7 stores). Both pass on the server evidence; Ian still has to confirm
-  the emails arrived in his inbox.
+  7 stores). Both pass. Ian confirmed the same evening that all three
+  emails (drill alert, complaint notice, recall alert) arrived.
 - 51: the drill (lot DRILL-2026-11-01-SMOKE51, Run drill on the Retail
   dashboard) called notify-event, which answered sent 3, failed 0 for
   drill_scheduled. The phone complaint logged from a History card in the

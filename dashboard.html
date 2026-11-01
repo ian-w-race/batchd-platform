@@ -3977,7 +3977,11 @@ async function renderRecalls() {
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--muted);"><div class="spinner"></div> Loading recalls…</div>`;
   try {
 
-  const userId = (await sb.auth.getUser()).data?.user?.id;
+  // 2026-11-01: an unused `await sb.auth.getUser()` sat here. It is a
+  // network call to the auth server that also waits for the client's
+  // auth lock, which is held during the token refresh at page load, so
+  // the panel sat on "Loading recalls" when opened by deep link right
+  // after sign-in. Nothing read its result.
   // Perf fix #12: 2 of the sequential queries that previously ran AFTER
   // this Promise.all (recall_distributions, scan_recall_matches) are
   // independent of the main batch. Moved them in. The remaining two
@@ -3991,7 +3995,7 @@ async function renderRecalls() {
     // without touching every call site (renderRecalls table cell, the
     // consumer-notice text, CSV exports, Consumer Notify picker, etc.).
     sb.from('recalls').select('*, reason:description').eq('organisation_id', _orgId).order('created_at', {ascending:false}).limit(300),
-    sb.from('recall_acknowledgements').select('*, stores(name), recall_events(is_drill)').eq('organisation_id', _orgId).order('created_at', {ascending:false}).limit(300),
+    sb.from('recall_acknowledgements').select('*, stores(name), recall_events(is_drill, closed_at)').eq('organisation_id', _orgId).order('created_at', {ascending:false}).limit(300),
     // Split-brain fix (2026-08-05): coordStrip reads the canonical org-row
     // coordinator (same source as compliance scoring, drill certificates
     // and escalation emails), not the per-user user_settings mirror.
@@ -4035,7 +4039,15 @@ async function renderRecalls() {
   // depending on the insert path (audit issue #6 — ID-class drift). This intersect
   // works for the manufacturer-push path; the trigger-based path may underreport
   // until that drift is normalised.
-  const activePushed   = pushed.filter(p => !p.recall_events?.is_drill && matchedIds.has(p.recall_event_id)).length;
+  // Closed recalls (2026-11-01): an administratively closed event
+  // (recall_events.closed_at, set by Mark complete) is finished whatever
+  // its store chain says. It leaves the Active tab, stops counting toward
+  // the badge and the "stores awaiting action" line, and sits in History
+  // with a CLOSED badge. Before this it stayed in Active as ACTION
+  // REQUIRED while the header said 0 active (seen in smoke check 48).
+  const isClosedEvent  = p => !!p.recall_events?.closed_at;
+  const openPushed     = pushed.filter(p => !isClosedEvent(p));
+  const activePushed   = openPushed.filter(p => !p.recall_events?.is_drill && matchedIds.has(p.recall_event_id)).length;
   const manualRecalls  = recalls.filter(r => {
     if (!r.active) return false;
     // Round-7 correction: re-introduced legacy push dedup. These columns DO
@@ -4051,7 +4063,7 @@ async function renderRecalls() {
   const active         = manualRecalls.length + activePushed;
   // Audit fix: exclude drill acks from the "unacknowledged" count — CLAUDE.md rule:
   // "Mock drills never count toward active recall numbers."
-  const unacknowledged = acks.filter(a => a.status === 'notified' && !a.recall_events?.is_drill).length;
+  const unacknowledged = acks.filter(a => a.status === 'notified' && !a.recall_events?.is_drill && !a.recall_events?.closed_at).length;
 
   const navBtn = document.getElementById('nav-recalls');
   if (navBtn && active > 0) {
@@ -4156,10 +4168,11 @@ async function renderRecalls() {
     const ev       = p.recall_events;
     if (!ev) return '';
     const isDrill  = ev.is_drill;
+    const isClosed = !!ev.closed_at;
     const mfrOrg   = orgNameMap[ev.source_org_id] || {};
     const mfrName  = mfrOrg.name || 'Unknown manufacturer';
     const allDone  = evAcks.length > 0 && evAcks.every(a => a.status === 'confirmed');
-    const anyAction= evAcks.some(a => a.status === 'notified');
+    const anyAction= !isClosed && evAcks.some(a => a.status === 'notified');
     // Audit fix #26: exact-match instead of substring. Previously
     // `class_iv` was bucketed as '1' because 'iv' contains 'i'.
     const sevKey   = (ev.severity || '').toLowerCase().trim().replace(/\s+/g,'_');
@@ -4243,7 +4256,9 @@ async function renderRecalls() {
       : null;
 
     let statusSummary;
-    if (totalStores === 0) {
+    if (isClosed && !allDone) {
+      statusSummary = `Closed ${fmtDashDT(ev.closed_at)} · ${completedCount} of ${totalStores} store${totalStores!==1?'s':''} complete${ev.closed_note ? ' · ' + ev.closed_note : ''}`;
+    } else if (totalStores === 0) {
       statusSummary = 'Awaiting store responses';
     } else if (allDone) {
       statusSummary = `All ${totalStores} store${totalStores!==1?'s':''} complete · audit trail locked`;
@@ -4267,6 +4282,7 @@ async function renderRecalls() {
               <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:var(--fs-body-lg);color:var(--text);">${esc(ev.product_name||'—')}</div>
               ${isDrill?`<span style="font-size:var(--fs-label);background:rgba(var(--warn-rgb),0.12);color:var(--warn);padding:2px 8px;border-radius:var(--r-md);font-weight:600;">MOCK DRILL</span>`:''}
               ${!isDrill&&anyAction?`<span style="font-size:var(--fs-label);background:rgba(var(--danger-rgb),0.12);color:var(--danger);padding:2px 8px;border-radius:var(--r-md);font-weight:600;">ACTION REQUIRED</span>`:''}
+              ${isClosed&&!allDone?`<span style="font-size:var(--fs-label);background:rgba(var(--accent-muted-rgb),0.1);color:var(--muted);padding:2px 8px;border-radius:var(--r-md);font-weight:600;">CLOSED</span>`:''}
               ${allDone?`<span style="font-size:var(--fs-label);background:rgba(var(--accent-rgb),0.12);color:var(--accent);padding:2px 8px;border-radius:var(--r-md);font-weight:600;">✓ COMPLETE</span>`:''}
             </div>
             <div style="font-size:var(--fs-meta);color:var(--muted);line-height:1.7;">
@@ -4371,19 +4387,19 @@ async function renderRecalls() {
     el.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
         <div style="font-size:var(--fs-eyebrow);color:var(--muted);">${active} active · ${unacknowledged} store${unacknowledged!==1?'s':''} awaiting action</div>
-        ${unacknowledged > 0 ? `<div style="display:flex;align-items:center;gap:6px;background:rgba(var(--danger-rgb),0.08);border:1px solid rgba(var(--danger-rgb),0.25);border-radius:var(--r-sm);padding:8px 12px;"><div style="width:7px;height:7px;border-radius:50%;background:var(--danger);animation:blink 1.2s ease-in-out infinite;"></div><span style="font-size:var(--fs-eyebrow);color:var(--danger);">${unacknowledged} store${unacknowledged!==1?'s':''} require action</span></div>` : ''}
+        ${unacknowledged > 0 ? `<div style="display:flex;align-items:center;gap:6px;background:rgba(var(--danger-rgb),0.08);border:1px solid rgba(var(--danger-rgb),0.25);border-radius:var(--r-sm);padding:8px 12px;"><div style="width:7px;height:7px;border-radius:50%;background:var(--danger);animation:blink 1.2s ease-in-out infinite;"></div><span style="font-size:var(--fs-eyebrow);color:var(--danger);">${unacknowledged} store${unacknowledged!==1?'s':''} require${unacknowledged===1?'s':''} action</span></div>` : ''}
       </div>
       ${tabBar('active')}
       ${coordStrip}
       ${_noticeStripHtml()}
-      ${pushed.length === 0 && manualRecalls.length === 0 ? `
+      ${openPushed.length === 0 && manualRecalls.length === 0 ? `
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:48px 24px;text-align:center;">
         <div style="font-size:var(--fs-h2);margin-bottom:12px;">${_ico('check-circle',32)}</div>
         <div style="font-size:var(--fs-body-lg);font-weight:600;color:var(--text);margin-bottom:6px;">No active recalls</div>
         <div style="font-size:var(--fs-body);color:var(--muted);">Your network is clear. ${_orgRegion === 'us' ? 'Pushed recalls, FDA alerts that match your products' : 'Manufacturer recalls, FDA/Mattilsynet alerts that match your products'}, and manually entered recalls will appear here.</div>
         <button onclick="_recallsTab='add';renderRecalls()" style="margin-top:16px;font-family:'DM Mono',monospace;font-size:var(--fs-meta);padding:8px 18px;border-radius:var(--r-sm);border:1px solid var(--glass-border);background:var(--surface2);color:var(--text);cursor:pointer;">+ Add a recall manually</button>
       </div>` : ''}
-      ${pushed.map(p => recallCard(p, acks.filter(a => a.recall_event_id === p.recall_event_id))).join('')}
+      ${openPushed.map(p => recallCard(p, acks.filter(a => a.recall_event_id === p.recall_event_id))).join('')}
       ${manualRecalls.length > 0 ? `
       <div style="margin-top:8px;">
         <div style="font-size:var(--fs-label);font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;">Internal recalls</div>
@@ -4402,7 +4418,7 @@ async function renderRecalls() {
 
   } else if (_recallsTab === 'history') {
     const allHistory = [
-      ...pushed.filter(p => p.recall_events && !p.recall_events.is_drill && acks.filter(a=>a.recall_event_id===p.recall_event_id).every(a=>a.status==='confirmed')),
+      ...pushed.filter(p => p.recall_events && !p.recall_events.is_drill && (isClosedEvent(p) || acks.filter(a=>a.recall_event_id===p.recall_event_id).every(a=>a.status==='confirmed'))),
       ...pushed.filter(p => p.recall_events?.is_drill),
     ];
     const histRecalls = recalls.filter(r => !r.active);
@@ -7966,10 +7982,14 @@ async function markRecallComplete(recallEventId) {
     showToast('Only corp admins can close a recall.', 'error', 4000);
     return;
   }
-  const note = prompt(
-    'Mark this recall as administratively complete?\n\n' +
-    'Optional: record a reason (e.g., "store deactivated", "product line discontinued"). Leave blank to skip.\n\n' +
-    'This locks the audit trail. You can still view the recall but can\'t re-open it.'
+  // _confirmDialog with an input (2026-11-01). This was prompt(), which the
+  // Claude browser pane and some embedded browsers refuse outright, so the
+  // button did nothing there. Resolves null on Cancel or Escape.
+  const note = await _confirmDialog(
+    'Mark this recall as administratively complete?\n' +
+    'This locks the audit trail. You can still view the recall but cannot reopen it.',
+    { title: 'Mark complete', okLabel: 'Mark complete',
+      input: { placeholder: 'Reason, optional (store deactivated, product line discontinued)' } }
   );
   if (note === null) return; // user canceled
 
@@ -18387,8 +18407,14 @@ let _toastTimer = null;
 // 2026-10-18: styled confirmation in place of the native confirm() (design
 // review item). Resolves true or false. Enter confirms, Escape or a click on
 // the scrim cancels; focus starts on Cancel so a stray Enter cannot delete.
+// opts.input = { placeholder, value } adds a single text field under the
+// message. The promise then resolves with the field's trimmed text on
+// Confirm (empty string allowed) and null on Cancel or Escape, which is
+// what prompt() returned. Without opts.input it resolves true or false.
+// Added 2026-11-01 so Mark complete on Live Recall stops calling prompt(),
+// which embedded browsers and some PWA shells refuse.
 function _confirmDialog(message, opts = {}) {
-  const { okLabel = 'Confirm', cancelLabel = 'Cancel', danger = false, title = '' } = opts;
+  const { okLabel = 'Confirm', cancelLabel = 'Cancel', danger = false, title = '', input = null } = opts;
   return new Promise(resolve => {
     const prev = document.activeElement;
     const overlay = document.createElement('div');
@@ -18398,16 +18424,19 @@ function _confirmDialog(message, opts = {}) {
     overlay.innerHTML = `<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-xl);box-shadow:var(--shadow-xl);padding:22px 24px;max-width:440px;width:100%;">
       ${title ? `<div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:var(--fs-h4);color:var(--text);margin-bottom:6px;">${esc(title)}</div>` : ''}
       <div style="font-size:var(--fs-body);color:var(--text);line-height:1.55;">${lines}</div>
+      ${input ? `<input type="text" data-dialog-input value="${esc(input.value || '')}" placeholder="${esc(input.placeholder || '')}" style="margin-top:14px;width:100%;box-sizing:border-box;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-sm);padding:9px 12px;font-family:'Figtree',sans-serif;font-size:var(--fs-body);color:var(--text);">` : ''}
       <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px;">
         <button type="button" class="btn-ghost" data-act="cancel">${esc(cancelLabel)}</button>
         <button type="button" class="btn-primary" data-act="ok" style="${danger ? 'background:var(--danger);color:var(--background-base);' : ''}">${esc(okLabel)}</button>
       </div></div>`;
-    const done = (v) => { overlay.remove(); document.removeEventListener('keydown', onKey, true); if (prev && prev.focus) { try { prev.focus(); } catch (_) {} } resolve(v); };
+    const field = () => overlay.querySelector('[data-dialog-input]');
+    const result = (ok) => input ? (ok ? (field()?.value || '').trim() : null) : ok;
+    const done = (ok) => { const v = result(ok); overlay.remove(); document.removeEventListener('keydown', onKey, true); if (prev && prev.focus) { try { prev.focus(); } catch (_) {} } resolve(v); };
     const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); done(false); } else if (e.key === 'Enter') { e.preventDefault(); done(true); } };
     overlay.addEventListener('click', (e) => { const act = e.target.closest('[data-act]')?.dataset.act; if (act) done(act === 'ok'); else if (e.target === overlay) done(false); });
     document.addEventListener('keydown', onKey, true);
     document.body.appendChild(overlay);
-    overlay.querySelector('[data-act="cancel"]').focus();
+    (input ? field() : overlay.querySelector('[data-act="cancel"]')).focus();
   });
 }
 

@@ -364,9 +364,22 @@ not repeated here.
     product field empty and the camera placeholder back. Do the same from
     step 3. Before this change the tap did nothing visible.
 
+## Closing a recall (2026-11-01)
+
+55. On Live Recall for an open pushed recall, click Mark complete. A
+    Batch'd dialog opens (not the browser's own prompt box) with the
+    reason field focused. Escape closes it and nothing changes. Open it
+    again, type a reason, press Enter: the toast says "Recall closed.
+    Audit trail locked." and the recall shows Closed with the reason.
+56. Open Recalls. The recall you just closed is not in the Active tab,
+    the header count and the red "stores require action" pill do not
+    count its stores, and the History tab shows it with a CLOSED badge,
+    the closing date, the stores complete count and the reason. A recall
+    whose stores all reached Resolved still shows COMPLETE.
+
 ## Scanner match rows for pushed recalls (2026-11-01)
 
-55. On Retail, push a recall (not a drill) for a lot one store has on
+57. On Retail, push a recall (not a drill) for a lot one store has on
     shelf and open its Live Recall page: the matched scans list shows that
     scan. On the scanner at that store, sign in, dismiss the alert, pick
     the store and shelf-scan the same lot: the red warning shows and the
@@ -383,5 +396,5 @@ not repeated here.
   functions locally). Detail in docs/CHANGELOG.md.
 - 2026-11-01, Claude in the built-in browser on the production apps
   (app.batchdapp.com, org Batch'd Admin, Ian signed in): 48 and 51 pass.
-  Email arrival in the inbox still to be confirmed by Ian. Detail in
-  docs/CHANGELOG.md.
+  Ian confirmed all three emails (drill, complaint, recall) arrived.
+  Detail in docs/CHANGELOG.md.

@@ -586,12 +586,12 @@ Owed by Ian:
 - Smoke checks 10 to 13, 17 to 20, 46 and 47 were run by Claude on
   2026-11-01 on the local static server against the staging database and
   passed; 48 and 51 were run on the production apps the same day and
-  passed on the server evidence (docs/CHANGELOG.md has the detail). Ian
-  still has to confirm the drill, complaint and recall emails arrived.
-  10 to 13, 17 to 20, 46 and 47 have not been run on production. Known
-  from the production run: Live Recall's Mark complete uses prompt(), and
-  an administratively closed recall still shows as ACTION REQUIRED in the
-  Recalls panel's Active tab.
+  passed, with Ian confirming the drill, complaint and recall emails
+  arrived (docs/CHANGELOG.md has the detail).
+  10 to 13, 17 to 20, 46 and 47 have not been run on production. The
+  three defects from that run (prompt() in Mark complete, closed recalls
+  in the Active tab, the slow Recalls deep link) were fixed the same day
+  and the deep link now loads in about 3 s on the live site.
 - Rotate the demo account password (in public git history). Claude's
   attempt on 2026-11-01 was blocked by the app's permission layer, so it
   stays Ian's: Supabase, Authentication, Users, demo@batchdapp.com.
