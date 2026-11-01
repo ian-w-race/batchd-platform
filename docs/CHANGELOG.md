@@ -27,8 +27,12 @@ how it was verified and what is still unverified. Everything before
   rolled-back block a test catalog entry swept 2 scans of the matching lot
   and stamped matched_at, the corp admin saw the entry as matched and
   dismissed it, another organization's id returned no rows, the deactivated
-  member got no rows and anon was refused. Not yet applied to production:
-  waits for Ian's go-ahead on the exact file.
+  member got no rows and anon was refused. Applied to PRODUCTION the same
+  day on Ian's go-ahead (recorded in supabase_migrations): the 043 check
+  reads true, both functions are byte-identical to staging (md5 of
+  pg_get_functiondef), and for Ian's organization the function returns
+  1 manual and 1 pushed recall, the same as the old query pair. The
+  catalog is empty until stage 2.
 
 ## 2026-11-01 (B4 planned; stage 0 run on production)
 - docs/B4-RECALL-CATALOG-PLAN.md: the build plan for one recall catalog
