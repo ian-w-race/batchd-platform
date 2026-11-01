@@ -4,6 +4,47 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-11-01 (scanner match rows for pushed recalls)
+- FIXED in the scanner, the open item from the safety-net entry below:
+  both scanner writers of scan_recall_matches for pushed recalls (the
+  upsert in matchScanAgainstRecalls after a shelf scan is saved, and the
+  login push sweep in checkRecallsOnLogin) wrote recall_id =
+  recall_events.id, which the foreign key to recalls(id) refuses (23503,
+  a 409 in devtools, swallowed by a console.warn). A shelf scan made after
+  a push therefore never got a match row and was invisible to the Live
+  Recall page, the FSMA 204 export and the scanner's ack strip. The pushed
+  recall objects now carry the linked recalls rows (_attachLinkedRecalls
+  in checkRecallsOnLogin and loadHistory, from the rows the cache
+  otherwise drops), and both writers set recall_id to the linked row for
+  the scan's lot (_pushedMatchRecallId: the lot found in the raw capture
+  when there are several, else the first) with recall_event_id = the
+  event and recall_source 'manufacturer_push'. The login sweep also stores
+  store_id and now surfaces its error instead of ignoring it. An event
+  with no linked row is skipped with a warning (the write cannot succeed).
+- Readers widened: checkPriorComplaintsForRecall and the Recalls drawer's
+  exposure query accept a recalls id or a recall_events id (filter on both
+  columns; the drawer keys its exposure rows by the id it knows); the ack
+  strip reads recall_event_id only (recall_id is no longer a stand-in for
+  the event); the manager overview's confirmed set includes
+  recall_event_id. No database change.
+- Verified: node scripts/check.mjs (10 of 10); node --test (100 tests, 7
+  new in tests/scanner-pushed-match.test.mjs for the two helpers, loaded
+  from index.html). e2e/core-flow.spec.mjs step 4 now saves the scan of
+  the recalled lot after the push and asserts two match rows by
+  recall_event_id (the step 2 scan and the new one), both with recall_id
+  = the one linked recalls row and recall_source 'manufacturer_push', and
+  no console error or failed request in that step. The scanner asks "Log
+  again anyway?" for the repeated lot, so the test accepts that dialog.
+  Run locally against staging on 2026-11-01: the chain passes end to end
+  (4 of 4; whole suite 11 passed, 1 skipped), and the rows on staging read back as expected (both match
+  rows point at the one linked recalls row, is_pushed true, and carry the
+  event and the store). Not verified: a live session on a phone, and the
+  deploy preview run of the suite (the e2e workflow runs it on the pull
+  request's preview).
+- Known, not fixed: a push with several lots gives the event a lot_number
+  of the whole list, so the scanner's event-based matcher only fires on a
+  scan carrying the whole list (CLAUDE.md, code known and not fixed).
+
 ## 2026-11-01 (safety net, improvement plan Phase 1)
 - End-to-end core flow (plan A3 "done when"). e2e/core-flow.spec.mjs runs
   the whole chain on one fresh lot per run: a delivery recorded from a

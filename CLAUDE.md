@@ -32,8 +32,9 @@ work. Never give Ian partial diffs or snippets to paste in by hand.
   flow; they may only target localhost or a deploy preview. The workflow
   signs in to the shared staging test account on every push.
   e2e/core-flow.spec.mjs is the plan A3 chain (receive, shelf-scan, push a
-  recall, see it in the store, produce records) on one fresh lot per run;
-  it closes its recall at the end. Every sign-out in the apps and the
+  recall, see it in the store, produce records, scan the lot again and
+  check its match row) on one fresh lot per run; it closes its recall at
+  the end. Every sign-out in the apps and the
   tests is `sb.auth.signOut({ scope: 'local' })` (since 2026-11-01): it
   ends the session on that device only, so a shared store phone stays
   signed in when someone signs out elsewhere.
@@ -419,17 +420,22 @@ pov once and refuses to run again.
   NULL. Written by matchScanAgainstRecalls and the sweep_recall_matches
   RPC. Query with `.eq('recall_id', recalls.id)`.
 - Path B (pushed): recall_event_id = recall_events.id, recall_id = the
-  linked recalls row (is_pushed, recall_event_id set). recall_id has a
-  foreign key to recalls(id), so it can NEVER hold a recall_events id;
-  the old "both columns = event id" rule was impossible and every such
-  write failed with 23503 (found by e2e/core-flow.spec.mjs 2026-11-01;
-  production had 0 match rows with an event). The dashboard's
-  _composerPushRecall now stamps recall_event_id on the rows the sweep
-  wrote. Query with `.eq('recall_event_id', id)` (real FK, cascade
-  delete). OPEN: the scanner's two writers (matchScanAgainstRecalls at
-  save and the login push sweep) still insert recall_id = event id and
-  fail silently (409 in devtools), so a shelf scan made after a push gets
-  no match row; they need the linked recalls row id.
+  linked recalls row for that lot (is_pushed, recall_event_id set; one
+  per lot since 2026-10-25). recall_id has a foreign key to recalls(id),
+  so it can NEVER hold a recall_events id; the old "both columns = event
+  id" rule was impossible and every such write failed with 23503 (found
+  by e2e/core-flow.spec.mjs 2026-11-01; production had 0 match rows with
+  an event). Writers: the dashboard's _composerPushRecall stamps
+  recall_event_id on the rows the sweep RPC wrote; the scanner's
+  matchScanAgainstRecalls (save path) and the login push sweep in
+  checkRecallsOnLogin pick the linked row with _pushedMatchRecallId. The
+  linked rows ride on each pushed recall object as _linkedRecalls,
+  attached by _attachLinkedRecalls where the cache is built
+  (checkRecallsOnLogin, loadHistory); a pushed event with no linked row
+  gets no match row (the write would be refused). Query with
+  `.eq('recall_event_id', id)` (real FK, cascade delete). A reader that
+  takes either kind of id (the scanner's checkPriorComplaintsForRecall and
+  the Recalls drawer's exposure query) filters on both columns.
 - recall_source ('manual', 'fda', 'rasff', 'mattilsynet',
   'manufacturer_push') is for reporting, not disambiguation.
 
@@ -599,11 +605,12 @@ storage bucket, 033 cross-org rules, 034 anon table writes and store
 names, 035 view user_accessible_stores, search paths and trigger
 functions). Nothing from that pass is still open.
 Code, known and not fixed:
-- Scanner match writers for pushed recalls (see "scan_recall_matches has
-  two paths"): matchScanAgainstRecalls (upsert near the save path) and the
-  login push sweep insert recall_id = recall_events.id, which the foreign
-  key refuses. Fix by carrying the linked recalls row id in the pushed
-  recall cache, or wait for B4 (one recall catalog).
+- A recall pushed with several lots has one recall_events row whose
+  lot_number is the typed list ("L1, L2"), so the scanner's event-based
+  matcher (recallMatchLevel on the pushed recall object) only fires on a
+  scan whose raw capture contains the whole list; the per-lot linked
+  recalls rows are filtered out of the cache. Single-lot pushes match.
+  Fix by matching on _linkedRecalls lots as well, or wait for B4.
 - Design review leftovers: spacing onto `--s-*`; the photo lightbox and
   camera overlays keep literal colors on purpose.
 Not built (by decision): EDI 856, a Shipping sheet for distribution

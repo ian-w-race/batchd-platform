@@ -364,6 +364,18 @@ not repeated here.
     product field empty and the camera placeholder back. Do the same from
     step 3. Before this change the tap did nothing visible.
 
+## Scanner match rows for pushed recalls (2026-11-01)
+
+55. On Retail, push a recall (not a drill) for a lot one store has on
+    shelf and open its Live Recall page: the matched scans list shows that
+    scan. On the scanner at that store, sign in, dismiss the alert, pick
+    the store and shelf-scan the same lot: the red warning shows and the
+    save button reads "Log recall item"; tap it. Reload Live Recall: the
+    new scan is in the matched scans list too, and the scanner's Recalls
+    drawer counts its units under the recall. Devtools on the scanner:
+    no 409 on scan_recall_matches. Before this change the save answered
+    409 (swallowed) and the second scan never appeared under the recall.
+
 ## Run log
 
 - 2026-11-01, Claude, local static server against the staging database:
