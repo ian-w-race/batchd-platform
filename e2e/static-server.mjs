@@ -1,13 +1,18 @@
-// Serves the repository root on http://localhost:8788 for local end-to-end
-// runs. On localhost every page picks the staging database (BATCHD_ENV), so
-// local runs never touch production. Netlify functions are not served here;
-// tests that need them run against a deploy preview instead.
+// Serves the built site (dist/, from `npm run build`) on http://localhost:8788
+// for local end-to-end runs, the same files Netlify publishes. On localhost
+// every page picks the staging database (BATCHD_ENV), so local runs never
+// touch production. Netlify functions are not served here; tests that need
+// them run against a deploy preview instead.
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist');
+if (!fs.existsSync(path.join(root, 'login.html'))) {
+  console.error('dist/ is missing or empty. Run `npm run build` first.');
+  process.exit(1);
+}
 const port = Number(process.env.PORT || 8788);
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css',
   '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json', '.ttf': 'font/ttf' };

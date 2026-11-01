@@ -405,6 +405,19 @@ not repeated here.
     manager's exposure list; the manual recall form's brand field has a
     neutral placeholder.
 
+## Build step and the shared database module (2026-11-01, A2 part 1)
+
+59. On the pull request's preview: the Netlify deploy log shows "npm run
+    build" and "built dist/". /login, /retail, /scan, /signup and /join
+    all load with the "Staging database" badge, and devtools Network
+    shows one request for /assets/batchd-shared.js (status 200) before
+    the Supabase client is created. Sign in and use Retail and the
+    scanner as usual; nothing looks or behaves differently. A link to
+    app.batchdapp.com inside the preview stays on the preview's own
+    address. After merge, on production: app.batchdapp.com/login loads
+    with no badge and the same bundle request; CLAUDE.md, SMOKE.md and
+    /netlify/lib/auth.js still answer 404.
+
 ## Run log
 
 - 2026-11-01, Claude, local static server against the staging database:

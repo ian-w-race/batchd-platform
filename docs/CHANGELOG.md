@@ -4,6 +4,41 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-11-01 (A2 part 1: the build step and the shared database module)
+- The site now has a build. `npm run build` (scripts/build.mjs) copies the
+  public pages and static files into dist/ from an allowlist (pages,
+  images, robots.txt, complaint-widget.js, fonts/) and bundles src/shared/
+  with esbuild 0.28.2 into dist/assets/batchd-shared.js, a 4 KB classic
+  script. netlify.toml gains [build] with command "npm run build" and
+  publish "dist" (Node 22), so Netlify builds every deploy and preview the
+  same way, a failed build stops the deploy, and private files (CLAUDE.md,
+  SECRETS.md, migrations, functions source) are no longer in the published
+  folder at all; the forced 404 rules stay as a second line of defense.
+  dist/ is ignored by git.
+- First shared rule: the database selection block (BATCHD_ENV, the two
+  Supabase URLs and anon keys, batchdLink, the staging badge and the
+  preview link rewriter) lives once in src/shared/env.js. Each of the six
+  app pages loads /assets/batchd-shared.js right before the script that
+  held the block, and the bundle publishes the same globals the pages
+  already read, so nothing else in the pages changed. The six inline
+  copies are gone, and with them the check that compared them.
+- Checks and tests follow: scripts/check.mjs now checks that every app
+  page loads the bundle before its Supabase client and keeps no local
+  block, that the site builds into dist/ with no private file in it, and
+  scans src/shared for keys as well; tests/env-block.test.mjs imports the
+  module instead of cutting the block out of dashboard.html. The checks
+  workflow installs dependencies first (the build check needs esbuild).
+  The end-to-end static server and the local .claude/serve.js serve
+  dist/, and Playwright builds before it serves.
+- Verified: node scripts/check.mjs (11 of 11, the build included); node
+  --test (100 tests); the end-to-end suite locally against the built
+  dist/ on staging (11 passed, 1 skipped). Not verified until the
+  preview: Netlify's own build (SMOKE.md 59).
+- Next for A2: the FSMA rules (export headers, citations, applicability,
+  thresholds, supplier completeness, the formula guard), then the GS1
+  parser, listed-food detector and recall matcher, then the design tokens
+  as one stylesheet. Splitting rarely used panels waits for the redesign.
+
 ## 2026-11-01 (Phase 2 cleanup: legacy sign-in forms and manufacturer-era copy)
 - The scanner's and Retail's own sign-in forms are gone, with the ?legacy=1
   fallback that showed them for one release after the central sign-in

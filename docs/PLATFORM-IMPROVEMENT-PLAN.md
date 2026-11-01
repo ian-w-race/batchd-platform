@@ -11,9 +11,13 @@ cover the whole chain in the "done when" line and run on every deploy
 preview. A1 (Supabase Pro for backups): Ian decided "not now" on
 2026-11-01, so the project stays on the free plan with no restorable
 backups until he revisits decision 1 below.
-Phase 2 (A2 shared code, F5 cleanup) has not started. B1 and B2 from
-Phase 3 shipped early on 2026-10-25 (supplier notice intake and lot-level
-matching). docs/CHANGELOG.md has the detail.
+Phase 2: F5 (retired screens and copy) shipped 2026-11-01 with the
+?legacy=1 removal; A2 started the same day with the esbuild build step
+(Netlify publishes dist/) and the first shared module, the database
+selection block. Next for A2: the FSMA rules, then the parsers and the
+recall matcher, then the design tokens; panel splitting waits for the
+redesign. B1 and B2 from Phase 3 shipped early on 2026-10-25 (supplier
+notice intake and lot-level matching). docs/CHANGELOG.md has the detail.
 
 ## 1. What Batch'd has to be able to do
 
