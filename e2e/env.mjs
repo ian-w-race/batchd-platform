@@ -57,12 +57,15 @@ export async function scannerSignIn(page, email, storeName = 'QA Store 1') {
     // working today?" picker shows.
     // Target the picker's button by role: a text match also finds the
     // store dropdown's <option>, which cannot be clicked.
-    const pick = page.getByRole('button', { name: storeName, exact: true }).filter({ visible: true });
-    await expect.poll(async () => {
-      if (await pick.count()) await pick.first().click({ timeout: 5_000 }).catch(() => {});
-      else await page.selectOption('#field-store', { label: storeName }, { timeout: 5_000 }).catch(() => {});
-      return page.evaluate(() => (typeof _currentStoreId !== 'undefined' ? _currentStoreId : null) || null);
-    }, { timeout: 30_000 }).not.toBeNull();
+    const pick = page.getByRole('button', { name: storeName, exact: true }).filter({ visible: true }).first();
+    try {
+      await pick.waitFor({ state: 'visible', timeout: 15_000 });
+      await pick.click();
+    } catch (_) {
+      // No picker: a store chosen in the last 12 hours is reused; make sure it is this one.
+      await page.selectOption('#field-store', { label: storeName });
+    }
+    await expect.poll(() => page.evaluate(() => (typeof _currentStoreId !== 'undefined' ? _currentStoreId : null) || null)).not.toBeNull();
     // A recall alert may open after sign-in on staging; close it if it does.
     const dismiss = page.getByRole('button', { name: 'Dismiss' }).filter({ visible: true });
     if (await dismiss.count()) await dismiss.first().click();
