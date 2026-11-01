@@ -4,6 +4,16 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-11-01 (misspelled secret fallback removed)
+- netlify/lib/auth.js reads the server-to-server secret from
+  INTERNAL_NOTIFY_SECRET only. The fallback that accepted the misspelled
+  INTERNAL_NOTIFY_SECREY (added 2026-10-25 while batchd-app still stored it
+  under that name) is gone, since the variable was recreated under the
+  right name on both sites the same day. Verified:
+  tests/internal-secret.test.mjs (4 tests; the misspelled name is now
+  ignored). Not verified: a live complaint email through batchd-app after
+  this deploy (SMOKE.md 51).
+
 ## 2026-11-01 (one address, checked on production)
 - #30, #39 and #40 merged and deployed. Checked by HTTP right after:
   app.batchdapp.com/ and /login serve the sign-in page; /retail serves the

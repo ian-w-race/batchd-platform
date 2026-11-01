@@ -337,3 +337,11 @@ not repeated here.
     waiting offline sees "Sending N saved scans first" until they sync).
     Reinstall the scanner on the test phones from app.batchdapp.com/scan.
 
+## Misspelled secret fallback removed (2026-11-01)
+
+51. On the live scanner (app.batchdapp.com/scan), as a manager, log a
+    phone complaint. The store manager's complaint email arrives (the
+    scanner's function hands the complaint to the email function with the
+    shared secret). On the dashboard, push a drill recall: the recall
+    email arrives. If either email is missing, the secret is not set under
+    INTERNAL_NOTIFY_SECRET on that site.
