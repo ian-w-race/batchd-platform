@@ -83,6 +83,8 @@ work. Never give Ian partial diffs or snippets to paste in by hand.
   covers syntax of every inline script and function, that every app page
   loads the shared bundle before its Supabase client and keeps no local
   database block, that the site builds into dist/ with no private file,
+  that the design tokens exist only in src/shared/design-tokens.css and
+  the three pages link it before their own styles,
   anon-only keys in pages and src/shared, that the FSMA rules (export
   headers, citations, applicability, thresholds, supplier completeness,
   CSV guard) exist only in src/shared/fsma.js and the pages read them
@@ -210,11 +212,13 @@ Not app files: README.md, SCHEMA.md, SECRETS.md, SMOKE.md, docs/,
 migrations/, fonts/, netlify/, netlify.toml, package.json (pins
 @supabase/supabase-js 2.112.1 for the functions, esbuild 0.28.2 for the
 build and @playwright/test for the end-to-end tests).
-Both big apps are still single files; apart from the shared bundle only
-esc, showToast and signOut share names between them. Design tokens are
-duplicated by design in index.html, dashboard.html and
-assets/design-tokens.css. Note: assets/ exists in Ian's local folder but
-is not on GitHub; nothing live loads it.
+Both big apps are still single files; apart from the shared bundle and
+the shared stylesheet only esc, showToast and signOut share names between
+them. Design tokens live once in `src/shared/design-tokens.css`, served
+as /assets/design-tokens.css and linked by index.html, dashboard.html and
+login.html (since 2026-11-01, A2 part 4); the old inline copies and the
+never-committed assets/ folder are gone. signup.html, join.html and
+admin.html keep their own small, older color sets.
 
 ## Domains and routing
 - Two Netlify sites deploy this repo: gentle-belekoy-be3cb7
@@ -580,9 +584,12 @@ Date format follows region; user_settings.date_format is never written.
 Users cannot change their own region.
 
 ## Design system
-Source of truth: assets/design-tokens.css, mirrored inline in
-dashboard.html and index.html. Change the canonical file first, then
-both copies.
+Source of truth: `src/shared/design-tokens.css` (built to
+/assets/design-tokens.css and linked by the scanner, Retail and the
+sign-in page; tests/design-tokens.test.mjs holds the rules below and
+scripts/check.mjs refuses an inline copy). Retail keeps 30 aliases of its
+own (sidebar, topbar, tints, blur) in its first `<style>`. Change the one
+file; the build ships it.
 - Theme is `<html data-theme="dark|light">`, saved in localStorage.
   Never switch on prefers-color-scheme; theme is an operator choice.
 - Dark never uses #000000 (use `--background-base` #080F12) and dark

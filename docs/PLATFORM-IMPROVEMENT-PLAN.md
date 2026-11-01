@@ -18,8 +18,11 @@ selection block; part 2 (same day) moved the FSMA rules (export headers,
 citations, applicability, thresholds, supplier completeness, CSV guard)
 into src/shared/fsma.js; part 3 (same day) moved the GS1 parser, the
 listed-food table and detector and the recall matcher into
-src/shared/gs1.js, ftl.js and recall-match.js. Next for A2: the design
-tokens as one stylesheet; panel splitting waits for the redesign. B1 and B2 from Phase 3 shipped early on 2026-10-25 (supplier
+src/shared/gs1.js, ftl.js and recall-match.js; part 4 (same day) put the
+design tokens in src/shared/design-tokens.css, one stylesheet the scanner,
+Retail and the sign-in page link. A2's "each rule exists once" is done;
+splitting rarely used panels out of the first download waits for the
+redesign (Phase 6), when the apps' own code is restructured. B1 and B2 from Phase 3 shipped early on 2026-10-25 (supplier
 notice intake and lot-level matching). docs/CHANGELOG.md has the detail.
 
 ## 1. What Batch'd has to be able to do
