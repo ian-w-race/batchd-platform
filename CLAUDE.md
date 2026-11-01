@@ -30,9 +30,13 @@ work. Never give Ian partial diffs or snippets to paste in by hand.
 - End-to-end tests: `npx playwright test` (local, staging) or the e2e
   workflow on every deploy preview. Add a test in e2e/ for each new core
   flow; they may only target localhost or a deploy preview. The workflow
-  signs in to the shared staging test account on every push, so a local
-  session on that account can be ended mid-test (the apps' own sign-out
-  is global; the test's sign-out is local since 2026-11-01).
+  signs in to the shared staging test account on every push.
+  e2e/core-flow.spec.mjs is the plan A3 chain (receive, shelf-scan, push a
+  recall, see it in the store, produce records) on one fresh lot per run;
+  it closes its recall at the end. Every sign-out in the apps and the
+  tests is `sb.auth.signOut({ scope: 'local' })` (since 2026-11-01): it
+  ends the session on that device only, so a shared store phone stays
+  signed in when someone signs out elsewhere.
 - After a change Ian should test, add a numbered check to SMOKE.md and a
   dated entry to docs/CHANGELOG.md. Keep this file to rules and current
   state; do not grow it back into a log.
@@ -414,10 +418,18 @@ pov once and refuses to run again.
 - Path A (manual and feed): recall_id = recalls.id, recall_event_id
   NULL. Written by matchScanAgainstRecalls and the sweep_recall_matches
   RPC. Query with `.eq('recall_id', recalls.id)`.
-- Path B (pushed): recall_id = recall_event_id = recall_events.id.
-  Written by the scanner's login push sweep and converted by the
-  dashboard's _composerPushRecall. Query with
-  `.eq('recall_event_id', id)` (real FK, cascade delete).
+- Path B (pushed): recall_event_id = recall_events.id, recall_id = the
+  linked recalls row (is_pushed, recall_event_id set). recall_id has a
+  foreign key to recalls(id), so it can NEVER hold a recall_events id;
+  the old "both columns = event id" rule was impossible and every such
+  write failed with 23503 (found by e2e/core-flow.spec.mjs 2026-11-01;
+  production had 0 match rows with an event). The dashboard's
+  _composerPushRecall now stamps recall_event_id on the rows the sweep
+  wrote. Query with `.eq('recall_event_id', id)` (real FK, cascade
+  delete). OPEN: the scanner's two writers (matchScanAgainstRecalls at
+  save and the login push sweep) still insert recall_id = event id and
+  fail silently (409 in devtools), so a shelf scan made after a push gets
+  no match row; they need the linked recalls row id.
 - recall_source ('manual', 'fda', 'rasff', 'mattilsynet',
   'manufacturer_push') is for reporting, not disambiguation.
 
@@ -474,7 +486,7 @@ docs/HISTORY.md.
 | notify-consumers.js | Consumer recall emails | corp_admin of the recall's org |
 | notify-event.js | recall_pushed, complaint_filed, drill_scheduled emails | INTERNAL_NOTIFY_SECRET or member JWT |
 | ocr.js | Anthropic vision; owns its prompt templates | requireAi |
-| health-check.js | Daily 07:00 UTC: reads job_runs and emails platform admins when a job has not run or failed | Scheduled only |
+| health-check.js | Daily 07:00 UTC: reads job_runs and emails platform admins when a job has not run or failed, plus one "all clear" on Mondays (HEALTH_HEARTBEAT=off disables) | Scheduled only |
 | parse-recall-notice-background.js | Background function: Claude reads a supplier recall notice into recall_notices.extracted (prompt and schema in netlify/lib/recall-notice.js) | corp_admin of the notice's org, plan pov/active |
 | push-recall-email.js | Recall alert emails | INTERNAL_NOTIFY_SECRET, fails closed |
 | recall-escalation.js | 2h and 24h unacknowledged escalations | Scheduled only |
@@ -484,6 +496,10 @@ docs/HISTORY.md.
 | trace.js | Retired, answers 410 | None |
 | triage-complaint.js | Complaint intake, AI triage, follow-ups | Public form with honeypot and rate limits; staff by JWT |
 | webhook-recall.js | ERP webhook for manufacturer orgs | X-Batchd-Api-Key, hashed |
+The on-demand email functions (push-recall-email, notify-event,
+recall-reminder, send-invite, notify-consumers) record a failed send as an
+ok=false row in job_runs through `logFailure` in netlify/lib/job-log.js, so
+the health check reports it the next morning; successes are not recorded.
 Secrets come from environment variables only. fetch-recall-feeds.js has
 a stray control character near line 143; use `grep -a` on it. Model ids
 pinned: claude-sonnet-4-20250514 and claude-haiku-4-5-20251001 (older
@@ -583,6 +599,11 @@ storage bucket, 033 cross-org rules, 034 anon table writes and store
 names, 035 view user_accessible_stores, search paths and trigger
 functions). Nothing from that pass is still open.
 Code, known and not fixed:
+- Scanner match writers for pushed recalls (see "scan_recall_matches has
+  two paths"): matchScanAgainstRecalls (upsert near the save path) and the
+  login push sweep insert recall_id = recall_events.id, which the foreign
+  key refuses. Fix by carrying the linked recalls row id in the pushed
+  recall cache, or wait for B4 (one recall catalog).
 - Design review leftovers: spacing onto `--s-*`; the photo lightbox and
   camera overlays keep literal colors on purpose.
 Not built (by decision): EDI 856, a Shipping sheet for distribution

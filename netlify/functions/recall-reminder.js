@@ -16,6 +16,7 @@
 // Never register this function with a schedule in netlify.toml.
 
 const { createClient } = require('@supabase/supabase-js');
+const { logFailure } = require('../lib/job-log');   // A4: failed sends show up in the health check
 
 const SUPABASE_URL   = process.env.SUPABASE_URL || 'https://lurxucdmrugikdlvvebc.supabase.co';
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
@@ -140,7 +141,7 @@ exports.handler = async (event) => {
     if (error) throw error;
 
     const now = new Date();
-    let sentManual = 0, failed = 0;
+    let sentManual = 0, failed = 0, firstError = null;
     const list = acks || [];
 
     // Batched parallel sends (verify-fix 2026-08-05): sequential awaits
@@ -191,15 +192,17 @@ exports.handler = async (event) => {
       }));
       settled.forEach(s => {
         if (s.status === 'fulfilled') sentManual++;
-        else { failed++; console.error('[recall-reminder] send error:', s.reason?.message || s.reason); }
+        else { failed++; firstError = firstError || String(s.reason?.message || s.reason); console.error('[recall-reminder] send error:', s.reason?.message || s.reason); }
       });
     }
 
     const result = { checked: (acks||[]).length, sentManual, failed, at: now.toISOString() };
     console.log('[recall-reminder] Done:', result);
+    if (failed) await logFailure('recall-reminder', { error: firstError || 'send failed', failed, sent: sentManual });
     return { statusCode: 200, body: JSON.stringify(result) };
   } catch(err) {
     console.error('[recall-reminder] error:', err);
+    await logFailure('recall-reminder', { error: err.message });
     return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
   }
 };

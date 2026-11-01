@@ -58,6 +58,7 @@ async function verifyCorpAdminOfOrg(jwt, orgId) {
 }
 
 const { sbGet, isUuid } = require('../lib/auth');
+const { logFailure } = require('../lib/job-log');   // A4: failed sends show up in the health check
 // One call must finish inside Netlify's 10 s limit while Resend allows about
 // two requests a second, so a call takes at most 500 customers (5 batches of
 // 100); the dashboard splits a longer list into several calls.
@@ -208,6 +209,9 @@ exports.handler = async (event) => {
       break;
     }
   }
+
+  // A4 (2026-11-01): failed batches are recorded in job_runs for the health check.
+  if (failed) await logFailure('notify-consumers', { error: errors[0] || 'send failed', failed, sent });
 
   return {
     statusCode: 200,

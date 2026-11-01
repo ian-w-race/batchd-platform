@@ -2241,7 +2241,7 @@ function showAuthMsg(txt, type = 'error') {
 }
 
 async function signOut() {
-  await sb.auth.signOut();
+  await sb.auth.signOut({ scope: 'local' });
   // Central sign-in (2026-11-01): back to the sign-in page on this address.
   if (_batchdLegacyLogin) location.reload(); else location.replace('/login');
 }
@@ -2271,7 +2271,7 @@ async function initDashboard(user) {
           <div style="margin-bottom:16px;"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
           <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:var(--fs-h3);margin-bottom:8px;">Account deactivated</div>
           <div style="font-size:var(--fs-body);color:var(--muted);max-width:380px;">Your account has been deactivated by your organization administrator. Contact them to restore access.</div>
-          <button onclick="sb.auth.signOut().then(()=>location.reload())" style="margin-top:20px;font-family:'DM Mono',monospace;font-size:var(--fs-meta);padding:10px 20px;border-radius:var(--r-sm);border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;">Sign out</button>
+          <button onclick="sb.auth.signOut({ scope: 'local' }).then(()=>location.reload())" style="margin-top:20px;font-family:'DM Mono',monospace;font-size:var(--fs-meta);padding:10px 20px;border-radius:var(--r-sm);border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;">Sign out</button>
         </div>
       </div>`;
     return;
@@ -5996,16 +5996,17 @@ async function _composerPushRecall() {
           p_organisation_id: _orgId,
           p_lookback_days:   180,
         });
-        // 2026-09-09 audit fix: the RPC writes Path A rows keyed to the
-        // LINKED recalls row (recall_id = inserted.id, recall_event_id
-        // NULL) — but every pushed-recall consumer (recall detail, FSMA
-        // export, scanner ack strip) queries by the EVENT id. Convert the
-        // fresh rows to canonical Path B (both columns = ev.id) so they are
-        // visible immediately and so the scanner's login-time Path B sweep
-        // dedupes against them via the (scan_id, recall_id) unique index
-        // instead of double-inserting.
+        // 2026-09-09 audit fix: the RPC writes rows keyed to the LINKED
+        // recalls row (recall_id = inserted.id, recall_event_id NULL), but
+        // the pushed-recall consumers (recall detail, FSMA export, scanner
+        // ack strip) query by the EVENT id, so stamp recall_event_id on the
+        // fresh rows. recall_id stays the linked recalls row: it has a
+        // foreign key to recalls(id), so writing the event id there fails
+        // with 23503 (found by e2e/core-flow.spec.mjs on 2026-11-01; until
+        // then this update always failed and the rows stayed invisible to
+        // those consumers).
         const { error: convErr } = await sb.from('scan_recall_matches')
-          .update({ recall_id: ev.id, recall_event_id: ev.id, recall_source: 'manufacturer_push' })
+          .update({ recall_event_id: ev.id, recall_source: 'manufacturer_push' })
           .eq('recall_id', inserted.id)
           .eq('organisation_id', _orgId);
         if (convErr) console.warn('[composer push] match-row conversion failed (rows stay Path A):', convErr.message);
