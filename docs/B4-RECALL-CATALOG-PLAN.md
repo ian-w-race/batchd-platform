@@ -233,7 +233,7 @@ the schema fingerprint rerun.
 
 | Stage | Contents | Done when |
 |---|---|---|
-| 0. Hygiene (data only, no code) | Delete the 8,340 feed rows with no organization, backed up to `backup.recalls_orphan_feed_<date>`. Preview count first. | `select count(*) from recalls where organisation_id is null` is 0 on staging and production; the backup table holds 8,340 rows |
+| 0. Hygiene (data only, no code). **Done 2026-11-01** | Deleted the 8,340 feed rows with no organization on production, backed up to `backup.recalls_orphan_feed_20261101` (scripts/cleanup-orphan-feed-recalls.sql). Staging had none; the block was rehearsed there rolled back, then dry-run on production rolled back, then run. | `recalls` went from 9,184 to 844 rows (784 fda, 48 mattilsynet, 12 manual or pushed); 0 orphans left; `scan_recall_matches` unchanged |
 | 1. Database (migration 043) | `recall_catalog`, `recall_catalog_org`, the `catalog_id` column and index, `batchd_active_recalls`, `sweep_catalog_matches`, policies and grants. Unit tests of the function with rolled-back SQL as a corp admin, a store manager, a deactivated member and anon. | Staging and production have the objects; the function returns the same recalls for the QA organization as the scanner's sign-in list does today |
 | 2. Importer (code) | `fetch-recall-feeds.js` writes the catalog and sweeps; the per-organization write path is deleted; the health check reads the catalog for the stale-feed rule. | The first scheduled run adds catalog entries and no `recalls` rows; job_runs shows it |
 | 3. Data move (migration 044) | The 832 per-organization feed rows become about 440 catalog entries (deduplicated by recall number and product, or product and day) and `recall_catalog_org` rows for every (organization, entry) pair that existed, `dismissed_at` set where the row was inactive. Then the feed rows leave `recalls`, backed up. Matches that pointed at a feed row (0 on production) are repointed. | Row counts reconcile in a verification query; nothing points at a deleted row |
@@ -265,8 +265,7 @@ its own commit with the e2e suite run on the preview.
 ## 6. Decisions for Ian
 
 1. **Delete the 8,340 orphan feed rows now** (stage 0), with a backup
-   table in the private schema? Recommended: yes. No screen can read them
-   and they date from one week in April.
+   table in the private schema? Ian: yes, 2026-11-01. Done the same day.
 2. **Keep showing every FDA entry to every US organization** in Feed
    alerts, with a per-organization "dismiss", or show only entries that
    match the organization's products? Recommended: keep showing all for

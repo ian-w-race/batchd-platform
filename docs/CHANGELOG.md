@@ -4,6 +4,29 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-11-01 (B4 planned; stage 0 run on production)
+- docs/B4-RECALL-CATALOG-PLAN.md: the build plan for one recall catalog
+  (improvement plan B4), from a line-by-line inventory of every recall read
+  and write in both apps, the functions and the migrations, plus live
+  counts. Headlines: 8,340 of the 9,172 public feed rows belonged to no
+  organization (one April week, an old importer defect, never visible to
+  any screen); 17 screens each built their own active-recall list with
+  differing rules (linked pushed rows counted twice in nine, closed events
+  ignored in eight, two unfiltered reads of recall_events); the scanner
+  carries three client-side feed importers beside the server's. Target:
+  recall_catalog, recall_catalog_org, a catalog_id on scan_recall_matches,
+  one function batchd_active_recalls(org) that every screen reads, the
+  importer writing once. The push chain stays. Six decisions for Ian in
+  section 6.
+- Stage 0 run on production with Ian's approval
+  (scripts/cleanup-orphan-feed-recalls.sql): the 8,340 orphan feed rows
+  copied to backup.recalls_orphan_feed_20261101 and deleted inside one
+  block that refuses to proceed on an unexpected count. Rehearsed first on
+  staging (which had no such rows) and dry-run on production, both rolled
+  back. recalls went from 9,184 to 844 rows (784 fda, 48 mattilsynet, 12
+  manual or pushed); 0 orphans left; scan_recall_matches unchanged at 2.
+  Nothing else changed; the apps never read those rows.
+
 ## 2026-11-01 (A2 part 4: the design tokens as one stylesheet)
 - src/shared/design-tokens.css is the one source of truth for the design
   tokens: the semantic dark palette on :root and [data-theme="dark"], the
