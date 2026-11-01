@@ -86,10 +86,14 @@ work. Never give Ian partial diffs or snippets to paste in by hand.
   anon-only keys in pages and src/shared, that the FSMA rules (export
   headers, citations, applicability, thresholds, supplier completeness,
   CSV guard) exist only in src/shared/fsma.js and the pages read them
-  through Batchd.fsma, and forced 404s for private paths. The tests cover
-  the database switch and the FSMA module (tests/shared-fsma.test.mjs),
-  the escalation job's duplicate protection, parseGS1 and
-  detectFtlCategory (loaded straight from index.html). When the FDA
+  through Batchd.fsma, that the GS1 parser, the listed-food table and
+  detector and the recall matcher exist only in src/shared with one
+  sentence-case label list, and forced 404s for private paths. The tests
+  cover the database switch, the FSMA module (tests/shared-fsma.test.mjs),
+  the escalation job's duplicate protection, parseGS1, extractBestBefore,
+  detectFtlCategory and the labels (tests/scanner-parsers.test.mjs, now
+  importing src/shared) and the recall matcher
+  (tests/shared-recall-match.test.mjs). When the FDA
   publishes inflation-adjusted thresholds, change THRESHOLDS and the band
   labels in src/shared/fsma.js only. When CLAUDE.md says "keep X in
   step", put X in src/shared and add a check. Run both locally before
@@ -188,10 +192,17 @@ page.
 Shared code (A2, since 2026-11-01): `src/shared/env.js` (database
 selection, links, staging badge), `src/shared/fsma.js` (the FSMA 204
 rules: export headers, citations, applicability bands and copy,
-thresholds, supplier completeness, CSV cell guard, local date and time)
-and `src/shared/index.js` (the bundle entry, exposes `window.Batchd.env`
-and `window.Batchd.fsma`), built by `scripts/build.mjs` into
-`dist/assets/batchd-shared.js`. `dist/` is build output, ignored by git.
+thresholds, supplier completeness, CSV cell guard, local date and time),
+`src/shared/gs1.js` (parseGS1, parseGS1DigitalLink, gs1ParseDate,
+extractBestBefore), `src/shared/ftl.js` (FTL_CATEGORIES,
+detectFtlCategory, normaliseProductKey, ftlLabels), `src/shared/recall-match.js`
+(recallMatchLevel, checkRecordAgainstRecalls, fuzzyProductMatch,
+levenshtein) and `src/shared/index.js` (the bundle entry, exposes
+`window.Batchd.env`, `.fsma`, `.gs1`, `.ftl` and `.recall`), built by
+`scripts/build.mjs` into `dist/assets/batchd-shared.js`. The scanner
+keeps its old function names as aliases of these; `recallMatchLevel` in
+the scanner passes `_logRecallMatch` as the module's log callback.
+`dist/` is build output, ignored by git.
 Per-surface wording (the "not yet answered" sentence, the store-staff
 version of the registered-facility sentence) is passed in by the page
 through `applicabilityTable()` and `citationTable()`.
@@ -511,8 +522,11 @@ docs/HISTORY.md.
   the disclaimer and the formula-safe `csvCell` come from
   src/shared/fsma.js. Used by the records request drill, Live Recall, the
   Reports panel and the scanner.
-- FTL detection: `FTL_CATEGORIES` in the scanner with optional `exclude`
-  regexes. Resolution order: ftl_overrides by GTIN, by normalized name,
+- FTL detection: `FTL_CATEGORIES` in src/shared/ftl.js (`Batchd.ftl`)
+  with optional `exclude` regexes; the dashboard's `_SUPPLIER_CATEGORIES`
+  and signup's `_FOCUS_LABELS` are `Batchd.ftl.ftlLabels()`, so the 17
+  category labels (sentence case, American English) exist once.
+  Resolution order: ftl_overrides by GTIN, by normalized name,
   products_public.is_ftl, then the name regex. If you see `^H` (0x08) in
   a regex, that is the old broken-`\b` defect.
 - ftl_overrides unique indexes are partial, so PostgREST upsert cannot

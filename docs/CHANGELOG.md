@@ -4,6 +4,37 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-11-01 (A2 part 3: the GS1 parser, the listed-food table and the recall matcher in src/shared)
+- Three more modules, moved verbatim out of index.html so behavior does not
+  change: src/shared/gs1.js (parseGS1, parseGS1DigitalLink, gs1ParseDate,
+  extractBestBefore), src/shared/ftl.js (FTL_CATEGORIES with the exclude
+  lists, detectFtlCategory, normaliseProductKey, ftlLabels) and
+  src/shared/recall-match.js (recallMatchLevel, checkRecordAgainstRecalls,
+  fuzzyProductMatch, levenshtein, with the scanner's debug match log passed
+  in as a callback). The bundle exposes them as Batchd.gs1, Batchd.ftl and
+  Batchd.recall; the scanner keeps its old names as aliases, so its call
+  sites did not change. The region-specific display helper
+  formatGS1Expiry stays in the scanner.
+- One label list for the 17 listed-food categories. The scanner showed
+  title case ("Leafy Greens", "Bivalve Molluscs", "Soft/Semi-Soft Cheese")
+  while Retail's suppliers card and signup's focus chips kept their own
+  sentence-case copies. All three now read Batchd.ftl.ftlLabels(): "Leafy
+  greens", "Bivalve mollusks", "Soft and semi-soft cheese" and so on, per
+  the voice rules (sentence case, American English). This is the one
+  visible change; smoke check 61 lists where to look.
+- scripts/check.mjs: a new check that none of the moved functions or lists
+  is defined in a page any more, that the three pages read the modules,
+  and that the 17 labels are in house style. tests/scanner-parsers.test.mjs
+  now imports the modules instead of cutting code out of index.html and
+  adds best-before, label and product-key cases; tests/shared-recall-match.test.mjs
+  (8 tests) encodes the counting rule: exact on lot substring or barcode,
+  possible on product only, nothing for long feed descriptions or a short
+  uncorroborated lot.
+- Verified: node scripts/check.mjs (9 of 9); node --test (118 tests); the
+  end-to-end suite locally against the built dist/ on staging (11 passed,
+  1 skipped), which drives the parser in Receiving, the detector on the
+  shelf scan and the matcher in the pre-placement warning.
+
 ## 2026-11-01 (A2 part 2: the FSMA rules in one module)
 - src/shared/fsma.js now holds, once, the rules that dashboard.html,
   index.html and signup.html carried as hand-kept copies: the 27 export

@@ -11720,71 +11720,9 @@ function normaliseForFuzzy(s) {
     .replace(/[^A-Z0-9]/g, '');  // strip spaces, colons, dashes for comparison
 }
 
-function levenshtein(a, b) {
-  const m = a.length, n = b.length;
-  if (m === 0) return n;
-  if (n === 0) return m;
-  const dp = Array.from({length: m+1}, (_, i) => Array.from({length: n+1}, (_, j) => i === 0 ? j : j === 0 ? i : 0));
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      dp[i][j] = a[i-1] === b[j-1]
-        ? dp[i-1][j-1]
-        : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
-    }
-  }
-  return dp[m][n];
-}
-
-function fuzzyProductMatch(recallProduct, scanProduct) {
-  if (!recallProduct) return false; // recall with no product name should not match anything
-  if (!scanProduct)   return false;
-
-  const a = recallProduct.toLowerCase();
-  const b = scanProduct.toLowerCase();
-
-  // Description-style recall product_names (FDA / Mattilsynet feed entries
-  // that stuff the entire recall notice into product_name) are too noisy to
-  // drive a fuzzy match alone. Pre-fix this would loosely match any scan
-  // sharing a common English word with the description, producing false-
-  // positive "possible" matches like a milk scan triggering a beef recall.
-  // For these long entries, we ONLY trust the lot substring path in
-  // recallMatchLevel — fuzzyProductMatch returns false here and the caller
-  // can still match if the recall lot is found in raw_capture.
-  if (a.length > 80) return false;
-
-  // 1. Exact substring match (both directions, stripped)
-  const STOP_RE = /\b(tilbakekaller?|recalls?|sa\b|as\b|aps\b|ltd\b|inc\b|og\b|av\b|med\b|fra\b|til\b|for\b|the\b|and\b|de\b|la\b|le\b|van\b)/g;
-  const aCore = a.replace(STOP_RE, '').replace(/\s+/g,' ').trim();
-  const bCore = b.replace(STOP_RE, '').replace(/\s+/g,' ').trim();
-  // Guard against empty cores — `''.includes('')` returns true and would
-  // false-match every scan if either core ended up empty after stopword
-  // stripping.
-  if (aCore && bCore && (bCore.includes(aCore) || aCore.includes(bCore))) return true;
-
-  // 2. Shared meaningful words — require an EXACT whole-word match (case-
-  //    insensitive). The pre-fix substring rule (`bw.includes(w)` either
-  //    direction) was the main false-positive vector: a recall token like
-  //    "expires" could substring-match any scan word containing those
-  //    letters, and reversed even short scan words could substring-match
-  //    long recall tokens. Whole-word equality eliminates this.
-  const BRAND_STOPWORDS = new Set(['nortura','tine','gilde','coop','bama','rema','kiwi','meny','asko','orkla',
-    'lerøy','marine','farms','foods','brand','group','nordic','norge','norsk','fresh','daily','royal',
-    'premium','select','extra','super','light','store','little','great','best','good','fine',
-    // Generic feed-description noise words — these appear in long FDA /
-    // Mattilsynet entries and were producing cross-product false positives.
-    'frozen','shelf','life','days','date','manufactur','expires','product','products','contains',
-    'manufactured','distributed','grunn','produktene','inneholde','tilbake','gjelder','følgende']);
-  const aWords = a.split(/[^a-z0-9æøå]+/).filter(w => w.length >= 5 && !BRAND_STOPWORDS.has(w));
-  const bWords = b.split(/[^a-z0-9æøå]+/).filter(w => w.length >= 5 && !BRAND_STOPWORDS.has(w));
-
-  if (aWords.length === 0 || bWords.length === 0) return false;
-
-  const bSet = new Set(bWords);
-  for (const w of aWords) {
-    if (bSet.has(w)) return true;
-  }
-  return false;
-}
+// levenshtein and fuzzyProductMatch live in src/shared/recall-match.js (A2 part 3).
+const levenshtein = Batchd.recall.levenshtein;
+const fuzzyProductMatch = Batchd.recall.fuzzyProductMatch;
 
 // Audit fix #36: parse a lot-range expression like "L23400-L23500" into
 // {prefix, start, end}. Returns null if the input isn't a recognisable
@@ -11897,74 +11835,10 @@ function lotMatchLevel(scanLot, recallLot) {
 // raw_capture column subsumes it. Old scans with label_text but no
 // raw_capture will fall to 'possible' on product match alone, which is
 // acceptable: pilot data, no compliance regression.
-function recallMatchLevel(scanRecord, recall) {
-  // 2026-09-09 audit fix. The exact-identifier checks below used to sit
-  // behind an early `if (!fuzzyProductMatch(...)) return {level:null}`.
-  // That contradicted both fuzzyProductMatch's own comment ("the caller can
-  // still match if the recall lot is found in raw_capture") and the
-  // CLAUDE.md counting rule, which keys on exact lot OR barcode with no
-  // product-name condition. Because fuzzyProductMatch deliberately returns
-  // false for product names over 80 chars, and the FDA importer writes
-  // product_name = product_description.slice(0,120), an exact lot hit on an
-  // FDA/Mattilsynet feed recall could never fire anywhere in the scanner.
-  const productMatches = fuzzyProductMatch(recall.product_name, scanRecord.product_name);
-
-  // Red — exact barcode match (legacy compat). Kept because pre-rebuild
-  // scans have barcode_number populated; new scans always have it null.
-  if (recall.barcode_number && scanRecord.barcode_number &&
-      recall.barcode_number.toLowerCase().trim() === scanRecord.barcode_number.toLowerCase().trim()) {
-    _logRecallMatch(scanRecord, recall, 'red', 'barcode');
-    return { level: 'exact', recall, matched_on: 'barcode' };
-  }
-
-  // Red — recall lot is a substring of scan.raw_capture (case-insensitive).
-  // The brief mandates raw_capture as the search field; lot_number on new
-  // scans is set equal to raw_capture by submitScan, so the fallback to
-  // lot_number below is functionally identical for new data and a
-  // partial-credit lifeline for legacy scans where raw_capture is null.
-  if (recall.lot_number) {
-    const recallLotLow = recall.lot_number.toLowerCase().trim();
-    // When the product name does NOT corroborate, require a lot code of
-    // real length: a 2-3 character code would substring-match half the
-    // shelf and bury staff in false alarms.
-    const MIN_UNCORROBORATED_LOT = 4;
-    if (recallLotLow && (productMatches || recallLotLow.length >= MIN_UNCORROBORATED_LOT)) {
-      const rawLow = (scanRecord.raw_capture || scanRecord.lot_number || '').toLowerCase();
-      if (rawLow && rawLow.includes(recallLotLow)) {
-        _logRecallMatch(scanRecord, recall, 'red', 'substring');
-        return { level: 'exact', recall, matched_on: 'substring' };
-      }
-    }
-  }
-
-  // No exact identifier hit and the product name doesn't corroborate — not
-  // a match at any level.
-  if (!productMatches) {
-    _logRecallMatch(scanRecord, recall, 'none', null);
-    return { level: null };
-  }
-
-  // Orange — product fuzzy-matches but no lot substring confirmed. Includes:
-  //   - recalls without a lot identifier (product-only recall)
-  //   - skip-path scans (raw_capture null)
-  //   - legacy scans where the captured lot doesn't match the recalled lot
-  _logRecallMatch(scanRecord, recall, 'orange', 'product_name_only');
-  return { level: 'possible', recall, matched_on: 'product_name_only' };
-}
-
-// Check a scan record against ALL active recalls.
-// Returns highest level found: 'exact' (red) | 'possible' (orange) | null.
-// 'raw' was retired in the raw-capture rebuild — recallMatchLevel no longer
-// emits it, so the branch was dead.
-function checkRecordAgainstRecalls(scanRecord, recalls) {
-  let best = null;
-  for (const recall of recalls) {
-    const { level } = recallMatchLevel(scanRecord, recall);
-    if (level === 'exact') return 'exact';
-    if (level === 'possible') best = 'possible';
-  }
-  return best;
-}
+// The matcher lives in src/shared/recall-match.js (A2 part 3, 2026-11-01); the
+// scanner passes its debug match log as the callback.
+function recallMatchLevel(scanRecord, recall) { return Batchd.recall.recallMatchLevel(scanRecord, recall, _logRecallMatch); }
+function checkRecordAgainstRecalls(scanRecord, recalls) { return Batchd.recall.checkRecordAgainstRecalls(scanRecord, recalls, _logRecallMatch); }
 
 // Check a query string (from recall search box) against a scan record
 // Returns 'exact' | 'possible' | 'raw' | null
@@ -14294,26 +14168,7 @@ function _updateRawCaptureFromRows() {
 // YYYY-MM-DD. Returns null if no date pattern matches. Stored in the
 // existing expiry_date column for review-screen display only — never used
 // for recall matching, which runs on raw_capture verbatim.
-function extractBestBefore(rawString) {
-  if (!rawString) return null;
-  const ddmmyy = rawString.match(/\b(\d{2})\.(\d{2})\.(\d{2})\b/);
-  if (ddmmyy) {
-    const year = parseInt(ddmmyy[3], 10) + 2000;
-    return `${year}-${ddmmyy[2]}-${ddmmyy[1]}`;
-  }
-  const ddmmyyyy = rawString.match(/\b(\d{2})\.(\d{2})\.(\d{4})\b/);
-  if (ddmmyyyy) {
-    return `${ddmmyyyy[3]}-${ddmmyyyy[2]}-${ddmmyyyy[1]}`;
-  }
-  const mmddyy = rawString.match(/\b(\d{2})\/(\d{2})\/(\d{2,4})\b/);
-  if (mmddyy) {
-    const year = mmddyy[3].length === 2 ? parseInt(mmddyy[3], 10) + 2000 : parseInt(mmddyy[3], 10);
-    return `${year}-${mmddyy[1]}-${mmddyy[2]}`;
-  }
-  const iso = rawString.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
-  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
-  return null;
-}
+const extractBestBefore = Batchd.gs1.extractBestBefore;   // src/shared/gs1.js
 
 // ── PHOTO QUALITY CHECK ──────────────────────────────────────
 // Fast canvas-based check for blur and darkness before sending to OCR.
@@ -15526,121 +15381,12 @@ const BRAND_PATTERNS = {
 // recordkeeping under FSMA Section 204, effective July 20, 2028.
 // Source: FDA Food Traceability List (21 CFR Part 1 Subpart S)
 
-const FTL_CATEGORIES = {
-  // Fresh produce
-  leafy_greens: {
-    label: 'Leafy Greens',
-    patterns: /\b(lettuce|romaine|spinach|kale|arugula|chard|collard|mustard green|watercress|endive|escarole|radicchio|iceberg|butterhead|mixed green|salad green|baby green|mesclun|rucola|rocket)\b/i
-  },
-  fresh_cut_produce: {
-    label: 'Fresh-Cut Produce',
-    patterns: /\bfresh.?cut\b|\bpre.?cut\b|\bready.?to.?eat (fruit|veg|salad)\b/i
-  },
-  tomatoes: {
-    label: 'Tomatoes',
-    patterns: /\btomato|\btomatoes\b|\btomat/i
-  },
-  peppers: {
-    label: 'Peppers',
-    patterns: /\bbell pepper|\bsweet pepper|\bchili pepper|\bchile pepper|\bcapsicum|\bjalapeno|\bjalapeño|\bhabanero|\bpoblano|\bserrano|\bpeppers?\b/i,
-    // Phase 6 (2026-10-07): known misfires. Checked before the pattern.
-    exclude: /dr\.?\s*pepper|pepperoni|peppermint|peppercorn|pepper jack|peppered|pepper spray|pepper steak|pepper sauce|salt (and|&) pepper/i
-  },
-  cucumbers: {
-    label: 'Cucumbers',
-    patterns: /\bcucumber|\bgurk/i
-  },
-  melons: {
-    label: 'Melons',
-    patterns: /\bmelon\b|\bcantaloupe\b|\bhoneydew\b|\bwatermelon\b/i
-  },
-  sprouts: {
-    label: 'Sprouts',
-    patterns: /\bsprout\b|\balfalfa sprout|\bbean sprout|\bbroccoli sprout/i
-  },
-  herbs: {
-    label: 'Fresh Herbs',
-    patterns: /\b(fresh |cut )?(basil|cilantro|coriander|parsley|dill|mint|chive|tarragon|thyme|rosemary|sage|oregano)\b/i
-  },
-  tropical_fruits: {
-    label: 'Tropical Tree Fruits',
-    patterns: /\b(mango|papaya|guava|pineapple|passion fruit|starfruit|carambola|lychee|rambutan|jackfruit|durian|cherimoya)\b/i
-  },
-  // Dairy
-  soft_cheese: {
-    label: 'Soft/Semi-Soft Cheese',
-    patterns: /\b(ricotta|feta|mozzarella|brie|camembert|blue cheese|gorgonzola|roquefort|havarti|fontina|gouda|manchego|gruyere|raclette|taleggio|limburger|munster|queso fresco|paneer|halloumi|chevre|fromage)\b/i
-  },
-  // Eggs
-  shell_eggs: {
-    label: 'Shell Eggs',
-    // Phase 6 (2026-10-07): word boundary so eggplant and eggnog do not match.
-    patterns: /\b(egg|eggs)\b(?! noodle| pasta| powder| substitute| replacement| salad| roll| white| whites)/i,
-    exclude: /eggplant|eggnog|liquid egg|egg beaters|egg salad|egg roll|egg white/i
-  },
-  // Seafood
-  // Phase 6 (2026-10-07): smoked finfish must be tested before finfish, or 'smoked salmon' lands in finfish.
-  smoked_finfish: {
-    label: 'Smoked Finfish',
-    patterns: /\bsmoked.{0,10}(salmon|trout|mackerel|herring|eel|fish)\b|\b(salmon|trout|fish).{0,10}smoked\b/i
-  },
-  finfish: {
-    label: 'Finfish',
-    patterns: /\b(tuna|salmon|cod|tilapia|halibut|snapper|mahi|grouper|flounder|sole|bass|trout|catfish|pollock|haddock|sardine|mackerel|herring|anchov|swordfish|sea bass|branzino|laks|torsk|sei|ørret|skrei)\b/i
-  },
-  crustaceans: {
-    label: 'Crustaceans',
-    patterns: /\b(shrimp|prawn|crab|lobster|crayfish|langoustine|scampi|reke)\b/i
-  },
-  bivalves: {
-    label: 'Bivalve Molluscs',
-    patterns: /\b(oyster|clam|mussel|scallop|cockle|abalone)\b/i
-  },
-  // Nut products
-  nut_butters: {
-    label: 'Nut Butters',
-    patterns: /\b(peanut butter|almond butter|cashew butter|sunflower butter|tahini|nut butter|peanut spread)\b/i
-  },
-  // Deli salads
-  deli_salads: {
-    label: 'Deli Salads',
-    patterns: /\b(pasta salad|potato salad|coleslaw|egg salad|tuna salad|chicken salad|macaroni salad|deli salad|prepared salad)\b/i
-  }
-};
-
-// Returns { isFtl: bool, category: string|null, label: string|null }
-function detectFtlCategory(productName) {
-  if (!productName) return { isFtl: false, category: null, label: null };
-  for (const [key, { label, patterns, exclude }] of Object.entries(FTL_CATEGORIES)) {
-    if (exclude && exclude.test(productName)) continue;   // Phase 6: per-category misfire list
-    if (patterns.test(productName)) {
-      return { isFtl: true, category: key, label };
-    }
-  }
-  return { isFtl: false, category: null, label: null };
-}
-
-// Normalise a product name to a stable lookup key.
-// DESIGN DECISION: We keep the size/volume as part of the key.
-// "Tine Helmelk 1L" and "Tine Helmelk 2L" are different SKUs with
-// different packaging — possibly different lot code locations.
-// Stripping the size was causing them to share a pattern, which
-// could direct staff to the wrong place on the label.
-// We do strip pure unit strings (ml, dl, kg, g) but keep the number.
-function normaliseProductKey(name) {
-  if (!name) return '';
-  return name
-    .toLowerCase()
-    // Strip standalone unit strings but keep the number: "1L" → "1", "500ml" → "500"
-    .replace(/(\d+)\s*(ml|dl|cl|l|kg|g|mg|liter|litre)/g, '$1')
-    // Strip pure unit words with no number
-    .replace(/\b(pk|stk|pcs|x)\b/g, '')
-    // Normalise Norwegian special chars for matching
-    .replace(/[^a-z0-9æøå\s]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .split(' ').slice(0, 5).join(' '); // max 5 words (was 4 — size now counts)
-}
+// The category table, the detector and the product key normalizer live in
+// src/shared/ftl.js (A2 part 3, 2026-11-01); the dashboard and signup read the
+// same labels through Batchd.ftl.ftlLabels().
+const FTL_CATEGORIES = Batchd.ftl.FTL_CATEGORIES;
+const detectFtlCategory = Batchd.ftl.detectFtlCategory;
+const normaliseProductKey = Batchd.ftl.normaliseProductKey;
 
 // Extract brand from a product name
 function extractBrand(name) {
@@ -16785,44 +16531,10 @@ function codesAreSimilar(a, b) {
   return diffs <= 1;
 }
 
-// ── GS1 DIGITAL LINK PARSER ───────────────────────────────────
-// Parses GS1 Digital Link URLs encoded in QR / DataMatrix codes.
-// Format: https://[domain]/[path]/01/{gtin}/10/{lot}/17/{expiry}
-// Brands may host on their own domain — we match by path structure only.
-function parseGS1DigitalLink(raw) {
-  const result = { gtin: null, lot: null, expiry: null, serial: null, all: {}, isDigitalLink: false };
-  if (!raw) return result;
-
-  let url;
-  try { url = new URL(raw); } catch(e) { return result; }
-
-  // Walk path segments looking for AI code / value pairs
-  // e.g. /somebase/01/09506000134352/10/ABC123/17/260101
-  const parts = url.pathname.split('/').filter(Boolean);
-  const AI_KEYS = { '00':'sscc','01':'gtin','02':'content','10':'lot','17':'expiry','21':'serial','22':'cpv' };
-
-  for (let i = 0; i < parts.length - 1; i++) {
-    const ai = parts[i];
-    if (AI_KEYS[ai]) {
-      const val = decodeURIComponent(parts[i + 1]);
-      result.all[ai] = val;
-      if (ai === '01') result.gtin = val.replace(/^0+(?=\d{13}$)/, ''); // normalise to 13-digit EAN if possible
-      if (ai === '10') result.lot = val;
-      if (ai === '17') result.expiry = val; // YYMMDD
-      if (ai === '21') result.serial = val;
-      result.isDigitalLink = true;
-      i++; // consume the value segment
-    }
-  }
-
-  // Also check query string for compressed/redirected forms: ?lot=X&exp=Y
-  const p = url.searchParams;
-  if (p.get('10') && !result.lot)     { result.lot = p.get('10');    result.all['10'] = result.lot;    result.isDigitalLink = true; }
-  if (p.get('17') && !result.expiry)  { result.expiry = p.get('17'); result.all['17'] = result.expiry; result.isDigitalLink = true; }
-  if (p.get('01') && !result.gtin)    { result.gtin = p.get('01');   result.all['01'] = result.gtin;   result.isDigitalLink = true; }
-
-  return result;
-}
+// ── GS1 PARSING ──────────────────────────────────────────────
+// parseGS1, parseGS1DigitalLink and gs1ParseDate live in src/shared/gs1.js
+// (A2 part 3, 2026-11-01), exposed as Batchd.gs1.
+const parseGS1DigitalLink = Batchd.gs1.parseGS1DigitalLink;
 
 // Format a GS1 DL expiry date (YYMMDD) into a human-readable region date string
 function formatGS1Expiry(yymmdd) {
@@ -16840,174 +16552,10 @@ function formatGS1Expiry(yymmdd) {
 }
 
 // ── GS1 BARCODE PARSER ────────────────────────────────────────
-// Parses GS1-128 / GS1 DataBar Application Identifiers from a raw barcode string.
-// Handles both human-readable "(AI)value" format and raw concatenated format.
-// Also handles GS1 Digital Link URLs via parseGS1DigitalLink().
-
-/** Parse a 6-digit GS1 date (YYMMDD) into ISO YYYY-MM-DD string */
-function _gs1ParseDate(yymmdd) {
-  if (!yymmdd || yymmdd.length < 6) return null;
-  const yy = yymmdd.slice(0, 2);
-  const mm = yymmdd.slice(2, 4);
-  const dd = yymmdd.slice(4, 6);
-  if (mm === '00' || dd === '00') return null; // GS1 spec: 00 = last day of month
-  const year = parseInt(yy) >= 50 ? `19${yy}` : `20${yy}`;
-  return `${year}-${mm}-${dd}`;
-}
-
-/** Derives semantic helper fields from the raw AI map after parsing */
-function _deriveGS1SemanticFields(gs1) {
-  const a = gs1.all;
-  // Dates: production AI(11/13), best-before AI(15), expiry AI(17)
-  gs1.productionDate = _gs1ParseDate(a['11'] || a['13']) || null;
-  gs1.bestBefore     = _gs1ParseDate(a['15']) || null;
-  gs1.expiry         = _gs1ParseDate(a['17']) || null;
-  // The most relevant date for the expiry field (expiry > best-before > production)
-  gs1.bestDate       = gs1.expiry || gs1.bestBefore || null;
-  // Other useful AIs
-  gs1.serial         = a['21'] || null;
-  gs1.quantity       = a['37'] ? parseInt(a['37'], 10) : null;
-  gs1.gtin           = a['01'] || a['02'] || null;
-  gs1.packDate       = _gs1ParseDate(a['13']) || null;
-  // Net weight from AI 310n (kg) or 320n (lb); n is the implied decimal count.
-  const _w = (prefix) => {
-    for (let n = 0; n <= 6; n++) {
-      const v = a[prefix + n];
-      if (v && /^\d{6}$/.test(v)) return parseInt(v, 10) / Math.pow(10, n);
-    }
-    return null;
-  };
-  gs1.netWeightKg = _w('310');
-  gs1.netWeightLb = _w('320');
-}
-function parseGS1(raw) {
-  const result = { lot: null, batch: null, all: {} };
-  if (!raw) return result;
-
-  // ── GS1 Digital Link URL — check first ────────────────────
-  if (raw.startsWith('http://') || raw.startsWith('https://')) {
-    const dl = parseGS1DigitalLink(raw);
-    if (dl.isDigitalLink) {
-      result.lot   = dl.lot;
-      result.batch = dl.lot;
-      result.all   = dl.all;
-      result._digitalLink = dl;
-      _deriveGS1SemanticFields(result);
-      return result;
-    }
-  }
-
-  // ── Plain GTIN guard ──────────────────────────────────────
-  // EAN-8 / UPC-A / EAN-13 / GTIN-14 are pure product identifiers with NO
-  // embedded Application Identifiers. The AI parser below would otherwise
-  // mis-read coincidental digit substrings (e.g. "10" in the middle of a
-  // 13-digit EAN) as a lot code AI and invent a false TLC. A real GS1-128
-  // payload either uses human-readable parens — "(10)ABC123" — or a raw
-  // FNC1 sentinel (\x1D / ]C1 / ]d2 / ]e0). If neither is present and the
-  // value is just 8/12/13/14 digits, treat it as a plain GTIN.
-  const _FNC1 = String.fromCharCode(29);
-  const _stripped = String(raw).replace(/^\]C1|^\]d2|^\]e0/i, '');
-  const _hasParens = /\(\d{2,4}\)/.test(raw);
-  const _hasFNC1   = raw.indexOf(_FNC1) !== -1;
-  if (!_hasParens && !_hasFNC1 && /^(?:\d{8}|\d{12}|\d{13}|\d{14})$/.test(_stripped)) {
-    result.gtin = _stripped;
-    return result;
-  }
-
-  const AI_LENGTHS = {
-    '00': 18, '01': 14, '02': 14,
-    '10': null, '11': 6, '12': 6, '13': 6, '15': 6, '16': 6, '17': 6,
-    '20': 2, '21': null, '22': null, '30': null, '37': null,
-    '240': null, '241': null, '242': null, '243': null,
-    '250': null, '251': null, '253': null, '254': null, '255': null,
-    '310': 6, '311': 6, '312': 6, '313': 6, '314': 6, '315': 6, '316': 6,
-    // Net weight AIs are four digits: 310n (kg) and 320n (lb), n = implied
-    // decimals, then a six-digit value. Listed as 4-char keys so the raw
-    // parser (which tries 4, 3, 2) reads them correctly. Added 2026-10-03
-    // for case labels; 320n is the US form.
-    '3100': 6, '3101': 6, '3102': 6, '3103': 6, '3104': 6, '3105': 6, '3106': 6,
-    '3200': 6, '3201': 6, '3202': 6, '3203': 6, '3204': 6, '3205': 6, '3206': 6,
-    '400': null, '401': null, '402': null, '403': null,
-    '410': 13, '411': 13, '412': 13, '413': 13, '414': 13, '415': 13, '416': 13, '417': 13,
-    '420': null, '421': null, '422': null,
-    '710': null, '711': null, '712': null, '713': null, '714': null,
-    '7003': null, '7004': null,
-    '8001': 14, '8002': null, '8003': null, '8004': null, '8005': 6,
-    '8006': 18, '8007': null, '8008': null, '8010': null, '8011': null,
-    '8012': null, '8013': null, '8017': 18, '8018': 18, '8019': null,
-    '8020': null, '8026': 18,
-    '90': null,
-    '91': null, '92': null, '93': null, '94': null, '95': null,
-    '96': null, '97': null, '98': null, '99': null,
-  };
-
-  const FNC1 = String.fromCharCode(29);
-
-  // Human-readable format: (10)LOT123(17)260101
-  const humanRe = /\((\d{2,4})\)([^(]*)/g;
-  let humanMatch;
-  let foundHuman = false;
-  while ((humanMatch = humanRe.exec(raw)) !== null) {
-    foundHuman = true;
-    const ai = humanMatch[1];
-    const val = humanMatch[2].trim();
-    result.all[ai] = val;
-    if (ai === '10') { result.lot = val; result.batch = val; }
-  }
-  if (foundHuman) { _deriveGS1SemanticFields(result); return result; }
-
-  // Raw concatenated format
-  let s = raw.replace(/^\]C1|^\]d2|^\]e0/i, '');
-  let i = 0, safetyLimit = 0;
-  while (i < s.length && safetyLimit++ < 30) {
-    if (s[i] === FNC1) { i++; continue; }
-    let ai = null, aiLen = 0;
-    for (const len of [4, 3, 2]) {
-      const candidate = s.substr(i, len);
-      if (Object.prototype.hasOwnProperty.call(AI_LENGTHS, candidate)) {
-        ai = candidate; aiLen = len; break;
-      }
-    }
-    if (!ai) { i++; continue; }
-    i += aiLen;
-    const fixedLen = AI_LENGTHS[ai];
-    let val = '';
-    if (fixedLen !== null) {
-      val = s.substr(i, fixedLen); i += fixedLen;
-    } else {
-      // Variable-length value. GS1 terminates these with FNC1 (\x1D). When the
-      // scanner preserved any FNC1 in this string, trust it: read to the next
-      // FNC1 or the end. Only when the whole string has no FNC1 at all fall
-      // back to guessing a boundary, and then only on the AIs that follow a
-      // lot on food case labels. The old guess used the full AI table, so a
-      // lot like RM240928 stopped at "RM" because "240" is an AI prefix
-      // (2026-10-03, Phase 2).
-      const _BOUNDARY_AIS = ['00','01','02','10','11','13','15','17','21','37',
-        '3100','3101','3102','3103','3104','3105','3106','3200','3201','3202','3203','3204','3205','3206'];
-      let end = i;
-      while (end < s.length && s[end] !== FNC1) {
-        if (!_hasFNC1 && end > i) {
-          let foundAI = false;
-          for (const len of [4, 2]) {
-            if (_BOUNDARY_AIS.includes(s.substr(end, len))) { foundAI = true; break; }
-          }
-          if (foundAI) break;
-        }
-        end++;
-      }
-      val = s.substring(i, end); i = end;
-      if (s[i] === FNC1) i++;
-    }
-    if (val) {
-      result.all[ai] = val;
-      if (ai === '10') { result.lot = val; result.batch = val; }
-    }
-  }
-
-  _deriveGS1SemanticFields(result);
-  return result;
-}
-
+// See src/shared/gs1.js. Human-readable "(AI)value", raw FNC1 strings and
+// Digital Link URLs all go through parseGS1.
+const _gs1ParseDate = Batchd.gs1.gs1ParseDate;
+const parseGS1 = Batchd.gs1.parseGS1;
 
 // ═══════════════════════════════════════════════════════════════════════
 // RECEIVING MODE (Phase 2 of the FSMA 204 handoff, 2026-10-03). US-only.

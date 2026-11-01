@@ -1,25 +1,11 @@
-// Tests for two pure functions in the scanner (index.html), loaded straight
-// from the page so the tests always exercise the shipping code:
-//   parseGS1           GS1-128 / DataBar / Digital Link label parser
-//   detectFtlCategory  FDA Food Traceability List category from a product name
-// Run: node --test tests/*.test.mjs
+// Tests for the shared GS1 parser and listed-food detector
+// (src/shared/gs1.js and src/shared/ftl.js, improvement plan A2 part 3).
+// Until 2026-11-01 these functions lived inline in index.html and this test
+// cut them out of the page. Run: node --test tests/*.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-
-const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-const slice = (startMarker, endMarker) => {
-  const a = html.indexOf(startMarker);
-  const b = html.indexOf(endMarker, a);
-  if (a < 0 || b < 0) throw new Error(`markers not found: ${startMarker} .. ${endMarker}`);
-  return html.slice(a, b);
-};
-
-const gs1Code = slice('function parseGS1DigitalLink(raw) {', '// RECEIVING MODE');
-const { parseGS1 } = new Function('_userRegion', gs1Code + '; return { parseGS1 };')('us');
-
-const ftlCode = slice('const FTL_CATEGORIES = {', '// Normalise a product name to a stable lookup key.');
-const { detectFtlCategory, FTL_CATEGORIES } = new Function(ftlCode + '; return { detectFtlCategory, FTL_CATEGORIES };')();
+import { parseGS1, gs1ParseDate, extractBestBefore } from '../src/shared/gs1.js';
+import { detectFtlCategory, FTL_CATEGORIES, ftlLabels, normaliseProductKey } from '../src/shared/ftl.js';
 
 const FNC1 = String.fromCharCode(29);
 
@@ -72,6 +58,8 @@ test('dates: best-before, pack date, and day 00', () => {
   assert.equal(r.bestBefore, '2026-11-30');
   assert.equal(r.bestDate, '2026-11-30');
   assert.equal(parseGS1('(15)261100').bestBefore, null, 'day 00 means end of month and is not guessed');
+  assert.equal(gs1ParseDate('991231'), '1999-12-31');
+  assert.equal(gs1ParseDate('26'), null);
 });
 
 test('GS1 Digital Link URL: path and query', () => {
@@ -86,14 +74,20 @@ test('empty input', () => {
   assert.deepEqual(parseGS1(null), { lot: null, batch: null, all: {} });
 });
 
+test('a typed lot cluster gives up its best-before date', () => {
+  assert.equal(extractBestBefore('L2407 BEST BY 03/01/2027'), '2027-03-01');
+  assert.equal(extractBestBefore('RM240928 15.06.26'), '2026-06-15');
+  assert.equal(extractBestBefore('2027-12-31 X'), '2027-12-31');
+  assert.equal(extractBestBefore('PB24105'), null);
+});
+
 const cat = (name) => detectFtlCategory(name).category;
 
 test('listed foods in the two wedge categories are detected', () => {
   assert.equal(cat('Romaine hearts 3 ct'), 'leafy_greens');
   assert.equal(cat('Organic baby spinach 5 oz'), 'leafy_greens');
-  assert.equal(cat('Spring mix salad'), cat('Spring mix salad')); // stable
-  assert.ok(['nut_butters', 'peanut_butter'].includes(cat('Creamy peanut butter 16 oz')), cat('Creamy peanut butter 16 oz'));
-  assert.ok(cat('Almond butter') !== null);
+  assert.equal(cat('Creamy peanut butter 16 oz'), 'nut_butters');
+  assert.equal(cat('Almond butter'), 'nut_butters');
 });
 
 test('pepper misfires are excluded, real peppers are listed', () => {
@@ -113,10 +107,28 @@ test('egg misfires are excluded, shell eggs are listed', () => {
   assert.equal(cat('Large brown eggs dozen'), 'shell_eggs');
 });
 
+test('smoked salmon is smoked finfish, not finfish', () => {
+  assert.equal(cat('Smoked salmon 4 oz'), 'smoked_finfish');
+  assert.equal(cat('Atlantic salmon fillet'), 'finfish');
+});
+
 test('everyday non-listed products are not flagged', () => {
   for (const n of ['Whole milk 1 gal', 'White bread', 'Cola 2L', 'Paper towels']) {
     assert.equal(detectFtlCategory(n).isFtl, false, n);
   }
+});
+
+test('labels are sentence case, American English, one per category', () => {
+  const labels = ftlLabels();
+  assert.equal(Object.keys(labels).length, 17);
+  assert.equal(labels.leafy_greens, 'Leafy greens');
+  assert.equal(labels.bivalves, 'Bivalve mollusks');
+  assert.equal(labels.soft_cheese, 'Soft and semi-soft cheese');
+  for (const [k, l] of Object.entries(labels)) {
+    assert.equal(l, FTL_CATEGORIES[k].label, k);
+    assert.ok(/^[A-Z][a-z]/.test(l) && !/ [A-Z][a-z]+ /.test(' ' + l.split(' ').slice(1).join(' ') + ' '), `${k}: "${l}" is not sentence case`);
+  }
+  assert.equal(detectFtlCategory('Romaine').label, 'Leafy greens');
 });
 
 test('no FTL pattern contains a literal backspace (the old broken \\b defect)', () => {
@@ -124,4 +136,11 @@ test('no FTL pattern contains a literal backspace (the old broken \\b defect)', 
     assert.ok(!c.patterns.source.includes('\b'), key);
     if (c.exclude) assert.ok(!c.exclude.source.includes('\b'), key + ' exclude');
   }
+});
+
+test('product keys keep the size, drop the unit and stop at five words', () => {
+  assert.equal(normaliseProductKey('Creamy Peanut Butter 16 oz'), 'creamy peanut butter 16 oz');
+  assert.equal(normaliseProductKey('Tine Helmelk 1L'), 'tine helmelk 1');
+  assert.equal(normaliseProductKey('one two three four five six'), 'one two three four five');
+  assert.equal(normaliseProductKey(''), '');
 });
