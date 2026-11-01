@@ -621,4 +621,8 @@ Code, known and not fixed:
 - Design review leftovers: spacing onto `--s-*`; the photo lightbox and
   camera overlays keep literal colors on purpose.
 Not built (by decision): EDI 856, a Shipping sheet for distribution
-centers, tier gating, NO variants of anything.
+centers, tier gating, NO variants of anything, Supabase Pro (Ian,
+2026-11-01: off until further notice), text-message alerts (push only).
+Ian's answers to the two plans' decision lists are recorded in
+docs/PLATFORM-IMPROVEMENT-PLAN.md and docs/PORTALS-PLAN.md section 6;
+three improvement-plan questions (5, 6, 7) are still open.

@@ -908,10 +908,14 @@ daily-use win for distributors. Phases 6 to 8 complete the chain.
 
 ## 6. Decisions Ian must make
 
-Each one has a recommendation. Building waits on Q1, Q3, Q4 and Q5 at
-minimum for the portal phases. Phase 2a has everything it needs (Q2, Q15
-and Q16 are settled) and can start once this plan is merged; it follows
-the Q17 recommendation unless Ian says otherwise.
+Each one has a recommendation. SETTLED 2026-11-01: Ian accepted every
+recommendation below as written. Q7 (who pays) had no recommendation
+and stays open; it does not block the build. For Q4, the four
+manufacturer orgs in production are April 2026 test data (three named
+"Test ...", one empty demo with no members or keys), so all four are
+archived after a backup in Phase 8 unless Ian names one as real. Q2,
+Q15, Q16 and Q17 shipped in Phase 2a on 2026-11-01. Nothing blocks the
+portal phases on this list any more.
 
 1. **One portal or two?** One page, `portal.html`, that shows manufacturer
    or distributor screens by org type, or two separate pages.
