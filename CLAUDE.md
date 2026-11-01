@@ -39,7 +39,17 @@ work. Never give Ian partial diffs or snippets to paste in by hand.
   of the viewport on previews only. Every sign-out in the apps and the
   tests is `sb.auth.signOut({ scope: 'local' })` (since 2026-11-01): it
   ends the session on that device only, so a shared store phone stays
-  signed in when someone signs out elsewhere.
+  signed in when someone signs out elsewhere. Every run leaves one chain
+  of rows in the staging QA org (delivery and scans for lot E2E<tag>, the
+  recall "E2E Peanut Butter <tag> 16 oz" with its distributions,
+  acknowledgements, linked recalls row and match rows, and on previews a
+  "STAGING TEST" notice with the recall pushed from it; both specs close
+  their recall at the end). scripts/cleanup-staging-e2e-data.sql copies
+  those rows to the private backup schema and deletes the ones older than
+  24 hours. Claude runs it on STAGING only (the script refuses a database
+  that holds the production org), after a batch of deploy previews or
+  when the Recalls panel on a preview gets slow or a run times out. First
+  run 2026-11-01.
 - After a change Ian should test, add a numbered check to SMOKE.md and a
   dated entry to docs/CHANGELOG.md. Keep this file to rules and current
   state; do not grow it back into a log.
