@@ -564,7 +564,7 @@ Owed by Ian:
 - Smoke checks 10 to 13, 17 to 20, 46 and 47 were run by Claude on
   2026-11-01 on the local static server against the staging database and
   passed (docs/CHANGELOG.md has the detail). They have still not been run
-  on the deployed production apps. 48 and 49 need Netlify functions, so
+  on the deployed production apps. 48 and 51 need Netlify functions, so
   they wait for a deploy preview with staging function variables or a
   live run.
 - Rotate the demo account password (in public git history). Claude's

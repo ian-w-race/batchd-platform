@@ -29,7 +29,7 @@ how it was verified and what is still unverified. Everything before
   the audit-trail chevron, keyboard tagging and toast ink (46); scanner
   views, light-theme inputs, the manager Audit tab store dropdowns and the
   Help overlay (47). `npx playwright test` also passed locally (3 passed,
-  1 skipped: it needs a preview). Not run: 48 and 49 (Netlify functions
+  1 skipped: it needs a preview). Not run: 48 and 51 (Netlify functions
   are not served locally). Also noticed: `/.netlify/functions/ocr` warm-up
   posts answer 404 locally, expected; the receiving form's listed-food
   chip resolves about a second after typing, so a receipt recorded
