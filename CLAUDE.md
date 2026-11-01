@@ -33,7 +33,10 @@ work. Never give Ian partial diffs or snippets to paste in by hand.
   signs in to the shared staging test account on every push.
   e2e/core-flow.spec.mjs is the plan A3 chain (receive, shelf-scan, push a
   recall, see it in the store, produce records) on one fresh lot per run;
-  it closes its recall at the end. Every sign-out in the apps and the
+  it closes its recall at the end. e2e/env.mjs blocks Netlify's
+  deploy-preview drawer script (/.netlify/scripts/cdp) because the drawer
+  covers buttons at the bottom of the viewport on previews only. Every
+  sign-out in the apps and the
   tests is `sb.auth.signOut({ scope: 'local' })` (since 2026-11-01): it
   ends the session on that device only, so a shared store phone stays
   signed in when someone signs out elsewhere.

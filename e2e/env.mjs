@@ -40,8 +40,20 @@ export async function dashboardSignIn(page, email) {
   await centralSignIn(page, email, 'retail');
 }
 
+// Netlify injects <script src="/.netlify/scripts/cdp"> into every deploy
+// preview page. It draws the "Collaborate on this Deploy Preview" drawer
+// across the bottom of the viewport, which covered the composer's Continue
+// button in the workflow runs of 2026-11-01 (local runs have no drawer).
+// Blocking that one request keeps the preview identical to production.
+export async function blockNetlifyDrawer(page) {
+  if (page._batchdDrawerBlocked) return;
+  page._batchdDrawerBlocked = true;
+  await page.route('**/.netlify/scripts/cdp', (route) => route.abort());
+}
+
 // Signs in at /login and asks for one app; the router opens it.
 export async function centralSignIn(page, email, app) {
+  await blockNetlifyDrawer(page);
   await page.goto('/login' + (app ? '?app=' + app : ''));
   await expect(page.locator('text=STAGING DATABASE').first()).toBeVisible();
   await page.locator('#email').fill(email);
