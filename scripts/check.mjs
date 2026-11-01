@@ -140,6 +140,31 @@ check('FSMA rules come only from src/shared/fsma.js', () => {
   return `${PAGES.length} pages, ${uses} reads, 27 columns`;
 });
 
+// 6. The GS1 parser, the listed-food table and detector, and the recall
+// matcher live only in src/shared (A2 part 3, 2026-11-01); the scanner,
+// dashboard and signup read them through Batchd.gs1, Batchd.ftl and
+// Batchd.recall, and the category labels are one list.
+check('Parsers, listed-food table and recall matcher come only from src/shared', () => {
+  const LOCAL = {
+    'index.html': ['function parseGS1(', 'function parseGS1DigitalLink(', 'function _gs1ParseDate(', 'function extractBestBefore(',
+      'const FTL_CATEGORIES = {', 'function detectFtlCategory(', 'function normaliseProductKey(',
+      'function levenshtein(', 'function fuzzyProductMatch(', 'return { level: \'exact\', recall, matched_on:'],
+    'dashboard.html': ['const _SUPPLIER_CATEGORIES = {'],
+    'signup.html': ['const _FOCUS_LABELS = {'],
+  };
+  const NEEDS = { 'index.html': ['Batchd.gs1.', 'Batchd.ftl.', 'Batchd.recall.'], 'dashboard.html': ['Batchd.ftl.ftlLabels()'], 'signup.html': ['Batchd.ftl.ftlLabels()'] };
+  for (const [f, list] of Object.entries(LOCAL)) {
+    const s = read(f);
+    for (const l of list) if (s.includes(l)) throw new Error(`${f}: still defines "${l}" locally; it belongs in src/shared`);
+    for (const n of NEEDS[f]) if (!s.includes(n)) throw new Error(`${f}: does not read ${n}`);
+  }
+  const ftl = read('src/shared/ftl.js');
+  const labels = ftl.match(/^    label: '([^']*)'/gm) || [];
+  if (labels.length !== 17) throw new Error(`src/shared/ftl.js: ${labels.length} category labels, expected 17`);
+  for (const l of labels) if (/\b(Molluscs|Semi-Soft)\b/.test(l) || /^    label: '[A-Z][a-z]+ [A-Z]/.test(l)) throw new Error(`src/shared/ftl.js: label not in house style: ${l.trim()}`);
+  return `3 pages, ${labels.length} categories`;
+});
+
 // 7c. Every function reads its database from SUPABASE_URL, so deploy previews
 // can point at staging. Production stays the fallback.
 check('Functions read SUPABASE_URL from the environment', () => {

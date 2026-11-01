@@ -431,6 +431,18 @@ not repeated here.
     same five bands and shows the applicability sentence when one is
     picked. Nothing reads differently from before.
 
+## Shared parsers, listed-food table and recall matcher (2026-11-01, A2 part 3)
+
+61. On the preview, scanner: Receiving mode, type
+    (01)00812345000016(10)RM261101(17)271231 into the label field; the GTIN,
+    lot and best-by fill in as before. Shelf mode: "Romaine hearts" shows
+    the badge "Leafy greens" (sentence case now, it read "Leafy Greens"),
+    "Smoked salmon" shows "Smoked finfish", "Pepperoni pizza" shows none.
+    Scan a lot that a live recall names: the red step 3 warning still
+    appears. Retail, Settings, Suppliers: the category chips read "Leafy
+    greens", "Bivalve mollusks", "Soft and semi-soft cheese" and so on,
+    the same words as the scanner badges and the signup focus chips.
+
 ## Run log
 
 - 2026-11-01, Claude, local static server against the staging database:
