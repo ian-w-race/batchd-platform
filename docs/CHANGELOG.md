@@ -4,6 +4,29 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-11-01 (one address, checked on production)
+- #30, #39 and #40 merged and deployed. Checked by HTTP right after:
+  app.batchdapp.com/ and /login serve the sign-in page; /retail serves the
+  Retail app and /scan the scanner (manifest start_url /scan);
+  app.batchdapp.com/dashboard(.html) 301 to /retail with the query kept;
+  corporate.batchdapp.com/, /?panel=recalls, /dashboard and
+  /dashboard.html?panel=triage 301 to app.batchdapp.com/retail with the
+  query kept, and /signup and /join?token= to the same path on app.;
+  www.batchdapp.com/ 301s to app.batchdapp.com/ and /dashboard to /retail;
+  batchdapp.com still 301s to www (two hops to the sign-in page);
+  batchd-app.netlify.app/dashboard.html 301s to app.batchdapp.com/retail.
+  Private files still answer 404 (CLAUDE.md, netlify/lib/auth.js,
+  tests/). Functions are not redirected: the ocr warm-up answers 204 on
+  app. and on corporate., and www's triage-complaint answers OPTIONS 200,
+  so complaint-widget.js keeps working.
+- In a browser: batchd-app.netlify.app shows "Batch'd has moved" with a
+  button to app.batchdapp.com/scan (no queued scans in that browser), and a
+  signed-out app.batchdapp.com/retail?panel=recalls lands on /login with
+  the link kept; no console errors.
+- Still owed by Ian: add https://app.batchdapp.com/login to Supabase Auth
+  redirect URLs (production and staging), and reinstall the scanner on the
+  test phones from app.batchdapp.com/scan.
+
 ## 2026-11-01 (one address and the Retail rename, Phase 2a step 2)
 - Every app now lives on app.batchdapp.com: / is the sign-in page,
   /retail the Retail app (dashboard.html), /scan the scanner. One sign-in
