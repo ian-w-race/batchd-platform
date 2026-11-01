@@ -29,7 +29,10 @@ work. Never give Ian partial diffs or snippets to paste in by hand.
   schema. Never hand Ian a script to run.
 - End-to-end tests: `npx playwright test` (local, staging) or the e2e
   workflow on every deploy preview. Add a test in e2e/ for each new core
-  flow; they may only target localhost or a deploy preview.
+  flow; they may only target localhost or a deploy preview. The workflow
+  signs in to the shared staging test account on every push, so a local
+  session on that account can be ended mid-test (the apps' own sign-out
+  is global; the test's sign-out is local since 2026-11-01).
 - After a change Ian should test, add a numbered check to SMOKE.md and a
   dated entry to docs/CHANGELOG.md. Keep this file to rules and current
   state; do not grow it back into a log.
@@ -528,8 +531,6 @@ both copies.
   legacy scans.
 
 ## Open items
-- The e2e workflow needs the GitHub secret E2E_PASSWORD, which Ian sets
-  from the local staging accounts file.
 - Netlify secret hygiene: keep every secret's Local development value empty
   (Netlify shows those in plain text). INTERNAL_NOTIFY_SECRET was rotated and
   recreated under the right name on both sites on 2026-10-25; the code's
@@ -540,9 +541,15 @@ Owed by Ian:
 - One real wholesaler delivery file, with permission, for the import.
 - Brand ownership of the suggested supplier seeds, and lot code formats
   for those brands before any lot hints are added.
-- Live smoke checks never run on the deployed apps: SMOKE.md 10 to 13,
-  17 to 20, 46 and 47.
-- Rotate the demo account password (in public git history).
+- Smoke checks 10 to 13, 17 to 20, 46 and 47 were run by Claude on
+  2026-11-01 on the local static server against the staging database and
+  passed (docs/CHANGELOG.md has the detail). They have still not been run
+  on the deployed production apps. 48 and 49 need Netlify functions, so
+  they wait for a deploy preview with staging function variables or a
+  live run.
+- Rotate the demo account password (in public git history). Claude's
+  attempt on 2026-11-01 was blocked by the app's permission layer, so it
+  stays Ian's: Supabase, Authentication, Users, demo@batchdapp.com.
 - Confirm the shared secrets match on both Netlify sites (the connector
   cannot read site-level variables). SCHEDULED_FUNCTIONS_DISABLED is
   settled: batchd-app skips, www runs (2026-10-28).

@@ -15,7 +15,9 @@ test('an active admin signs in to the dashboard and sees the organization', asyn
 test('a deactivated member is locked out of the dashboard and the scanner', async ({ page }) => {
   await dashboardSignIn(page, DEACTIVATED);
   await expect(page.getByText('Account deactivated')).toBeVisible();
-  await page.evaluate(() => sb.auth.signOut());
+  // Local scope only: the default (global) sign-out revokes every session of
+  // the shared test account, including a person clicking through a preview.
+  await page.evaluate(() => sb.auth.signOut({ scope: 'local' }));
   await scannerSignIn(page, DEACTIVATED, null);
   await expect(page.getByText('Account deactivated')).toBeVisible();
 });

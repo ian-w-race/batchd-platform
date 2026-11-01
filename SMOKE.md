@@ -312,3 +312,9 @@ not repeated here.
     shared secret). On the dashboard, push a drill recall: the recall
     email arrives. If either email is missing, the secret is not set under
     INTERNAL_NOTIFY_SECRET on that site.
+
+## Run log
+
+- 2026-11-01, Claude, local static server against the staging database:
+  10, 11, 12, 13, 17, 18, 19, 20, 46, 47 pass. 48 and 49 not run (no
+  functions locally). Detail in docs/CHANGELOG.md.
