@@ -81,6 +81,17 @@ how it was verified and what is still unverified. Everything before
   of the whole list, so the scanner's event-based matcher only fires on a
   scan carrying the whole list (CLAUDE.md, code known and not fixed).
 
+## 2026-11-01 (plan decisions recorded)
+- Ian answered the decision lists of docs/PLATFORM-IMPROVEMENT-PLAN.md
+  and docs/PORTALS-PLAN.md: every recommendation accepted; Supabase Pro
+  off until further notice; push notifications only; the build step
+  approved; USDA FSIS later. Still open: improvement plan 5 (where the
+  complaint, consumer-notify and investigations panels live), 6 (plan
+  order versus recall engine first), 7 (an inbound recall-notice email
+  address), and portals plan 7 (who pays). The four manufacturer orgs
+  in production were checked read-only and are April test data. Docs
+  only; no code.
+
 ## 2026-11-01 (closing a recall: dialog, Active tab, deep link)
 - Mark complete on Live Recall used prompt(), which the dashboard
   convention forbids and some embedded browsers refuse, so the button did
