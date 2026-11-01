@@ -47,7 +47,12 @@ export async function centralSignIn(page, email, app) {
   await page.locator('#email').fill(email);
   await page.locator('#password').fill(PASSWORD);
   await page.locator('#signin-btn').click();
+  // Wait until the router has opened the app (path, not the ?app= query).
+  if (app) await page.waitForURL((u) => new URL(u).pathname === '/' + app);
 }
+
+// True when the page is on that app's path (ignores ?app= on /login).
+export const onPath = (path) => (u) => new URL(u).pathname === path;
 
 export async function scannerSignIn(page, email, storeName = 'QA Store 1') {
   await centralSignIn(page, email, 'scan');
