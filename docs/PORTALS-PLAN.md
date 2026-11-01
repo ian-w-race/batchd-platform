@@ -542,7 +542,8 @@ Why everything has to sit on one web address:
   batchd-app.netlify.app and Retail is on corporate.batchdapp.com, so a
   login on one does not carry to the other, and a separate login site
   would sign you in to neither.
-- So all apps move under one domain with paths. Recommended (Q15):
+- So all apps move under one domain with paths, on app.batchdapp.com
+  (Ian, 2026-11-01, Q15):
   - `app.batchdapp.com/` the sign-in page and router (new file
     `login.html`)
   - `app.batchdapp.com/retail` today's dashboard.html
@@ -908,7 +909,9 @@ daily-use win for distributors. Phases 6 to 8 complete the chain.
 ## 6. Decisions Ian must make
 
 Each one has a recommendation. Building waits on Q1, Q3, Q4 and Q5 at
-minimum, and Phase 2a also waits on Q15.
+minimum for the portal phases. Phase 2a has everything it needs (Q2, Q15
+and Q16 are settled) and can start once this plan is merged; it follows
+the Q17 recommendation unless Ian says otherwise.
 
 1. **One portal or two?** One page, `portal.html`, that shows manufacturer
    or distributor screens by org type, or two separate pages.
@@ -965,9 +968,9 @@ minimum, and Phase 2a also waits on Q15.
     lot on hold, the portal either refuses a shipment of it or warns and
     lets it through. Recommended: refuse, with an admin override that
     records a written reason (some holds are released after testing).
-15. **Which address do all the apps share?** app.batchdapp.com (already
-    attached to the site, no DNS work), or a new name such as
-    my.batchdapp.com. Recommended: app.batchdapp.com.
+15. **Which address do all the apps share?** SETTLED 2026-11-01 (Ian):
+    app.batchdapp.com. It is already attached to the site, so no DNS work
+    is needed.
 16. **How many phones have the scanner installed today, and whose?**
     SETTLED 2026-11-01 (Ian): only Batch'd's own test phones. No store
     uses it, so the move in Phase 2a needs no date agreed with a customer
