@@ -1202,58 +1202,15 @@ let _session = null, _orgId = null, _orgName = '', _orgRegion = 'us', _orgDefaul
 // checked against fda.gov and the eCFR structure of 21 CFR Part 1 Subpart S
 // on 2026-09-29 (implementation handoff, section 9). The NO branch is frozen
 // and keeps its existing literals; do not add to it.
-const _CITATIONS = {
-  us: {
-    rule:           'FSMA 204',
-    subpart:        '21 CFR Part 1 Subpart S',
-    plan:           '21 CFR 1.1315',      // traceability plan
-    receivingKde:   '21 CFR 1.1345',      // receiving key data elements
-    availability:   '21 CFR 1.1455(c)',   // records to the FDA within 24 hours ((c)(1)), sortable spreadsheet ((c)(3))
-    retention:      '21 CFR 1.1455(d)',   // two-year retention. Verified on eCFR 2026-10-07; Phase 0 had (a), which is the general records paragraph.
-    exemptions:     '21 CFR 1.1305',
-    recallNotify:   '21 CFR 7.46',        // the recalling firm notifies the FDA
-    recallComms:    '21 CFR 7.49',        // recall communications
-    recallEnd:      '21 CFR 7.55',        // recall termination
-    complianceDate: 'July 20, 2028',
-    // Retail stores are not registered facilities and owe no Reportable Food
-    // Registry filing. This sentence replaces every "file with the RFR"
-    // instruction the product used to show retailers.
-    rfrRetail: 'Retail stores do not file with the FDA Reportable Food Registry; that duty belongs to registered facilities. For a recall in progress, the recalling firm notifies the FDA district recall coordinator (21 CFR 7.46). Your job is to pull, hold and document.',
-    // Phase 5 (2026-10-07): shown instead of rfrRetail when the organization says it
-    // operates a registered facility (organisations.operates_registered_facility).
-    rfrFacility: 'Your organization operates a registered facility, so the Reportable Food Registry applies to it: a registered facility reports within 24 hours of determining that a food is a reportable food (FD&C Act section 417). Your stores still pull, hold and document, and for a recall in progress the recalling firm notifies the FDA district recall coordinator (21 CFR 7.46).',
-  },
-};
+// Citations come from src/shared/fsma.js (A2 part 2, 2026-11-01); this is the
+// dashboard's view of them.
+const _CITATIONS = { us: Batchd.fsma.CITATIONS_US };
 
 // Phase 5 (2026-10-07): FSMA 204 applicability for retail food establishments.
-// Thresholds come from the retail food establishment exemption in 21 CFR
-// 1.1305(i) (no more than $250,000) and the sortable-spreadsheet exemption in
-// 21 CFR 1.1455(c)(3)(iii) (no more than $1 million), both "average annual
-// monetary value of food sold or provided during the previous 3-year period (on
-// a rolling basis), adjusted for inflation using 2020 as the baseline year".
-// Verified against the eCFR text (LII and govinfo mirrors) on 2026-10-07. The
-// FDA's "FSMA Inflation Adjusted Cut Offs" page (updated 2026-05-13) says it
-// intends to post adjusted values for this rule in a future update and lists
-// none yet, so the bands use the amounts as written. When the FDA posts them,
-// this constant and the copies in signup.html and index.html change together.
-const _FSMA_APPLICABILITY = {
-  bands: [
-    { key: 'under_250k',  label: 'Under $250,000',             applicability: 'exempt' },
-    { key: '250k_to_1m',  label: '$250,000 to $1 million',      applicability: 'covered_no_spreadsheet' },
-    { key: '1m_to_10m',   label: '$1 million to $10 million',   applicability: 'covered' },
-    { key: 'over_10m',    label: 'Over $10 million',            applicability: 'covered' },
-    { key: 'undisclosed', label: 'Prefer not to say',           applicability: 'unknown' },
-  ],
-  labels: { exempt: 'Likely exempt', covered_no_spreadsheet: 'Covered, no spreadsheet duty', covered: 'Covered', unknown: 'Not yet answered' },
-  copy: {
-    exempt: "Based on your sales band, your store is likely exempt from the FSMA 204 record-keeping requirements. Lot-level receiving records still cut recall time and protect you if a supplier's records are wrong, which is why Batch'd keeps them anyway.",
-    covered_no_spreadsheet: "Your store is covered by FSMA 204 and must keep receiving records and a traceability plan, and still has to make records available within 24 hours of an FDA request, but is not required to produce them as an electronic sortable spreadsheet. Batch'd produces the spreadsheet anyway so the request is a one-click answer.",
-    covered: "Your store is covered by FSMA 204. Receiving records, a traceability plan and the ability to produce a sortable spreadsheet within 24 hours are required from July 20, 2028.",
-    unknown: "Tell Batch'd your annual food sales band in Settings and it will say which FSMA 204 requirements apply to your stores.",
-  },
-  closing: "Batch'd supports FSMA 204 record keeping. It does not by itself constitute compliance.",
-  thresholdNote: "Bands follow 21 CFR 1.1305(i) ($250,000, exempt) and 1.1455(c)(3)(iii) ($1 million, no electronic spreadsheet duty): average annual food sales over the previous three years, in 2020 dollars adjusted for inflation. The FDA had not published adjusted figures for this rule as of May 2026, so the bands use the amounts as written.",
-};
+// Bands, labels, copy, closing line and the threshold note live in
+// src/shared/fsma.js (A2 part 2, 2026-11-01); only the "not yet answered"
+// sentence is the dashboard's own, because it speaks to the corporate admin.
+const _FSMA_APPLICABILITY = Batchd.fsma.applicabilityTable("Tell Batch'd your annual food sales band in Settings and it will say which FSMA 204 requirements apply to your stores.");
 function fsmaApplicabilityFor(band) { return (_FSMA_APPLICABILITY.bands.find(b => b.key === band) || {}).applicability || 'unknown'; }
 function fsmaApplicabilityCopy(app) { return (_FSMA_APPLICABILITY.copy[app] || _FSMA_APPLICABILITY.copy.unknown) + ' ' + _FSMA_APPLICABILITY.closing; }
 // Reportable Food Registry guidance, gated on the registered-facility answer.
@@ -7475,26 +7432,13 @@ async function renderCommandCenter() {
 // is missing (migration 023 not applied) the export still produces shelf-scan rows
 // and says so on the cover.
 // ══════════════════════════════════════════════════════════════
-const FSMA204_EXPORT_HEADERS = [
-  'Traceability Lot Code', 'Product Description', 'GTIN', 'Quantity', 'Unit of Measure',
-  'Immediate Previous Source: Business Name', 'Immediate Previous Source: Phone',
-  'Immediate Previous Source: Address', 'Immediate Previous Source: City',
-  'Immediate Previous Source: State', 'Immediate Previous Source: Zip', 'Immediate Previous Source: Country',
-  'Receiving Location: Business Name', 'Receiving Location: Phone', 'Receiving Location: Address',
-  'Receiving Location: City', 'Receiving Location: State', 'Receiving Location: Zip',
-  'Date Received', 'Time Received (local)', 'TLC Source Type', 'TLC Source Reference',
-  'Reference Document Type', 'Reference Document Number', 'FTL Category', 'Record ID', 'Notes',
-];
-const FSMA204_EXPORT_DISCLAIMER = "Prepared with Batch'd. Batch'd supports FSMA 204 record keeping; the responsibility for the records remains with the business.";
+const FSMA204_EXPORT_HEADERS = Batchd.fsma.FSMA204_EXPORT_HEADERS;   // the 27 columns live in src/shared/fsma.js
+const FSMA204_EXPORT_DISCLAIMER = Batchd.fsma.FSMA204_EXPORT_DISCLAIMER;
 const FSMA204_GAP_NOTE = 'Shelf placement only, no receiving record';
 
-function _fsmaCsvCell(v) {
-  const s = v == null ? '' : String(v);
-  const safe = /^[=@+]|^-\s*[A-Za-z(]/.test(s) ? "'" + s : s;   // formula guard; a leading + (phone numbers) is quoted too, negative numbers untouched
-  return /[",\n\r]/.test(safe) ? '"' + safe.replace(/"/g, '""') + '"' : safe;
-}
-function _fsmaLocalDate(d) { const dt = new Date(d); const pad = n => String(n).padStart(2, '0'); return isNaN(dt) ? '' : `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`; }
-function _fsmaLocalTime(d) { const dt = new Date(d); const pad = n => String(n).padStart(2, '0'); return isNaN(dt) ? '' : `${pad(dt.getHours())}:${pad(dt.getMinutes())}`; }
+const _fsmaCsvCell = Batchd.fsma.csvCell;   // formula guard and escaping, shared
+const _fsmaLocalDate = Batchd.fsma.localDate;
+const _fsmaLocalTime = Batchd.fsma.localTime;
 function _fsmaSanitizeFilter(s) { return String(s || '').replace(/[,()%]/g, ' ').trim(); }
 
 // Pure: turns loaded data into sheet rows. Tested in isolation.
@@ -13788,7 +13732,7 @@ function renderTerminology() {
           _CITATIONS.us.receivingKde) : ''}
         ${isUS ? term('Records request (24 hours)',
           'When the FDA asks, records must be available within 24 hours, and for most covered businesses as an electronic sortable spreadsheet.',
-          `Batch\'d produces the 27-column export from Compliance (the timed records request drill), from a Live Recall, or from Reports. Stores with no more than $1 million in average annual food sales may provide records in another format but still within 24 hours (${_CITATIONS.us.availability}).`,
+          `Batch\'d produces the 27-column export from Compliance (the timed records request drill), from a Live Recall, or from Reports. Stores with no more than ${Batchd.fsma.THRESHOLDS.spreadsheet} in average annual food sales may provide records in another format but still within 24 hours (${_CITATIONS.us.availability}).`,
           _CITATIONS.us.availability) : ''}
         ${term('Scan record',
           'A single entry in the Batch\'d traceability database created when a staff member completes a shelf placement scan.',
@@ -14553,7 +14497,7 @@ let _supplierLastUsed = {};     // supplier id -> newest received_at
 let _supplierShowInactive = false;
 let _supplierToggleTouched = false;   // Phase 6: suggested seeds show until the user toggles
 
-function supplierIsComplete(s) { return !!(s && s.name && s.phone && s.street_address && s.city && s.region && s.postal_code); }
+function supplierIsComplete(s) { return Batchd.fsma.supplierIsComplete(s); }   // rule shared with the scanner
 function supplierCanEdit() { return _userRole === 'corp_admin' || _userRole === 'store_manager'; }
 function supplierNormalizeState(v) {
   const t = String(v || '').trim(); if (!t) return null;

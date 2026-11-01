@@ -83,15 +83,17 @@ work. Never give Ian partial diffs or snippets to paste in by hand.
   covers syntax of every inline script and function, that every app page
   loads the shared bundle before its Supabase client and keeps no local
   database block, that the site builds into dist/ with no private file,
-  anon-only keys in pages and src/shared, identical
-  FSMA204_EXPORT_HEADERS, agreeing citation tables, the
-  supplier completeness fields, the FSMA dollar thresholds across
-  dashboard, signup and scanner, and forced 404s for private paths. The
-  tests cover the database switch, the escalation job's duplicate
-  protection, parseGS1 and detectFtlCategory (loaded straight from
-  index.html). When the FDA publishes inflation-adjusted thresholds,
-  change all three files together or the check fails. When CLAUDE.md says "keep X in step",
-  add a check there. Run both locally before opening a pull request.
+  anon-only keys in pages and src/shared, that the FSMA rules (export
+  headers, citations, applicability, thresholds, supplier completeness,
+  CSV guard) exist only in src/shared/fsma.js and the pages read them
+  through Batchd.fsma, and forced 404s for private paths. The tests cover
+  the database switch and the FSMA module (tests/shared-fsma.test.mjs),
+  the escalation job's duplicate protection, parseGS1 and
+  detectFtlCategory (loaded straight from index.html). When the FDA
+  publishes inflation-adjusted thresholds, change THRESHOLDS and the band
+  labels in src/shared/fsma.js only. When CLAUDE.md says "keep X in
+  step", put X in src/shared and add a check. Run both locally before
+  opening a pull request (`npm run check`).
 - Verification standard beyond that: Node tests with stubbed clients,
   local previews in both themes, rolled-back SQL checks as real roles.
   None of that proves behavior in a live session; say so when reporting.
@@ -184,9 +186,15 @@ visits in the week before, per Netlify observability); netlify.toml 301s
 both to batchd.no. Check observability traffic before removing any other
 page.
 Shared code (A2, since 2026-11-01): `src/shared/env.js` (database
-selection, links, staging badge) and `src/shared/index.js` (the bundle
-entry), built by `scripts/build.mjs` into `dist/assets/batchd-shared.js`.
-`dist/` is build output, ignored by git.
+selection, links, staging badge), `src/shared/fsma.js` (the FSMA 204
+rules: export headers, citations, applicability bands and copy,
+thresholds, supplier completeness, CSV cell guard, local date and time)
+and `src/shared/index.js` (the bundle entry, exposes `window.Batchd.env`
+and `window.Batchd.fsma`), built by `scripts/build.mjs` into
+`dist/assets/batchd-shared.js`. `dist/` is build output, ignored by git.
+Per-surface wording (the "not yet answered" sentence, the store-staff
+version of the registered-facility sentence) is passed in by the page
+through `applicabilityTable()` and `citationTable()`.
 Not app files: README.md, SCHEMA.md, SECRETS.md, SMOKE.md, docs/,
 migrations/, fonts/, netlify/, netlify.toml, package.json (pins
 @supabase/supabase-js 2.112.1 for the functions, esbuild 0.28.2 for the
@@ -470,32 +478,39 @@ pov once and refuses to run again.
 Phases 0 to 8 of the handoff are built, deployed and backed by applied
 migrations (022 to 026, 028 to 030). Full detail per phase:
 docs/HISTORY.md.
-- Citations: `_CITATIONS.us` (dashboard const; `window._CITATIONS` in
-  the scanner). Every surface reads through it. Retention is
+- Citations: `Batchd.fsma.CITATIONS_US` (src/shared/fsma.js), read by
+  the dashboard as `_CITATIONS.us` and by the scanner as
+  `window._CITATIONS.us` (with `RFR_FACILITY_STORE` as its
+  registered-facility wording). Every surface reads through it. Retention is
   21 CFR 1.1455(d), availability 1.1455(c), receiving KDEs 1.1345, plan
   1.1315, exemptions 1.1305, recall 7.46, 7.49, 7.55. A registered
   facility gets the Reportable Food Registry sentence (`rfrCopy()`,
   gated on operates_registered_facility); a retail store gets "the
   recalling firm notifies the FDA; the store pulls, holds and documents".
-- Applicability bands and copy: `_FSMA_APPLICABILITY` (dashboard),
-  `_FSMA_BANDS` and `_FSMA_COPY` (signup), `window._FSMA_APPLICABILITY_COPY`
-  (scanner). Keep the three in step. $250,000 (1.1305(i)) and $1 million
-  (1.1455(c)(3)(iii)) are 2020 dollars; the FDA has not published adjusted
-  figures for this rule yet. When it does, change all three together.
+- Applicability bands and copy: `Batchd.fsma.applicabilityTable(unknown)`
+  in src/shared/fsma.js (bands, labels, copy, closing, threshold note),
+  read as `_FSMA_APPLICABILITY` (dashboard), `_FSMA_TABLE`, `_FSMA_BANDS`
+  and `_FSMA_COPY` (signup, which also renders its sales band options
+  from `APPLICABILITY_BANDS`) and `window._FSMA_APPLICABILITY_COPY`
+  (scanner). Only the "not yet answered" sentence differs per page.
+  $250,000 (1.1305(i)) and $1 million (1.1455(c)(3)(iii)) are 2020
+  dollars (`THRESHOLDS`); the FDA has not published adjusted figures for
+  this rule yet. When it does, change them in the module only.
 - Receiving: receiving_events (migration 023) is the Receiving CTE.
   Scanner Receiving mode (`rcv*` functions), dashboard Receiving panel
   (wholesaler file import, status 'expected', confirmed in the scanner).
   scans.receiving_event_id links a shelf scan to its delivery. Statuses:
   expected, received, rejected. No client DELETE on this table.
-- Completeness rule: supplier name, phone, street, city, state, ZIP.
-  `supplierIsComplete` (dashboard) and `_rcvSupplierComplete` (scanner)
-  must match. The four record checks (supplier location, lot or exempt
+- Completeness rule: supplier name, phone, street, city, state, ZIP, in
+  `Batchd.fsma.supplierIsComplete`; `supplierIsComplete` (dashboard) and
+  `_rcvSupplierComplete` (scanner) are aliases of it. The four record checks (supplier location, lot or exempt
   source, quantity and unit, reference document) are shared by
   loadComplianceData and the scanner's renderFsmaReadiness.
 - Export: `buildFsma204Records(scope)` and `downloadFsma204Export`
-  (dashboard), `fsmaExport` (scanner). `FSMA204_EXPORT_HEADERS` must be
-  identical in both files. Cells are formula-safe. Used by the records
-  request drill, Live Recall, the Reports panel and the scanner.
+  (dashboard), `fsmaExport` (scanner). The 27 `FSMA204_EXPORT_HEADERS`,
+  the disclaimer and the formula-safe `csvCell` come from
+  src/shared/fsma.js. Used by the records request drill, Live Recall, the
+  Reports panel and the scanner.
 - FTL detection: `FTL_CATEGORIES` in the scanner with optional `exclude`
   regexes. Resolution order: ftl_overrides by GTIN, by normalized name,
   products_public.is_ftl, then the name regex. If you see `^H` (0x08) in

@@ -110,60 +110,34 @@ check('Only anon Supabase keys in pages and src/shared', () => {
   return [...found].map(([ref, n]) => `${ref} x${n}`).join(', ');
 });
 
-// 5. FSMA 204 export columns are identical in the dashboard and the scanner.
-check('FSMA204_EXPORT_HEADERS identical in dashboard and scanner', () => {
-  const get = (f) => {
+// 5. The FSMA 204 rules live only in src/shared/fsma.js (A2 part 2,
+// 2026-11-01): export headers, citations, applicability bands and copy, dollar
+// thresholds, the supplier completeness rule and the CSV cell guard. The pages
+// read them through Batchd.fsma; a copy pasted back into a page fails here.
+check('FSMA rules come only from src/shared/fsma.js', () => {
+  const PAGES = ['dashboard.html', 'index.html', 'signup.html'];
+  const LOCAL = [
+    'const FSMA204_EXPORT_HEADERS = [', 'const _CITATIONS = {\n', 'window._CITATIONS = {\n',
+    'const _FSMA_APPLICABILITY = {\n', 'window._FSMA_APPLICABILITY_COPY = {\n', 'const _FSMA_COPY = {',
+    'const _FSMA_BANDS = {', 'function _fsmaCsvCell(', 'return !!(s && s.name && s.phone', 'return !!(x && x.name && x.phone',
+    'FSMA204_EXPORT_DISCLAIMER = "',
+  ];
+  let uses = 0;
+  for (const f of PAGES) {
     const s = read(f);
-    const m = s.match(/const FSMA204_EXPORT_HEADERS = (\[[\s\S]*?\]);/);
-    if (!m) throw new Error(`${f}: FSMA204_EXPORT_HEADERS not found`);
-    return JSON.stringify(new Function(`return ${m[1]}`)());
-  };
-  const a = get('dashboard.html'), b = get('index.html');
-  if (a !== b) throw new Error('header lists differ');
-  return `${JSON.parse(a).length} columns`;
-});
-
-// 6. Regulatory citations agree between the dashboard and the scanner.
-check('US citation table agrees in dashboard and scanner', () => {
-  const get = (f, marker) => {
-    const s = read(f);
-    const a = s.indexOf(marker);
-    if (a < 0) throw new Error(`${f}: ${marker} not found`);
-    const body = s.slice(a, s.indexOf('rfrRetail', a));
-    const map = {};
-    for (const m of body.matchAll(/^\s*(\w+):\s*'([^']*)'/gm)) map[m[1]] = m[2];
-    return map;
-  };
-  const d = get('dashboard.html', 'const _CITATIONS = {');
-  const i = get('index.html', 'window._CITATIONS = {');
-  const keys = Object.keys(d);
-  const bad = keys.filter((k) => d[k] !== i[k]);
-  if (bad.length) throw new Error(bad.map((k) => `${k}: dashboard "${d[k]}" vs scanner "${i[k]}"`).join('; '));
-  return `${keys.length} citations`;
-});
-
-// 7a. The supplier "complete location" rule matches in dashboard and scanner.
-check('Supplier completeness fields match in dashboard and scanner', () => {
-  const fields = (f, name) => {
-    const m = read(f).match(new RegExp(`function ${name}\\((\\w+)\\) \\{ return !!\\(([^;]*)\\);`));
-    if (!m) throw new Error(`${f}: ${name} not found`);
-    return [...m[2].matchAll(new RegExp(`${m[1]}\\.(\\w+)`, 'g'))].map((x) => x[1]).sort().join(',');
-  };
-  const d = fields('dashboard.html', 'supplierIsComplete');
-  const i = fields('index.html', '_rcvSupplierComplete');
-  if (d !== i) throw new Error(`dashboard [${d}] vs scanner [${i}]`);
-  return d;
-});
-
-// 7b. FSMA 204 dollar thresholds agree across the dashboard, signup and scanner.
-check('FSMA dollar thresholds agree in dashboard, signup and scanner', () => {
-  const amounts = (f) => new Set(read(f).match(/\$\d[\d,]*(?:,000| million)/g) || []);
-  const d = amounts('dashboard.html'), s = amounts('signup.html'), i = amounts('index.html');
-  const fmt = (x) => [...x].sort().join(', ') || 'none';
-  if (fmt(d) !== fmt(s)) throw new Error(`dashboard {${fmt(d)}} vs signup {${fmt(s)}}`);
-  const extra = [...i].filter((x) => !d.has(x));
-  if (extra.length) throw new Error(`scanner mentions ${extra.join(', ')} which the dashboard does not`);
-  return fmt(d);
+    for (const l of LOCAL) if (s.includes(l)) throw new Error(`${f}: still defines "${l.trim()}" locally; it belongs in src/shared/fsma.js`);
+    const dollars = s.match(/\$\d[\d,]*(?:,000| million)/g) || [];
+    if (dollars.length) throw new Error(`${f}: dollar thresholds ${dollars.join(', ')} must come from Batchd.fsma.THRESHOLDS`);
+    const n = (s.match(/Batchd\.fsma\./g) || []).length;
+    if (!n) throw new Error(`${f}: does not read Batchd.fsma`);
+    uses += n;
+  }
+  const mod = read('src/shared/fsma.js');
+  const headers = (mod.match(/export const FSMA204_EXPORT_HEADERS = Object\.freeze\(\[([\s\S]*?)\]\);/) || [])[1];
+  if (!headers) throw new Error('src/shared/fsma.js: FSMA204_EXPORT_HEADERS not found');
+  const count = (headers.match(/"/g) || []).length / 2;
+  if (count !== 27) throw new Error(`src/shared/fsma.js: ${count} export columns, expected 27`);
+  return `${PAGES.length} pages, ${uses} reads, 27 columns`;
 });
 
 // 7c. Every function reads its database from SUPABASE_URL, so deploy previews

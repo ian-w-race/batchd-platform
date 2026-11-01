@@ -5758,35 +5758,12 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 // on 2026-09-29 (implementation handoff, section 9). The NO branch is frozen
 // and keeps its existing literals; do not add to it. Declared on window so
 // every script block in this file can read it.
-window._CITATIONS = {
-  us: {
-    rule:           'FSMA 204',
-    subpart:        '21 CFR Part 1 Subpart S',
-    plan:           '21 CFR 1.1315',
-    receivingKde:   '21 CFR 1.1345',
-    availability:   '21 CFR 1.1455(c)',
-    retention:      '21 CFR 1.1455(d)',   // verified on eCFR 2026-10-07; Phase 0 had (a)
-    exemptions:     '21 CFR 1.1305',
-    recallNotify:   '21 CFR 7.46',
-    recallComms:    '21 CFR 7.49',
-    recallEnd:      '21 CFR 7.55',
-    complianceDate: 'July 20, 2028',
-    rfrRetail: 'Retail stores do not file with the FDA Reportable Food Registry; that duty belongs to registered facilities. For a recall in progress, the recalling firm notifies the FDA district recall coordinator (21 CFR 7.46). Your job is to pull, hold and document.',
-    // Phase 5 (2026-10-07): shown instead when the organization operates a registered facility.
-    rfrFacility: 'Your organization operates a registered facility, so the Reportable Food Registry applies to it: a registered facility reports within 24 hours of determining that a food is a reportable food (FD&C Act section 417). Your job in the store is still to pull, hold and document; for a recall in progress the recalling firm notifies the FDA district recall coordinator (21 CFR 7.46).',
-  },
-};
-// Phase 5 (2026-10-07): applicability copy, same text as dashboard.html's _FSMA_APPLICABILITY.
-window._FSMA_APPLICABILITY_COPY = {
-  labels: { exempt: 'Likely exempt', covered_no_spreadsheet: 'Covered, no spreadsheet duty', covered: 'Covered', unknown: 'Not yet answered' },
-  copy: {
-    exempt: "Based on your sales band, your store is likely exempt from the FSMA 204 record-keeping requirements. Lot-level receiving records still cut recall time and protect you if a supplier's records are wrong, which is why Batch'd keeps them anyway.",
-    covered_no_spreadsheet: "Your store is covered by FSMA 204 and must keep receiving records and a traceability plan, and still has to make records available within 24 hours of an FDA request, but is not required to produce them as an electronic sortable spreadsheet. Batch'd produces the spreadsheet anyway so the request is a one-click answer.",
-    covered: "Your store is covered by FSMA 204. Receiving records, a traceability plan and the ability to produce a sortable spreadsheet within 24 hours are required from July 20, 2028.",
-    unknown: "Your corporate admin has not yet answered the FSMA 204 applicability questions in the dashboard's Settings.",
-  },
-  closing: "Batch'd supports FSMA 204 record keeping. It does not by itself constitute compliance.",
-};
+// Citations come from src/shared/fsma.js (A2 part 2, 2026-11-01). The
+// registered-facility sentence is worded for store staff here.
+window._CITATIONS = { us: Batchd.fsma.citationTable({ rfrFacility: Batchd.fsma.RFR_FACILITY_STORE }) };
+// Phase 5 (2026-10-07): applicability copy, from src/shared/fsma.js; only the
+// "not yet answered" sentence is the scanner's own, because it speaks to store staff.
+window._FSMA_APPLICABILITY_COPY = Batchd.fsma.applicabilityTable("Your corporate admin has not yet answered the FSMA 204 applicability questions in the dashboard's Settings.");
 // ── STATE ───────────────────────────────────────────────────
 let productStream = null;
 let barcodeStream = null;
@@ -13175,28 +13152,15 @@ function printAuditReport() {
 // Generates FDA-format electronic sortable spreadsheet for Receiving CTE
 // Per 21 CFR Part 1 Subpart S — FSMA Food Traceability Rule
 // Phase 4 of the FSMA 204 handoff (2026-10-07): the FDA-shaped Receiving sheet.
-// Twin of buildFsma204Records in dashboard.html; FSMA204_EXPORT_HEADERS must stay
-// identical in both files. Rows come from receiving_events first; shelf scans of
+// Twin of buildFsma204Records in dashboard.html; the 27 columns come from
+// src/shared/fsma.js, so the two exports cannot drift. Rows come from receiving_events first; shelf scans of
 // FTL products with no linked receiving record are listed as gap rows so the
 // store sees what is missing. Degrades to scan rows when migration 023 is absent.
-const FSMA204_EXPORT_HEADERS = [
-  'Traceability Lot Code', 'Product Description', 'GTIN', 'Quantity', 'Unit of Measure',
-  'Immediate Previous Source: Business Name', 'Immediate Previous Source: Phone',
-  'Immediate Previous Source: Address', 'Immediate Previous Source: City',
-  'Immediate Previous Source: State', 'Immediate Previous Source: Zip', 'Immediate Previous Source: Country',
-  'Receiving Location: Business Name', 'Receiving Location: Phone', 'Receiving Location: Address',
-  'Receiving Location: City', 'Receiving Location: State', 'Receiving Location: Zip',
-  'Date Received', 'Time Received (local)', 'TLC Source Type', 'TLC Source Reference',
-  'Reference Document Type', 'Reference Document Number', 'FTL Category', 'Record ID', 'Notes',
-];
-const FSMA204_EXPORT_DISCLAIMER = "Prepared with Batch'd. Batch'd supports FSMA 204 record keeping; the responsibility for the records remains with the business.";
-function _fsmaCsvCell(v) {
-  const s = v == null ? '' : String(v);
-  const safe = /^[=@+]|^-\s*[A-Za-z(]/.test(s) ? "'" + s : s;   // formula guard; a leading + (phone numbers) is quoted too, negative numbers untouched
-  return /[",\n\r]/.test(safe) ? '"' + safe.replace(/"/g, '""') + '"' : safe;
-}
-function _fsmaLocalDate(d) { const dt = new Date(d); const pad = n => String(n).padStart(2, '0'); return isNaN(dt) ? '' : `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`; }
-function _fsmaLocalTime(d) { const dt = new Date(d); const pad = n => String(n).padStart(2, '0'); return isNaN(dt) ? '' : `${pad(dt.getHours())}:${pad(dt.getMinutes())}`; }
+const FSMA204_EXPORT_HEADERS = Batchd.fsma.FSMA204_EXPORT_HEADERS;
+const FSMA204_EXPORT_DISCLAIMER = Batchd.fsma.FSMA204_EXPORT_DISCLAIMER;
+const _fsmaCsvCell = Batchd.fsma.csvCell;   // formula guard and escaping, shared
+const _fsmaLocalDate = Batchd.fsma.localDate;
+const _fsmaLocalTime = Batchd.fsma.localTime;
 
 async function fsmaExport() {
   const fromVal  = document.getElementById('fsma-export-from')?.value;
@@ -17139,7 +17103,7 @@ async function loadSuppliersCache() {
   } catch (e) { console.warn('[receiving] suppliers load failed:', e.message); _suppliers = []; }
   rcvRenderSupplierOptions();
 }
-function _rcvSupplierComplete(x) { return !!(x && x.name && x.phone && x.street_address && x.city && x.region && x.postal_code); }
+function _rcvSupplierComplete(x) { return Batchd.fsma.supplierIsComplete(x); }   // rule shared with the dashboard
 function rcvRenderSupplierOptions() {
   const sel = _rcvEl('rcv-supplier'); if (!sel) return;
   const current = sel.value;

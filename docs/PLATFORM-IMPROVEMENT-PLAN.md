@@ -14,9 +14,10 @@ backups until he revisits decision 1 below.
 Phase 2: F5 (retired screens and copy) shipped 2026-11-01 with the
 ?legacy=1 removal; A2 started the same day with the esbuild build step
 (Netlify publishes dist/) and the first shared module, the database
-selection block. Next for A2: the FSMA rules, then the parsers and the
-recall matcher, then the design tokens; panel splitting waits for the
-redesign. B1 and B2 from Phase 3 shipped early on 2026-10-25 (supplier
+selection block; part 2 (same day) moved the FSMA rules (export headers,
+citations, applicability, thresholds, supplier completeness, CSV guard)
+into src/shared/fsma.js. Next for A2: the parsers and the recall matcher,
+then the design tokens; panel splitting waits for the redesign. B1 and B2 from Phase 3 shipped early on 2026-10-25 (supplier
 notice intake and lot-level matching). docs/CHANGELOG.md has the detail.
 
 ## 1. What Batch'd has to be able to do

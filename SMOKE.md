@@ -418,6 +418,19 @@ not repeated here.
     with no badge and the same bundle request; CLAUDE.md, SMOKE.md and
     /netlify/lib/auth.js still answer 404.
 
+## Shared FSMA rules (2026-11-01, A2 part 2)
+
+60. On the preview: Retail, Compliance shows the applicability sentence and
+    the FDA authority card as before; Settings, Organization lists the five
+    sales bands; Reports and Exports, the FSMA 204 export opens with the 27
+    columns and a phone number starting with + is quoted; Terminology &
+    Help still cites 21 CFR 1.1455(c) and names the $1 million figure. In
+    the scanner, the manager's FSMA tab shows the "What applies to you"
+    banner and the receiving CSV export still opens cleanly in a
+    spreadsheet. On /signup the "Annual food sales" dropdown lists the
+    same five bands and shows the applicability sentence when one is
+    picked. Nothing reads differently from before.
+
 ## Run log
 
 - 2026-11-01, Claude, local static server against the staging database:
