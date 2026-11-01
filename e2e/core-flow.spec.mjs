@@ -15,12 +15,21 @@ test.skip(!PASSWORD, 'E2E_PASSWORD is not set');
 test.describe.configure({ mode: 'serial' });
 let recallEventId = null;
 
-// A fresh lot per attempt: on a retry the whole serial chain reruns, and a
-// reused lot would hit the duplicate-scan prompt and an existing recall.
+// A fresh lot and product name per attempt. On a retry the whole serial
+// chain reruns, and a reused lot would hit the duplicate-scan prompt and an
+// existing recall. The product name carries the same tag because several
+// previews run this suite on the shared staging org at the same time, and a
+// live recall from another run for the same product name would show the
+// pre-placement warning for a lot it never named.
 let LOT = '';
-test.beforeAll(() => { LOT = 'E2E' + Date.now().toString(36).toUpperCase(); recallEventId = null; });
+let PRODUCT = '';
+test.beforeAll(() => {
+  const tag = Date.now().toString(36).toUpperCase();
+  LOT = 'E2E' + tag;
+  PRODUCT = `E2E Peanut Butter ${tag} 16 oz`;
+  recallEventId = null;
+});
 const GTIN = '00812345000016';
-const PRODUCT = 'E2E Creamy Peanut Butter 16 oz';
 const STORE = 'QA Store 1';
 
 // Stand in for the camera: a label photo blob, then the product name typed.
@@ -47,7 +56,7 @@ test('1. a delivery is recorded from a GS1 label string with its lot and GTIN', 
   await page.locator('#rcv-raw').dispatchEvent('change');
   await expect(page.locator('#rcv-lot')).toHaveValue(LOT);
   await expect(page.locator('#rcv-gtin')).toHaveValue(/812345000016/);
-  if (!(await page.locator('#rcv-product').inputValue())) await page.fill('#rcv-product', PRODUCT);
+  await page.fill('#rcv-product', PRODUCT);
   await page.fill('#rcv-qty', '5');
   await page.click('#rcv-btn-save');
   await expect.poll(async () => page.evaluate(async (l) => {
