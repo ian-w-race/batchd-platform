@@ -58,7 +58,7 @@ how it was verified and what is still unverified. Everything before
   on the pull request's deploy preview. Not verified: a real failed send recorded on production, and the
   Monday email itself (first one 2026-11-02 07:00 UTC; SMOKE.md 53).
 - Not done from Phase 1: A1 Supabase Pro (daily backups, leaked-password
-  protection), Ian's purchase decision.
+  protection). Ian decided "not now" on 2026-11-01; the free plan stays.
 
 ## 2026-11-01 (smoke checks 48 and 51 on production)
 - SMOKE.md 48 and 51 run by Claude in the built-in browser on
