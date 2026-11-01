@@ -568,9 +568,9 @@ What the move costs, and why now:
   address with a short "Batch'd has moved, add it to your home screen
   again" screen. Nothing queued is lost.
 - CLAUDE.md already says to settle the scanner's address before the first
-  design partner installs it. How many phones have it installed today
-  needs verification with Ian (Q16). If the answer is "only ours", this is
-  the cheapest the move will ever be.
+  design partner installs it. Ian confirmed on 2026-11-01 that only
+  Batch'd's own test phones have it (Q16), so this is the cheapest the
+  move will ever be.
 
 What the rename touches (labels and links, never identifiers):
 - Visible text that says "corporate dashboard" or "Corporate" in the
@@ -908,7 +908,7 @@ daily-use win for distributors. Phases 6 to 8 complete the chain.
 ## 6. Decisions Ian must make
 
 Each one has a recommendation. Building waits on Q1, Q3, Q4 and Q5 at
-minimum, and Phase 2a also waits on Q15 and Q16.
+minimum, and Phase 2a also waits on Q15.
 
 1. **One portal or two?** One page, `portal.html`, that shows manufacturer
    or distributor screens by org type, or two separate pages.
@@ -968,10 +968,12 @@ minimum, and Phase 2a also waits on Q15 and Q16.
 15. **Which address do all the apps share?** app.batchdapp.com (already
     attached to the site, no DNS work), or a new name such as
     my.batchdapp.com. Recommended: app.batchdapp.com.
-16. **How many phones have the scanner installed today, and whose?** If
-    it is only Batch'd's own test phones, the move in Phase 2a costs
-    nothing. If a store already uses it, the move needs a date agreed with
-    that store and someone on site to reinstall.
+16. **How many phones have the scanner installed today, and whose?**
+    SETTLED 2026-11-01 (Ian): only Batch'd's own test phones. No store
+    uses it, so the move in Phase 2a needs no date agreed with a customer
+    and no one on site. The test phones reinstall once. The queue hand-off
+    and the redirect from the old address are still built, because they
+    are cheap and protect anyone who installed it unnoticed.
 17. **Should the chooser remember the last pick?** A retail admin who
     always opens Retail could skip the chooser after the first time.
     Recommended: remember it per device, with a "Switch app" link in every
