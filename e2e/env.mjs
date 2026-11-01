@@ -47,8 +47,15 @@ export async function centralSignIn(page, email, app) {
   await page.locator('#email').fill(email);
   await page.locator('#password').fill(PASSWORD);
   await page.locator('#signin-btn').click();
-  // Wait until the router has opened the app (path, not the ?app= query).
-  if (app) await page.waitForURL((u) => new URL(u).pathname === '/' + app);
+  // Wait until the router has opened the app (path, not the ?app= query),
+  // or has stopped on the deactivated screen.
+  if (app) {
+    // Promise.any: the losing wait rejects later and must not go unhandled.
+    await Promise.any([
+      page.waitForURL((u) => new URL(u).pathname === '/' + app, { timeout: 30_000 }),
+      page.getByRole('heading', { name: 'Account deactivated' }).waitFor({ timeout: 30_000 }),
+    ]);
+  }
 }
 
 // True when the page is on that app's path (ignores ?app= on /login).
@@ -57,19 +64,12 @@ export const onPath = (path) => (u) => new URL(u).pathname === path;
 export async function scannerSignIn(page, email, storeName = 'QA Store 1') {
   await centralSignIn(page, email, 'scan');
   if (storeName) {
-    // Since the central sign-in the scanner opens with a restored session,
-    // so its store dropdown is already filled when the "Where are you
-    // working today?" picker shows.
-    // Target the picker's button by role: a text match also finds the
-    // store dropdown's <option>, which cannot be clicked.
-    const pick = page.getByRole('button', { name: storeName, exact: true }).filter({ visible: true }).first();
-    try {
-      await pick.waitFor({ state: 'visible', timeout: 15_000 });
-      await pick.click();
-    } catch (_) {
-      // No picker: a store chosen in the last 12 hours is reused; make sure it is this one.
-      await page.selectOption('#field-store', { label: storeName });
-    }
+    // The scanner asks "Where are you working today?" whenever no store
+    // was chosen on this device in the last 12 hours, which is always true
+    // in a fresh test browser. Pick the store there (by role: a text match
+    // also finds the hidden dropdown <option>) and wait for the modal to go.
+    await page.getByRole('button', { name: storeName, exact: true }).filter({ visible: true }).first().click({ timeout: 60_000 });
+    await expect(page.locator('#session-store-modal')).toBeHidden();
     await expect.poll(() => page.evaluate(() => (typeof _currentStoreId !== 'undefined' ? _currentStoreId : null) || null)).not.toBeNull();
     // A recall alert may open after sign-in on staging; close it if it does.
     const dismiss = page.getByRole('button', { name: 'Dismiss' }).filter({ visible: true });
