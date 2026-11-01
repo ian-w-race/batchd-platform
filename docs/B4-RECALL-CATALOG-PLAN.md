@@ -6,7 +6,7 @@ with this document. It is item B4 of docs/PLATFORM-IMPROVEMENT-PLAN.md
 (production, 2026-11-01), read-only counts run on production and staging on
 2026-11-01, and a line-by-line inventory of every recall read and write in
 dashboard.html, index.html, the Netlify functions and the migrations made the
-same day. Nothing in sections 3 to 5 starts before Ian answers section 6.
+same day. Ian answered every question in section 6 on 2026-11-01; stage 0 ran the same day and stage 1 followed.
 
 ## 1. What B4 is for
 
@@ -270,17 +270,19 @@ its own commit with the e2e suite run on the preview.
    alerts, with a per-organization "dismiss", or show only entries that
    match the organization's products? Recommended: keep showing all for
    now, add dismiss; B5 adds the "matches what you received" flag and can
-   narrow the default view then.
+   narrow the default view then. Ian: yes, 2026-11-01.
 3. **Mattilsynet**: move the 26 legacy entries into the catalog for the
    existing NO organizations and remove the importer leg (the feed URL has
    answered 404 for weeks)? Recommended: yes. Nothing new is added, which
-   is the frozen-NO rule.
+   is the frozen-NO rule. Ian: yes, 2026-11-01.
 4. **Remove the scanner's own "Fetch FDA / RASFF / Mattilsynet recalls"
    buttons in Settings**, so the server importer is the only writer?
-   Recommended: yes.
+   Recommended: yes. Ian: yes, 2026-11-01.
 5. **Pushed recalls stay in `recall_events`** (section 3.6) rather than
    moving into the catalog in B4? Recommended: yes; the portals build on
-   them and the function hides the difference from the screens.
+   them and the function hides the difference from the screens. Ian: yes,
+   2026-11-01.
 6. **Order**: stage 0 this week; stages 1 to 3 as the next two pull
    requests; stages 4 and 5 as four to six pull requests after that, one
    app at a time. Or hold B4 and do B3 (the manufacturer link) first?
+   Ian: in order, 2026-11-01.
