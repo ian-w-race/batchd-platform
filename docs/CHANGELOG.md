@@ -4,6 +4,50 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-11-01 (smoke checks 48 and 51 on production)
+- SMOKE.md 48 and 51 run by Claude in the built-in browser on
+  app.batchdapp.com after Ian signed in (org Batch'd Admin, plan active,
+  7 stores). Both pass on the server evidence; Ian still has to confirm
+  the emails arrived in his inbox.
+- 51: the drill (lot DRILL-2026-11-01-SMOKE51, Run drill on the Retail
+  dashboard) called notify-event, which answered sent 3, failed 0 for
+  drill_scheduled. The phone complaint logged from a History card in the
+  scanner (CMP-20261101-1f10ef, triage level monitor, 12 s round trip)
+  made triage-complaint call notify-event server to server; the Netlify
+  request log shows that second call at 18:38:08 UTC from a Netlify
+  address with user agent "node" and no browser session, answering 200.
+  Without the shared secret that call answers 403, so
+  INTERNAL_NOTIFY_SECRET is set and matches on the site that serves
+  app.batchdapp.com (gentle-belekoy-be3cb7).
+- 48: the pasted notice (the Holsum spinach tortilla recall from the FDA
+  feed, H-0089-2027, three lots) was accepted (202) and read in about
+  40 s: firm, Class II, reason, instructions, contact, one product with
+  GTIN 810023430629, lots 26187, 26195 and 26210, best-by range
+  2026-10-04 to 2026-10-27. "Your stores" said no delivery or shelf scan
+  matched (the org has none), and the caution box flagged that the notice
+  footer calls itself a smoke check. "Review and push in the composer"
+  filled product, lots and barcode; Classify came prefilled with Class II
+  and Undeclared allergen; Review listed everything; the push created
+  recall event b6d36fc9 (not a drill, on Ian's word), notified 7 stores,
+  notify-event answered sent 3, failed 0 for recall_pushed, Live Recall
+  opened with 7 of 7 notified, and the notice (status pushed) left the
+  list. Claude then closed the recall with the same update Mark complete
+  runs (closed_at, closed_by, closed_note on the event; the three linked
+  recalls rows set inactive) so the 2 h and 24 h escalations do not fire.
+- Found and fixed: the composer's Continue buttons printed the arrow
+  icon's SVG source as text, because _composerNavRow ran esc() over a
+  label that already contained _ico() markup. The label is now inserted
+  as is; all three callers pass a literal string plus the icon.
+- Found, not fixed: Mark complete on Live Recall uses prompt(), which the
+  built-in browser rejects ("prompt() is not supported") and the dashboard
+  convention forbids (use _confirmDialog). After an administrative close
+  the Recalls panel's Active tab still shows the recall as ACTION
+  REQUIRED with "7 stores require action" while the header says 0 active.
+  Opening /retail?panel=recalls directly sat on "Loading recalls..." for
+  more than 10 s on the first try and loaded in about 18 s on the second;
+  opening the panel from the sidebar was quick. The scanner's
+  /.netlify/functions/ocr warm-up answers 204 on production.
+
 ## 2026-11-01 (smoke checks on staging)
 - SMOKE.md 10 to 13, 17 to 20, 46 and 47 run by Claude in the built-in
   browser on `node e2e/static-server.mjs` (localhost:8788, staging
