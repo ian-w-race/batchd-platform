@@ -4,6 +4,32 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-11-01 (B4 stage 1: migration 043, the recall catalog, on staging)
+- migrations/043_recall_catalog.sql adds, without changing anything the apps
+  read today: recall_catalog (each public recall entry once, no
+  organization; active members read, only the service role writes),
+  recall_catalog_org (what one organization did with an entry: reviewed,
+  dismissed, matched; members read, corp admins and store managers write),
+  scan_recall_matches.catalog_id with a partial unique index on (scan_id,
+  catalog_id), batchd_active_recalls(p_org) (SECURITY INVOKER: the one list
+  of active recalls for an organization, manual, pushed and feed in one
+  shape, with the drill, closed-event and linked-row rules inside, every
+  lot of a pushed recall in a lots array, and matched and dismissed flags;
+  a signed-in caller outside the organization gets no rows; anon cannot
+  execute it) and sweep_catalog_matches(p_catalog_id, p_lookback_days)
+  (SECURITY DEFINER, service role only: matches an entry's lots and GTINs
+  against every eligible organization's scans and stamps matched_at).
+  CHECK_MIGRATIONS.sql has a 043 row.
+- Applied to STAGING through the Supabase connector (recorded in
+  supabase_migrations). Verified there: the function returns the QA
+  organization's 11 pushed and 0 manual recalls, the same counts as the
+  old query pair, with the multi-lot push listing both lots; in a
+  rolled-back block a test catalog entry swept 2 scans of the matching lot
+  and stamped matched_at, the corp admin saw the entry as matched and
+  dismissed it, another organization's id returned no rows, the deactivated
+  member got no rows and anon was refused. Not yet applied to production:
+  waits for Ian's go-ahead on the exact file.
+
 ## 2026-11-01 (B4 planned; stage 0 run on production)
 - docs/B4-RECALL-CATALOG-PLAN.md: the build plan for one recall catalog
   (improvement plan B4), from a line-by-line inventory of every recall read

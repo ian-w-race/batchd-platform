@@ -455,6 +455,14 @@ not repeated here.
     carries into the print window. /signup, /join and the admin page are
     unchanged (they keep their own small color sets).
 
+## Migration 043, the recall catalog (B4 stage 1)
+
+63. Nothing changes on screen yet: the catalog is empty until stage 2 and
+    the apps still read the old tables until stages 4 and 5. After the
+    production apply, run migrations/CHECK_MIGRATIONS.sql in the Supabase
+    SQL editor (project lurxucdmrugikdlvvebc): the 043 row reads true, and
+    every earlier row still reads true.
+
 ## Run log
 
 - 2026-11-01, Claude, local static server against the staging database:
