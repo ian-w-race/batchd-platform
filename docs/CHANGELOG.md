@@ -26,8 +26,8 @@ how it was verified and what is still unverified. Everything before
   lock, held during the token refresh at page load. Removed. This is the
   likely cause of "Loading recalls" sitting for 10 to 18 s when
   /retail?panel=recalls was opened straight after sign-in; the deep link
-  was quick in the stubbed preview, but the live timing is not yet
-  measured (needs verification).
+  was quick in the stubbed preview, and after the deploy Ian measured
+  the live one at about 3 s, down from 10 to 18 s.
 - Verified in the stubbed local preview (.claude/app-preview.html built
   from this branch, with a closed, unfinished recall added to the stub
   data): Active hides it and counts 1 store, History shows the CLOSED
