@@ -1,6 +1,8 @@
 # Manufacturer and distributor portals: build plan
 
-Written 2026-10-25. Planning only. No app code and no migrations come with
+Written 2026-10-25, revised 2026-11-01 (recall notices go to
+distributors too, store matching research, two citations verified,
+migration numbers moved past the ones now taken). Planning only. No app code and no migrations come with
 this document. Facts about the database come from
 `docs/SCHEMA-REFERENCE.md` (generated from production on 2026-10-24),
 migrations 020, 038 and 039, `CLAUDE.md`, `docs/HISTORY.md`, and a
@@ -25,8 +27,17 @@ keeping duty under 21 CFR Part 1, Subpart S:
 Manufacturer or packer  ->  Distributor (wholesaler, DC)  ->  Retailer stores
   ships (Shipping CTE)        receives, then ships             receive (Receiving CTE)
   assigns the lot code        keeps the lot code               keeps the lot code
-  starts recalls              forwards recalls                 pulls product
+  starts recalls              holds and stops shipping         pulls product
+        |                                                         ^
+        +---- recall notice goes to BOTH distributors and retailers -+
 ```
+
+How recalls really move (Ian, 2026-11-01): the manufacturer sends its
+recall notice to its retail customers and to its distributors. The
+distributor gets it so it can halt shipments: hold the lot in its
+warehouses and stop it going out to stores. Forwarding to stores is the
+distributor's backup job, for stores the manufacturer does not know
+about.
 
 Batch'd today covers only the right-hand box. Retailers type or scan what
 arrives (receiving_events), import delivery files from wholesalers, and
@@ -39,12 +50,34 @@ partners helps each side fill in its own records faster. It never makes
 one business responsible for another's records. Batch'd copy must keep
 saying "Batch'd supports FSMA 204 record keeping" and never "compliant".
 
-Citations to check against eCFR before any of them reach UI copy: Shipping
-KDEs 21 CFR 1.1340, Receiving KDEs 1.1345, Transformation 1.1350, lot code
-assignment 1.1320, records within 24 hours 1.1455(c). Recall duties:
-21 CFR 7.46, 7.49 and 7.55. A manufacturer runs a registered facility, so
-the Reportable Food Registry sentence (`_CITATIONS.us.rfrFacility`) applies
-to it by default. Needs verification before use: 1.1320 and 1.1350.
+Citations, checked against the eCFR text (law.cornell.edu) on
+2026-11-01:
+- 21 CFR 1.1320, "When must I assign traceability lot codes to foods on
+  the Food Traceability List?": a lot code is assigned only when you
+  initially pack a raw agricultural commodity, do the first land-based
+  receiving of food from a fishing vessel, or transform a food. Paragraph
+  (b): you may not create a new lot code for other activities, such as
+  shipping. So a distributor keeps the manufacturer's lot code; it never
+  makes its own.
+- 21 CFR 1.1340, "What records must I keep and provide when I ship a food
+  on the Food Traceability List?": eight KDEs in (a), and (b) says the
+  shipper must provide (a)(1) to (a)(7) to the next business. The
+  reference document (a)(8) is kept but need not be sent.
+- 21 CFR 1.1345, receiving KDEs.
+- 21 CFR 1.1350, "What records must I keep when I transform a food on the
+  Food Traceability List?": input lots (lot code, description, quantity)
+  and the new output lot (new lot code, where and when transformed,
+  description, quantity, reference document). This is the nut butter
+  maker's duty when peanuts become peanut butter.
+- 21 CFR 1.1455(c), records within 24 hours.
+- Recall duties: 21 CFR 7.46, 7.49 and 7.55.
+- A manufacturer runs a registered facility, so the Reportable Food
+  Registry sentence (`_CITATIONS.us.rfrFacility`) applies to it by
+  default.
+
+A "location description" (1.1310) is the business name, phone number,
+physical address, city, state and ZIP. The rule does not require any
+location code or GLN. That matters for store matching (section 3).
 
 ### Manufacturer portal
 
@@ -59,19 +92,22 @@ Jobs they do:
    (lot code, pack or production date, best-by date).
 2. Record outbound shipments: which lot, how much, shipped to which
    customer and location, on which reference document. This is their
-   Shipping CTE. FSMA 204 also says the shipper must pass the lot code and
-   key data to the next business. The portal does that passing for them.
-3. Start a recall and push it to every customer that received the affected
-   lots, then watch who has acknowledged and pulled.
+   Shipping CTE. 21 CFR 1.1340(b) also says the shipper must pass the lot
+   code and the other shipping KDEs to the next business. The portal does
+   that passing for them.
+3. Start a recall and send the notice to every customer that received the
+   affected lots: retailers and distributors alike. Then watch who has
+   acknowledged, who has put stock on hold, and who has pulled.
 4. Answer a traceback: "which customers got lot X?" in minutes.
 5. Produce their own records for the FDA within 24 hours (a sortable
    spreadsheet), and practice that with a records request drill.
 
 How they exchange data with the retailer side:
 - Pushed recalls: they create a recall_events row and distribute it to
-  linked customers. Retailers already see pushed recalls in the dashboard
-  and the scanner (Path B in scan_recall_matches), so this side needs
-  almost no retailer change.
+  linked customers of both kinds in one step. Retailers already see pushed
+  recalls in the dashboard and the scanner (Path B in scan_recall_matches),
+  so this side needs almost no retailer change. Distributors get the same
+  event in their portal as a hold instruction (see the distributor jobs).
 - Shipments and lot data: each shipment to a linked customer shows up on
   the customer's side as an "expected delivery". That is the same
   receiving_events status 'expected' that Phase 7 built for wholesaler
@@ -102,15 +138,22 @@ Jobs they do:
 3. Ship to stores (Shipping CTE). Most distributors already export a
    shipping file from their own system, so file upload comes first and
    typed entry second.
-4. Forward recalls: when a manufacturer pushes a recall, find which stores
-   got the lots and pass the recall on to those retailers.
-5. Answer tracebacks in both directions and produce records within 24
+4. Halt shipments when a recall arrives. The manufacturer's notice lands
+   in the portal. The distributor sees how much of the lot sits in each
+   DC, marks it on hold, and the portal stops any new shipment of that lot
+   to a store (a warning that needs a written reason to override). It also
+   lists which stores already got the lot.
+5. Forward the recall as a backup: pass it on to the stores on that list
+   that the manufacturer did not already notify.
+6. Answer tracebacks in both directions and produce records within 24
    hours, with both a Receiving sheet and a Shipping sheet.
 
 How they exchange data with the retailer side:
-- Pushed recalls: they forward a manufacturer's recall (same event, so the
-  retailer sees the original manufacturer as the source) or start their
-  own.
+- Pushed recalls: they receive the manufacturer's notice directly, hold
+  stock, and forward the same event to stores the manufacturer missed (so
+  the retailer sees the original manufacturer as the source, and a store
+  that got it both ways sees one recall, not two). They can also start
+  their own recall.
 - Shipments and lot data: the shipping file they upload becomes expected
   deliveries at each linked retailer. That replaces the Phase 7 CSV that
   the retailer imports today. Retailers whose wholesaler is not on Batch'd
@@ -165,8 +208,9 @@ Ian (question Q4).
 | `organisation_api_keys` | sha256-hashed ERP keys, service role only. 3 keys. | Reuse for portal integrations. |
 | `suppliers` (migration 022) | The retailer's own supplier directory with the 1.1345 location fields. | Reuse. Add an optional link from a supplier row to a partner org, so the retailer's directory and the real partner stay one thing. |
 | `receiving_events` (023) | The Receiving CTE. Status expected, received, rejected. Source staff_scan, wholesaler_import, manual_entry. | Reuse for retailers and distributors. Add source 'partner_shipment' and a link to the shipment that created the row. |
-| `stores.external_code` (028) | The wholesaler's ship-to code for a store. | Reuse. It is how a distributor's shipment finds the right store. |
+| `stores.external_code` (028) | One wholesaler ship-to code per store. | Keep for the CSV import. Not enough for the portals: a store that buys from two distributors has two codes. See "Store matching" in section 3. |
 | `records_requests` (026) | FDA records request drill, org-scoped. | Reuse for portal orgs unchanged. |
+| `recall_notices` and `match_recall_notice()` (040, on main since 2026-10-25) | A retailer uploads a recall notice (email or PDF); Claude reads it into fields; match_recall_notice finds matching deliveries and scans by GTIN, lot, lot range, best-by or product words. The source CHECK already allows 'manufacturer_link'. | Reuse. A notice pushed from the manufacturer portal skips the upload and reading steps, and the same matcher runs on it at the retailer and at the distributor. Notices from manufacturers not on Batch'd keep coming in by upload. |
 
 ### Pages and functions
 
@@ -266,8 +310,10 @@ policy must be precise on its own. Two traps:
   `tlc_source_location` fields, `quantity`, `unit_of_measure`, `pack_date`,
   `best_by`.
 - Where to: `ship_to_org_id` (null when the customer is not on Batch'd),
-  `ship_to_code` (matches stores.external_code at the receiver),
-  `ship_to_name` and address fields.
+  `ship_to_code` (the shipper's own customer or store number),
+  `ship_to_gln` (optional), and the full location description: name,
+  phone, street, city, state, ZIP. The location description is what
+  1.1340 requires; the code and GLN are only for matching.
 - `shipped_at`, `reference_document_type`, `reference_document_number`,
   `source` (manual_entry, file_import, api), `import_batch_id`,
   `client_uuid`, `retain_until` (two years, same trigger idea as 023).
@@ -276,8 +322,28 @@ policy must be precise on its own. Two traps:
 - Policies: members of the owner org read and insert; admins and managers
   update; no client delete. Nobody else reads it.
 
+`partner_location_codes` (new). The store matching table (see "Store
+matching" below).
+- `link_id` (partner_links), `store_id` (the receiver's store or DC),
+  `code` (the shipper's number for that location), `confirmed_by`,
+  `confirmed_at`.
+- Unique on (link_id, code) and on (link_id, store_id).
+- Owned by the receiver: the receiver's admins and managers write it, the
+  receiver's members read it. The shipper never reads it; it only sees
+  "matched" or "not matched" on its own shipment rows, through
+  publish_shipments.
+
+`recall_holds` (new). A distributor's hold on a recalled lot.
+- `organisation_id` (the distributor), `recall_event_id`, `location_id`
+  (a DC), lot code, GTIN, quantity held, `status` (on_hold, released,
+  disposed, returned), `placed_by`, `placed_at`, `released_at`, notes.
+- Owned by the distributor. The manufacturer sees only a summary per
+  distributor (lots on hold, quantity) through get_recall_progress.
+
 Changes to existing tables:
 - `organisations.type` CHECK adds 'distributor'.
+- `stores` gains `gln` (optional 13 digits), so a store or DC can be
+  matched by GLN when both sides use them.
 - `receiving_events.source` CHECK adds 'partner_shipment'; new column
   `shipping_event_id` (no foreign key across orgs is needed; a plain uuid
   is enough and keeps deletes simple).
@@ -311,19 +377,81 @@ anon:
 - `distribute_recall(p_event uuid, p_org_ids uuid[])`: caller must be an
   admin of the event's source org, or (for forwarding) an admin of an org
   the event was distributed to. Every target must be an active downstream
-  partner with share_recalls on. Writes recall_distributions with
-  `via_org_id` when forwarding.
+  partner with share_recalls on, of any type: a manufacturer sends to
+  retailers and distributors in one call. Writes recall_distributions with
+  `via_org_id` when forwarding. The existing unique key on
+  (recall_event_id, retailer_org_id) means a store org that gets the
+  recall from both the manufacturer and the distributor still has one
+  recall; a forward to an org that already has it changes nothing.
 - `publish_shipments(p_ids uuid[])`: for each shipment with an active
-  link and share_shipments on, writes an expected receiving_events row in
-  the receiver org (store found by ship_to_code against
-  stores.external_code, else no store), and sets receiver_status. Same
-  duplicate rule as Phase 7 (store, lot, GTIN).
+  link and share_shipments on, finds the receiver's location (see "Store
+  matching"), writes an expected receiving_events row there, and sets
+  receiver_status. Same duplicate rule as Phase 7 (store, lot, GTIN). It
+  refuses a shipment whose lot is on an active recall_holds row for the
+  shipper, unless the shipper's admin overrides with a written reason,
+  which is stored on the shipment.
 - A trigger on receiving_events: when a row with a shipping_event_id moves
   to received or rejected, copy status, time and quantity back onto the
   shipping_events row.
 - `get_recall_progress(p_event uuid)`: for the source org (and
   forwarders), per receiving org: acknowledged, pulled, disposed, units
-  pulled. Org-level counts only, no store names (Q6).
+  pulled for retailers; lots and quantity on hold for distributors.
+  Org-level counts only, no store or DC names (Q6).
+
+### Store matching
+
+The question: when a distributor ships to "store 0412", how does Batch'd
+know which of the retailer's stores that is?
+
+What the research found (2026-11-01):
+- FSMA 204 does not require any location code. A location description in
+  21 CFR 1.1310 is name, phone, address, city, state and ZIP. GS1 US's own
+  FSMA 204 location guidance says the rule "does not require unique
+  identification of products and locations".
+- GS1 US recommends GLNs, and lists among their uses replacing "internal
+  numbers, DUNS+4, etc." with trading partners. That wording confirms that
+  internal numbers are what most partners use today.
+- In EDI shipping notices (the X12 856) the ship-to sits in the N1 "ST"
+  segment. GS1 US's FSMA 204 EDI guidance recommends a GLN there
+  (qualifier UL). Retailer specifications seen in practice also use a
+  store or DC number assigned by the buyer (qualifier 92). Which one a
+  partner uses is set by each retailer's own EDI guide.
+- Wholesalers assign each customer an account number when credit is
+  approved (SpartanNash's credit application process says so). Where that
+  number sits on a given wholesaler's invoice could not be confirmed from
+  public sources; a real delivery file will settle it.
+
+So the guess holds: a distributor's file almost always carries its own
+customer or store number, sometimes a GLN, and always a name and address.
+Two corrections follow for the design:
+1. Codes belong to the pair of companies, not to the store. Two
+   distributors give the same store two different numbers. The single
+   `stores.external_code` column cannot hold that, so the portals use
+   `partner_location_codes` per link. external_code stays for the CSV
+   import of wholesalers not on Batch'd.
+2. A code alone is not proof. Matching runs in this order and stops at the
+   first hit:
+   a. GLN on the shipment equals `stores.gln` at the receiver.
+   b. The shipper's code is in `partner_location_codes` for this link.
+   c. Address match: same ZIP and the same street number and name, after
+      the same normalizing the supplier form uses. A hit here is a
+      suggestion, not a match.
+   Anything that is not an a or b match lands in a "Match these
+   locations" list on the receiver's side, showing the shipper's code,
+   name and address next to a store picker. Once the receiver's admin
+   picks a store, the code is saved for that link and every later
+   shipment matches on its own. The expected delivery is held in that list
+   until then; it is never guessed onto a store.
+3. The first file from a new partner is the setup step: the receiver maps
+   each new code once. That is a one-time job of a few minutes for a
+   10-store chain.
+
+Sources: eCFR 21 CFR 1.1310 and 1.1340 (law.cornell.edu); GS1 US, "Global
+Location Number Recommendations for FSMA Rule 204" (R1.0, Jan 2024) and
+"EDI Recommendations for FSMA 204 Critical Tracking Events" (R2.0);
+SpartanNash credit application instructions (spartannash.com). EDI vendor
+guides (betteredi.com, ediacademy.com) were used for the N1 qualifier
+practice; they are vendor sources, not standards.
 
 ### Who sees what
 
@@ -332,8 +460,9 @@ anon:
 | Its own rows (shipments, receiving, lots, plans, drills) | Yes | Yes | Yes |
 | A partner's org name and recall contact | Linked only, via get_partner_directory | Same | Same |
 | A recall it started | Full | Full | Full |
-| A recall pushed or forwarded to it | Read | Read and forward | Read (today) |
-| Progress on its recall at a partner | Org-level counts | Org-level counts for what it forwarded | Its own stores in full |
+| A recall pushed or forwarded to it | Read | Read, hold stock, forward | Read (today) |
+| Progress on its recall at a partner | Org-level counts, including distributor holds | Org-level counts for what it forwarded | Its own stores in full |
+| Its customers' location codes | Never (only matched or not) | Never (only matched or not) | Its own, per partner |
 | A shipment sent to it | As an expected delivery in its own receiving | Same | Same (today's expected rows) |
 | Whether its shipment was received | On its own shipment row | Same | n/a |
 | A partner's other receiving, scans, stores, complaints | Never | Never | Never |
@@ -410,7 +539,10 @@ dashboard and scanner as today, portal orgs go to the portal.
 ## 5. Phased build order
 
 Each phase is one pull request that Ian can test on its Netlify preview.
-Migration numbers start at 040.
+Migration numbers start at the next free number when each phase is built.
+At the time of writing 040 (recall notices) and 041 (job runs) are on
+main and 042 is in review, so the numbers below start at 043. Recheck
+before writing each file.
 
 ### How testing works for every phase
 
@@ -438,11 +570,11 @@ Migration numbers start at 040.
 
 ### Phase 1. Link foundations (database only)
 
-- Migration 040: organisations.type adds 'distributor'; partner_links and
-  partner_invites with policies; the helpers above (directory, accept,
+- Migration 043: organisations.type adds 'distributor'; stores.gln;
+  partner_links, partner_invites and partner_location_codes with policies; the helpers above (directory, accept,
   status, scope, partner ids); b38 extended to the new tables; backfill the
   one trading_partners row into partner_links.
-- Files: migrations/040_partner_links.sql, migrations/CHECK_MIGRATIONS.sql,
+- Files: migrations/043_partner_links.sql, migrations/CHECK_MIGRATIONS.sql,
   docs/SCHEMA-REFERENCE.md (regenerated), tests for the helpers where they
   can run in Node, SMOKE.md, docs/CHANGELOG.md.
 - Acceptance: rolled-back checks show an unlinked org reads no link and no
@@ -461,7 +593,7 @@ Migration numbers start at 040.
   team and invites, locations for distributors), the design tokens, the
   `_ico` icon set and `_confirmDialog` copied from the dashboard. No data
   sharing yet.
-- Migration 041: create_organisation_with_admin accepts manufacturer and
+- Migration 044: create_organisation_with_admin accepts manufacturer and
   distributor (same signature).
 - Files: portal.html, signup.html (type cards, step 3 questions, routing),
   join.html (route portal orgs and the mfr roles to the portal),
@@ -499,12 +631,18 @@ Migration numbers start at 040.
 - Portal: products and lots (product_lots with rewritten policies),
   a recall composer, a recall detail page with per-partner progress from
   get_recall_progress, drills.
-- Migration 042: distribute_recall, get_recall_progress,
+- Migration 045: distribute_recall, get_recall_progress, recall_holds,
   recall_distributions.via_org_id, product_lots policies rebuilt on the
   helpers, the legacy store-level acknowledgement read for mfr roles
   dropped (after Q6).
-- Distributor forwarding: a forwarded recall shows in the distributor
-  portal with the list of linked retailers to forward to.
+- The composer sends to retailers and distributors in one step, preselecting
+  every linked customer that received the lot (once Phase 5 exists; before
+  that, the manufacturer picks customers by hand).
+- Distributor side: the recall lands as a hold instruction. The distributor
+  records what it holds at each DC (recall_holds) and sees which stores
+  already got the lot, through match_recall_notice on its own receiving and
+  shipping rows. Forwarding is a one-click backup for stores the
+  manufacturer did not notify.
 - webhook-recall.js: accept distributor orgs, distribute through
   distribute_recall rules (partner_links instead of trading_partners).
   docs.html refreshed and linked from portal Settings.
@@ -513,13 +651,15 @@ Migration numbers start at 040.
   set. Recall matching in the scanner needs no change (Path B).
 - Files: portal.html, dashboard.html (small label change),
   netlify/functions/webhook-recall.js, notify-event.js, docs.html,
-  migrations/042_partner_recalls.sql, tests, SMOKE.md, CHANGELOG.md.
-- Acceptance: QA Greens pushes a Class I recall to QA Grocer; the
-  dashboard and the scanner show it; a staging scan of the lot matches;
-  QA Grocer acknowledges and pulls; QA Greens sees the counts and no store
-  names; an unlinked retailer sees nothing; a recall forwarded through QA
-  Wholesale shows both orgs; the webhook pushes with a staging key; every
-  recall check still reads both sources.
+  migrations/045_partner_recalls.sql, tests, SMOKE.md, CHANGELOG.md.
+- Acceptance: QA Greens pushes a Class I recall to QA Grocer and QA
+  Wholesale in one step; the dashboard and the scanner show it; a staging
+  scan of the lot matches; QA Grocer acknowledges and pulls; QA Wholesale
+  records a hold at its DC; QA Greens sees the retailer counts and the
+  distributor hold, with no store or DC names; an unlinked retailer sees
+  nothing; QA Wholesale forwards to QA Grocer and QA Grocer still has one
+  recall, not two; the webhook pushes with a staging key; every recall
+  check still reads both sources.
 - Risks: this is the most sensitive data in the product; a wrong policy
   could push recalls into the wrong org. The distribute function is the
   only write path and gets the heaviest tests. Escalation emails
@@ -531,24 +671,33 @@ Migration numbers start at 040.
 - Portal: Shipping panel (typed entry, file import through a copy of the
   dashboard's CSV import engine, remembered column mappings), shipment list
   with receiver status.
-- Migration 043: shipping_events, publish_shipments, the confirm-back
+- Migration 046: shipping_events, publish_shipments, the confirm-back
   trigger, receiving_events source 'partner_shipment' and
   shipping_event_id.
+- Store matching as designed in section 3: GLN, then the per-link code,
+  then an address suggestion. Unmatched rows wait in a "Match these
+  locations" list in the dashboard's Receiving panel (and the
+  distributor's), and a mapping saved there applies to every later file.
+- Shipments of a lot on hold are refused unless an admin overrides with a
+  reason.
 - Dashboard Receiving panel: a "Partner" source tag. Scanner: the expected
   delivery list already works; the banner names the partner.
 - Files: portal.html, dashboard.html, index.html (label only),
-  migrations/043_shipping_events.sql, tests (store matching by ship-to
-  code, duplicates, confirm-back), SMOKE.md, CHANGELOG.md.
-- Acceptance: QA Wholesale uploads a shipping file with two stores; QA
-  Grocer sees two expected deliveries on the right stores; the scanner
-  confirms one with a different quantity; QA Wholesale sees "received,
-  11 of 12"; re-uploading the same file adds nothing; a store with no
-  ship-to code lands with no store and a warning; the retailer's own CSV
-  import still works.
-- Risks: a wrong ship-to code puts product on the wrong store's list
-  (show unmatched rows instead of guessing); the trigger runs inside the
-  retailer's confirm, so a failure there must not block the retailer's
-  save.
+  migrations/046_shipping_events.sql, tests (matching order, unmatched
+  list, duplicates, confirm-back, hold refusal), SMOKE.md, CHANGELOG.md.
+- Acceptance: QA Wholesale uploads a shipping file with three stores, one
+  by GLN, one by a mapped code and one by an unknown code; QA Grocer sees
+  two expected deliveries on the right stores and one row in "Match these
+  locations"; after QA Grocer maps it, the next file matches on its own;
+  the scanner confirms one with a different quantity; QA Wholesale sees
+  "received, 11 of 12"; re-uploading the same file adds nothing; a
+  shipment of a held lot is refused; the retailer's own CSV import still
+  works.
+- Risks: a wrong mapping puts product on the wrong store's list (only the
+  receiver maps, and an address match is never applied on its own); the
+  trigger runs inside the retailer's confirm, so a failure there must not
+  block the retailer's save. The first real distributor file (still owed)
+  must be run through the matcher on staging before a customer sees this.
 
 ### Phase 6. Distributor receiving and the manufacturer lot master
 
@@ -574,10 +723,10 @@ Migration numbers start at 040.
   Shipping sheet is new; `FSMA204_EXPORT_HEADERS` stays as the Receiving
   sheet so check.mjs keeps agreeing), records request drill on
   records_requests, traceability plan reuse where it fits.
-- Migration 044: trace_requests and its storage policy.
+- Migration 047: trace_requests and its storage policy.
 - Retailer side: "Ask supplier for records" on a recall or lot in the
   dashboard, sent to a linked partner.
-- Files: portal.html, dashboard.html, migrations/044_trace_requests.sql,
+- Files: portal.html, dashboard.html, migrations/047_trace_requests.sql,
   notify-event.js (trace request emails), scripts/check.mjs (Shipping
   headers identical wherever they appear), tests, SMOKE.md, CHANGELOG.md.
 - Acceptance: QA Grocer asks QA Wholesale for lot X; QA Wholesale answers
@@ -594,7 +743,7 @@ Migration numbers start at 040.
   webhook off trading_partners and shipments. Drop the legacy mfr policies
   once the four legacy orgs are handled (Q4). Back up and drop
   supplier_connections and, if Q10 says so, the ingredient-era tables.
-- Files: dashboard.html, migrations/045_legacy_cleanup.sql, tests,
+- Files: dashboard.html, migrations/048_legacy_cleanup.sql, tests,
   SMOKE.md, CHANGELOG.md.
 - Acceptance: legacy demo data still renders or is archived as Ian
   decided; no policy references trading_partners; backups sit in the
@@ -604,8 +753,9 @@ Migration numbers start at 040.
 
 ### Rough order of value
 
-Phases 1 to 4 deliver the first sellable thing: a manufacturer can push a
-recall to its retail customers and see who pulled. Phase 5 is the biggest
+Phases 1 to 4 deliver the first sellable thing: a manufacturer can send a
+recall to its retailers and distributors at once, see which distributors
+have stopped shipping and which stores have pulled. Phase 5 is the biggest
 daily-use win for distributors. Phases 6 to 8 complete the chain.
 
 ---
@@ -661,5 +811,16 @@ Each one has a recommendation. Building waits on Q1 to Q5 at minimum.
     browser. Recommended: the portal first; the scanner is 23,000 lines
     built around stores and shelves.
 13. **Does a distributor forward recalls automatically or by hand?**
-    Recommended: by hand with one click, showing which retailers got the
-    lot. Automatic forwarding can come later as a per-link setting.
+    Since manufacturers usually notify retailers directly (Ian,
+    2026-11-01), forwarding is a backup. Recommended: by hand with one
+    click, showing only the stores that got the lot and do not have the
+    recall yet. Automatic forwarding can come later as a per-link setting.
+14. **Does a hold block shipping, or only warn?** When a distributor has a
+    lot on hold, the portal either refuses a shipment of it or warns and
+    lets it through. Recommended: refuse, with an admin override that
+    records a written reason (some holds are released after testing).
+
+Settled 2026-11-01 (Ian): manufacturers send recall notices to retailers
+and to distributors; distributors receive them to halt shipments. Store
+matching by the distributor's own store number is confirmed as the common
+case by the research in section 3.
