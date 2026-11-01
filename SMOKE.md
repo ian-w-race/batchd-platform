@@ -304,3 +304,18 @@ not repeated here.
     the notice leaves the Supplier notices list. Needs migration 040 and an
     org on a pilot or paid plan.
 
+## Central sign-in (2026-11-01)
+
+49. On the pull request's preview (staging database), open /login. Sign
+    in as a store staff member: you land straight in the scanner at /scan
+    with no second sign-in. Sign out, sign in as a corporate admin: a
+    chooser offers Retail and Scanner. Pick Retail: the dashboard opens at
+    /retail already signed in. Open /scan in the same browser: the scanner
+    opens signed in too. Back at /login, the chooser lists Scanner or
+    Retail first with "Last used", whichever you picked last. A deactivated
+    account sees "Account deactivated". "Forgot password" sends an email
+    whose link opens "Set a new password" on /login (needs the Supabase
+    redirect URL, see the changelog). After merge, app.batchdapp.com opens
+    the same sign-in page, and corporate.batchdapp.com and
+    batchd-app.netlify.app still work exactly as before.
+

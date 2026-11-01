@@ -41,7 +41,7 @@ work. Never give Ian partial diffs or snippets to paste in by hand.
   database" badge, rewrite links and window.open calls aimed at the
   production apps to the preview's own origin (batchdPreviewUrl), and
   use batchdLink(productionUrl, stagingPath) for redirects. Keep the
-  block identical in all five files.
+  block identical in all six files (login.html since 2026-11-01).
 - Netlify FUNCTIONS on previews still run with the production
   environment variables, so anything that calls /.netlify/functions/
   from a preview (invite emails, AI, reminders, complaint intake) talks
@@ -61,7 +61,7 @@ work. Never give Ian partial diffs or snippets to paste in by hand.
   scripts/check.mjs` and `node --test tests/*.test.mjs` on every pull
   request and push to main (.github/workflows/checks.yml). check.mjs
   covers syntax of every inline script and function, the identical
-  database selection block in the five app pages, anon-only keys in
+  database selection block in the six app pages, anon-only keys in
   pages, identical FSMA204_EXPORT_HEADERS, agreeing citation tables, the
   supplier completeness fields, the FSMA dollar thresholds across
   dashboard, signup and scanner, and forced 404s for private paths. The
@@ -137,6 +137,10 @@ Live surfaces:
 - signup.html (self-serve, retailer only), join.html (invitation
   acceptance), admin.html (internal, gated on
   organisation_members.is_batched_admin, linked from nowhere).
+- login.html (2026-11-01): central sign-in and app router at /login and
+  at the root of app.batchdapp.com. Routing rules live in batchdRoute
+  (tests/login-router.test.mjs). Phase 2a of docs/PORTALS-PLAN.md moves
+  Retail and the scanner under app.batchdapp.com in a later step.
 - lot-code-guide.html, privacy.html, terms.html.
 - complaint.html and complaint-widget.js: public complaint intake to
   triage-complaint.js. The widget hardcodes www.batchdapp.com.
@@ -185,7 +189,8 @@ is not on GitHub; nothing live loads it.
   three. Missing on more than one sends duplicate escalation emails;
   true on all three runs nothing. Needs verification in the Netlify UI.
 - Path aliases on every domain: /join, /manufacturer, /signup, /terms,
-  /privacy.
+  /privacy, /login (login.html), /retail (dashboard.html) and /scan
+  (index.html). app.batchdapp.com/ serves login.html (forced 200).
 - corporate.batchdapp.com/ serves dashboard.html (forced 200);
   /dashboard.html and /dashboard on corporate, app., www. and
   batchd-app.netlify.app 301 to the corporate root.

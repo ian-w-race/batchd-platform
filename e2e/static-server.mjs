@@ -13,7 +13,9 @@ const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '
   '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json', '.ttf': 'font/ttf' };
 http.createServer((req, res) => {
   let p = decodeURIComponent((req.url || '/').split('?')[0]);
-  if (p === '/') p = '/index.html';
+  // Same rewrites as netlify.toml (central sign-in, 2026-11-01).
+  const rewrites = { '/': '/index.html', '/login': '/login.html', '/retail': '/dashboard.html', '/scan': '/index.html', '/signup': '/signup.html', '/join': '/join.html' };
+  p = rewrites[p] || p;
   const file = path.normalize(path.join(root, p));
   if (!file.startsWith(root) || file.includes(`${path.sep}node_modules${path.sep}`)) { res.writeHead(403); res.end(); return; }
   fs.readFile(file, (err, data) => {

@@ -49,8 +49,11 @@ export async function scannerSignIn(page, email, storeName = 'QA Store 1') {
   await page.locator('input[type=password]').first().fill(PASSWORD);
   await page.click('#btn-signin');
   if (storeName) {
-    // The store picker overlay; the same names also exist as hidden <option>s.
-    await page.getByText(storeName, { exact: true }).filter({ visible: true }).first().click();
+    // The "Where are you working today?" picker. Target its button by role:
+    // a text match also finds the store dropdown's hidden <option>, which
+    // cannot be clicked once the dropdown has filled.
+    await page.getByRole('button', { name: storeName, exact: true }).filter({ visible: true }).first().click({ timeout: 60_000 });
+    await expect(page.locator('#session-store-modal')).toBeHidden();
     await expect.poll(() => page.evaluate(() => (typeof _currentStoreId !== 'undefined' ? _currentStoreId : null) || null)).not.toBeNull();
     // A recall alert may open after sign-in on staging; close it if it does.
     const dismiss = page.getByRole('button', { name: 'Dismiss' }).filter({ visible: true });

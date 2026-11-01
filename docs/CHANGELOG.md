@@ -4,6 +4,50 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-11-01 (central sign-in, Phase 2a step 1)
+- New login.html: one sign-in page for every Batch'd app
+  (docs/PORTALS-PLAN.md, Phase 2a). After sign-in it reads the person's
+  memberships and sends store staff straight to the scanner, legacy
+  manufacturer members to the manufacturer page, and shows a short chooser
+  to anyone with more than one app (retail admins and store managers:
+  Retail and Scanner; platform admins also Admin). The chooser lists the
+  last app used on that device first. It handles two-factor codes, the
+  deactivated screen, and password recovery with a real "Set a new
+  password" form (the dashboard's reset link signed people in without
+  asking for a new password). ?app=retail or ?app=scan skips the chooser
+  when the person may open that app.
+- netlify.toml: /login, /retail (the dashboard) and /scan (the scanner)
+  on every host, and app.batchdapp.com/ now opens the sign-in page instead
+  of the scanner (nothing linked there; the scanner's address is
+  batchd-app.netlify.app). Because /retail and /scan share one address, one
+  sign-in opens both. Nothing else moved: corporate.batchdapp.com and
+  batchd-app.netlify.app behave as before until step 2.
+- FIXED (scanner): it ran its start-up twice whenever it opened with a
+  saved sign-in, because the "already started" flag lived on the user
+  object and initAuth and the auth listener each pass a fresh copy; with no
+  store chosen in the last 12 hours it stacked two "Where are you working
+  today?" pickers and taps landed on the hidden one. Already possible when
+  reopening the scanner, and every visit through the sign-in page opens
+  with a saved session. The guard is now by user id and the picker never
+  opens twice. Found by the end-to-end tests on pull request 40.
+- scripts/check.mjs counts login.html as a sixth page with the identical
+  database selection block; tests/login-router.test.mjs (10 tests) covers
+  the routing rules and checks that every app path has a rule.
+- Verified: node scripts/check.mjs (10 of 10), node --test (81 tests), and
+  a local copy on staging with a stubbed client driven through staff,
+  corporate admin, platform admin, deactivated, no membership, signed out,
+  wrong password, two-factor (wrong then right code), forgot password, the
+  last-used order and ?app=; dark and light, phone width with no sideways
+  scroll; /retail and /scan load the real apps with no console errors.
+  Not verified: a real sign-in on staging (the staging test password could
+  not be read in this session), and the app.batchdapp.com root rule, which
+  only exists on production (check it after merge).
+- Owed by Ian: add https://app.batchdapp.com/login (and, for previews,
+  https://*--gentle-belekoy-be3cb7.netlify.app/login and
+  https://*--batchd-app.netlify.app/login) to Supabase Auth, URL
+  Configuration, Redirect URLs, in production and staging. Without it the
+  reset link falls back to the project's Site URL.
+
 ## 2026-10-25 (monitoring and end-to-end tests, plan A3 and A4)
 - Monitoring. Migration 041 adds job_runs; fetch-recall-feeds and
   recall-escalation record every run through netlify/lib/job-log.js (job,
