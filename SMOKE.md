@@ -346,6 +346,21 @@ not repeated here.
     email arrives. If either email is missing, the secret is not set under
     INTERNAL_NOTIFY_SECRET on that site.
 
+## Closing a recall (2026-11-01)
+
+Numbered 54 and 55 because another branch in flight adds 52 and 53.
+
+54. On Live Recall for an open pushed recall, click Mark complete. A
+    Batch'd dialog opens (not the browser's own prompt box) with the
+    reason field focused. Escape closes it and nothing changes. Open it
+    again, type a reason, press Enter: the toast says "Recall closed.
+    Audit trail locked." and the recall shows Closed with the reason.
+55. Open Recalls. The recall you just closed is not in the Active tab,
+    the header count and the red "stores require action" pill do not
+    count its stores, and the History tab shows it with a CLOSED badge,
+    the closing date, the stores complete count and the reason. A recall
+    whose stores all reached Resolved still shows COMPLETE.
+
 ## Run log
 
 - 2026-11-01, Claude, local static server against the staging database:

@@ -566,10 +566,10 @@ Owed by Ian:
   passed; 48 and 51 were run on the production apps the same day and
   passed, with Ian confirming the drill, complaint and recall emails
   arrived (docs/CHANGELOG.md has the detail).
-  10 to 13, 17 to 20, 46 and 47 have not been run on production. Known
-  from the production run: Live Recall's Mark complete uses prompt(), and
-  an administratively closed recall still shows as ACTION REQUIRED in the
-  Recalls panel's Active tab.
+  10 to 13, 17 to 20, 46 and 47 have not been run on production. The
+  three defects from that run (prompt() in Mark complete, closed recalls
+  in the Active tab, the slow Recalls deep link) were fixed the same day;
+  the deep-link timing on the live site is still unmeasured.
 - Rotate the demo account password (in public git history). Claude's
   attempt on 2026-11-01 was blocked by the app's permission layer, so it
   stays Ian's: Supabase, Authentication, Users, demo@batchdapp.com.
