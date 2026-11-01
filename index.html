@@ -5981,7 +5981,7 @@ async function initAuth() {
     const { data: member } = await sb.from('organisation_members')
       .select('active').eq('user_id', session.user.id).maybeSingle();
     if (member?.active === false) {
-      await sb.auth.signOut();
+      await sb.auth.signOut({ scope: 'local' });
       location.reload();
       return;
     }
@@ -6012,7 +6012,7 @@ async function initAuth() {
         const { data: member } = await sb.from('organisation_members')
           .select('active').eq('user_id', session.user.id).maybeSingle();
         if (member?.active === false) {
-          await sb.auth.signOut();
+          await sb.auth.signOut({ scope: 'local' });
           document.getElementById('login-screen').style.display = 'flex';
           document.getElementById('login-screen').classList.remove('hidden');
           document.getElementById('login-screen').innerHTML = `
@@ -6119,14 +6119,14 @@ async function showApp(user) {
             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.5"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
             <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:var(--fs-h4);">Account deactivated</div>
             <div style="font-size:var(--fs-body);color:var(--muted);max-width:300px;line-height:1.6;">Your account has been deactivated by your organization administrator. Contact them to restore access.</div>
-            <button onclick="sb.auth.signOut().then(()=>location.reload())"
+            <button onclick="sb.auth.signOut({ scope: 'local' }).then(()=>location.reload())"
               style="margin-top:8px;padding:10px 20px;border-radius:var(--r-sm);border:1px solid var(--border);background:none;color:var(--muted);font-family:'DM Mono',monospace;font-size:var(--fs-meta);cursor:pointer;">
               Sign out
             </button>
           </div>`;
         _lsDeact.style.display = 'flex';
         _lsDeact.classList.remove('hidden');
-        await sb.auth.signOut();
+        await sb.auth.signOut({ scope: 'local' });
         return;
       }
 
@@ -6164,14 +6164,14 @@ async function showApp(user) {
           <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.5"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
           <div style="font-family:'Figtree',sans-serif;font-weight:700;font-size:var(--fs-h4);">Not linked to an organization</div>
           <div style="font-size:var(--fs-body);color:var(--muted);max-width:320px;line-height:1.6;">Your account isn't linked to a Batch'd organization yet. Ask your administrator to add you to your store's organization, then sign in again.</div>
-          <button onclick="sb.auth.signOut().then(()=>location.reload())"
+          <button onclick="sb.auth.signOut({ scope: 'local' }).then(()=>location.reload())"
             style="margin-top:8px;padding:10px 20px;border-radius:var(--r-sm);border:1px solid var(--border);background:none;color:var(--muted);font-family:'DM Mono',monospace;font-size:var(--fs-meta);cursor:pointer;">
             Sign out
           </button>
         </div>`;
       _lsNoOrg.style.display = 'flex';
       _lsNoOrg.classList.remove('hidden');
-      await sb.auth.signOut();
+      await sb.auth.signOut({ scope: 'local' });
       return;
     }
 
@@ -6736,7 +6736,7 @@ async function signOut() {
   try { stopSharedStream(); } catch (e) {}
   currentUser = null; // so the SIGNED_OUT handler does not show "Session expired"
   _appInitUserId = null;
-  await sb.auth.signOut();
+  await sb.auth.signOut({ scope: 'local' });
   if (!_batchdLegacyLogin) location.replace('/login');
 }
 
@@ -21062,8 +21062,12 @@ function confirmRegion() {
 }
 
 function hideRegionConfirmation() {
-  document.getElementById('region-confirm-overlay').style.display = 'none';
-  document.getElementById('region-confirm-bar').style.display = 'none';
+  // The region confirmation markup left with the OCR flow, so these are
+  // usually null. Without the guards cancelScan() ("Cancel and start over"
+  // on steps 2 and 3) threw here and never reset the form (found by
+  // e2e/core-flow.spec.mjs 2026-11-01).
+  const ov = document.getElementById('region-confirm-overlay'); if (ov) ov.style.display = 'none';
+  const bar = document.getElementById('region-confirm-bar'); if (bar) bar.style.display = 'none';
 }
 
 function finaliseOcrResult(assignment, confidence, source, raw) {

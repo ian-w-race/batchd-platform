@@ -1,9 +1,19 @@
 # Platform improvement plan (before the portals)
 
-Written 2026-10-25 for Ian. A plan, not a build. Nothing here is started.
-It sits before docs/PORTALS-PLAN.md: several items below are the
-foundations the portals need anyway, so doing them first makes the portals
-cheaper, not later.
+Written 2026-10-25 for Ian. A plan, not a build. It sits before
+docs/PORTALS-PLAN.md: several items below are the foundations the portals
+need anyway, so doing them first makes the portals cheaper, not later.
+
+Status 2026-11-01: Phase 1 (safety net) is built except the part only Ian
+can do. A4 monitoring runs daily on production (job_runs, health-check,
+the weekly all clear, failed email sends recorded). A3 end-to-end tests
+cover the whole chain in the "done when" line and run on every deploy
+preview. A1 (Supabase Pro for backups): Ian decided "not now" on
+2026-11-01, so the project stays on the free plan with no restorable
+backups until he revisits decision 1 below.
+Phase 2 (A2 shared code, F5 cleanup) has not started. B1 and B2 from
+Phase 3 shipped early on 2026-10-25 (supplier notice intake and lot-level
+matching). docs/CHANGELOG.md has the detail.
 
 ## 1. What Batch'd has to be able to do
 

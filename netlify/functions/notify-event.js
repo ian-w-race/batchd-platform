@@ -25,6 +25,7 @@
 // before sending. Prevents cross-org abuse.
 
 const { internalSecretOk } = require('../lib/auth');
+const { logFailure } = require('../lib/job-log');   // A4: failed sends show up in the health check
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://lurxucdmrugikdlvvebc.supabase.co'; // deploy previews set this to staging
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const RESEND_API_KEY       = process.env.RESEND_API_KEY;
@@ -372,6 +373,10 @@ exports.handler = async (event) => {
       errors.push({ to: r.email, message: String(e.message || e).slice(0, 200) });
     }
   }
+
+  // A4 (2026-11-01): a failed send is recorded in job_runs so the daily
+  // health check reports it; successes are not recorded.
+  if (failed) await logFailure('notify-event', { error: errors[0]?.message || 'send failed', event_type, failed, sent });
 
   return {
     statusCode: 200,

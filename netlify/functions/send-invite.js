@@ -72,6 +72,7 @@ const SUPABASE_URL         = process.env.SUPABASE_URL || 'https://lurxucdmrugikd
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
 const { verifyUser, sbGet, isPlatformAdmin } = require('../lib/auth');
+const { logFailure } = require('../lib/job-log');   // A4: failed sends show up in the health check
 
 // Every value in the email comes from the invitation row and the session, never the body.
 async function authoriseStaffInvite(event, { to, inviteUrl }) {
@@ -143,12 +144,14 @@ async function handleStaffInvite({ to, orgName, inviterEmail, role, inviteUrl })
     if (!res.ok) {
       const errText = await res.text();
       console.error('[send-invite] Resend error:', res.status, errText);
+      await logFailure('send-invite', { error: String(errText || 'Resend error').slice(0, 300) }, res.status);
       return { statusCode: 500, body: JSON.stringify({ error: 'Failed to send invitation' }) };
     }
 
     return { statusCode: 200, body: JSON.stringify({ ok: true }) };
   } catch (err) {
     console.error('[send-invite] handler error:', err);
+    await logFailure('send-invite', { error: err.message });
     return { statusCode: 500, body: JSON.stringify({ error: 'Failed to send invitation' }) };
   }
 }

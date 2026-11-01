@@ -346,16 +346,32 @@ not repeated here.
     email arrives. If either email is missing, the secret is not set under
     INTERNAL_NOTIFY_SECRET on that site.
 
+## Safety net: sign-out scope and the weekly all clear (2026-11-01)
+
+52. Sign in to the scanner on a phone and to Retail on a computer with the
+    same account. Sign out on the computer. The phone stays signed in (the
+    next scan still saves). Before this change the phone was signed out
+    too, because sign-out ended every session of the account.
+53. On the first Monday after the deploy (2026-11-02, about 07:00 UTC),
+    the platform admins receive "Batch'd health check: all clear this
+    week" from alerts@batchdapp.com with the week's run counts. On any
+    other day no email arrives unless something is wrong. If the Monday
+    email is missing, the alert path itself is broken: check the
+    health-check row in job_runs (detail.heartbeat should be true) and
+    the Netlify function log on www.
+54. Scanner, Shelf mode: type a product name, reach step 2 and tap the
+    X ("Cancel and start over"). The form returns to step 1 with the
+    product field empty and the camera placeholder back. Do the same from
+    step 3. Before this change the tap did nothing visible.
+
 ## Closing a recall (2026-11-01)
 
-Numbered 54 and 55 because another branch in flight adds 52 and 53.
-
-54. On Live Recall for an open pushed recall, click Mark complete. A
+55. On Live Recall for an open pushed recall, click Mark complete. A
     Batch'd dialog opens (not the browser's own prompt box) with the
     reason field focused. Escape closes it and nothing changes. Open it
     again, type a reason, press Enter: the toast says "Recall closed.
     Audit trail locked." and the recall shows Closed with the reason.
-55. Open Recalls. The recall you just closed is not in the Active tab,
+56. Open Recalls. The recall you just closed is not in the Active tab,
     the header count and the red "stores require action" pill do not
     count its stores, and the History tab shows it with a CLOSED badge,
     the closing date, the stores complete count and the reason. A recall

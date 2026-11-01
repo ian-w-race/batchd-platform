@@ -110,3 +110,33 @@ test('BATCHD_JOB_LOG=off writes nothing', async () => {
   assert.equal(rows.length, 0);
   delete process.env.BATCHD_JOB_LOG;
 });
+
+// Weekly all clear (2026-11-01): proves the alert email path once a week.
+const { shouldHeartbeat, heartbeatText } = require('../netlify/functions/health-check.js')._test;
+const MONDAY = Date.parse('2026-11-02T07:00:00Z');   // a Monday
+const TUESDAY = Date.parse('2026-11-03T07:00:00Z');
+
+test('the all clear goes out on a healthy Monday only, and never with problems', () => {
+  assert.equal(shouldHeartbeat(MONDAY, [], {}), true);
+  assert.equal(shouldHeartbeat(TUESDAY, [], {}), false);
+  assert.equal(shouldHeartbeat(MONDAY, ['something is wrong'], {}), false);
+  assert.equal(shouldHeartbeat(MONDAY, [], { HEALTH_HEARTBEAT: 'off' }), false);
+});
+
+test('the all clear text counts the week\'s runs, added recalls and failures', () => {
+  const runs = [
+    { job: 'fetch-recall-feeds', started_at: ago(1), ok: true, detail: { fda_added: 3 } },
+    { job: 'fetch-recall-feeds', started_at: ago(25), ok: true, detail: { fda_added: 2 } },
+    { job: 'fetch-recall-feeds', started_at: ago(24 * 9), ok: true, detail: { fda_added: 50 } },   // older than a week
+    { job: 'recall-escalation', started_at: ago(0.4), ok: true },
+    { job: 'recall-escalation', started_at: ago(0.9), ok: true },
+    { job: 'health-check', started_at: ago(24), ok: true },
+    { job: 'push-recall-email', started_at: ago(5), ok: false, detail: { error: 'Resend 422' } },
+  ];
+  const text = heartbeatText(NOW, runs);
+  assert.match(text, /nothing wrong this week/);
+  assert.match(text, /FDA recall import: 2 runs, 5 recalls added/);
+  assert.match(text, /Recall escalation: 2 runs/);
+  assert.match(text, /Health check: 1 runs/);
+  assert.match(text, /Failed runs or sends: 1\./);
+});

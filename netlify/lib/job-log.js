@@ -4,6 +4,12 @@
 // and the parsed result body. The daily health check reads these rows.
 // Logging never changes the job's own result: a failed write is only logged
 // to the console. Set BATCHD_JOB_LOG=off to disable (tests do).
+//
+// logFailure (2026-11-01, plan A4 "failed emails"): the email functions that
+// run on demand (push-recall-email, notify-event, recall-reminder,
+// send-invite, notify-consumers) record one ok=false row when a send fails,
+// so the health check reports "<job> failed N times in the last 24 hours".
+// Successful sends are not recorded; only the scheduled jobs log every run.
 
 const { SUPABASE_URL, SVC_HEADERS } = require('./auth');
 
@@ -55,4 +61,18 @@ function withJobLog(job, run) {
   };
 }
 
-module.exports = { withJobLog, writeRun };
+// One ok=false row for a failure inside an on-demand function. `detail` is
+// a small object (error text, counts); it is trimmed to 500 characters of
+// error text so a Resend body cannot bloat the table.
+function failureRow(job, detail, statusCode) {
+  const d = detail && typeof detail === 'object' ? { ...detail } : { error: String(detail || 'failed') };
+  if (d.error != null) d.error = String(d.error).slice(0, 500);
+  const now = new Date().toISOString();
+  return { job, site: process.env.SITE_NAME || null, started_at: now, finished_at: now,
+    ok: false, status_code: statusCode == null ? 500 : statusCode, detail: d };
+}
+async function logFailure(job, detail, statusCode) {
+  try { await writeRun(failureRow(job, detail, statusCode)); } catch (_) {}
+}
+
+module.exports = { withJobLog, writeRun, logFailure, failureRow };
