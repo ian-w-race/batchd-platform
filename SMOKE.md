@@ -353,5 +353,5 @@ not repeated here.
   functions locally). Detail in docs/CHANGELOG.md.
 - 2026-11-01, Claude in the built-in browser on the production apps
   (app.batchdapp.com, org Batch'd Admin, Ian signed in): 48 and 51 pass.
-  Email arrival in the inbox still to be confirmed by Ian. Detail in
-  docs/CHANGELOG.md.
+  Ian confirmed all three emails (drill, complaint, recall) arrived.
+  Detail in docs/CHANGELOG.md.
