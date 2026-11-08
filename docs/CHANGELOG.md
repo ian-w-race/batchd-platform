@@ -4,6 +4,19 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-11-08 (B5 planned: public feeds as backstop)
+- docs/B5-FEEDS-BACKSTOP-PLAN.md: the facts (the catalog's 501 entries
+  have lot codes on 283 and GTINs on none; 172 are date-coded and 59 are
+  ranges, which today's parser cannot match; the FDA press-release RSS
+  and the openFDA enforcement report verified with their fields; the USDA
+  FSIS API answered 403), the target (every entry matchable on lots,
+  ranges, GTINs and best-by dates; press releases in the catalog on day
+  0 through the supplier notice reader; a "no supplier notice" flag),
+  the additive model, five stages and five decisions for Ian. Docs only;
+  no code.
+- docs/PLATFORM-IMPROVEMENT-PLAN.md status: B4 shipped 2026-11-08, B5
+  planned and ordered before B3.
+
 ## 2026-11-08 (B4 stage 6: the per-organization feed copies are retired)
 - fetch-recall-feeds.js writes the recall catalog and nothing else: the
   organisations read and the per-organization upsert into recalls are

@@ -23,10 +23,16 @@ design tokens in src/shared/design-tokens.css, one stylesheet the scanner,
 Retail and the sign-in page link. A2's "each rule exists once" is done;
 splitting rarely used panels out of the first download waits for the
 redesign (Phase 6), when the apps' own code is restructured. B1 and B2 from Phase 3 shipped early on 2026-10-25 (supplier
-notice intake and lot-level matching). B4 (one recall catalog) is planned in docs/B4-RECALL-CATALOG-PLAN.md
-(2026-11-01), waiting on Ian's decisions in its section 6. Section 6
-below records Ian's answers of 2026-11-01 and 2026-11-08: the recall
-engine comes first. docs/CHANGELOG.md has the detail.
+notice intake and lot-level matching). B4 (one recall catalog) shipped in
+six stages on 2026-11-08 (docs/B4-RECALL-CATALOG-PLAN.md): one shared
+catalog of public recalls, one database function both apps call for the
+active list, per-organization dismiss and review, lot-level matching on
+every lot and GTIN, the per-organization feed copies gone with a backup.
+B5 (public feeds as backstop) is planned in docs/B5-FEEDS-BACKSTOP-PLAN.md
+(2026-11-08), waiting on Ian's decisions in its section 6; it comes
+before B3 by Ian's choice of 2026-11-08. Section 6 below records Ian's
+answers of 2026-11-01 and 2026-11-08: the recall engine comes first.
+docs/CHANGELOG.md has the detail.
 
 ## 1. What Batch'd has to be able to do
 
