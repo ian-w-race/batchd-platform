@@ -484,6 +484,18 @@ not repeated here.
     0 and `select count(*) from recall_catalog where lots && array['2025',
     '2026', '2027'];` is 0.
 
+## B4 stage 4: the scanner reads one list of active recalls (2026-11-08)
+
+66. Scanner, signed in as a corp admin: the sign-in alert, the History
+    banner, the Recalls drawer, Quick check, the shift summary, the audit
+    report and the multi-store tile all agree on which recalls are active.
+    In the Recalls drawer an FDA entry that matches a scan shows the FDA
+    label with "Lot:" and an exposure summary; pushed recalls still show
+    PUSHED RECALL. Push a recall with two lots from Retail and scan a lot
+    that is second in the list: the pre-placement warning fires (it did
+    not before). File a manual recall from the manager Settings card for a
+    lot already on shelf: a toast reports the matched scans.
+
 ## Run log
 
 - 2026-11-01, Claude, local static server against the staging database:

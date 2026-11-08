@@ -5596,27 +5596,10 @@ let _ocrOriginalSource = 'none'; // 'sonnet' | 'tesseract_fallback' | 'none'
 let allRecords = [];
 let _cachedActiveRecalls = []; // populated at login (checkRecallsOnLogin) and refreshed by loadHistory
 
-// ── Closed-recall filtering (2026-09-09 audit) ────────────────────
-// recall_events.closed_at comes from migration 008, which may NOT be
-// applied on a given deployment (SCHEMA.md's verified column list does
-// not include it, and the dashboard still carries "needs migration 008"
-// fallbacks). Selecting or filtering a missing column makes PostgREST
-// 400 the WHOLE query, which on the login path would leave the
-// scan-time recall cache empty — every scan-time safeguard silently off.
-// So closure is resolved in a separate best-effort probe that fails
-// OPEN: if the column isn't there we simply treat nothing as closed.
-let _closedEventIds = null; // Set once resolved; null = unknown/unsupported
-async function _loadClosedEventIds() {
-  try {
-    const res = await sb.from('recall_events').select('id').not('closed_at', 'is', null);
-    if (res.error) { _closedEventIds = null; return null; }
-    _closedEventIds = new Set((res.data || []).map(r => r.id));
-    return _closedEventIds;
-  } catch (e) { _closedEventIds = null; return null; }
-}
-function _isClosedEvent(id) {
-  return !!(_closedEventIds && _closedEventIds.has(id));
-}
+// Closed recall events, drills and dismissed feed entries are left out by
+// batchd_active_recalls itself (B4 stage 4, 2026-11-08); the 2026-09-09
+// closed-event probe that every reader ran first is gone with the query
+// pairs it guarded.
 let recallLookbackDays = 180; // default 6 months; managers can set 30–365 days
 // In-memory recall match log for debugging — NOT persisted. Each entry:
 //   { scan_id, recall_id, match_type: 'red'|'orange'|'none', matched_on: 'substring'|'barcode'|'product_name_only'|null, ts }
@@ -7730,25 +7713,9 @@ async function loadMultiStoreOverview() {
     const { data, error } = await query;
     if (error) throw error;
 
-    // Audit fix: pull manual recalls from `recalls` AND manufacturer-pushed
-    // recalls from `recall_distributions` → `recall_events`. Previously only
-    // the manual table was queried, so pushed recalls never showed up in the
-    // multi-store Recall Hits tile even when on-shelf scans matched.
-    const [manualRecallsRes, distRes] = await Promise.all([
-      sb.from('recalls').select('product_name, lot_number, barcode_number').eq('active', true).eq('organisation_id', _currentOrgId),
-      sb.from('recall_distributions').select('recall_event_id').eq('retailer_org_id', _currentOrgId),
-    ]);
-    let pushedRecalls = [];
-    const distRows = distRes.data || [];
-    if (distRows.length) {
-      const eventIds = [...new Set(distRows.map(d => d.recall_event_id))];
-      const { data: events } = await sb.from('recall_events')
-        .select('product_name, lot_number, is_drill')
-        .in('id', eventIds);
-      // Drill events are training, not real recalls — exclude per CLAUDE.md.
-      pushedRecalls = (events || []).filter(ev => !ev.is_drill);
-    }
-    const activeRecalls = [...(manualRecallsRes.data || []), ...pushedRecalls];
+    // The one list of active recalls (B4 stage 4): manual, pushed and feed,
+    // with drills, closed events and dismissed feed entries already left out.
+    const activeRecalls = (await _fetchActiveRecalls()).data || [];
 
     if (!data || !data.length) {
       output.innerHTML = `<div style="color:var(--muted);font-size:var(--fs-body);text-align:center;padding:16px;">${t('store.noScanData')}</div>`;
@@ -7764,16 +7731,11 @@ async function loadMultiStoreOverview() {
       if (r.scanned_by) byStore[s].employees.add(r.scanned_by.split('@')[0]);
       if (r.lot_number) byStore[s].lots.add(r.lot_number);
       if (!r.removed_from_shelf_at) byStore[s].onShelf++;
-      // Strict three-condition rule: exact lot OR exact barcode match only.
-      // Substring/product matching previously over-counted Recall Hits per store.
-      const sLot     = (r.lot_number     || '').toLowerCase().trim();
-      const sBarcode = (r.barcode_number || '').toLowerCase().trim();
-      const isMatch = activeRecalls.some(rec => {
-        const recLot     = (rec.lot_number     || '').toLowerCase().trim();
-        const recBarcode = (rec.barcode_number || '').toLowerCase().trim();
-        return (recLot && sLot && recLot === sLot) ||
-               (recBarcode && sBarcode && recBarcode === sBarcode);
-      });
+      // Strict three-condition rule: exact lot OR exact barcode match only
+      // (Batchd.activeRecalls.exactIdentifierHit, over every lot and GTIN the
+      // recall names). Substring/product matching previously over-counted
+      // Recall Hits per store.
+      const isMatch = activeRecalls.some(rec => Batchd.activeRecalls.exactIdentifierHit(r, rec));
       if (isMatch) {
         // Audit fix: only count as a "recall hit requiring action" if the
         // scan is still on shelf. A pulled scan is no longer at risk and
@@ -8116,40 +8078,9 @@ async function checkPrePlacementRecall() {
   const barcodeNum  = document.getElementById('field-barcode')?.value.trim() || '';
 
   try {
-    // Check both recall sources: manual/FDA/Mattilsynet recalls + manufacturer-pushed recall_events.
-    // The recall_events / manufacturer-push arm is preserved on the read side
-    // for legacy data — the manufacturer portal itself is retired in the
-    // retailer-only pivot, but pushed recalls already in the DB still need
-    // to surface here.
-    const [recallsRes, eventsRes] = await Promise.all([
-      sb.from('recalls').select('id, product_name, lot_number, batch_number, barcode_number, description, source, is_pushed, recall_event_id').eq('active', true).eq('organisation_id', _currentOrgId),
-      _currentOrgId
-        ? sb.from('recall_distributions')
-            .select('recall_event_id, recall_events!inner(id, product_name, lot_number, barcode, reason, is_drill)')
-            .eq('retailer_org_id', _currentOrgId)
-            .eq('recall_events.is_drill', false)
-        : Promise.resolve({ data: [] }),
-    ]);
-
-    // Deduplicate by recall_event_id before normalising
-    const _seenEvIds2 = new Set();
-    const _uniqueDist2 = (eventsRes.data || []).filter(d => {
-      if (_seenEvIds2.has(d.recall_event_id)) return false;
-      _seenEvIds2.add(d.recall_event_id); return true;
-    });
-    const pushedRecalls = _uniqueDist2.map(d => ({
-      id:             d.recall_events.id,
-      product_name:   d.recall_events.product_name,
-      lot_number:     d.recall_events.lot_number,
-      barcode_number: d.recall_events.barcode,
-      description:    d.recall_events.reason,
-      source:         'manufacturer_push',
-    }));
-
-    // Linked recalls-table rows for pushed recalls (is_pushed /
-    // recall_event_id set) are dropped — the event version is canonical;
-    // keeping both matched every scan twice (2026-09-09 audit fix).
-    const recalls = [...(recallsRes.data || []).filter(r => !(r.is_pushed || r.recall_event_id)), ...pushedRecalls];
+    // The one list of active recalls (B4 stage 4): manual, pushed and feed
+    // entries from batchd_active_recalls, each once.
+    const recalls = (await _fetchActiveRecalls()).data || [];
     if (!recalls.length) return;
 
     // Build a synthetic scanRecord for the matcher. Sources truth from
@@ -9217,6 +9148,77 @@ function stopStream(stream) {
 // _pushedMatchRecallId picks the row for a scan (the lot the scan carries
 // when there are several, else the first). Both are tested in
 // tests/scanner-pushed-match.test.mjs.
+// ── The one list of active recalls (B4 stage 4, 2026-11-08) ─────────────
+// Every reader in this file that needs "the active recalls of this
+// organization" calls _fetchActiveRecalls(): one RPC to batchd_active_recalls
+// (migration 043; SECURITY INVOKER, so row security still applies), which
+// returns manual recalls, pushed recall events and public feed entries in one
+// shape with drills, closed events and dismissed feed entries already left
+// out. Batchd.activeRecalls.normalizeActiveRecalls turns the rows into the
+// cache shape this file has always read (id, product_name, lot_number, lots,
+// barcode_number, gtins, description, source, _kind). The linked recalls rows
+// of a pushed recall are then attached (_attachLinkedRecalls) because the
+// match writers need their ids. Resolves to { data, error } like a query;
+// callers keep a previous cache on error.
+async function _fetchActiveRecalls() {
+  if (!_currentOrgId) return { data: [], error: null };
+  try {
+    const { data, error } = await sb.rpc('batchd_active_recalls', { p_org: _currentOrgId });
+    if (error) return { data: null, error };
+    const recalls = Batchd.activeRecalls.normalizeActiveRecalls(data);
+    const pushed = recalls.filter(r => r._kind === 'pushed');
+    if (pushed.length) {
+      const { data: linked } = await sb.from('recalls')
+        .select('id, recall_event_id, lot_number, barcode_number')
+        .eq('organisation_id', _currentOrgId).eq('active', true)
+        .in('recall_event_id', pushed.map(r => r.id));
+      _attachLinkedRecalls(pushed, linked);
+    }
+    return { data: recalls, error: null };
+  } catch (e) {
+    return { data: null, error: e };
+  }
+}
+// The id columns of a scan_recall_matches row for a cached recall (CLAUDE.md,
+// "two paths", plus the catalog path): manual -> recall_id; pushed ->
+// recall_id = the linked recalls row for the lot, recall_event_id = the event
+// (null when no linked row exists, so no row can be written); feed ->
+// catalog_id.
+function _matchIdColumns(recall, scanRecord) {
+  const kind = recall._kind || (recall.source === 'manufacturer_push' ? 'pushed' : 'manual');
+  const linkedId = kind === 'pushed' ? _pushedMatchRecallId(recall, scanRecord) : null;
+  return Batchd.activeRecalls.matchIdColumns(recall, linkedId);
+}
+// Writes match rows, skipping ones that exist. Rows keyed by recall_id use
+// the (scan_id, recall_id) unique index through an upsert. Rows keyed by
+// catalog_id cannot: that unique index is partial (WHERE catalog_id IS NOT
+// NULL) and PostgREST's upsert cannot target a partial index, so those are
+// looked up first and only the missing ones inserted.
+async function _writeMatchRows(rows) {
+  if (!rows || !rows.length) return;
+  const byRecall  = rows.filter(r => r.recall_id);
+  const byCatalog = rows.filter(r => !r.recall_id && r.catalog_id);
+  if (byRecall.length) {
+    const { error } = await sb.from('scan_recall_matches').upsert(byRecall, { onConflict: 'scan_id,recall_id', ignoreDuplicates: true });
+    if (error) throw error;
+  }
+  if (byCatalog.length) {
+    const have = new Set();
+    const scanIds = [...new Set(byCatalog.map(r => r.scan_id))];
+    const catIds  = [...new Set(byCatalog.map(r => r.catalog_id))];
+    for (let i = 0; i < scanIds.length; i += 200) {
+      const { data } = await sb.from('scan_recall_matches').select('scan_id, catalog_id')
+        .in('scan_id', scanIds.slice(i, i + 200)).in('catalog_id', catIds);
+      (data || []).forEach(m => have.add(m.scan_id + '|' + m.catalog_id));
+    }
+    const missing = byCatalog.filter(r => !have.has(r.scan_id + '|' + r.catalog_id));
+    if (missing.length) {
+      const { error } = await sb.from('scan_recall_matches').insert(missing);
+      if (error) throw error;
+    }
+  }
+}
+
 function _attachLinkedRecalls(pushedRecalls, recallRows) {
   const byEvent = {};
   (recallRows || []).forEach(r => {
@@ -9272,21 +9274,19 @@ async function matchScanAgainstRecalls(scanId, scanData) {
     if (level !== 'exact') continue; // only red hits get persisted
 
     seenRecallIds.add(r.id);
-    // Path A (manual and feed): recall_id = recalls.id, recall_event_id NULL.
-    // Path B (pushed): recall_id = the linked recalls row for this lot,
-    // recall_event_id = recall_events.id (see _attachLinkedRecalls above).
-    // A pushed recall without a linked row cannot get a match row (the
-    // foreign key refuses the event id); staff still see the alert.
-    const isPushed = r.source === 'manufacturer_push';
-    const linkedRecallId = isPushed ? _pushedMatchRecallId(r, scanRecord) : null;
-    if (isPushed && !linkedRecallId) {
+    // manual: recall_id = recalls.id. pushed: recall_id = the linked recalls
+    // row for this lot, recall_event_id = the event (see _attachLinkedRecalls
+    // and _matchIdColumns above); a pushed recall without a linked row cannot
+    // get a match row (the foreign key refuses the event id) and staff still
+    // see the alert. feed: catalog_id = the catalog entry.
+    const idCols = _matchIdColumns(r, scanRecord);
+    if (!idCols) {
       console.warn('[cross-ref] pushed recall has no linked recalls row; match not recorded:', r.id);
       continue;
     }
     rows.push({
       scan_id:          scanId,
-      recall_id:        isPushed ? linkedRecallId : r.id,
-      recall_event_id:  isPushed ? r.id : null,
+      ...idCols,
       recall_source:    r.source || 'manual',
       recall_product:   r.product_name || null,
       recall_lot:       r.lot_number   || null,
@@ -9308,14 +9308,10 @@ async function matchScanAgainstRecalls(scanId, scanData) {
   if (!rows.length) return;
 
   try {
-    // upsert — ignore conflicts (scan_id + recall_id already matched).
-    // Supabase doesn't throw on RLS / constraint failures; destructure error so a
-    // silent failure here doesn't quietly break the active-recall counter.
-    const { error } = await sb.from('scan_recall_matches').upsert(rows, {
-      onConflict: 'scan_id,recall_id',
-      ignoreDuplicates: true,
-    });
-    if (error) throw error;
+    // Existing rows are skipped (see _writeMatchRows). Supabase doesn't throw
+    // on RLS / constraint failures; the helper rethrows the error so a silent
+    // failure here doesn't quietly break the active-recall counter.
+    await _writeMatchRows(rows);
   } catch(e) {
     console.warn('[cross-ref] matchScanAgainstRecalls failed:', e.message);
   }
@@ -10161,64 +10157,19 @@ async function checkRecallsOnLogin(silent = false) {
   if (!silent && checkRecallsOnLogin._running) return;
   if (!silent) checkRecallsOnLogin._running = true;
   try {
-    // Load both recall sources in parallel:
-    // 1. recalls table — FDA/RASFF/manual recalls
-    // 2. recall_events — manufacturer-pushed recalls distributed to this org
-    const [recallsRes, eventsRes] = await Promise.all([
-      sb.from('recalls').select('*').eq('active', true).eq('organisation_id', _currentOrgId),
-      _currentOrgId
-        ? sb.from('recall_distributions')
-            .select('recall_event_id, recall_events!inner(id, product_name, lot_number, barcode, severity, reason, is_drill, published_at)')
-            .eq('retailer_org_id', _currentOrgId)
-            .eq('recall_events.is_drill', false)
-        : Promise.resolve({ data: [] }),
-    ]);
-
-    // Deduplicate by recall_event_id — recall_distributions has one row per store,
-    // so a single recall event pushed to 5 stores produces 5 rows. Collapse to unique events.
-    // Best-effort closure probe — fails open (see _loadClosedEventIds).
-    await _loadClosedEventIds();
-    const seenEventIds = new Set();
-    const uniqueDistRows = (eventsRes.data || []).filter(d => {
-      if (seenEventIds.has(d.recall_event_id)) return false;
-      seenEventIds.add(d.recall_event_id);
-      return !_isClosedEvent(d.recall_event_id);
-    });
-
-    // Normalise recall_events into the same shape as recalls
-    const pushedRecalls = uniqueDistRows.map(d => ({
-      id:             d.recall_events.id,
-      product_name:   d.recall_events.product_name,
-      lot_number:     d.recall_events.lot_number,
-      barcode_number: d.recall_events.barcode,
-      description:    d.recall_events.reason,
-      source:         'manufacturer_push',
-      active:         true,
-    }));
-    // The linked recalls rows are dropped from the cache below, but the
-    // match writers need their ids (2026-11-01): keep them on the event.
-    _attachLinkedRecalls(pushedRecalls, recallsRes.data);
-
-    // 2026-09-09 audit fix: composer/legacy-pushed recalls have BOTH a
-    // linked recalls-table row (is_pushed / recall_event_id set) AND a
-    // recall_events row arriving via distributions. Keeping both cached
-    // the same recall twice — every matching scan wrote two match rows and
-    // exposure counts doubled. The event version is canonical.
-    const recalls = [...(recallsRes.data || []).filter(r => !(r.is_pushed || r.recall_event_id)), ...pushedRecalls];
-    // Core-loop fix (2026-08-05): populate the scan-time recall cache at
-    // login. Previously _cachedActiveRecalls was only filled by
-    // loadHistory(), so the pre-placement recall check and the submit-path
-    // match ran against an empty list until someone opened the History
-    // tab — a freshly-logged-in staffer could scan a recalled item with
-    // no warning. This login check already fetches the exact same
-    // normalized shape loadHistory caches (recalls rows + pushed
-    // recall_events mapped to id/product_name/lot_number/barcode_number).
-    // Guarded on query success (verify-fix 2026-08-05): supabase-js
-    // resolves failed queries as {data:null, error} without throwing, so
-    // an unguarded assignment on the 6-hour silent re-check would wipe a
-    // previously good cache to [] on one transient failure — disabling
-    // every scan-time recall safeguard until the next successful load.
-    if (!recallsRes.error && !eventsRes.error) _cachedActiveRecalls = recalls;
+    // The one list of active recalls (B4 stage 4): batchd_active_recalls
+    // returns manual recalls, pushed events and feed entries once each, with
+    // drills, closed events and dismissed feed entries already left out, and
+    // _fetchActiveRecalls attaches the linked recalls rows the match writers
+    // need. This fills the scan-time cache at login (core-loop fix,
+    // 2026-08-05: before, the pre-placement check and the save-path match ran
+    // against an empty list until someone opened History). Guarded on
+    // success (verify-fix 2026-08-05): a transient failure must not wipe a
+    // previously good cache to [], which would disable every scan-time
+    // recall safeguard until the next successful load.
+    const activeRes = await _fetchActiveRecalls();
+    const recalls = activeRes.data || [];
+    if (!activeRes.error) _cachedActiveRecalls = recalls;
     if (!recalls.length) return;
 
     // Deduplicate by product_name + lot_number — duplicate DB rows from repeated
@@ -10309,35 +10260,33 @@ async function checkRecallsOnLogin(silent = false) {
       return true;
     });
 
-    // ── #2: Manufacturer push → cross-reference engine ──────────
-    // recall_events don't trigger the DB sweep (only recalls table does).
-    // For any pushed recall that matched scans, persist those matches now.
-    // Fire-and-forget — doesn't block the login flow.
-    //
-    // Raw-capture rebuild: switched the per-scan filter from exact equality
-    // to recallMatchLevel. Only 'exact' (red) hits get persisted to
+    // ── #2: Confirm the sign-in hits as match rows ──────────────
+    // Pushed events never trigger the database sweep (only a manual recall
+    // does) and the daily feed sweep only covers entries new that morning,
+    // so every exact hit found here is persisted now, for every kind. The
+    // rows that already exist are skipped. Fire-and-forget — doesn't block
+    // the login flow. Only 'exact' (red) hits get persisted to
     // scan_recall_matches — 'possible' (orange) is informational only.
     (async () => {
       try {
         for (const m of loginRecallMatches) {
-          if (m.recall.source !== 'manufacturer_push' || !m.recall.id) continue;
+          if (!m.recall.id) continue;
           if (m.exactCount === 0) continue; // only red hits persist
 
           const rowsToInsert = recentScans
             .map(s => {
               const { level, matched_on } = recallMatchLevel(s, m.recall);
               if (level !== 'exact') return null;
-              // Path B: recall_id is the LINKED recalls row for this lot
-              // (foreign key to recalls), recall_event_id the event. See
-              // _attachLinkedRecalls. Without a linked row the foreign key
-              // refuses the insert, so the scan is skipped here.
-              const linkedRecallId = _pushedMatchRecallId(m.recall, s);
-              if (!linkedRecallId) return null;
+              // manual: recall_id. pushed: the LINKED recalls row for this
+              // lot in recall_id (the foreign key) and the event in
+              // recall_event_id; without a linked row the scan is skipped.
+              // feed: catalog_id. See _matchIdColumns.
+              const idCols = _matchIdColumns(m.recall, s);
+              if (!idCols) return null;
               return {
                 scan_id:         s.id,
-                recall_id:       linkedRecallId,
-                recall_event_id: m.recall.id,
-                recall_source:   'manufacturer_push',
+                ...idCols,
+                recall_source:   m.recall.source || 'manual',
                 recall_product:  m.recall.product_name || null,
                 recall_lot:      m.recall.lot_number   || null,
                 match_type:      matched_on === 'barcode' ? 'exact_barcode' : 'exact_lot',
@@ -10352,16 +10301,11 @@ async function checkRecallsOnLogin(silent = false) {
             })
             .filter(Boolean);
 
-          if (rowsToInsert.length) {
-            // Rows the composer's sweep already wrote for these scans are
-            // skipped by the (scan_id, recall_id) unique index.
-            const { error: sweepErr } = await sb.from('scan_recall_matches').upsert(rowsToInsert, {
-              onConflict: 'scan_id,recall_id', ignoreDuplicates: true,
-            });
-            if (sweepErr) throw sweepErr;
-          }
+          // Rows the composer's sweep, the daily feed sweep or an earlier
+          // sign-in already wrote are skipped (see _writeMatchRows).
+          await _writeMatchRows(rowsToInsert);
         }
-      } catch(e) { console.warn('[cross-ref] pushed recall sweep failed:', e.message); }
+      } catch(e) { console.warn('[cross-ref] sign-in match sweep failed:', e.message); }
     })();
 
     if (!loginRecallMatches.length) return;
@@ -10779,12 +10723,10 @@ async function deleteRecall(id) {
 async function loadHistory() {
   const grid = document.getElementById('records-grid');
   grid.innerHTML = `<div class="empty-state"><div class="spinner" style="margin:0 auto;"></div><p style="margin-top:12px;">${t('hist.loadingRecords')}</p></div>`;
-  // Audit fix #22: also fetch manufacturer-pushed recalls so the post-save
-  // toast and history-tab banner cover both paths. Previously only the
-  // recalls table was queried, so a scan that matched a pushed recall
-  // silently passed the post-save check without surfacing a warning to
-  // staff. Distributions → recall_events normalised into the same shape
-  // as recalls rows (matches the login-alert pattern at line ~9372).
+  // The active recalls come from the one list (B4 stage 4, _fetchActiveRecalls)
+  // so the post-save toast and the history-tab banner cover manual, pushed
+  // and feed recalls alike (audit fix #22 wanted both paths; the function
+  // now gives all three).
   // Perf fix #4: cap scans at 2000 rows. Previously unbounded — orgs with
   // thousands of historical scans would download 10MB+ of JSON, parse it,
   // hold it in memory, and then re-render the entire grid on every search
@@ -10792,10 +10734,9 @@ async function loadHistory() {
   // records are accessible via the dashboard's Reports & Exports panel
   // (which uses the audit-trail CSV path with proper server-side date
   // filtering). Future: replace with server-side pagination + date filter.
-  const [scansRes, recallsRes, distRes] = await Promise.all([
+  const [scansRes, activeRes] = await Promise.all([
     sb.from('scans').select('*').eq('organisation_id', _currentOrgId).order('created_at', { ascending: false }).limit(2000),
-    sb.from('recalls').select('*').eq('active', true).eq('organisation_id', _currentOrgId),
-    sb.from('recall_distributions').select('recall_event_id').eq('retailer_org_id', _currentOrgId),
+    _fetchActiveRecalls(),
   ]);
   if (scansRes.error) { grid.innerHTML = '<div class="empty-state"><h3>Error loading records</h3><p>' + scansRes.error.message + '</p></div>'; return; }
   allRecords = scansRes.data || [];
@@ -10810,39 +10751,11 @@ async function loadHistory() {
       (_rcvRows || []).forEach(x => { window._rcvLinkMap[x.id] = x; });
     }
   } catch (_) {}
-  let pushedRecalls = [];
-  const distRows = distRes.data || [];
-  if (distRows.length) {
-    const eventIds = [...new Set(distRows.map(d => d.recall_event_id).filter(Boolean))];
-    const { data: events } = await sb.from('recall_events')
-      .select('id, product_name, lot_number, barcode, reason, is_drill')
-      .in('id', eventIds);
-    // Drills are training, not real recalls — exclude per CLAUDE.md.
-    // Closed events are over — exclude too, via the fail-open probe
-    // (2026-09-09 audit fix).
-    await _loadClosedEventIds();
-    pushedRecalls = (events || []).filter(ev => !ev.is_drill && !_isClosedEvent(ev.id)).map(ev => ({
-      id:             ev.id,
-      product_name:   ev.product_name,
-      lot_number:     ev.lot_number,
-      barcode_number: ev.barcode,        // recall_events column is `barcode` not `barcode_number`
-      description:    ev.reason,
-      active:         true,
-      source:         'manufacturer_push',
-    }));
-    // Linked recalls rows ride on the event for the match writers (2026-11-01).
-    _attachLinkedRecalls(pushedRecalls, recallsRes.data);
-  }
   // Guarded on query success (verify-fix 2026-08-05, mirrors the
-  // checkRecallsOnLogin guard): a transient failure of the recalls or
-  // distributions query must not wipe a previously good cache — that
-  // would silently disable the pre-placement recall check and the
-  // post-save match until the next successful load.
-  if (!recallsRes.error && !distRes.error) {
-    // Same is_pushed/recall_event_id filter as checkRecallsOnLogin — the
-    // event version of a pushed recall is canonical (2026-09-09 audit fix).
-    _cachedActiveRecalls = [...(recallsRes.data || []).filter(r => !(r.is_pushed || r.recall_event_id)), ...pushedRecalls];
-  }
+  // checkRecallsOnLogin guard): a transient failure must not wipe a
+  // previously good cache — that would silently disable the pre-placement
+  // recall check and the post-save match until the next successful load.
+  if (!activeRes.error) _cachedActiveRecalls = activeRes.data || [];
   buildStoreDropdown();
   applyFilters();
   // Pass already-fetched recalls so checkActiveRecalls doesn't re-query for the same data.
@@ -10858,9 +10771,12 @@ async function loadHistory() {
 // the data on hand (tab-focus refresh, lookback setting save, etc.).
 async function checkActiveRecalls(cachedRecalls = null) {
   try {
-    const data = cachedRecalls
-      ? cachedRecalls
-      : (await sb.from('recalls').select('*').eq('active', true).eq('organisation_id', _currentOrgId)).data;
+    let data = cachedRecalls;
+    if (!data) {
+      const activeRes = await _fetchActiveRecalls();
+      data = activeRes.data;
+      if (!activeRes.error && data) _cachedActiveRecalls = data; // a fresh list is a good cache
+    }
     if (!data || !data.length) { document.getElementById('auto-recall-banner').style.display = 'none'; return; }
 
     // Deduplicate by product_name + lot_number
@@ -11553,7 +11469,7 @@ async function submitQuickAddRecall() {
 
     // Update cached recalls immediately.
     // id is required so matchScanAgainstRecalls() can write the scan_recall_matches row.
-    _cachedActiveRecalls.push({ id: _newRecallId, product_name: product, lot_number: lot || null, barcode_number: barcode || null, description: reason, active: true, source: 'manual' });
+    _cachedActiveRecalls.push({ id: _newRecallId, _kind: 'manual', product_name: product, lot_number: lot || null, lots: lot ? [lot] : [], barcode_number: barcode || null, gtins: [], description: reason, active: true, source: 'manual', _linkedRecalls: [] });
 
     // Sweep existing scans for this new recall — non-blocking
     if (_newRecallId) {
@@ -11617,33 +11533,21 @@ async function runQuickCheck() {
   el.innerHTML = `<div style="color:var(--muted);font-size:var(--fs-meta);">Checking…</div>`;
 
   try {
-    // Run both queries in parallel — scan history + active recalls
+    // Run both queries in parallel — scan history + the one list of active
+    // recalls (B4 stage 4)
     const cutoff = new Date(Date.now() - 180 * 86400000).toISOString();
-    const [scansRes, recallsRes, eventRecallsRes] = await Promise.all([
+    const [scansRes, activeRes] = await Promise.all([
       sb.from('scans')
         .select('id,product_name,lot_number,barcode_number,raw_capture,store_name,store_id,quantity,created_at,removed_from_shelf_at,recall_resolved,scanned_by,label_text')
         .eq('organisation_id', _currentOrgId)
         .gte('created_at', cutoff)
         .order('created_at', { ascending: false })
         .limit(500),
-      sb.from('recalls').select('*').eq('active', true).eq('organisation_id', _currentOrgId),
-      _currentOrgId
-        ? sb.from('recall_distributions')
-            .select('recall_event_id, recall_events!inner(id, product_name, lot_number, reason, severity, is_drill)')
-            .eq('retailer_org_id', _currentOrgId)
-            .eq('recall_events.is_drill', false)
-        : Promise.resolve({ data: [] }),
+      _fetchActiveRecalls(),
     ]);
 
     const allScans = scansRes.data || [];
-    const recalls  = [
-      ...(recallsRes.data || []),
-      ...(eventRecallsRes.data || []).map(d => ({
-        id: d.recall_events.id, product_name: d.recall_events.product_name,
-        lot_number: d.recall_events.lot_number, description: d.recall_events.reason,
-        source: 'manufacturer_push', active: true,
-      })),
-    ];
+    const recalls  = activeRes.data || [];
 
     // ── MATCH SCANS ──────────────────────────────────────────────
     // A scan matches the query if the lot, barcode, product name, or label_text contains it
@@ -12006,20 +11910,15 @@ async function buildShiftSummary() {
     const { data: scans, error } = await query;
     if (error) throw error;
 
-    // Fetch active recalls for cross-check. Both sources (CLAUDE.md rule, 2026-10-09):
-    // the recalls table (manual and feed) and pushed recall_events via distributions.
-    const [recallsRes, distRes, rcvRes] = await Promise.all([
-      sb.from('recalls').select('product_name, lot_number, batch_number, barcode_number').eq('active', true).eq('organisation_id', _currentOrgId),
-      sb.from('recall_distributions').select('recall_events!inner(product_name, lot_number, barcode, is_drill)').eq('retailer_org_id', _currentOrgId).eq('recall_events.is_drill', false),
+    // Fetch the one list of active recalls for the cross-check (B4 stage 4).
+    const [activeRes, rcvRes] = await Promise.all([
+      _fetchActiveRecalls(),
       // Deliveries this person recorded today (US orgs; tolerant of a missing table).
       _userRegion === 'us'
         ? sb.from('receiving_events').select('id, product_name, traceability_lot_code, quantity, unit_of_measure, received_at, supplier_name_snapshot').eq('organisation_id', _currentOrgId).eq('status', 'received').eq('received_by', currentUser?.email || '').gte('received_at', todayStart).order('received_at', { ascending: false })
         : Promise.resolve({ data: [] }),
     ]);
-    const activeRecalls = [
-      ...(recallsRes.data || []),
-      ...((distRes && distRes.data) || []).map(dd => ({ product_name: dd.recall_events?.product_name, lot_number: dd.recall_events?.lot_number, barcode_number: dd.recall_events?.barcode })),
-    ];
+    const activeRecalls = activeRes.data || [];
     const todayDeliveries = (rcvRes && !rcvRes.error && rcvRes.data) || [];
 
     // Compute stats
@@ -12029,16 +11928,7 @@ async function buildShiftSummary() {
     // Strict three-condition rule: exact lot OR exact barcode match only.
     // Product-name substring matching previously over-counted (every Coop-brand
     // scan matched a recall titled "Coop tilbakekaller …"). See matchScanAgainstRecalls.
-    const recallMatches = (scans || []).filter(s => {
-      const sLot     = (s.lot_number     || '').toLowerCase().trim();
-      const sBarcode = (s.barcode_number || '').toLowerCase().trim();
-      return activeRecalls.some(r => {
-        const rLot     = (r.lot_number     || '').toLowerCase().trim();
-        const rBarcode = (r.barcode_number || '').toLowerCase().trim();
-        return (rLot && sLot && rLot === sLot) ||
-               (rBarcode && sBarcode && rBarcode === sBarcode);
-      });
-    });
+    const recallMatches = (scans || []).filter(s => activeRecalls.some(r => Batchd.activeRecalls.exactIdentifierHit(s, r)));
     const resolved = (scans || []).filter(s => s.recall_resolved).length;
 
     // Recent 5 products
@@ -12209,8 +12099,7 @@ async function generateAuditReport() {
     const { data, error } = await query;
     if (error) throw error;
 
-    // Both recall sources (CLAUDE.md rule, 2026-10-09): the recalls table plus pushed
-    // recall_events via distributions, mapped to the recalls shape the matcher reads.
+    // The one list of active recalls (B4 stage 4: manual, pushed and feed).
     // Deliveries in the same period (US orgs) ride along; tolerant of a missing table.
     let rq = _userRegion === 'us'
       ? sb.from('receiving_events').select('id, received_at, store_id, product_name, gtin, traceability_lot_code, tlc_source_type, quantity, unit_of_measure, supplier_name_snapshot, reference_document_type, reference_document_number, received_by, source, stores(name)').eq('organisation_id', _currentOrgId).eq('status', 'received').order('received_at', { ascending: true }).limit(2000)
@@ -12218,16 +12107,12 @@ async function generateAuditReport() {
     if (rq && from) rq = rq.gte('received_at', from);
     if (rq && to)   { const td2 = new Date(to); td2.setHours(23,59,59,999); rq = rq.lte('received_at', td2.toISOString()); }
     if (rq && store) { const su = window._storeIdMap?.[store] || null; if (su) rq = rq.eq('store_id', su); }
-    const [recallsRes, distRes, rcvRes] = await Promise.all([
-      sb.from('recalls').select('*').eq('active', true).eq('organisation_id', _currentOrgId),
-      sb.from('recall_distributions').select('recall_events!inner(id, product_name, lot_number, barcode, severity, reason, is_drill)').eq('retailer_org_id', _currentOrgId).eq('recall_events.is_drill', false),
+    const [activeRes, rcvRes] = await Promise.all([
+      _fetchActiveRecalls(),
       rq || Promise.resolve({ data: [] }),
     ]);
     _auditData    = data || [];
-    _auditRecalls = [
-      ...(recallsRes.data || []),
-      ...((distRes && distRes.data) || []).map(dd => ({ id: dd.recall_events?.id, product_name: dd.recall_events?.product_name, lot_number: dd.recall_events?.lot_number, barcode_number: dd.recall_events?.barcode, _pushed: true })),
-    ];
+    _auditRecalls = activeRes.data || [];
     let dlv = (rcvRes && !rcvRes.error && rcvRes.data) || [];
     if (store && !(window._storeIdMap?.[store])) dlv = dlv.filter(r => r.stores?.name === store);
     _auditDeliveries = dlv;
@@ -12242,16 +12127,7 @@ async function generateAuditReport() {
     // Strict three-condition rule: exact lot OR exact barcode match only.
     // This count drives the audit report's match/resolved/coverage numbers — those
     // are regulatory documents, so loose product matching here was over-reporting.
-    const matchedScans = _auditData.filter(r => {
-      const sLot     = (r.lot_number     || '').toLowerCase().trim();
-      const sBarcode = (r.barcode_number || '').toLowerCase().trim();
-      return _auditRecalls.some(rec => {
-        const recLot     = (rec.lot_number     || '').toLowerCase().trim();
-        const recBarcode = (rec.barcode_number || '').toLowerCase().trim();
-        return (recLot && sLot && recLot === sLot) ||
-               (recBarcode && sBarcode && recBarcode === sBarcode);
-      });
-    });
+    const matchedScans = _auditData.filter(r => _auditRecalls.some(rec => Batchd.activeRecalls.exactIdentifierHit(r, rec)));
     const resolvedCount = matchedScans.filter(r => r.recall_resolved).length;
     const unresolvedCount = matchedScans.length - resolvedCount;
 
@@ -16686,17 +16562,11 @@ function rcvDoneDelivery() {
 // not change the platform's active-recall count.
 async function rcvCheckRecallForReceipt(payload) {
   try {
-    const orgId = _currentOrgId; if (!orgId) return;
-    const [recallsRes, eventsRes] = await Promise.all([
-      sb.from('recalls').select('*').eq('active', true).eq('organisation_id', orgId).limit(300),
-      sb.from('recall_distributions')
-        .select('recall_event_id, recall_events!inner(id, product_name, lot_number, barcode, severity, reason, published_at, is_drill, closed_at)')
-        .eq('retailer_org_id', orgId).eq('recall_events.is_drill', false).limit(100),
-    ]);
-    const manual = (recallsRes.data || []).filter(r => !r.is_pushed && !r.recall_event_id);
-    const pushed = (eventsRes.data || []).map(d => d.recall_events).filter(ev => ev && !ev.closed_at).map(ev => ({ ...ev, barcode_number: ev.barcode }));
+    if (!_currentOrgId) return;
+    // The one list of active recalls (B4 stage 4): manual, pushed and feed.
+    const recalls = (await _fetchActiveRecalls()).data || [];
     const pseudo = { lot_number: payload.traceability_lot_code, raw_capture: payload.raw_label_capture || payload.traceability_lot_code, barcode_number: payload.gtin, product_name: payload.product_name };
-    const hits = [...pushed, ...manual].filter(r => recallMatchLevel(pseudo, r).level === 'exact');
+    const hits = recalls.filter(r => recallMatchLevel(pseudo, r).level === 'exact');
     if (hits.length) {
       _rcvMsg(`RECALL: this lot matches an active recall (${esc(hits[0].product_name || '')}). Hold it in the back room. Do not shelve it.`, 'error');
       showToast('Recalled lot received. Hold it, do not shelve it.', 'error', 6000);
@@ -19581,7 +19451,9 @@ async function mgrAddRecall() {
     const hazEl = document.getElementById('mgr-recall-hazard'); if (hazEl) hazEl.value = '';
     const sevEl = document.getElementById('mgr-recall-severity'); if (sevEl) sevEl.value = '';
     // id is required so matchScanAgainstRecalls() can write the scan_recall_matches row
-    _cachedActiveRecalls.push({ id: newRecall?.id, product_name: product, lot_number: lot || null, barcode_number: barcode || null, description: fullDesc, active: true, source: 'manual' });
+    _cachedActiveRecalls.push({ id: newRecall?.id, _kind: 'manual', product_name: product, lot_number: lot || null, lots: lot ? [lot] : [], barcode_number: barcode || null, gtins: [], description: fullDesc, active: true, source: 'manual', _linkedRecalls: [] });
+    // Back-match the scans already on shelf (B4 stage 4: every writer sweeps).
+    if (newRecall?.id) sweepScansForRecall(newRecall.id).then(n => { if (n > 0) showToast(`${n} existing scan${n !== 1 ? 's' : ''} matched this recall across your stores.`, 'warn', 6000); });
     setTimeout(() => { if (msgEl) msgEl.textContent=''; }, 3000);
     loadMgrRecalls();
     checkActiveRecalls();
@@ -21466,10 +21338,12 @@ async function recallActionFileRecall() {
     // Refresh cached recalls so auto-matching picks up the new recall.
     // id is required so matchScanAgainstRecalls() can write the scan_recall_matches row.
     _cachedActiveRecalls = [..._cachedActiveRecalls, {
-      id: newRecall?.id,
-      product_name: r.product_name, lot_number: r.lot_number,
-      barcode_number: r.barcode_number, description: reason, active: true, source: 'manual'
+      id: newRecall?.id, _kind: 'manual',
+      product_name: r.product_name, lot_number: r.lot_number, lots: r.lot_number ? [r.lot_number] : [],
+      barcode_number: r.barcode_number, gtins: [], description: reason, active: true, source: 'manual', _linkedRecalls: []
     }];
+    // Back-match the scans already on shelf (B4 stage 4: every writer sweeps).
+    if (newRecall?.id) sweepScansForRecall(newRecall.id).then(n => { if (n > 0) showToast(`${n} existing scan${n !== 1 ? 's' : ''} matched this recall across your stores.`, 'warn', 6000); });
 
     showToast(`Recall filed for "${r.product_name}" — visible to all stores.`, 'ok', 4000);
 
@@ -21866,24 +21740,12 @@ async function loadRecallsView() {
     // recallMatchLevel (substring on raw_capture + product fuzzy) so the
     // Recalls drawer surfaces hits consistently with the rest of the app.
 
-    // Step 2: fetch active recalls (manual + Mattilsynet/FDA feed) + manufacturer-pushed recalls
-    const [recallsRes, eventsRes] = await withTimeout(Promise.all([
-      sb.from('recalls').select('*').eq('active', true).eq('organisation_id', orgId).limit(300),
-      sb.from('recall_distributions')
-          .select('recall_event_id, recall_events!inner(id, product_name, lot_number, barcode, severity, reason, published_at, is_drill)')
-          .eq('retailer_org_id', orgId)
-          .eq('recall_events.is_drill', false)
-          .limit(100),
-    ]), 10000);
-
-    const manualRecalls = (recallsRes.data || []).map(r => ({ ...r, _type: 'manual' }));
-    const seen = new Set();
-    const pushedRecalls = (eventsRes.data || []).filter(d => {
-      if (seen.has(d.recall_event_id)) return false;
-      seen.add(d.recall_event_id); return true;
-    }).map(d => ({ ...d.recall_events, barcode_number: d.recall_events.barcode, description: d.recall_events.reason, _type: 'pushed' }));
-
-    const allRecalls = [...pushedRecalls, ...manualRecalls];
+    // Step 2: the one list of active recalls (B4 stage 4): manual recalls,
+    // pushed events and feed entries, each once. _type keeps the drawer's
+    // old names ('pushed', 'manual', and now 'feed').
+    const activeRes = await withTimeout(_fetchActiveRecalls(), 10000);
+    if (activeRes.error) throw activeRes.error;
+    const allRecalls = (activeRes.data || []).map(r => ({ ...r, _type: r._kind }));
 
     // Step 3: cross-reference — surface every recall whose on-shelf scans
     // match at EITHER level (exact / red OR possible / orange). The page
@@ -21972,15 +21834,15 @@ async function loadRecallsView() {
         // (pullFromShelf writes to scans.removed_from_shelf_at, not scan_recall_matches).
         // Selecting it would cause a silent Supabase error, returning data:null and
         // leaving exposureByRecall empty so the drawer shows the "Calculating…" stub forever.
-        // recallIds mixes recalls.id (manual and feed) with recall_events.id
-        // (pushed); match rows hold the former in recall_id and the latter in
-        // recall_event_id (2026-11-01), so read both columns and key the
-        // result by whichever one the drawer knows the recall by.
+        // recallIds mixes recalls.id (manual), recall_events.id (pushed) and
+        // recall_catalog.id (feed); match rows hold them in recall_id,
+        // recall_event_id and catalog_id, so read all three columns and key
+        // the result by whichever one the drawer knows the recall by.
         const _idList = `(${recallIds.join(',')})`;
         const { data: matchRows } = await sb
           .from('scan_recall_matches')
-          .select('recall_id, recall_event_id, scan_id, store_name, quantity, placed_at, scanned_by, match_type')
-          .or(`recall_id.in.${_idList},recall_event_id.in.${_idList}`)
+          .select('recall_id, recall_event_id, catalog_id, scan_id, store_name, quantity, placed_at, scanned_by, match_type')
+          .or(`recall_id.in.${_idList},recall_event_id.in.${_idList},catalog_id.in.${_idList}`)
           .eq('organisation_id', _currentOrgId);
         if (matchRows) {
           // 2026-09-09 audit fix: match rows alone say nothing about pulls
@@ -21995,7 +21857,9 @@ async function loadRecallsView() {
           const _wanted = new Set(recallIds);
           matchRows.forEach(m => {
             m._removedAt = m.scan_id ? (_removedByScan[m.scan_id] || null) : null;
-            const key = (m.recall_event_id && _wanted.has(m.recall_event_id)) ? m.recall_event_id : m.recall_id;
+            const key = (m.recall_event_id && _wanted.has(m.recall_event_id)) ? m.recall_event_id
+                      : (m.catalog_id && _wanted.has(m.catalog_id)) ? m.catalog_id
+                      : m.recall_id;
             if (!exposureByRecall[key]) exposureByRecall[key] = [];
             exposureByRecall[key].push(m);
           });

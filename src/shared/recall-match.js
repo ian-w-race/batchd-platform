@@ -75,11 +75,24 @@ export function fuzzyProductMatch(recallProduct, scanProduct) {
   return false;
 }
 
+// Every lot a recall names (the `lots` list when it has one, else the single
+// lot_number) and every barcode (barcode_number plus GTINs), lower-cased.
+// B4 stage 4 (2026-11-08): a pushed recall with several lots and a feed entry
+// with parsed lots match on any of them, not only the first.
+function _lots(recall) {
+  const src = Array.isArray(recall.lots) && recall.lots.length ? recall.lots : [recall.lot_number];
+  return src.map(l => (l || '').toString().toLowerCase().trim()).filter(Boolean);
+}
+function _barcodes(recall) {
+  const src = [recall.barcode_number].concat(Array.isArray(recall.gtins) ? recall.gtins : []);
+  return src.map(b => (b || '').toString().toLowerCase().trim()).filter(Boolean);
+}
+
 // Match levels:
-//   'exact'    red alert: the recall's barcode equals the scan's, or the recall
-//              lot is a substring of raw_capture (case-insensitive). Product
-//              corroboration is not required for an exact identifier hit, but a
-//              lot shorter than 4 characters needs it.
+//   'exact'    red alert: one of the recall's barcodes equals the scan's, or one
+//              of the recall's lots is a substring of raw_capture
+//              (case-insensitive). Product corroboration is not required for an
+//              exact identifier hit, but a lot shorter than 4 characters needs it.
 //   'possible' orange alert: the product fuzzy-matches but no lot substring
 //              confirmed (recalls without a lot, skip-path scans, legacy scans).
 //   null       no match.
@@ -97,28 +110,29 @@ export function recallMatchLevel(scanRecord, recall, log) {
 
   // Red — exact barcode match (legacy compat). Kept because pre-rebuild
   // scans have barcode_number populated; new scans always have it null.
-  if (recall.barcode_number && scanRecord.barcode_number &&
-      recall.barcode_number.toLowerCase().trim() === scanRecord.barcode_number.toLowerCase().trim()) {
+  // A feed entry's GTINs count as barcodes.
+  const scanBc = (scanRecord.barcode_number || '').toString().toLowerCase().trim();
+  if (scanBc && _barcodes(recall).includes(scanBc)) {
     if (log) log(scanRecord, recall, 'red', 'barcode');
     return { level: 'exact', recall, matched_on: 'barcode' };
   }
 
-  // Red — recall lot is a substring of scan.raw_capture (case-insensitive).
+  // Red — a recall lot is a substring of scan.raw_capture (case-insensitive).
   // The brief mandates raw_capture as the search field; lot_number on new
   // scans is set equal to raw_capture by submitScan, so the fallback to
   // lot_number below is functionally identical for new data and a
   // partial-credit lifeline for legacy scans where raw_capture is null.
-  if (recall.lot_number) {
-    const recallLotLow = recall.lot_number.toLowerCase().trim();
-    // When the product name does NOT corroborate, require a lot code of
-    // real length: a 2-3 character code would substring-match half the
-    // shelf and bury staff in false alarms.
-    const MIN_UNCORROBORATED_LOT = 4;
-    if (recallLotLow && (productMatches || recallLotLow.length >= MIN_UNCORROBORATED_LOT)) {
-      const rawLow = (scanRecord.raw_capture || scanRecord.lot_number || '').toLowerCase();
-      if (rawLow && rawLow.includes(recallLotLow)) {
+  // When the product name does NOT corroborate, require a lot code of real
+  // length: a 2-3 character code would substring-match half the shelf and
+  // bury staff in false alarms.
+  const MIN_UNCORROBORATED_LOT = 4;
+  const rawLow = (scanRecord.raw_capture || scanRecord.lot_number || '').toString().toLowerCase();
+  if (rawLow) {
+    for (const recallLotLow of _lots(recall)) {
+      if (!(productMatches || recallLotLow.length >= MIN_UNCORROBORATED_LOT)) continue;
+      if (rawLow.includes(recallLotLow)) {
         if (log) log(scanRecord, recall, 'red', 'substring');
-        return { level: 'exact', recall, matched_on: 'substring' };
+        return { level: 'exact', recall, matched_on: 'substring', matched_lot: recallLotLow };
       }
     }
   }

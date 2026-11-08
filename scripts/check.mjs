@@ -165,6 +165,29 @@ check('Parsers, listed-food table and recall matcher come only from src/shared',
   return `3 pages, ${labels.length} categories`;
 });
 
+// 6c. The scanner reads "the active recalls" only through the database
+// function batchd_active_recalls (B4 stage 4, 2026-11-08): no page query of
+// recall_distributions or recall_events, and the one normalizer and the two
+// match-row rules come from src/shared/active-recalls.js. The Retail app
+// moves in stage 5; the manual-recall management lists still read `recalls`
+// on purpose (CLAUDE.md, "Database rules").
+check('Scanner reads active recalls only through batchd_active_recalls', () => {
+  const s = read('index.html');
+  for (const q of ["from('recall_distributions')", "from('recall_events')", '_loadClosedEventIds(']) {
+    if (s.includes(q)) throw new Error(`index.html: still contains ${q}; active recalls come from batchd_active_recalls`);
+  }
+  for (const n of ["rpc('batchd_active_recalls'", 'Batchd.activeRecalls.normalizeActiveRecalls(', 'Batchd.activeRecalls.matchIdColumns(', 'Batchd.activeRecalls.exactIdentifierHit(']) {
+    if (!s.includes(n)) throw new Error(`index.html: does not call ${n}`);
+  }
+  const pairs = (s.match(/from\('recalls'\)\.select\([^)]*\)\.eq\('active', true\)/g) || []).length;
+  if (pairs) throw new Error(`index.html: ${pairs} direct "active recalls" quer${pairs === 1 ? 'y' : 'ies'} on the recalls table left`);
+  const shared = read('src/shared/active-recalls.js');
+  for (const fn of ['export function normalizeActiveRecalls(', 'export function exactIdentifierHit(', 'export function matchIdColumns(']) {
+    if (!shared.includes(fn)) throw new Error(`src/shared/active-recalls.js: ${fn.slice(16, -1)} missing`);
+  }
+  return `1 RPC, ${(s.match(/_fetchActiveRecalls\(\)/g) || []).length} callers`;
+});
+
 // 6b. The design tokens live only in src/shared/design-tokens.css (A2 part 4,
 // 2026-11-01); the scanner, Retail and the sign-in page link the built copy
 // before their own styles and declare none of the shared tokens inline.

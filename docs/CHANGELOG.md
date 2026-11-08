@@ -4,6 +4,48 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-11-08 (B4 stage 4: the scanner reads one list of active recalls)
+- Every scanner reader that needs the active recalls (sign-in alert,
+  History banner and post-save toast, pre-placement warning, receiving
+  hold, multi-store tile, Quick check, shift summary, audit report, the
+  Recalls drawer and the checkActiveRecalls fallback) now calls
+  batchd_active_recalls once through _fetchActiveRecalls(); the rows become
+  the cache shape through Batchd.activeRecalls.normalizeActiveRecalls
+  (src/shared/active-recalls.js). Drills, closed events and dismissed feed
+  entries are left out by the function, so the 2026-09-09 closed-event
+  probe and the ten query pairs are gone. Public feed entries now come from
+  the catalog (501 on production) instead of the per-organization copies.
+- The shared matcher reads every lot a recall names (`lots`) and every
+  GTIN (`gtins`): a recall pushed with several lots matches a scan of any
+  of them (the known defect since 2026-10-25), and a feed entry matches on
+  its parsed lots or GTINs instead of the whole free-text code line.
+  The strict equal-lot-or-barcode rule the reports use is now one shared
+  function, exactIdentifierHit.
+- Match rows: Batchd.activeRecalls.matchIdColumns decides the id columns
+  (manual recall_id; pushed recall_id = linked row plus recall_event_id;
+  feed catalog_id) and _writeMatchRows writes them, selecting before
+  inserting catalog rows because that unique index is partial. The
+  sign-in sweep persists exact hits of every kind, not only pushed ones.
+  The two manual-recall writers that never swept (the manager card and
+  the recall action sheet) now call sweep_recall_matches and report the
+  matched scans.
+- One direct read of `recalls` stays in the active path: the linked rows
+  of pushed recalls, fetched once per list because the match writers need
+  their ids. The manual-recall management lists and the duplicate checks
+  read `recalls` on purpose.
+- scripts/check.mjs: a new check refuses a page query of
+  recall_distributions or recall_events in index.html and requires the RPC
+  and the three shared rules.
+- Verified: node scripts/check.mjs (11 of 11); node --test (132 tests;
+  tests/shared-active-recalls.test.mjs covers the normalizer against the
+  three kinds and a pushed recall with two lots, the strict rule, the id
+  columns and the matcher on lots and GTINs); the end-to-end suite
+  locally against the built site and the staging database (11 passed, 1
+  skipped: the notice test needs functions, which the local server lacks),
+  so the sign-in alert, the pre-placement warning and the pushed recall's
+  match rows all come through the new path. Not verified in a live
+  session: the Recalls drawer with a matched feed entry (SMOKE.md 66).
+
 ## 2026-11-08 (B4 stage 3: migration 044 copies the feed rows into the catalog)
 - migrations/044_recall_catalog_backfill.sql copies every per-organization
   public feed row in recalls (source fda or mattilsynet, with an

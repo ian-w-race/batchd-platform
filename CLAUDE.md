@@ -199,8 +199,13 @@ thresholds, supplier completeness, CSV cell guard, local date and time),
 extractBestBefore), `src/shared/ftl.js` (FTL_CATEGORIES,
 detectFtlCategory, normaliseProductKey, ftlLabels), `src/shared/recall-match.js`
 (recallMatchLevel, checkRecordAgainstRecalls, fuzzyProductMatch,
-levenshtein) and `src/shared/index.js` (the bundle entry, exposes
-`window.Batchd.env`, `.fsma`, `.gs1`, `.ftl` and `.recall`), built by
+levenshtein; since B4 stage 4 the matcher reads every lot in `lots` and
+every GTIN in `gtins`), `src/shared/active-recalls.js`
+(normalizeActiveRecalls, exactIdentifierHit, matchIdColumns, recallLots,
+recallBarcodes: the rows of batchd_active_recalls become the scanner's
+cache shape; B4 stage 4) and `src/shared/index.js` (the bundle entry,
+exposes `window.Batchd.env`, `.fsma`, `.gs1`, `.ftl`, `.recall` and
+`.activeRecalls`), built by
 `scripts/build.mjs` into `dist/assets/batchd-shared.js`. The scanner
 keeps its old function names as aliases of these; `recallMatchLevel` in
 the scanner passes `_logRecallMatch` as the module's log callback.
@@ -452,11 +457,19 @@ pov once and refuses to run again.
   barcode match to an on-shelf scan.
 - Every recall check reads BOTH sources: the recalls table (manual and
   feed) AND recall_events joined through recall_distributions on
-  retailer_org_id (pushed). This has regressed before. Lists that still
-  read the recalls table only, on purpose or not: the scanner's
-  loadRecallsList and loadMgrRecalls (manual-recall management),
-  loadMgrData (it also loads scan_recall_matches), and
-  checkActiveRecalls when called without `_cachedActiveRecalls`.
+  retailer_org_id (pushed). This has regressed before. In the SCANNER
+  (since B4 stage 4, 2026-11-08) that means one call: every reader goes
+  through `_fetchActiveRecalls()`, which calls the database function
+  `batchd_active_recalls(p_org)` (manual, pushed and feed in one shape,
+  drills, closed events and dismissed feed entries left out) and
+  normalizes the rows with `Batchd.activeRecalls.normalizeActiveRecalls`
+  (src/shared/active-recalls.js) into the cache shape; scripts/check.mjs
+  refuses a new page query of recall_distributions or recall_events in
+  index.html. Retail still reads the two sources itself until stage 5.
+  Lists that read the recalls table only, on purpose: the scanner's
+  loadRecallsList, loadMgrRecalls and loadMgrData (manual-recall
+  management; loadMgrData also loads scan_recall_matches) and the
+  duplicate checks before a manual recall is filed.
 - A received lot with no shelf scan is "held at receiving": warn to hold
   it, but it does not count toward active-recall badges.
 
@@ -477,10 +490,21 @@ pov once and refuses to run again.
 - A SELECT on a missing column fails silently in the UI (a 400 visible
   only in devtools).
 
-### scan_recall_matches has two paths
-- Path A (manual and feed): recall_id = recalls.id, recall_event_id
-  NULL. Written by matchScanAgainstRecalls and the sweep_recall_matches
-  RPC. Query with `.eq('recall_id', recalls.id)`.
+### scan_recall_matches has three paths
+The id columns a row carries come from `Batchd.activeRecalls.matchIdColumns`
+(the scanner wraps it as `_matchIdColumns`) and every scanner write goes
+through `_writeMatchRows` (since B4 stage 4, 2026-11-08).
+- Path A (manual): recall_id = recalls.id, recall_event_id and catalog_id
+  NULL. Written by matchScanAgainstRecalls, the sign-in sweep and the
+  sweep_recall_matches RPC. Query with `.eq('recall_id', recalls.id)`.
+- Path C (feed, since migration 043): catalog_id = recall_catalog.id,
+  recall_id and recall_event_id NULL. Written by the importer's
+  sweep_catalog_matches RPC and by the scanner (save path and sign-in
+  sweep). The (scan_id, catalog_id) unique index is partial, so PostgREST
+  upsert cannot target it: `_writeMatchRows` selects, then inserts the
+  missing rows. Query with `.eq('catalog_id', id)`. Until stage 6 the old
+  per-organization feed copies in `recalls` still exist, but no scanner
+  write points at them any more.
 - Path B (pushed): recall_event_id = recall_events.id, recall_id = the
   linked recalls row for that lot (is_pushed, recall_event_id set; one
   per lot since 2026-10-25). recall_id has a foreign key to recalls(id),
@@ -496,8 +520,8 @@ pov once and refuses to run again.
   (checkRecallsOnLogin, loadHistory); a pushed event with no linked row
   gets no match row (the write would be refused). Query with
   `.eq('recall_event_id', id)` (real FK, cascade delete). A reader that
-  takes either kind of id (the scanner's checkPriorComplaintsForRecall and
-  the Recalls drawer's exposure query) filters on both columns.
+  takes any kind of id (the Recalls drawer's exposure query) filters on
+  all three columns; checkPriorComplaintsForRecall takes a manual id.
 - recall_source ('manual', 'fda', 'rasff', 'mattilsynet',
   'manufacturer_push') is for reporting, not disambiguation.
 
@@ -680,12 +704,11 @@ storage bucket, 033 cross-org rules, 034 anon table writes and store
 names, 035 view user_accessible_stores, search paths and trigger
 functions). Nothing from that pass is still open.
 Code, known and not fixed:
-- A recall pushed with several lots has one recall_events row whose
-  lot_number is the typed list ("L1, L2"), so the scanner's event-based
-  matcher (recallMatchLevel on the pushed recall object) only fires on a
-  scan whose raw capture contains the whole list; the per-lot linked
-  recalls rows are filtered out of the cache. Single-lot pushes match.
-  Fix by matching on _linkedRecalls lots as well, or wait for B4.
+- Fixed 2026-11-08 (B4 stage 4): a recall pushed with several lots now
+  matches a scan of any of them, because batchd_active_recalls returns
+  every lot in `lots` and the shared matcher reads that list (and the
+  GTINs of a feed entry). Retail's own matchers still read lot_number
+  only until stage 5.
 - Design review leftovers: spacing onto `--s-*`; the photo lightbox and
   camera overlays keep literal colors on purpose.
 Not built (by decision): EDI 856, a Shipping sheet for distribution
