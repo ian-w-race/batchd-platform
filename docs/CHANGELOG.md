@@ -4,6 +4,49 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-11-08 (B4 stage 5: Retail reads one list of active recalls)
+- Every Retail reader that needs the active recalls calls
+  batchd_active_recalls once through _fetchActiveRecalls(opts): the
+  Dashboard overview (tiles, recall inbox, exposed lots), the Recalls
+  panel's Active tab and badge, Lot Lookup, the lot tracer, the
+  Intelligence panel, the Store Network command center and the exposure
+  report. The lot tracer and the Intelligence panel lose their unfiltered
+  recall_events reads (every event of every organization, relying on row
+  security); the eight query pairs are gone.
+- Feed alerts is now the shared catalog with per-organization state:
+  each entry shows its parsed lots, recall number, recalling firm,
+  classification and date, with Mark reviewed and Dismiss; a dismissed
+  entry leaves the Active tab and the scanner for that organization,
+  sits under "Show N dismissed" and can be restored. These write
+  recall_catalog_org (corp admins and store managers, policy
+  b43_catalog_org_*). An FDA entry that a scan still on shelf matches
+  appears in the Active tab with a Dismiss button instead of Resolve.
+- Every Retail matching rule reads every lot and GTIN a recall names
+  (_recallLotsMatch over lotsMatch; the strict readers through
+  Batchd.activeRecalls.recallLots and recallBarcodes), and every
+  match-row reader counts recall_id, recall_event_id and catalog_id.
+- Kept on the tables on purpose: the Recalls panel's History tab and the
+  recall history report (inactive recalls and closed events; the report
+  now leaves drills out), Live Recall and the drill pages (one event by
+  id) and the Consumer Notify picker (events closed within the last 30
+  days are still offered, which the function would hide).
+- The Add recall form's notice sources are fda_notice and
+  mattilsynet_notice (labels unchanged), so a recall logged by hand from
+  an FDA notice is a manual recall to the function and not a feed copy.
+- scripts/check.mjs: the single-source check covers dashboard.html (no
+  recall_distributions and recall_events query pair, no unfiltered
+  recall_events list, no "active recalls" query on the recalls table; the
+  RPC and recall_catalog_org must be used).
+- Verified: node scripts/check.mjs (11 of 11); node --test (132 tests);
+  the end-to-end suite locally against the built site and the staging
+  database (11 passed, 1 skipped: the notice test needs functions), so the
+  overview, the composer push and Live Recall still work on the new path;
+  and a new e2e/feed-alerts.spec.mjs (passed locally): Feed alerts counts
+  the catalog, Dismiss moves an entry under the dismissed toggle, Restore
+  brings it back, and the staging organization is left as found. Not
+  verified in a live session: Lot Lookup and the lot tracer on a pushed
+  recall's second lot (SMOKE.md 67).
+
 ## 2026-11-08 (B4 stage 4: the scanner reads one list of active recalls)
 - Every scanner reader that needs the active recalls (sign-in alert,
   History banner and post-save toast, pre-placement warning, receiving
