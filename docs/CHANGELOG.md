@@ -4,6 +4,17 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-11-08 (plan decisions recorded)
+- Ian answered the decision lists of docs/PLATFORM-IMPROVEMENT-PLAN.md
+  and docs/PORTALS-PLAN.md (2026-11-01 and 2026-11-08): every
+  recommendation accepted; Supabase Pro off until further notice; push
+  notifications only; the build step approved; USDA FSIS later; the
+  complaint, consumer-notify and investigations panels stay as sections
+  under Recalls; the recall engine comes first; an inbound recall-notice
+  address per retailer is approved. Still open: portals plan 7 (who
+  pays). The four manufacturer orgs in production were checked read-only
+  on 2026-11-01 and are April test data. Docs only; no code.
+
 ## 2026-11-08 (B4 stage 2: the importer writes the recall catalog)
 - fetch-recall-feeds.js now writes each FDA report entry once into
   recall_catalog, keyed (source, external_key) with the recall number plus

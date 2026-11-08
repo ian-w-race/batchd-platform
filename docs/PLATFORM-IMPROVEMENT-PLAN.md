@@ -24,7 +24,9 @@ Retail and the sign-in page link. A2's "each rule exists once" is done;
 splitting rarely used panels out of the first download waits for the
 redesign (Phase 6), when the apps' own code is restructured. B1 and B2 from Phase 3 shipped early on 2026-10-25 (supplier
 notice intake and lot-level matching). B4 (one recall catalog) is planned in docs/B4-RECALL-CATALOG-PLAN.md
-(2026-11-01), waiting on Ian's decisions in its section 6. docs/CHANGELOG.md has the detail.
+(2026-11-01), waiting on Ian's decisions in its section 6. Section 6
+below records Ian's answers of 2026-11-01 and 2026-11-08: the recall
+engine comes first. docs/CHANGELOG.md has the detail.
 
 ## 1. What Batch'd has to be able to do
 
@@ -182,19 +184,19 @@ today.
 
 ## 6. Decisions for Ian
 
-1. **Supabase Pro now?** $25 a month for backups. Recommended.
-2. **USDA FSIS recalls:** in scope for the wedge? Leafy greens and nut
-   butters are FDA products, but a grocery chain will expect one recall
-   inbox for everything. Lower priority now that supplier notices come
-   first.
-3. **Text messages for alerts:** they cost per message (Twilio or similar).
-   Push notifications are free. Start with push only?
-4. **A build step:** it changes how files are uploaded (Netlify builds them,
-   as it already does for functions). Acceptable?
-5. **Complaint Triage, Consumer Notify and Investigations:** keep them as
-   sections under Recalls, or park them until a customer asks?
-6. **Order:** this plan first, then the portals? Or the recall engine
-   (phase 3) first because it matters most to pilots?
-7. **Recall notice intake address:** a Batch'd address per retailer
-   (for example `recalls+<org>@batchdapp.com`) means receiving email
-   through Resend or a similar inbound service. Acceptable?
+Answered by Ian: 1 to 4 on 2026-11-01, 5 to 7 on 2026-11-08.
+
+1. **Supabase Pro now?** No. Off until further notice. The project stays
+   on the free plan with no restorable backups and no leaked-password
+   protection. Revisit only when Ian raises it.
+2. **USDA FSIS recalls:** in scope for the backstop (B5), but later, after
+   supplier notices. Not part of the wedge.
+3. **Text messages for alerts:** no. Push notifications only (C1).
+4. **A build step:** yes. Netlify builds the pages as it already builds
+   the functions. A2 shipped the same day.
+5. **Complaint Triage, Consumer Notify and Investigations:** keep them,
+   as sections under Recalls (F1).
+6. **Order:** the recall engine (phase 3) first, because it matters most
+   to pilots. The rest of this plan and the portals follow.
+7. **Recall notice intake address:** yes. A Batch'd address per retailer
+   through Resend or a similar inbound service (B1's email path).
