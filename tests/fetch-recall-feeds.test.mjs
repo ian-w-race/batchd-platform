@@ -1,8 +1,7 @@
 // fetch-recall-feeds.js: the daily FDA import writes each entry once into
 // recall_catalog and sweeps matches for the new ones (B4 stage 2,
-// 2026-11-08), and, until B4 stage 6, still adds the per-organization copies
-// the screens read, once per US org and never duplicated (rewritten
-// 2026-10-24). Run: node --test tests/*.test.mjs
+// 2026-11-08). Since B4 stage 6 it writes nothing else: the per-organization
+// copies in `recalls` are gone. Run: node --test tests/*.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
@@ -81,7 +80,7 @@ const item = (n, product, date = '20261020', reason = 'Possible Listeria contami
 const US = [{ id: 'us-1', region: 'us', type: 'retailer' }, { id: 'us-2', region: 'us', type: 'retailer' }];
 const NO = [{ id: 'no-1', region: 'no', type: 'retailer' }];
 
-test('fresh import writes each entry once to the catalog, sweeps it, and still adds the per-org copies', async () => {
+test('fresh import writes each entry once to the catalog and sweeps it, and writes no per-org copies', async () => {
   delete process.env.SCHEDULED_FUNCTIONS_DISABLED;
   global.fetch = fda([item(1, 'Romaine hearts'), item(2, 'Peanut butter'), item(3, 'Spinach')]);
   const db = makeDb({ orgs: [...US, ...NO] });
@@ -90,17 +89,16 @@ test('fresh import writes each entry once to the catalog, sweeps it, and still a
   assert.equal(db.catalog.length, 3, 'one catalog row per entry, no organization');
   assert.equal(db.sweeps.length, 3, 'one sweep per new entry');
   assert.equal(r.catalog_matches, 6, 'the stub reports 2 matches per sweep');
-  assert.equal(r.fda_added, 6, 'per-org copies: 3 entries x 2 US orgs, none for the NO org');
-  assert.equal(db.calls, 3 + 3 + 2, 'organisations, catalog lookup, catalog upsert, three sweeps, existing per-org rows, per-org upsert');
-  assert.equal(db.recalls.filter((x) => x.source === 'fda').length, 6);
-  assert.ok(db.recalls.every((x) => /\[F-\d{4}-2026\]$/.test(x.description)));
+  assert.equal(r.fda_added, undefined, 'the per-organization copies are no longer written or reported (B4 stage 6)');
+  assert.equal(db.calls, 2 + 3, 'catalog lookup, catalog upsert, three sweeps; no organisations read, no recalls write');
+  assert.equal(db.recalls.length, 0, 'nothing in recalls');
   assert.equal(r.errors, undefined, 'the Mattilsynet leg is gone, so no 404 error');
   const c = db.catalog[0];
   assert.equal(c.source, 'fda'); assert.equal(c.recall_number, 'F-0001-2026'); assert.equal(c.classification, 'Class I');
   assert.deepEqual(c.lots, ['L100']); assert.equal(c.report_date, '2026-10-20'); assert.equal(c.raw.product_description, 'Romaine hearts');
 });
 
-test('a second run adds nothing to the catalog or the copies, refreshes the entries, and sweeps nothing', async () => {
+test('a second run adds nothing to the catalog, refreshes the entries, and sweeps nothing', async () => {
   global.fetch = fda([item(1, 'Romaine hearts'), item(2, 'Peanut butter')]);
   const db = makeDb({ orgs: US });
   const mod = load(db);
@@ -110,9 +108,8 @@ test('a second run adds nothing to the catalog or the copies, refreshes the entr
   assert.equal(second.catalog_added, 0);
   assert.equal(second.catalog_refreshed, 2);
   assert.equal(db.catalog.find((c) => c.recall_number === 'F-0001-2026').feed_status, 'Terminated', 'a later run refreshes the status');
-  assert.equal(second.fda_added, 0);
   assert.equal(db.catalog.length, 2);
-  assert.equal(db.recalls.length, 4);
+  assert.equal(db.recalls.length, 0);
   assert.equal(db.sweeps.length, 2, 'only the first run swept');
 });
 
@@ -130,35 +127,32 @@ test('one recall number with several product lines is several catalog entries', 
   assert.equal(db.catalog[0].external_key, 'F-0005-2026|' + createHash('md5').update('Creamy peanut butter 16 oz').digest('hex').slice(0, 12));
 });
 
-test('two runs at the same moment cannot duplicate (stable ids and the unique key)', async () => {
+test('two runs at the same moment cannot duplicate (the unique key)', async () => {
   global.fetch = fda([item(1, 'Romaine hearts'), item(2, 'Peanut butter')]);
   const db = makeDb({ orgs: US });
   const mod = load(db);
   await Promise.all([mod.handler({}), mod.handler({})]);
-  assert.equal(db.recalls.length, 4);
   assert.equal(db.catalog.length, 2);
+  assert.equal(db.recalls.length, 0);
 });
 
-test('existing per-org rows are respected, including old rows whose recall number was cut off', async () => {
+test('old per-organization copies left in recalls are neither read nor touched', async () => {
   global.fetch = fda([item(1, 'Romaine hearts'), item(2, 'Peanut butter')]);
   const db = makeDb({ orgs: US, recalls: [
     { id: 'old-a', organisation_id: 'us-1', source: 'fda', product_name: 'Romaine hearts', description: 'Listeria [F-0001-2026]', created_at: '2026-10-20T00:00:00.000Z' },
-    { id: 'old-b', organisation_id: 'us-1', source: 'fda', product_name: 'Peanut butter', description: 'A very long reason that lost its number at 200 characters', created_at: '2026-10-20T00:00:00.000Z' },
   ] });
   const r = JSON.parse((await load(db).handler({})).body);
-  assert.equal(r.fda_added, 2, 'only us-2 needed both recalls');
-  assert.equal(db.recalls.filter((x) => x.organisation_id === 'us-1').length, 2);
-  assert.equal(db.recalls.filter((x) => x.organisation_id === 'us-2').length, 2);
+  assert.equal(r.catalog_added, 2);
+  assert.equal(db.recalls.length, 1, 'untouched');
+  assert.equal(db.calls, 2 + 2, 'no read of recalls');
 });
 
-test('a long reason keeps the whole recall number in the per-org copy, and the catalog keeps the full text', async () => {
+test('the catalog keeps the full reason text', async () => {
   global.fetch = fda([item(9, 'Kale', '20261020', 'x'.repeat(500))]);
   const db = makeDb({ orgs: [US[0]] });
   await load(db).handler({});
-  const d = db.recalls[0].description;
-  assert.equal(d.length, 200);
-  assert.ok(d.endsWith(' [F-0009-2026]'));
   assert.equal(db.catalog[0].reason.length, 500);
+  assert.equal(db.catalog[0].recall_number, 'F-0009-2026');
 });
 
 test('the disabled flag skips the run', async () => {
@@ -179,13 +173,11 @@ test('"N/A" and missing recall numbers are keyed on product and day, in the cata
   const db = makeDb({ orgs: [US[0]] });
   const mod = load(db);
   const r = JSON.parse((await mod.handler({})).body);
-  assert.equal(r.fda_added, 3, 'three different recalls, three rows');
-  assert.equal(r.catalog_added, 3);
+  assert.equal(r.catalog_added, 3, 'three different recalls, three entries');
   assert.ok(db.catalog.every((x) => x.recall_number === null && x.external_key.startsWith('pd|')));
   assert.equal(db.sweeps.length, 3, 'a sweep is asked for each new entry; the database function returns 0 when there is nothing to match');
   const again = JSON.parse((await mod.handler({})).body);
-  assert.equal(again.catalog_added, 0);
-  assert.equal(again.fda_added, 0, 'and none repeated on the next run');
+  assert.equal(again.catalog_added, 0, 'and none repeated on the next run');
 });
 
 const { parseCodeInfo } = (() => { const db = makeDb({ orgs: [] }); return load(db)._test; })();

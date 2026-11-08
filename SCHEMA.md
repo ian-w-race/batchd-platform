@@ -35,9 +35,14 @@ This file is the long-form reference.
 ## recalls
 
 **Purpose.** Manual recalls (created by retailer staff via dashboard or
-manager view) and feed-imported recalls (FDA, Mattilsynet, RASFF). Also
-holds ~7 legacy rows from the retired manufacturer-push flow — those
-rows have `is_pushed = true` and `recall_event_id` populated.
+manager view) and the linked rows of pushed recalls (`is_pushed = true`,
+`recall_event_id` set, one per lot since 2026-10-25). Public feed recalls
+(FDA, Mattilsynet) no longer live here: since B4 stage 6 (2026-11-08) they
+are rows of `recall_catalog`, one per entry with no organization, with the
+organization's state in `recall_catalog_org`; the old per-organization
+copies were removed (backup.recalls_feed_copies_20261108). Both apps read
+"the active recalls" through the function `batchd_active_recalls(p_org)`
+(migration 043), never from this table directly.
 
 **Columns** (verified):
 
@@ -55,8 +60,8 @@ rows have `is_pushed = true` and `recall_event_id` populated.
 | source_org_id | uuid | YES | FK → organisations(id) ON DELETE SET NULL. Legacy from manufacturer-push flow. |
 | is_pushed | boolean | YES | True for ~7 legacy manufacturer-push rows. **Filter when iterating "manual recalls only".** |
 | recall_event_id | uuid | YES | Links legacy push rows to recall_events. No FK constraint. |
-| source | text | YES | 'manual' \| 'fda' \| 'rasff' \| 'mattilsynet' |
-| potential_duplicate | boolean | YES | Used by FDA/feed dedup |
+| source | text | YES | 'manual' \| 'manufacturer_push' \| 'fda_notice' \| 'mattilsynet_notice' (the Add recall form's notice options since 2026-11-08). The feed values 'fda', 'rasff' and 'mattilsynet' are history: batchd_active_recalls treats such a row as a feed copy and leaves it out. |
+| potential_duplicate | boolean | YES | Was used by the FDA feed dedup; nothing writes it since B4 stage 6 |
 | duplicate_source | text | YES | |
 | duplicate_ref | uuid | YES | |
 | resolved_at | timestamp tz | YES | Set when active flips to false |
@@ -365,23 +370,29 @@ RPC returns null or a non-number — schema drift surface (audit fix #44).
 
 ## Two ID columns convention
 
-`scan_recall_matches.recall_id` is polymorphic for legacy reasons:
+A match row names its recall in exactly one of three ways (CLAUDE.md,
+"scan_recall_matches has three paths"; the id columns come from
+`Batchd.activeRecalls.matchIdColumns` since B4 stage 4):
 
-| Path | Inserted by | recall_id holds | recall_event_id holds | recall_source |
-|---|---|---|---|---|
-| **A** (manual / feed) | `matchScanAgainstRecalls` (index.html), `sweep_recall_matches` RPC, `trigger_recall_sweep` | `recalls.id` | NULL | 'manual' \| 'fda' \| 'rasff' \| 'mattilsynet' |
-| **B** (manufacturer-push) | Login-time push sweep (index.html) | `recall_events.id` | `recall_events.id` (same value, both populated) | 'manufacturer_push' |
+| Path | Inserted by | recall_id holds | recall_event_id holds | catalog_id holds | recall_source |
+|---|---|---|---|---|---|
+| **A** (manual) | `matchScanAgainstRecalls` and the sign-in sweep (index.html), `sweep_recall_matches` RPC, `trigger_recall_sweep` | `recalls.id` | NULL | NULL | 'manual' |
+| **B** (pushed) | the same scanner writers and the composer's sweep (dashboard.html) | the LINKED `recalls` row for the lot (foreign key) | `recall_events.id` | NULL | 'manufacturer_push' |
+| **C** (feed, since migration 043) | `sweep_catalog_matches` RPC (the importer) and the scanner writers | NULL | NULL | `recall_catalog.id` | 'fda' |
 
-**Querying convention** (audit fix #6, 2026-05-07):
+**Querying convention:**
 
-- For manual/feed recalls — use `.eq('recall_id', recalls.id)`. The
-  `recall_event_id` column will be NULL.
-- For manufacturer-pushed recalls — use `.eq('recall_event_id', recall_events.id)`.
-  Has a real FK with CASCADE on delete, type-safe, unambiguous.
+- Manual recalls: `.eq('recall_id', recalls.id)`.
+- Pushed recalls: `.eq('recall_event_id', recall_events.id)`. Real FK with
+  CASCADE on delete.
+- Feed entries: `.eq('catalog_id', recall_catalog.id)`. Real FK with CASCADE
+  on delete; the (scan_id, catalog_id) unique index is partial, so a writer
+  selects before inserting instead of upserting.
+- A reader that takes any kind of id filters on all three columns (the
+  scanner's Recalls drawer, Retail's overview and command center).
 
-The legacy `recall_source` discriminator is still useful for reporting
-but no longer needed for disambiguation since `recall_event_id` is
-unambiguous on Path B.
+The `recall_source` column is for reporting, not disambiguation; the id
+columns are.
 
 **Why this exists.** Before 2026-05-07 the only column was the
 polymorphic `recall_id`. `generateJointRecallReport` queried by

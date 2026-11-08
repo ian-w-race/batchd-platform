@@ -4,6 +4,43 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-11-08 (B4 stage 6: the per-organization feed copies are retired)
+- fetch-recall-feeds.js writes the recall catalog and nothing else: the
+  organisations read and the per-organization upsert into recalls are
+  gone, the job detail no longer carries fda_added and fda_skipped, and
+  the health check's Monday line counts catalog entries added (older runs'
+  fda_added still counts). recall-feeds.js, the proxy the scanner's
+  removed importers called, is deleted (14 functions remain).
+- scripts/retire-feed-copies.sql removes the per-organization feed copies
+  from recalls (source fda, mattilsynet or rasff, with an organization,
+  not a linked row of a pushed recall) after backing them up to
+  backup.recalls_feed_copies_20261108, together with any match rows that
+  pointed at them (repointed to their catalog entry). It refuses to run
+  when a copy has no catalog entry or a match would be left dangling, and
+  when the backup count differs from the expected count. Staging
+  2026-11-08: 56 removed, 0 match rows affected, 57 recalls left (manual
+  and linked rows), batchd_active_recalls still returns the QA
+  organization's 28 feed entries. Production, the same day with Ian's
+  go-ahead after a second preview count: 982 copies removed (934 fda, 48
+  mattilsynet, 3 organizations), 0 match rows affected, 12 recalls rows
+  left (2 manual, 10 linked rows of pushed recalls), 501 catalog entries
+  untouched, batchd_active_recalls still returns 464 feed entries for
+  Ian's organization. docs/SCHEMA-REFERENCE.md regenerated afterwards
+  (row counts only; the schema did not change).
+- Rules: CLAUDE.md's "every recall check reads both sources" became
+  "every recall check calls batchd_active_recalls"; the match-row section
+  describes the three paths (manual recall_id, pushed linked recall_id
+  plus recall_event_id, feed catalog_id); SCHEMA.md's recalls section and
+  its two-id-columns convention are rewritten to match.
+- scripts/check.mjs: the single-source check also refuses a recalls or
+  organisations read in fetch-recall-feeds.js and the proxy's return.
+- Verified: node scripts/check.mjs (11 of 11); node --test (132 tests;
+  the importer's tests now assert no organisations read and no recalls
+  write, and that old copies left in recalls are neither read nor
+  touched); the end-to-end suite locally against staging after the
+  staging delete (12 passed, 1 skipped: the notice test needs functions),
+  so both apps still show, match and dismiss recalls with the copies gone.
+
 ## 2026-11-08 (B4 stage 5: Retail reads one list of active recalls)
 - Every Retail reader that needs the active recalls calls
   batchd_active_recalls once through _fetchActiveRecalls(opts): the
