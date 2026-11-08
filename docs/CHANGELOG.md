@@ -4,6 +4,61 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-11-08 (B5 stage 1: the recall code parser)
+- src/shared/lot-codes.cjs: one parser for what a store can match on,
+  shared by the importer (CommonJS), the browser bundle (Batchd.lotCodes)
+  and the tests. It reads lot codes (labeled first), printed lot ranges
+  (kept as from and to), GTINs and UPCs from the code text and the product
+  text, the best-by window from labeled dates (US month-first, month names,
+  a month alone) and the "all lots" flag ("all lots", "no codes", "none",
+  "will be provided by firm"), with PARSER_VERSION 2. Dry run over
+  production's 501 entries: entries with at least one matchable key go
+  from 283 (56 percent) to 397 (79 percent); 119 gain a GTIN, 164 a
+  best-by window, 67 are flagged all-lots; the 104 left carry no code in
+  the FDA text at all and are now product-level alerts. Seven entries lose
+  a token the old parser kept, all of them dates or punctuation.
+- The shared matcher: a code inside a printed range is an exact hit
+  (lot_range); a scan's best-before date inside the window is exact when
+  the product corroborates and never alone (Ian's decision 3); an
+  all-lots recall is red on a GTIN and only a warning on the product name
+  (decision 2). exactIdentifierHit counts a whole lot inside a range.
+- Migration 045 (staging and then production 2026-11-08 with Ian's
+  go-ahead; the 045 check row reads true on production and
+  batchd_active_recalls returns 464 feed entries for Ian's organization
+  with feed_kind enforcement; docs/SCHEMA-REFERENCE.md regenerated,
+  recall_catalog now has 30 columns): recall_catalog
+  gains kind, notice_url, event_key, announcement_id, lot_ranges,
+  best_by_from, best_by_to, all_lots, match_terms and parser_version;
+  recall_catalog_org gains covered_by_event_id; batchd_active_recalls
+  returns the new fields plus covered (it is dropped and recreated with
+  the same grants). event_key is filled from the stored FDA entry.
+- fetch-recall-feeds.js writes the parser's fields for new entries (kind
+  enforcement, event_key) and re-parses up to 100 older entries per run
+  from the raw entry or the kept code text, newest first, never dropping
+  a lot the old parser had, and sweeps the entries that gained a key; the
+  job detail gains catalog_reparsed and reparse_matches.
+- Retail Feed alerts rows show every key: lots, ranges as "A to B", the
+  best-by window, "all lots", and an FDA notice link when stage 2 fills
+  one. The normalizer carries the new fields.
+- Verified: node scripts/check.mjs (11 of 11); node --test (145 tests,
+  tests/shared-lot-codes.test.mjs against the production text shapes);
+  the end-to-end suite locally against staging with 045 applied (12
+  passed, 1 skipped). Not verified until production: the nightly re-parse
+  (SMOKE.md 69).
+
+## 2026-11-08 (B5 planned: public feeds as backstop)
+- docs/B5-FEEDS-BACKSTOP-PLAN.md: the facts (the catalog's 501 entries
+  have lot codes on 283 and GTINs on none; 172 are date-coded and 59 are
+  ranges, which today's parser cannot match; the FDA press-release RSS
+  and the openFDA enforcement report verified with their fields; the USDA
+  FSIS API answered 403), the target (every entry matchable on lots,
+  ranges, GTINs and best-by dates; press releases in the catalog on day
+  0 through the supplier notice reader; a "no supplier notice" flag),
+  the additive model, five stages and five decisions for Ian. Docs only;
+  no code.
+- docs/PLATFORM-IMPROVEMENT-PLAN.md status: B4 shipped 2026-11-08, B5
+  planned and ordered before B3.
+
 ## 2026-11-08 (B4 stage 6: the per-organization feed copies are retired)
 - fetch-recall-feeds.js writes the recall catalog and nothing else: the
   organisations read and the per-organization upsert into recalls are

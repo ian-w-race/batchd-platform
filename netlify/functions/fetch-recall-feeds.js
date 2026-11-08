@@ -38,7 +38,7 @@ const run = async (event) => {
   }
 
   const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
-  const results = { catalog: null, errors: [] };
+  const results = { catalog: null, reparse: null, errors: [] };
 
   let feed = null;
   try {
@@ -57,6 +57,13 @@ const run = async (event) => {
       results.errors.push('Catalog: ' + e.message);
     }
   }
+  // Older entries take the current parser's reading, a hundred a run (B5 stage 1).
+  try {
+    results.reparse = await reparseCatalog(sb, 100);
+  } catch (e) {
+    console.error('[fetch-recall-feeds] re-parse error:', e.message);
+    results.errors.push('Re-parse: ' + e.message);
+  }
 
   console.log('[fetch-recall-feeds] Complete:', JSON.stringify(results));
 
@@ -67,6 +74,8 @@ const run = async (event) => {
       catalog_skipped:  results.catalog?.skipped ?? 0,
       catalog_refreshed: results.catalog?.refreshed ?? 0,
       catalog_matches:  results.catalog?.matches ?? 0,
+      catalog_reparsed: results.reparse?.reparsed ?? 0,
+      reparse_matches:  results.reparse?.matches ?? 0,
       errors: results.errors.length > 0 ? results.errors : undefined,
       timestamp: new Date().toISOString(),
     }),
@@ -109,52 +118,32 @@ function catalogKey(r) {
   return `pd|${productName}|${day.slice(0, 10)}`;
 }
 
-// Lot codes and GTINs out of the FDA's free-text code_info, conservatively:
-// a token counts as a lot when it has 4 to 30 characters, at least one digit
-// and no spaces, is not a date, not a bare number of four digits or fewer
-// (years and counts) and not a UPC. Digit runs of 12 to 14 (spaces allowed,
-// as "0 41497 03611 9") count as GTINs. B5 improves this.
-const CODE_LABELS = /\b(lot|lots|lot\s*(?:#|no\.?|number|numbers|code|codes)|batch|batches|codes?|numbers?|no\.?|item|items|upc|upcs|sku|skus|best\s*by|use\s*by|sell\s*by|exp(?:ires|iry|iration)?|dates?|through|thru|to|and|all)\b/gi;
-function parseCodeInfo(text) {
-  const s = String(text || '');
-  const gtins = new Set();
-  for (const m of s.matchAll(/\b(\d[\d ]{10,16}\d)\b/g)) {
-    const digits = m[1].replace(/\s+/g, '');
-    if (digits.length >= 12 && digits.length <= 14) gtins.add(digits);
-  }
-  const withoutGtins = s.replace(/\b\d[\d ]{10,16}\d\b/g, ' ');
-  const lots = new Set();
-  for (const fragment of withoutGtins.split(/[,;\n|]|\band\b|&/i)) {
-    const cleaned = fragment.replace(CODE_LABELS, ' ').replace(/[#:()]/g, ' ');
-    for (const tok of cleaned.split(/\s+/)) {
-      const t = tok.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, '');
-      if (t.length < 4 || t.length > 30) continue;
-      if (!/\d/.test(t)) continue;
-      if (/^\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4}$/.test(t) || /^\d{4}[\/.-]\d{1,2}[\/.-]\d{1,2}$/.test(t)) continue; // a date
-      if (/^\d{1,2}[\/.-]\d{2,4}$/.test(t)) continue;                                                       // month/year
-      if (/^\d{1,4}$/.test(t)) continue;                                                                   // a year or a count
-      if (/^\d{12,14}$/.test(t)) { gtins.add(t); continue; }
-      lots.add(t);
-      if (lots.size >= 50) break;
-    }
-    if (lots.size >= 50) break;
-  }
-  return { lots: [...lots], gtins: [...gtins] };
+// What a store can match on comes from the shared parser (B5 stage 1,
+// src/shared/lot-codes.cjs): lots, printed lot ranges, GTINs and UPCs from
+// the code text and the product text, the best-by window and the "all lots"
+// flag, with a parser_version so older entries can be re-parsed below.
+const lotCodes = require('../../src/shared/lot-codes.cjs');
+function codesFor(r) {
+  return lotCodes.parseRecallCodes({ code_info: r.code_info, more_code_info: r.more_code_info, product_description: r.product_description });
 }
 
 function catalogRow(r) {
   const recallNumber = fdaRecallNumber(r);
   const productName = (r.product_description || '').slice(0, 120);
   const reportDate = r.report_date ? parseDate(r.report_date) : null;
-  const { lots, gtins } = parseCodeInfo(r.code_info);
+  const codes = codesFor(r);
   return {
     source: 'fda',
+    kind: 'enforcement',
+    event_key: (r.event_id || '').toString().slice(0, 40) || null,
     external_key: catalogKey(r),
     recall_number: recallNumber,
     product_name: productName,
     product_description: (r.product_description || '').slice(0, 4000) || null,
-    code_info: (r.code_info || '').slice(0, 4000) || null,
-    lots, gtins,
+    code_info: [r.code_info, r.more_code_info].filter(Boolean).join(' ').slice(0, 4000) || null,
+    lots: codes.lots, gtins: codes.gtins, lot_ranges: codes.lot_ranges,
+    best_by_from: codes.best_by_from, best_by_to: codes.best_by_to, all_lots: codes.all_lots,
+    parser_version: codes.parser_version,
     recalling_firm: (r.recalling_firm || '').slice(0, 200) || null,
     classification: (r.classification || '').slice(0, 40) || null,
     reason: (r.reason_for_recall || '').slice(0, 4000) || null,
@@ -163,6 +152,43 @@ function catalogRow(r) {
     published_at: reportDate,
     raw: r,
   };
+}
+
+// Older entries take the current parser's reading, a hundred a run, newest
+// first: from the raw FDA entry where one is stored, else from the code text
+// and product name the migration kept. An entry that gains a matchable key
+// is swept again.
+async function reparseCatalog(sb, limit = 100) {
+  const { data: rows, error } = await sb.from('recall_catalog')
+    .select('id, raw, code_info, product_name, product_description, lots, gtins')
+    .lt('parser_version', lotCodes.PARSER_VERSION)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) throw new Error('Could not read catalog entries to re-parse: ' + error.message);
+  let reparsed = 0, matches = 0;
+  const toSweep = [];
+  for (const row of rows || []) {
+    const src = row.raw && typeof row.raw === 'object'
+      ? row.raw
+      : { code_info: row.code_info, product_description: row.product_description || row.product_name };
+    const codes = codesFor(src);
+    const patch = {
+      lots: codes.lots.length ? codes.lots : (row.lots || []),   // never lose a lot the old parser had
+      gtins: codes.gtins, lot_ranges: codes.lot_ranges,
+      best_by_from: codes.best_by_from, best_by_to: codes.best_by_to, all_lots: codes.all_lots,
+      parser_version: codes.parser_version,
+    };
+    const { error: upErr } = await sb.from('recall_catalog').update(patch).eq('id', row.id);
+    if (upErr) throw new Error('Could not re-parse catalog entry ' + row.id + ': ' + upErr.message);
+    reparsed++;
+    if (patch.lots.length || patch.gtins.length) toSweep.push(row.id);
+  }
+  for (let i = 0; i < toSweep.length; i += 10) {
+    const part = toSweep.slice(i, i + 10);
+    const res = await Promise.all(part.map((id) => sb.rpc('sweep_catalog_matches', { p_catalog_id: id, p_lookback_days: 180 })));
+    for (const r of res) { if (r.error) throw new Error('sweep_catalog_matches failed: ' + r.error.message); matches += Number(r.data) || 0; }
+  }
+  return { reparsed, matches, remaining_known: (rows || []).length === limit };
 }
 
 async function importCatalog(sb, feed) {
@@ -219,7 +245,7 @@ function parseDate(str) {
 }
 
 // Exported for tests.
-exports._test = { catalogKey, catalogRow, parseCodeInfo, importCatalog };
+exports._test = { catalogKey, catalogRow, importCatalog, reparseCatalog };
 
 // Every run is recorded in job_runs for the daily health check (migration 041).
 exports.handler = require('../lib/job-log').withJobLog('fetch-recall-feeds', run);

@@ -205,9 +205,12 @@ levenshtein; since B4 stage 4 the matcher reads every lot in `lots` and
 every GTIN in `gtins`), `src/shared/active-recalls.js`
 (normalizeActiveRecalls, exactIdentifierHit, matchIdColumns, recallLots,
 recallBarcodes: the rows of batchd_active_recalls become the scanner's
-cache shape; B4 stage 4) and `src/shared/index.js` (the bundle entry,
-exposes `window.Batchd.env`, `.fsma`, `.gs1`, `.ftl`, `.recall` and
-`.activeRecalls`), built by
+cache shape; B4 stage 4), `src/shared/lot-codes.cjs` (parseRecallCodes,
+lotInRange, findRangeHit, parseDateToken, PARSER_VERSION: the recall code
+parser, CommonJS so the importer can require it; B5 stage 1) and
+`src/shared/index.js` (the bundle entry, exposes `window.Batchd.env`,
+`.fsma`, `.gs1`, `.ftl`, `.recall`, `.activeRecalls` and `.lotCodes`),
+built by
 `scripts/build.mjs` into `dist/assets/batchd-shared.js`. The scanner
 keeps its old function names as aliases of these; `recallMatchLevel` in
 the scanner passes `_logRecallMatch` as the module's log callback.
@@ -261,9 +264,15 @@ admin.html keep their own small, older color sets.
   scripts/retire-feed-copies.sql on staging and production on 2026-11-08
   with Ian's go-ahead (982 rows on production, kept in
   backup.recalls_feed_copies_20261108; `recalls` now holds 12 rows: manual
-  recalls and the linked rows of pushed recalls). parseCodeInfo
-  pulls lot codes and GTINs out of the FDA's free-text code_info
-  conservatively (B5 improves it; batchd_parse_lots is its SQL twin). The
+  recalls and the linked rows of pushed recalls). Since B5 stage 1 the
+  shared parser (src/shared/lot-codes.cjs, PARSER_VERSION 2) reads lots,
+  printed lot ranges, GTINs and UPCs (also from the product text), the
+  best-by window and the "all lots" flag; each run also re-parses up to
+  100 older entries (parser_version below the current) and sweeps the
+  ones that gained a key. Bump PARSER_VERSION when a rule changes and the
+  nightly runs refresh every entry within days. batchd_parse_lots (SQL,
+  migration 044) was the migration's one-off twin and is not kept in step
+  with the JavaScript parser. The
   Mattilsynet leg is gone (decision 3 of the B4 plan; the feed answered
   404 for weeks) and so are the scanner's own FDA, RASFF and Mattilsynet
   importers, its "Fetch latest recalls now" button and recall-feeds.js,
@@ -321,13 +330,17 @@ admin.html keep their own small, older color sets.
   exist in production (checked 2026-10-24; CHECK_MIGRATIONS reports it
   MISSING). The only writer is the retired OCR path in saveRecord, so the
   insert never runs today. Apply 007 before reviving OCR capture.
-- Migrations: 001 to 044 with 020a, no 027 (John's code_patterns slot,
+- Migrations: 001 to 045 with 020a, no 027 (John's code_patterns slot,
   applied outside the folder). 043 (the recall catalog, B4 stage 1) was
   applied to staging and then production on 2026-11-01 with Ian's
   go-ahead; both functions are byte-identical on the two projects. 044
   (the catalog backfill, B4 stage 3) was applied to staging and then
   production on 2026-11-08 with Ian's go-ahead; it is re-runnable and
-  deletes nothing. CHECK_MIGRATIONS.sql reports APPLIED or
+  deletes nothing. 045 (the catalog's code columns and the function's new
+  fields, B5 stage 1) was applied to staging and then production on
+  2026-11-08 with Ian's go-ahead; it changes the function's return type,
+  so it drops and recreates batchd_active_recalls with the same grants.
+  CHECK_MIGRATIONS.sql reports APPLIED or
   MISSING per migration; Ian ran it 2026-10-11 and every row was APPLIED.
   031 to 044 were applied through the Supabase connector (031 to 039 on
   2026-10-24, 040 and 041 on 2026-10-25, 042 and 043 on 2026-11-01, 044

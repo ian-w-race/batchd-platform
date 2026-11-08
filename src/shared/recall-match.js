@@ -8,6 +8,10 @@
 // scanner uses for its debug match log. CLAUDE.md's counting rule: a recall
 // requires action on an exact lot or barcode match to an on-shelf scan.
 // The Norwegian stop words are part of the frozen NO layer; leave them.
+// B5 stage 1 (2026-11-08): a recall's lot ranges and best-by window match
+// too (src/shared/lot-codes.cjs; Ian's decisions 2 and 3 of the B5 plan).
+import { extractBestBefore } from './gs1.js';
+import lotCodes from './lot-codes.cjs';
 
 export function levenshtein(a, b) {
   const m = a.length, n = b.length;
@@ -137,6 +141,31 @@ export function recallMatchLevel(scanRecord, recall, log) {
     }
   }
 
+  // Red — a code inside one of the recall's printed lot ranges ("PB24105
+  // through PB24150") appears in the raw capture. The same length rule as a
+  // single lot applies when the product does not corroborate.
+  if (rawLow && Array.isArray(recall.lot_ranges)) {
+    for (const range of recall.lot_ranges) {
+      const hit = lotCodes.findRangeHit(rawLow, range);
+      if (hit && (productMatches || hit.length >= MIN_UNCORROBORATED_LOT)) {
+        if (log) log(scanRecord, recall, 'red', 'lot_range');
+        return { level: 'exact', recall, matched_on: 'lot_range', matched_lot: hit };
+      }
+    }
+  }
+
+  // Red — the scan's best-before date falls inside the recall's best-by
+  // window and the product corroborates (decision 3). A date alone, with no
+  // product agreement, is not a hit: half the shelf shares a date.
+  if (productMatches && recall.best_by_from) {
+    const scanDate = extractBestBefore(scanRecord.raw_capture || scanRecord.lot_number || '');
+    const to = recall.best_by_to || recall.best_by_from;
+    if (scanDate && scanDate >= recall.best_by_from && scanDate <= to) {
+      if (log) log(scanRecord, recall, 'red', 'best_by');
+      return { level: 'exact', recall, matched_on: 'best_by', matched_lot: scanDate };
+    }
+  }
+
   // No exact identifier hit and the product name doesn't corroborate — not
   // a match at any level.
   if (!productMatches) {
@@ -145,7 +174,9 @@ export function recallMatchLevel(scanRecord, recall, log) {
   }
 
   // Orange — product fuzzy-matches but no lot substring confirmed. Includes:
-  //   - recalls without a lot identifier (product-only recall)
+  //   - recalls without a lot identifier (product-only recall), and "all
+  //     lots" recalls, which never go red on the product name alone
+  //     (decision 2); a GTIN hit above still makes them red
   //   - skip-path scans (raw_capture null)
   //   - legacy scans where the captured lot doesn't match the recalled lot
   if (log) log(scanRecord, recall, 'orange', 'product_name_only');

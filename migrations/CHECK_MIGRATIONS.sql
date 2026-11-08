@@ -113,6 +113,13 @@ WITH checks AS (
   UNION ALL SELECT '030 products_public exposes the FTL columns',
          EXISTS (SELECT 1 FROM information_schema.columns
                  WHERE table_schema='public' AND table_name='products_public' AND column_name='is_ftl')
+  UNION ALL SELECT '045 recall catalog codes: ranges, best-by window, all-lots, parser_version, kind; covered_by_event_id; the function returns them',
+         EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='recall_catalog' AND column_name='parser_version')
+         AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='recall_catalog' AND column_name='lot_ranges')
+         AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='recall_catalog_org' AND column_name='covered_by_event_id')
+         AND EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                     WHERE n.nspname = 'public' AND p.proname = 'batchd_active_recalls' AND pg_get_function_result(p.oid) LIKE '%covered boolean%')
+         AND NOT has_function_privilege('anon', 'public.batchd_active_recalls(uuid)', 'EXECUTE')
   UNION ALL SELECT '044 feed rows copied into the recall catalog (every per-org copy has an entry)',
          NOT EXISTS (
            SELECT 1 FROM recalls r

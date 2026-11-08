@@ -10,6 +10,7 @@ import * as gs1 from './gs1.js';
 import * as ftl from './ftl.js';
 import * as recall from './recall-match.js';
 import * as activeRecalls from './active-recalls.js';
+import lotCodes from './lot-codes.cjs';
 
 const env = install({ location, document, window });
 // The pages keep reading BATCHD_ENV, SUPABASE_URL, SUPABASE_KEY and
@@ -20,4 +21,5 @@ Object.assign(window, env);
 // A2 part 3: the GS1 parser (gs1), the listed-food categories and detector
 // (ftl) and the recall matcher (recall). B4 stage 4: the one list of active
 // recalls (activeRecalls) that the rows of batchd_active_recalls become.
-window.Batchd = Object.assign(window.Batchd || {}, { env, fsma, gs1, ftl, recall, activeRecalls });
+// B5 stage 1: the recall code parser and range helpers (lotCodes).
+window.Batchd = Object.assign(window.Batchd || {}, { env, fsma, gs1, ftl, recall, activeRecalls, lotCodes });

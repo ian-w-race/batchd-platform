@@ -4042,7 +4042,14 @@ async function renderRecalls() {
       // truncated to 120 characters before escaping.
       const reasonText = r.reason || r.description || '';
       const _desc120 = reasonText.slice(0,120) + (reasonText.length>120?'…':'');
-      const lotsText = (r.lots && r.lots.length) ? r.lots.slice(0, 6).join(', ') + (r.lots.length > 6 ? ` +${r.lots.length - 6} more` : '') : (r.lot_number || '—');
+      // Every key the entry carries (B5 stage 1): lots, printed ranges, a
+      // best-by window, "all lots".
+      const keyParts = [];
+      if (r.lots && r.lots.length) keyParts.push(r.lots.slice(0, 6).join(', ') + (r.lots.length > 6 ? ` +${r.lots.length - 6} more` : ''));
+      (r.lot_ranges || []).slice(0, 3).forEach(rg => keyParts.push(`${rg.from} to ${rg.to}`));
+      if (r.best_by_from) keyParts.push(`best by ${fmtDash(r.best_by_from)}${r.best_by_to && r.best_by_to !== r.best_by_from ? ` to ${fmtDash(r.best_by_to)}` : ''}`);
+      if (r.all_lots) keyParts.push('all lots');
+      const lotsText = keyParts.length ? keyParts.join(' · ') : (r.lot_number || '—');
       const recallNo = (r.description || '').match(/\[([A-Z]-\d{4}-\d{4})\]$/);
       return `<div style="display:flex;align-items:flex-start;gap:12px;padding:13px 16px;background:var(--surface);border:1px solid ${matched?'rgba(var(--danger-rgb),0.25)':'var(--border)'};border-radius:var(--r-md);${r._dismissed?'opacity:0.6;':''}">
         <div style="flex-shrink:0;margin-top:2px;">
@@ -4054,7 +4061,7 @@ async function renderRecalls() {
         </div>
         <div style="flex:1;min-width:0;">
           <div style="font-size:var(--fs-meta);font-weight:600;color:var(--text);margin-bottom:2px;">${esc(r.product_name||'—')}${inFocus ? ` <span style="font-size:var(--fs-label);font-family:'DM Mono',monospace;letter-spacing:0.06em;text-transform:uppercase;padding:2px 6px;border-radius:var(--r-xs);background:rgba(var(--info-rgb),0.12);color:var(--info);margin-left:6px;vertical-align:middle;">In your focus categories</span>` : ''}${r.severity ? ` <span style="margin-left:6px;vertical-align:middle;">${sevPill(r.severity)}</span>` : ''}</div>
-          <div style="font-size:var(--fs-eyebrow);color:var(--muted);">${regionTerm('lot_short')}: <span style="font-family:'DM Mono',monospace;">${esc(lotsText)}</span> · ${esc((r.source||'').toUpperCase())}${recallNo ? ` <span style="font-family:'DM Mono',monospace;">${esc(recallNo[1])}</span>` : ''}${r.recalling_firm ? ` · ${esc(r.recalling_firm)}` : ''} · ${r.published_at?fmtDash(r.published_at):''}${reviewed ? ` · Reviewed ${fmtDash(state.reviewed_at)}` : ''}</div>
+          <div style="font-size:var(--fs-eyebrow);color:var(--muted);">${regionTerm('lot_short')}: <span style="font-family:'DM Mono',monospace;">${esc(lotsText)}</span> · ${esc((r.source||'').toUpperCase())}${recallNo ? ` <span style="font-family:'DM Mono',monospace;">${esc(recallNo[1])}</span>` : ''}${r.recalling_firm ? ` · ${esc(r.recalling_firm)}` : ''} · ${r.published_at?fmtDash(r.published_at):''}${reviewed ? ` · Reviewed ${fmtDash(state.reviewed_at)}` : ''}${r.notice_url ? ` · <a href="${esc(r.notice_url)}" target="_blank" rel="noopener" style="color:var(--info);">FDA notice</a>` : ''}</div>
           ${_desc120?`<div style="font-size:var(--fs-eyebrow);color:var(--muted);margin-top:4px;line-height:1.5;">${esc(_desc120)}</div>`:''}
         </div>
         <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;flex-shrink:0;">
