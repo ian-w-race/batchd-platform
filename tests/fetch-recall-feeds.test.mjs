@@ -23,13 +23,21 @@ function makeDb({ orgs, recalls = [], catalog = [] }) {
       eq(c, v) { st.filters.push((r) => r[c] === v); return b; },
       in(c, vs) { st.filters.push((r) => vs.includes(r[c])); return b; },
       gte(c, v) { st.filters.push((r) => String(r[c]) >= v); return b; },
+      lt(c, v) { st.filters.push((r) => (r[c] ?? 1) < v); return b; },
+      order() { return b; },
       limit(n) { st.limit = n; return b; },
       upsert(rows, opts) { st.op = 'upsert'; st.rows = rows; st.opts = opts; return b; },
+      update(patch) { st.op = 'update'; st.patch = patch; return b; },
       then(res, rej) {
         return Promise.resolve().then(() => {
           db.calls++;
           if (st.table === 'organisations') return { data: db.orgs.filter((r) => st.filters.every((f) => f(r))), error: null };
           const store = st.table === 'recall_catalog' ? db.catalog : db.recalls;
+          if (st.op === 'update') {
+            const hit = store.filter((r) => st.filters.every((f) => f(r)));
+            hit.forEach((r) => Object.assign(r, st.patch));
+            return { data: hit, error: null };
+          }
           if (st.op === 'upsert') {
             const keys = String(st.opts?.onConflict || 'id').split(',');
             const out = [];
@@ -90,12 +98,13 @@ test('fresh import writes each entry once to the catalog and sweeps it, and writ
   assert.equal(db.sweeps.length, 3, 'one sweep per new entry');
   assert.equal(r.catalog_matches, 6, 'the stub reports 2 matches per sweep');
   assert.equal(r.fda_added, undefined, 'the per-organization copies are no longer written or reported (B4 stage 6)');
-  assert.equal(db.calls, 2 + 3, 'catalog lookup, catalog upsert, three sweeps; no organisations read, no recalls write');
+  assert.equal(db.calls, 2 + 3 + 1, 'catalog lookup, catalog upsert, three sweeps, the re-parse read (nothing to re-parse); no organisations read, no recalls write');
   assert.equal(db.recalls.length, 0, 'nothing in recalls');
   assert.equal(r.errors, undefined, 'the Mattilsynet leg is gone, so no 404 error');
   const c = db.catalog[0];
   assert.equal(c.source, 'fda'); assert.equal(c.recall_number, 'F-0001-2026'); assert.equal(c.classification, 'Class I');
   assert.deepEqual(c.lots, ['L100']); assert.equal(c.report_date, '2026-10-20'); assert.equal(c.raw.product_description, 'Romaine hearts');
+  assert.equal(c.kind, 'enforcement'); assert.equal(c.parser_version, 2); assert.deepEqual(c.lot_ranges, []); assert.equal(c.all_lots, false);
 });
 
 test('a second run adds nothing to the catalog, refreshes the entries, and sweeps nothing', async () => {
@@ -144,7 +153,7 @@ test('old per-organization copies left in recalls are neither read nor touched',
   const r = JSON.parse((await load(db).handler({})).body);
   assert.equal(r.catalog_added, 2);
   assert.equal(db.recalls.length, 1, 'untouched');
-  assert.equal(db.calls, 2 + 2, 'no read of recalls');
+  assert.equal(db.calls, 2 + 2 + 1, 'no read of recalls; one re-parse read');
 });
 
 test('the catalog keeps the full reason text', async () => {
@@ -180,16 +189,23 @@ test('"N/A" and missing recall numbers are keyed on product and day, in the cata
   assert.equal(again.catalog_added, 0, 'and none repeated on the next run');
 });
 
-const { parseCodeInfo } = (() => { const db = makeDb({ orgs: [] }); return load(db)._test; })();
-
-test('code_info parsing keeps lot codes, finds UPCs, and skips dates and labels', () => {
-  assert.deepEqual(parseCodeInfo('Lot #: L24201, L24202; Best By 12/15/2026'), { lots: ['L24201', 'L24202'], gtins: [] });
-  assert.deepEqual(parseCodeInfo('UPC 0 41497 03611 9, Lot codes 2024-07 and 2024-08'), { lots: ['2024-07', '2024-08'], gtins: ['041497036119'] });
-  assert.deepEqual(parseCodeInfo('All lots. Exp 01/2027'), { lots: [], gtins: [] });
-  assert.deepEqual(parseCodeInfo('Best by 2026, lot 26187 and 2576'), { lots: ['26187'], gtins: [] }, 'bare years and small counts are not lots');
-  assert.deepEqual(parseCodeInfo('Item 00812345000016 lot PB24105 through PB24150'), { lots: ['PB24105', 'PB24150'], gtins: ['00812345000016'] });
-  assert.deepEqual(parseCodeInfo(''), { lots: [], gtins: [] });
-  assert.deepEqual(parseCodeInfo(null), { lots: [], gtins: [] });
-  const many = parseCodeInfo(Array.from({ length: 80 }, (_, i) => 'LOT' + (1000 + i)).join(', '));
-  assert.equal(many.lots.length, 50, 'capped at 50');
+test('older entries are re-parsed a hundred a run, newest first, and swept when they gain a key', async () => {
+  global.fetch = fda([]);
+  const db = makeDb({ orgs: [], catalog: [
+    { id: 'old-1', source: 'fda', external_key: 'F-0001-2026|aaaaaaaaaaaa', product_name: 'Jovy Gummy Worms Neon', code_info: 'lot: 6156', lots: [], gtins: [], parser_version: 1, created_at: '2026-10-01T00:00:00.000Z',
+      raw: { product_description: 'Jovy Gummy Worms Neon; packaged in 1lb plastic units. UPC 712199083411', code_info: 'lot: 6156', more_code_info: '' } },
+    { id: 'old-2', source: 'fda', external_key: 'pd|Banana pudding|2026-09-01', product_name: 'Alabama Banana Pudding Marshmallow', code_info: 'Best By Date: 8/21/2026', lots: ['OLDLOT'], gtins: [], parser_version: 1, created_at: '2026-09-01T00:00:00.000Z', raw: null },
+    { id: 'new-1', source: 'fda', external_key: 'F-0002-2026|bbbbbbbbbbbb', product_name: 'Kale', code_info: 'Lot K1', lots: ['K1'], gtins: [], parser_version: 2, created_at: '2026-10-05T00:00:00.000Z', raw: null },
+  ] });
+  const r = JSON.parse((await load(db).handler({})).body);
+  assert.equal(r.catalog_reparsed, 2, 'the two version-1 entries');
+  const a = db.catalog.find((c) => c.id === 'old-1');
+  assert.deepEqual(a.lots, ['6156']); assert.deepEqual(a.gtins, ['712199083411']); assert.equal(a.parser_version, 2);
+  const b = db.catalog.find((c) => c.id === 'old-2');
+  assert.equal(b.best_by_from, '2026-08-21'); assert.deepEqual(b.lots, ['OLDLOT'], 'a lot the old parser had is never lost'); assert.equal(b.parser_version, 2);
+  assert.equal(db.catalog.find((c) => c.id === 'new-1').parser_version, 2);
+  assert.deepEqual(db.sweeps.map((x) => x.p_catalog_id).sort(), ['old-1', 'old-2'], 'entries with a lot or GTIN are swept again');
+  assert.equal(r.reparse_matches, 4, 'the stub reports 2 matches per sweep');
+  const again = JSON.parse((await load(db).handler({})).body);
+  assert.equal(again.catalog_reparsed, 0, 'nothing left at version 1');
 });

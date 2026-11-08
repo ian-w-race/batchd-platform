@@ -19,7 +19,10 @@
 // `lots` holds every lot: a pushed recall's linked rows, a feed entry's parsed
 // lots; `lot_number` stays the first one for screens that show one.
 
+import lotCodes from './lot-codes.cjs';
+
 const clean = (v) => (v === undefined || v === null || v === '' ? null : v);
+const rangeList = (v) => (Array.isArray(v) ? v.filter((r) => r && typeof r.from === 'string' && typeof r.to === 'string') : []);
 const list = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x.trim() !== '') : []);
 
 export function kindId(row) {
@@ -48,6 +51,15 @@ export function normalizeActiveRecalls(rows, opts = {}) {
       lots,
       barcode_number: clean(row.barcode),
       gtins: list(row.gtins),
+      // B5 stage 1: what else a store can match on, and where the entry came from.
+      lot_ranges: rangeList(row.lot_ranges),
+      best_by_from: clean(row.best_by_from),
+      best_by_to: clean(row.best_by_to),
+      all_lots: !!row.all_lots,
+      match_terms: list(row.match_terms),
+      _feedKind: clean(row.kind),
+      notice_url: clean(row.notice_url),
+      _covered: !!row.covered,
       description: clean(row.description),
       reason: clean(row.reason),
       severity: clean(row.severity),
@@ -77,13 +89,16 @@ export function recallBarcodes(recall) {
 }
 
 // The strict rule the multi-store tile, the shift summary and the audit
-// report apply: the scan's lot equals one of the recall's lots, or the
-// scan's barcode equals one of its barcodes. No substring, no product match.
+// report apply: the scan's lot equals one of the recall's lots or sits inside
+// one of its printed lot ranges, or the scan's barcode equals one of its
+// barcodes. No substring, no product match, no dates.
 export function exactIdentifierHit(scan, recall) {
   if (!scan || !recall) return false;
   const sLot = (scan.lot_number || '').toString().toLowerCase().trim();
   const sBc = (scan.barcode_number || '').toString().toLowerCase().trim();
-  return (!!sLot && recallLots(recall).includes(sLot)) || (!!sBc && recallBarcodes(recall).includes(sBc));
+  if (sLot && recallLots(recall).includes(sLot)) return true;
+  if (sLot && Array.isArray(recall.lot_ranges) && recall.lot_ranges.some((r) => lotCodes.lotInRange(sLot, r))) return true;
+  return !!sBc && recallBarcodes(recall).includes(sBc);
 }
 
 // Which id columns a scan_recall_matches row carries (CLAUDE.md, "two paths",

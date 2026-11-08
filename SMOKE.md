@@ -524,6 +524,19 @@ not repeated here.
     row for fetch-recall-feeds has catalog_added and no fda_added, and
     `select count(*) from recalls where source = 'fda';` is still 0.
 
+## B5 stage 1: the recall code parser (2026-11-08)
+
+69. After the production apply of migration 045 and the first 06:00 UTC
+    run after the merge, in the Supabase SQL editor on production:
+    `select parser_version, count(*) from recall_catalog group by 1;`
+    shows version 2 rows growing by about 100 a day until none are left
+    at version 1; `select count(*) from recall_catalog where
+    cardinality(gtins) > 0;` is above 0 (it was 0). Retail, Recalls, Feed
+    alerts: an entry's key line shows "best by <date>", a range as "A to
+    B" and "all lots" where the FDA text has them. Scanner: scan a product
+    whose best-before date falls inside a feed entry's window and whose
+    name matches the entry; the pre-placement warning fires red.
+
 ## Run log
 
 - 2026-11-01, Claude, local static server against the staging database:

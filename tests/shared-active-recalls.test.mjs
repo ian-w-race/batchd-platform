@@ -90,3 +90,36 @@ test('matcher: a feed entry matches on a parsed lot or a GTIN', () => {
   assert.equal(recallMatchLevel({ product_name: 'Tortillas', raw_capture: null, lot_number: null, barcode_number: '041497036119' }, feed).matched_on, 'barcode');
   assert.equal(recallMatchLevel({ product_name: 'Whole milk', raw_capture: 'X9', lot_number: 'X9' }, feed).level, null);
 });
+
+test('matcher: a code inside a printed lot range is exact; outside it is only possible', () => {
+  const recall = { id: 'c-9', _kind: 'feed', product_name: 'Creamy peanut butter 16 oz', lot_number: 'PB24105', lots: ['PB24105', 'PB24150'], lot_ranges: [{ from: 'PB24105', to: 'PB24150' }], barcode_number: null, gtins: [] };
+  const inside = recallMatchLevel({ product_name: 'Creamy peanut butter 16 oz', raw_capture: '(10)PB24120(17)271231', lot_number: '(10)PB24120(17)271231' }, recall);
+  assert.equal(inside.level, 'exact'); assert.equal(inside.matched_on, 'lot_range'); assert.equal(inside.matched_lot, 'pb24120');
+  assert.equal(recallMatchLevel({ product_name: 'Creamy peanut butter 16 oz', raw_capture: 'PB24199', lot_number: 'PB24199' }, recall).level, 'possible');
+  assert.equal(recallMatchLevel({ product_name: 'Whole milk', raw_capture: 'PB24120', lot_number: 'PB24120' }, recall).level, 'exact', 'a 7-character code inside the range needs no product agreement');
+});
+
+test('matcher: a best-before date inside the window is exact only when the product agrees', () => {
+  const recall = { id: 'c-8', _kind: 'feed', product_name: 'Alabama Banana Pudding Marshmallow 4 ounce', lot_number: null, lots: [], lot_ranges: [], best_by_from: '2026-07-28', best_by_to: '2026-07-28', barcode_number: null, gtins: [] };
+  assert.equal(recallMatchLevel({ product_name: 'Alabama Banana Pudding Marshmallow', raw_capture: 'BEST BY 07/28/2026', lot_number: 'BEST BY 07/28/2026' }, recall).matched_on, 'best_by');
+  assert.equal(recallMatchLevel({ product_name: 'Alabama Banana Pudding Marshmallow', raw_capture: 'BEST BY 07/29/2026', lot_number: 'BEST BY 07/29/2026' }, recall).level, 'possible', 'outside the window the product alone is a warning');
+  assert.equal(recallMatchLevel({ product_name: 'Whole milk 1 gal', raw_capture: 'BEST BY 07/28/2026', lot_number: 'BEST BY 07/28/2026' }, recall).level, null, 'a date alone never matches');
+});
+
+test('matcher: an "all lots" recall is red on a GTIN and only a warning on the product name', () => {
+  const recall = { id: 'c-7', _kind: 'feed', product_name: 'Tractor Wheels Organic Toddler Soft-Baked Bars', lot_number: null, lots: [], lot_ranges: [], all_lots: true, barcode_number: null, gtins: ['812345000016'] };
+  assert.equal(recallMatchLevel({ product_name: 'Tractor Wheels Toddler Bars', raw_capture: 'L77', lot_number: 'L77', barcode_number: '812345000016' }, recall).matched_on, 'barcode');
+  assert.equal(recallMatchLevel({ product_name: 'Tractor Wheels Toddler Bars', raw_capture: 'L77', lot_number: 'L77', barcode_number: null }, recall).level, 'possible');
+});
+
+test('normalize carries the stage 1 fields; the strict rule counts a lot inside a range', () => {
+  const [r] = normalizeActiveRecalls([{ kind: 'feed', catalog_id: 'c-1', product_name: 'P', lot_number: 'PB24105', lots: ['PB24105'], lot_ranges: [{ from: 'PB24105', to: 'PB24150' }], best_by_from: '2026-07-01', best_by_to: '2026-07-31', all_lots: false, match_terms: ['peanut', 'butter'], notice_url: 'https://www.fda.gov/x', covered: true, barcode: null, gtins: ['812345000016'], source: 'fda' }]);
+  assert.deepEqual(r.lot_ranges, [{ from: 'PB24105', to: 'PB24150' }]);
+  assert.equal(r.best_by_from, '2026-07-01'); assert.equal(r.best_by_to, '2026-07-31');
+  assert.deepEqual(r.match_terms, ['peanut', 'butter']); assert.equal(r.notice_url, 'https://www.fda.gov/x'); assert.equal(r._covered, true);
+  assert.equal(exactIdentifierHit({ lot_number: 'PB24133' }, r), true, 'a whole lot inside the range');
+  assert.equal(exactIdentifierHit({ lot_number: 'PB24133 BEST BY 1/1/27' }, r), false, 'still no substring');
+  assert.equal(exactIdentifierHit({ lot_number: 'PB24151' }, r), false);
+  const [old] = normalizeActiveRecalls([{ kind: 'manual', recall_id: 'r-1', product_name: 'P', lot_number: 'L1' }]);
+  assert.deepEqual(old.lot_ranges, []); assert.equal(old.all_lots, false); assert.equal(old._covered, false, 'rows from before migration 045 normalize too');
+});
