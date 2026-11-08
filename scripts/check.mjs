@@ -171,7 +171,7 @@ check('Parsers, listed-food table and recall matcher come only from src/shared',
 // match-row rules come from src/shared/active-recalls.js. The Retail app
 // moves in stage 5; the manual-recall management lists still read `recalls`
 // on purpose (CLAUDE.md, "Database rules").
-check('Scanner reads active recalls only through batchd_active_recalls', () => {
+check('Scanner and Retail read active recalls only through batchd_active_recalls', () => {
   const s = read('index.html');
   for (const q of ["from('recall_distributions')", "from('recall_events')", '_loadClosedEventIds(']) {
     if (s.includes(q)) throw new Error(`index.html: still contains ${q}; active recalls come from batchd_active_recalls`);
@@ -179,13 +179,28 @@ check('Scanner reads active recalls only through batchd_active_recalls', () => {
   for (const n of ["rpc('batchd_active_recalls'", 'Batchd.activeRecalls.normalizeActiveRecalls(', 'Batchd.activeRecalls.matchIdColumns(', 'Batchd.activeRecalls.exactIdentifierHit(']) {
     if (!s.includes(n)) throw new Error(`index.html: does not call ${n}`);
   }
-  const pairs = (s.match(/from\('recalls'\)\.select\([^)]*\)\.eq\('active', true\)/g) || []).length;
+  const activePair = /from\('recalls'\)\.select\([^)]*\)(\.eq\('organisation_id', [^)]*\))?\.eq\('active', true\)/g;
+  const pairs = (s.match(activePair) || []).length;
   if (pairs) throw new Error(`index.html: ${pairs} direct "active recalls" quer${pairs === 1 ? 'y' : 'ies'} on the recalls table left`);
+  // Retail (B4 stage 5): no query pair of recall_distributions joined to
+  // recall_events, no unfiltered recall_events list, no "active recalls"
+  // query on the recalls table. Reads by event id (Live Recall, drills,
+  // the Recalls panel's History tab) and the Consumer Notify picker, which
+  // needs events closed within 30 days, stay.
+  const d = read('dashboard.html');
+  for (const q of [".eq('recall_events.is_drill', false)", "recall_events!inner(id", ".select('id').eq('is_drill', false).is('closed_at', null)", ".eq('is_drill', false).order('published_at'"]) {
+    if (d.includes(q)) throw new Error(`dashboard.html: still contains ${q}; active recalls come from batchd_active_recalls`);
+  }
+  const dPairs = (d.match(activePair) || []).length;
+  if (dPairs) throw new Error(`dashboard.html: ${dPairs} direct "active recalls" quer${dPairs === 1 ? 'y' : 'ies'} on the recalls table left`);
+  for (const n of ["rpc('batchd_active_recalls'", 'Batchd.activeRecalls.normalizeActiveRecalls(', "from('recall_catalog_org')"]) {
+    if (!d.includes(n)) throw new Error(`dashboard.html: does not use ${n}`);
+  }
   const shared = read('src/shared/active-recalls.js');
   for (const fn of ['export function normalizeActiveRecalls(', 'export function exactIdentifierHit(', 'export function matchIdColumns(']) {
     if (!shared.includes(fn)) throw new Error(`src/shared/active-recalls.js: ${fn.slice(16, -1)} missing`);
   }
-  return `1 RPC, ${(s.match(/_fetchActiveRecalls\(\)/g) || []).length} callers`;
+  return `scanner ${(s.match(/_fetchActiveRecalls\(/g) || []).length - 1} callers, Retail ${(d.match(/_fetchActiveRecalls\(/g) || []).length - 1} callers`;
 });
 
 // 6b. The design tokens live only in src/shared/design-tokens.css (A2 part 4,

@@ -496,6 +496,21 @@ not repeated here.
     not before). File a manual recall from the manager Settings card for a
     lot already on shelf: a toast reports the matched scans.
 
+## B4 stage 5: Retail reads one list of active recalls (2026-11-08)
+
+67. Retail, signed in as a corp admin. Recalls, Feed alerts: the FDA
+    entries come from the shared catalog (the count is the catalog's, not
+    the old per-organization copies); each row shows its lots, recall
+    number, firm and date, with Mark reviewed and Dismiss. Dismiss one:
+    it moves under "Show N dismissed" with Restore, the Active tab and the
+    scanner no longer list it, and Restore brings it back. Mark one
+    reviewed: the row shows "Reviewed <date>". Dashboard tiles, the
+    Recalls badge, Lot Lookup and Store Network agree with the scanner on
+    the active recalls; Lot Lookup finds a pushed recall by its second
+    lot. Recalls, + Add recall: the Source options read "FDA notification"
+    and "Mattilsynet notification" as before and a recall saved with one
+    of them appears in the Active tab as an internal recall.
+
 ## Run log
 
 - 2026-11-01, Claude, local static server against the staging database:

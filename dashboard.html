@@ -1364,6 +1364,68 @@ function productNameMatch(a, b) {
   return shared.length >= Math.min(2, Math.min(wa.length, wb.length));
 }
 
+// ── The one list of active recalls (B4 stage 5, 2026-11-08) ──────────────
+// Every Retail reader that needs "the active recalls of this organization"
+// calls _fetchActiveRecalls(): one RPC to batchd_active_recalls (migration
+// 043; SECURITY INVOKER, so row security applies), which returns manual
+// recalls, pushed recall events and public feed entries in one shape with
+// drills, closed events and (unless asked for) dismissed feed entries left
+// out. Batchd.activeRecalls.normalizeActiveRecalls (src/shared) turns the
+// rows into the shape the scanner caches: id, _kind ('manual' | 'pushed' |
+// 'feed'), product_name, lot_number, lots, barcode_number, gtins,
+// description, reason, severity, source, published_at, recalling_firm,
+// _dismissed, _matched. Resolves to { data, error } like a query.
+async function _fetchActiveRecalls(opts = {}) {
+  if (!_orgId) return { data: [], error: null };
+  try {
+    const { data, error } = await sb.rpc('batchd_active_recalls', { p_org: _orgId });
+    if (error) return { data: null, error };
+    return { data: Batchd.activeRecalls.normalizeActiveRecalls(data, opts), error: null };
+  } catch (e) {
+    return { data: null, error: e };
+  }
+}
+// lotsMatch over every lot a recall names (a pushed recall's linked rows, a
+// feed entry's parsed lots), not only the first.
+function _recallLotsMatch(recall, lotCode) {
+  if (!recall || !lotCode) return false;
+  const lots = Array.isArray(recall.lots) && recall.lots.length ? recall.lots : [recall.lot_number];
+  return lots.some(l => lotsMatch(l, lotCode));
+}
+// Per-organization state of a feed entry (recall_catalog_org): dismiss
+// ("not our product": it leaves every active list but stays in Feed alerts),
+// restore, and mark reviewed. Corp admins and store managers may write
+// (policy b43_catalog_org_*); the row is keyed (organisation_id, catalog_id).
+async function _setFeedEntryState(catalogId, patch) {
+  const row = { organisation_id: _orgId, catalog_id: catalogId, ...patch };
+  const { error } = await sb.from('recall_catalog_org').upsert(row, { onConflict: 'organisation_id,catalog_id' });
+  if (error) throw error;
+}
+async function dismissFeedRecall(catalogId, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    await _setFeedEntryState(catalogId, { dismissed_at: new Date().toISOString(), dismissed_by: _userId || null });
+    showToast('Alert dismissed for your organization. It stays in Feed alerts.', 'ok', 3000);
+    renderRecalls();
+  } catch (e) { if (btn) btn.disabled = false; showToast('Could not dismiss: ' + e.message, 'error', 4000); }
+}
+async function restoreFeedRecall(catalogId, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    await _setFeedEntryState(catalogId, { dismissed_at: null, dismissed_by: null, dismiss_note: null });
+    showToast('Alert restored.', 'ok', 2500);
+    renderRecalls();
+  } catch (e) { if (btn) btn.disabled = false; showToast('Could not restore: ' + e.message, 'error', 4000); }
+}
+async function markFeedRecallReviewed(catalogId, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    await _setFeedEntryState(catalogId, { reviewed_at: new Date().toISOString(), reviewed_by: _userId || null });
+    renderRecalls();
+  } catch (e) { if (btn) btn.disabled = false; showToast('Could not save: ' + e.message, 'error', 4000); }
+}
+let _feedShowDismissed = false;
+
 // ── Cross-entity intelligence panel ─────────────────────────────
 // Surfaces everything Batch'd knows about a product+lot from all tables.
 // Call with a container element ID and optional product/lot context.
@@ -1409,12 +1471,9 @@ async function renderIntelligencePanel(containerId, productName, lotCode, opts =
       queries.push(Promise.resolve({ data: [] }));
     }
 
-    // 4. Active recalls matching this product or lot. Both sources (CLAUDE.md rule,
-    //    2026-10-09): pushed recall_events plus the recalls table (manual and feed).
-    queries.push(
-      sb.from('recall_events').select('id, product_name, lot_number, severity, reason, is_drill, published_at, source_org_id')
-        .eq('is_drill', false).order('published_at', { ascending: false }).limit(100)
-    );
+    // 4. Active recalls matching this product or lot: the one list (B4 stage
+    //    5), scoped to this organization by the function itself.
+    queries.push(_fetchActiveRecalls());
 
     // 5. Related investigations — must be scoped to investigations owned by
     //    THIS retailer's connected manufacturers. Without that scope, the
@@ -1440,12 +1499,7 @@ async function renderIntelligencePanel(containerId, productName, lotCode, opts =
       queries.push(Promise.resolve({ data: [] }));
     }
 
-    // 6. recalls table (manual and feed recalls live here, not in recall_events).
-    queries.push(
-      sb.from('recalls').select('id, product_name, lot_number, barcode_number, description, source, created_at')
-        .eq('organisation_id', _orgId).eq('active', true).limit(200)
-    );
-    // 7. Deliveries (receiving_events) for this lot or product, last 90 days. US orgs;
+    // 6. Deliveries (receiving_events) for this lot or product, last 90 days. US orgs;
     //    tolerant of a missing table.
     if ((productName || lotCode) && _orgRegion === 'us') {
       queries.push(
@@ -1456,15 +1510,12 @@ async function renderIntelligencePanel(containerId, productName, lotCode, opts =
       queries.push(Promise.resolve({ data: [] }));
     }
 
-    const [scansRes, complaintsRes, shipmentsRes, recallsRes, invsRes, recallsTblRes, rcvRes] = await Promise.all(queries);
+    const [scansRes, complaintsRes, shipmentsRes, recallsRes, invsRes, rcvRes] = await Promise.all(queries);
 
     const allScans      = scansRes.data      || [];
     const allComplaints = complaintsRes.data  || [];
     const allShipments  = shipmentsRes.data   || [];
-    const allRecalls    = [
-      ...(recallsRes.data || []),
-      ...((recallsTblRes && recallsTblRes.data) || []).map(r => ({ id: r.id, product_name: r.product_name, lot_number: r.lot_number, severity: null, reason: r.description, is_drill: false, published_at: r.created_at, _fromRecallsTable: true })),
-    ];
+    const allRecalls    = recallsRes.data     || [];
     const allInvs       = invsRes.data        || [];
     const allDeliveries = (rcvRes && !rcvRes.error && rcvRes.data) || [];
 
@@ -1484,7 +1535,7 @@ async function renderIntelligencePanel(containerId, productName, lotCode, opts =
 
     const matchedRecalls = allRecalls.filter(r =>
       (productName && productNameMatch(r.product_name, productName)) ||
-      (lotCode && lotsMatch(r.lot_number, lotCode))
+      (lotCode && _recallLotsMatch(r, lotCode))
     );
 
     // Check if this entity is the source of a recall already
@@ -2200,23 +2251,15 @@ async function traceLot() {
     // not worth it for the tracer where correctness > speed. Left as
     // client-side filter pending a more sophisticated server filter
     // (e.g. trigram similarity index in Postgres).
-    const [shipmentsRes, scansRes, recallsRes, acksRes, recallsTblRes, rcvRes] = await Promise.all([
+    const [shipmentsRes, scansRes, recallsRes, acksRes, rcvRes] = await Promise.all([
       sb.from('shipments').select('id,lot_number,quantity,unit,shipped_at,reference_document,stores(name,address),organisations!shipments_manufacturer_id_fkey(name),products(name)').eq('retailer_id', _orgId).limit(200),
       sb.from('scans').select('id,product_name,lot_number,store_name,scanned_by,created_at,tlc_source').eq('organisation_id', _orgId).order('created_at',{ascending:false}).limit(500),
-      // recall_events is global by design (FDA + Mattilsynet feeds + pushed
-      // recalls), so no org filter — this lot tracer needs to see every
-      // candidate. Server-side filter is_drill=false (drills shouldn't
-      // surface here) and bump the limit from 100 to 500 because busy feed
-      // days can easily push a relevant recall out of the most-recent-100
-      // window, causing the tracer to silently say "no recall match" when
-      // there actually is one.
-      sb.from('recall_events').select('id,product_name,lot_number,severity,reason,is_drill,published_at').eq('is_drill', false).order('published_at',{ascending:false}).limit(500),
+      // The one list of active recalls (B4 stage 5): manual, pushed and feed
+      // for this organization, drills and closed events already left out. It
+      // replaces the unfiltered recall_events read (every event of every
+      // organization, relying on row security) and the recalls read.
+      _fetchActiveRecalls(),
       sb.from('recall_acknowledgements').select('id,status,recall_event_id,created_at,acknowledged_at,units_pulled,stores(name)').eq('organisation_id', _orgId),
-      // recall_events alone MISSES manual and FDA/Mattilsynet feed recalls —
-      // those live in the recalls TABLE, not recall_events. Without this
-      // second query the tracer said "no active recall" for a lot under an
-      // active manual recall (2026-09-09 audit fix).
-      sb.from('recalls').select('id,product_name,lot_number,description,source,created_at').eq('organisation_id', _orgId).eq('active', true).limit(500),
       // 2026-10-09: receiving records are the retailer's own "immediate previous
       // source" evidence (21 CFR 1.1345). Shipments (manufacturer-era, nothing
       // writes them) stay as a fallback for legacy rows. Tolerates a missing table.
@@ -2226,12 +2269,7 @@ async function traceLot() {
     const shipments = (shipmentsRes.data||[]).filter(s => lotsMatch(s.lot_number, lotCode));
     const deliveries = ((rcvRes && !rcvRes.error && rcvRes.data) || []).filter(r => lotsMatch(r.traceability_lot_code, lotCode));
     const scans     = (scansRes.data||[]).filter(s => lotsMatch(s.lot_number, lotCode));
-    const recallsTbl = (recallsTblRes.data||[])
-      .filter(r => lotsMatch(r.lot_number, lotCode))
-      .map(r => ({ id: r.id, product_name: r.product_name, lot_number: r.lot_number,
-                   severity: null, reason: r.description, is_drill: false,
-                   published_at: r.created_at, _fromRecallsTable: true }));
-    const recalls   = [...(recallsRes.data||[]).filter(r => lotsMatch(r.lot_number, lotCode) && !r.is_drill), ...recallsTbl];
+    const recalls   = (recallsRes.data||[]).filter(r => _recallLotsMatch(r, lotCode));
     const matchedRecallIds = recalls.map(r => r.id);
     const acks      = (acksRes.data||[]).filter(a => matchedRecallIds.includes(a.recall_event_id));
 
@@ -2811,8 +2849,8 @@ async function _renderOverviewLegacy() {
     const days7Iso = new Date(now - 7 * 86400000).toISOString();
 
     const [
-      storesRes, scansRes, partnersRes, shipmentsRes, acksRes, distRes, srmRes, onShelfRes,
-      ownRecallsRes, scans90Res, drillsRecentRes, recentComplaintsRes, rcvLinkRes, rcv90Res, rcvLotsRes,
+      storesRes, scansRes, partnersRes, shipmentsRes, acksRes, activeRes, srmRes, onShelfRes,
+      scans90Res, drillsRecentRes, recentComplaintsRes, rcvLinkRes, rcv90Res, rcvLotsRes,
     ] = await Promise.all([
       sb.from('stores').select('id, name, active').eq('organisation_id', _orgId),
       sb.from('scans').select('id, created_at, store_name, store_id, product_name, lot_number, barcode_number, removed_from_shelf_at, scanned_by, recall_resolved').eq('organisation_id', _orgId).gte('created_at', days30).order('created_at', {ascending:false}).limit(500),
@@ -2824,12 +2862,14 @@ async function _renderOverviewLegacy() {
       // 365 days don't affect the active-recall counter or the response-rate
       // KPIs (those are time-bounded), so the floor is safe.
       sb.from('recall_acknowledgements').select('id, status, recall_event_id, store_id, created_at, acknowledged_at, organisation_id, recall_events!inner(is_drill)').eq('organisation_id', _orgId).gte('created_at', days365Iso),
-      sb.from('recall_distributions').select('recall_event_id, distributed_at').eq('retailer_org_id', _orgId),
+      // The one list of active recalls (B4 stage 5): pushed events, manual
+      // recalls and feed entries for this organization in one shape.
+      _fetchActiveRecalls(),
       // NOTE: removed_at is intentionally omitted — it is never written by app code
       // (pullFromShelf writes to scans.removed_from_shelf_at, not scan_recall_matches).
       // Selecting it would cause a silent Supabase error, returning data:null and
       // zeroing _confirmedRecallIds → activeCount = 0.
-      sb.from('scan_recall_matches').select('scan_id, recall_id, recall_product, recall_lot, store_name, quantity, placed_at, match_confidence').eq('organisation_id', _orgId),
+      sb.from('scan_recall_matches').select('scan_id, recall_id, recall_event_id, catalog_id, recall_product, recall_lot, store_name, quantity, placed_at, match_confidence').eq('organisation_id', _orgId),
       // Audit fix (#9): the main `scans` query is capped at 30 days for KPI
       // display, but on-shelf detection must NOT be date-bounded — slow-moving
       // products (freezer aisle, ambient shelf) older than 30 days that are
@@ -2837,11 +2877,6 @@ async function _renderOverviewLegacy() {
       // dashboard under-reported risk. This separate query fetches all
       // currently-on-shelf scans regardless of age, with a generous cap.
       sb.from('scans').select('id, lot_number, barcode_number').eq('organisation_id', _orgId).is('removed_from_shelf_at', null).limit(10000),
-      // Perf fix #6: ownRecallsRaw — was a sequential await mid-render (line ~2167)
-      sb.from('recalls')
-        .select('id, product_name, lot_number, barcode_number, active, source, created_at, reason:description, is_pushed, recall_event_id')
-        .eq('organisation_id', _orgId)
-        .eq('active', true).limit(300),
       // Perf fix #6: scans90 baseline — was sequential (line ~2353)
       sb.from('scans').select('store_name, store_id, created_at').eq('organisation_id', _orgId).gte('created_at', days90Iso),
       // Perf fix #6: drillsRecent — was sequential (line ~2381)
@@ -2863,7 +2898,6 @@ async function _renderOverviewLegacy() {
     const partners  = partnersRes.data  || [];
     const shipments = shipmentsRes.data || [];
     const acks      = acksRes.data      || [];
-    const dists     = distRes.data      || [];
     const srmRows   = srmRes.data       || [];
     const onShelfAll = onShelfRes.data  || [];
 
@@ -2887,43 +2921,26 @@ async function _renderOverviewLegacy() {
     const storesExposed = new Set(srmOnShelf.map(m => m.store_name).filter(Boolean)).size;
     const productsAtRisk = new Set(srmOnShelf.map(m => (m.recall_product||'').toLowerCase()).filter(Boolean)).size;
 
-    // ── Fetch pushed recall events distributed to this retailer ──
-    let recallEvents = [];
-    if (dists.length > 0) {
-      const evIds = [...new Set(dists.map(d => d.recall_event_id))];
-      const { data: evs } = await sb.from('recall_events')
-        // is_recalled removed from the SELECT — column doesn't exist on the
-        // live schema and was producing a 400 on every overview load. Was
-        // never read from the result anyway. (chunk-6B-postship hotfix)
-        .select('id, product_name, lot_number, barcode, reason, severity, is_drill, published_at, created_at, source_org_id')
-        .in('id', evIds);
-
-      // Get manufacturer names
-      const mfrIds = [...new Set((evs||[]).map(e => e.source_org_id).filter(Boolean))];
-      let mfrNames = {};
-      if (mfrIds.length) {
-        const { data: mfrs } = await sb.from('organisations').select('id,name').in('id', mfrIds);
-        (mfrs||[]).forEach(m => { mfrNames[m.id] = m.name; });
-      }
-      recallEvents = (evs||[]).map(e => ({...e, mfrName: mfrNames[e.source_org_id] || 'Unknown'}));
-    }
-
-    // ── Also fetch any self-managed recalls for this org ──
-    // Exclude pushed recalls (already in relevantRecalls) to avoid duplicates.
-    // Perf fix #6: ownRecallsRaw is now fetched in the main Promise.all above.
-    // Round-7 schema correction (2026-05-08): recalls.is_pushed and
-    // recall_event_id DO exist (~7 legacy production rows); included in the
-    // select so we can dedup against legacy push artifacts.
-    const ownRecallsRaw = ownRecallsRes.data;
+    // ── The one list, split the way the tiles read it (B4 stage 5) ──
+    // Pushed events keep the fields this renderer has always read (barcode,
+    // mfrName from the pushing organization's name, is_drill false, since the
+    // function leaves drills and closed events out); manual recalls and feed
+    // entries are the organization's own list.
+    const _activeAll   = activeRes.data || [];
+    const recallEvents = _activeAll.filter(r => r._kind === 'pushed')
+      .map(e => ({ ...e, barcode: e.barcode_number, mfrName: e.recalling_firm || 'Unknown', is_drill: false, created_at: e.published_at }));
+    const ownRecallsRaw = _activeAll.filter(r => r._kind !== 'pushed');
     // Feed sources — imported from FDA/RASFF/Mattilsynet daily feeds.
     // These are NOT operational alerts unless they match something in scan history.
     const FEED_SOURCES = new Set(['fda','rasff','FDA','RASFF','mattilsynet','Mattilsynet']);
 
-    // Recall IDs with at least one confirmed match against an on-shelf scan
+    // Recall IDs with at least one confirmed match against an on-shelf scan:
+    // a match row names its recall by recall_id (manual), recall_event_id
+    // (pushed) or catalog_id (feed), so all three count.
     const _confirmedRecallIds = new Set(
       (srmRows||[])
         .filter(m => _onShelfScanIds.has(m.scan_id))
-        .map(m => m.recall_id)
+        .flatMap(m => [m.recall_id, m.recall_event_id, m.catalog_id])
         .filter(Boolean)
     );
 
@@ -2938,25 +2955,18 @@ async function _renderOverviewLegacy() {
     // Manual recalls require an exact on-shelf hit too — drill / "just logged" recalls
     // with no scan in stock no longer inflate the headline count.
     const ownRecalls = (ownRecallsRaw || []).filter(r => {
-      // Round-7 correction: is_pushed and recall_event_id DO exist on recalls
-      // (verified 2026-05-08; ~7 of ~14k production rows have them set, all
-      // legacy artifacts from the retired manufacturer-push flow). The earlier
-      // round-3 audit incorrectly treated these as dead code based on a stale
-      // CLAUDE.md gotcha. Re-introduced — these legacy rows would otherwise
-      // leak into the manual-recall count if their recall_event was deleted
-      // (so pushedKeys lookup wouldn't catch them).
-      if (r.is_pushed || r.recall_event_id) return false;
-      const rLot = (r.lot_number    ||'').toLowerCase().trim();
-      const rBc  = (r.barcode_number||'').toLowerCase().trim();
-      if (!rLot && !rBc) return false; // can't satisfy condition (2) without a key
+      // Every lot and barcode the recall names (a feed entry's parsed lots and GTINs).
+      const rLots = Batchd.activeRecalls.recallLots(r);
+      const rBcs  = Batchd.activeRecalls.recallBarcodes(r);
+      if (!rLots.length && !rBcs.length) return false; // can't satisfy condition (2) without a key
       const hasOnShelfMatch =
-        (rLot && _onShelfLots.has(rLot)) ||
-        (rBc  && _onShelfBcs.has(rBc))   ||
+        rLots.some(l => _onShelfLots.has(l)) ||
+        rBcs.some(b => _onShelfBcs.has(b))   ||
         _confirmedRecallIds.has(r.id);
       if (!hasOnShelfMatch) return false;
       // For non-feed (manual) recalls also drop duplicates already represented as a push event
       if (!FEED_SOURCES.has(r.source)) {
-        const key = (r.product_name||'').toLowerCase() + '|' + rLot;
+        const key = (r.product_name||'').toLowerCase() + '|' + (r.lot_number||'').toLowerCase().trim();
         if (pushedLotKeys.has(key)) return false;
       }
       return true;
@@ -2966,13 +2976,10 @@ async function _renderOverviewLegacy() {
     const deliveriesAll = (rcvLotsRes && !rcvLotsRes.error && rcvLotsRes.data) || [];
     const myLotNumbers = new Set([...shipments.map(s => s.lot_number), ...deliveriesAll.map(r => r.traceability_lot_code)].filter(Boolean));
     const activeRecallEvents = recallEvents.filter(e => !e.is_drill);
-    const _eventHasOnShelfMatch = (e) => {
-      const eLot = (e.lot_number||'').toLowerCase().trim();
-      const eBc  = (e.barcode  ||'').toLowerCase().trim();
-      return (eLot && _onShelfLots.has(eLot)) ||
-             (eBc  && _onShelfBcs.has(eBc))   ||
-             _confirmedRecallIds.has(e.id);
-    };
+    const _eventHasOnShelfMatch = (e) =>
+      Batchd.activeRecalls.recallLots(e).some(l => _onShelfLots.has(l)) ||
+      Batchd.activeRecalls.recallBarcodes(e).some(b => _onShelfBcs.has(b)) ||
+      _confirmedRecallIds.has(e.id);
     // relevantRecalls = every pushed event (kept for the recall inbox panel display)
     const relevantRecalls    = activeRecallEvents;
     // actionableRecalls = pushed events that satisfy the strict three-condition rule
@@ -2980,8 +2987,8 @@ async function _renderOverviewLegacy() {
     // pendingAckRecalls = pushed events without an on-shelf match — still need acknowledgement
     const pendingAckRecalls  = activeRecallEvents.filter(e => !_eventHasOnShelfMatch(e));
     // Lots we received (deliveries, plus legacy shipments) that match a relevant recall.
-    const exposedDeliveries  = deliveriesAll.filter(r => r.traceability_lot_code && relevantRecalls.some(rc => lotsMatch(rc.lot_number, r.traceability_lot_code)));
-    const exposedShipments   = [...shipments.filter(s => s.lot_number && relevantRecalls.some(r => lotsMatch(r.lot_number, s.lot_number))), ...exposedDeliveries];
+    const exposedDeliveries  = deliveriesAll.filter(r => r.traceability_lot_code && relevantRecalls.some(rc => _recallLotsMatch(rc, r.traceability_lot_code)));
+    const exposedShipments   = [...shipments.filter(s => s.lot_number && relevantRecalls.some(r => _recallLotsMatch(r, s.lot_number))), ...exposedDeliveries];
 
     // ── Acknowledgement analysis ──────────────────────────────
     // Per CLAUDE.md, mock drills never count toward active recall numbers.
@@ -3551,7 +3558,7 @@ async function renderRecalls() {
   // sequential below. The trading_partners read that used to sit here was
   // removed 2026-10-11: nothing read its result once the manufacturer-era
   // drill launcher went.
-  const [recallsRes, acksRes, coordRes, distRes, recallMatchRes] = await Promise.all([
+  const [recallsRes, acksRes, coordRes, distRes, recallMatchRes, activeRes, catalogOrgRes] = await Promise.all([
     // CLAUDE.md schema gotcha: recalls has `description`, not `reason`.
     // Aliased via PostgREST so downstream `r.reason` reads keep working
     // without touching every call site (renderRecalls table cell, the
@@ -3563,9 +3570,17 @@ async function renderRecalls() {
     // and escalation emails), not the per-user user_settings mirror.
     sb.from('organisations').select('recall_coordinator_name, recall_coordinator_contact').eq('id', _orgId).single(),
     sb.from('recall_distributions').select('recall_event_id, est_affected_units, distributed_at').eq('retailer_org_id', _orgId),
-    sb.from('scan_recall_matches').select('recall_id, scans!inner(removed_from_shelf_at)').eq('organisation_id', _orgId).is('scans.removed_from_shelf_at', null),
+    sb.from('scan_recall_matches').select('recall_id, recall_event_id, catalog_id, scans!inner(removed_from_shelf_at)').eq('organisation_id', _orgId).is('scans.removed_from_shelf_at', null),
+    // The one list of active recalls (B4 stage 5), dismissed feed entries
+    // included so the Feed alerts tab can show and restore them.
+    _fetchActiveRecalls({ includeDismissed: true }),
+    // Per-organization state of the feed entries: reviewed, dismissed.
+    sb.from('recall_catalog_org').select('catalog_id, reviewed_at, dismissed_at, dismiss_note').eq('organisation_id', _orgId),
   ]);
   const coord   = coordRes.data || {};
+  const activeList = activeRes.data || [];
+  const catalogState = {};
+  (catalogOrgRes.data || []).forEach(o => { catalogState[o.catalog_id] = o; });
   const recalls = recallsRes.data || [];
   const acks    = acksRes.data   || [];
   const distData = distRes.data;
@@ -3586,14 +3601,15 @@ async function renderRecalls() {
     }));
   }
 
-  const RECALL_FEED_SOURCES = new Set(['fda','rasff','FDA','RASFF','mattilsynet','Mattilsynet']);
   // Audit fix: enforce CLAUDE.md three-condition rule — a recall only "matches"
   // if at least one matched scan is still on shelf. Previously this set
   // included recalls whose only matched scan had been pulled, inflating active
   // counts. Inner join + IS NULL filter on scans.removed_from_shelf_at gates
   // it server-side. Perf fix #12: this query is now in the main Promise.all.
+  // A match row names its recall by recall_id (manual), recall_event_id
+  // (pushed) or catalog_id (feed), so all three count.
   const recallMatchRows = recallMatchRes.data;
-  const matchedIds = new Set((recallMatchRows||[]).map(m => m.recall_id).filter(Boolean));
+  const matchedIds = new Set((recallMatchRows||[]).flatMap(m => [m.recall_id, m.recall_event_id, m.catalog_id]).filter(Boolean));
 
   const pushedKeys = new Set(pushed.map(p => (p.recall_events?.product_name||'').toLowerCase() + '|' + (p.recall_events?.lot_number||'').toLowerCase()));
   // Audit fix: activePushed now requires an on-shelf match (matchedIds is filtered above).
@@ -3610,18 +3626,19 @@ async function renderRecalls() {
   const isClosedEvent  = p => !!p.recall_events?.closed_at;
   const openPushed     = pushed.filter(p => !isClosedEvent(p));
   const activePushed   = openPushed.filter(p => !p.recall_events?.is_drill && matchedIds.has(p.recall_event_id)).length;
-  const manualRecalls  = recalls.filter(r => {
-    if (!r.active) return false;
-    // Round-7 correction: re-introduced legacy push dedup. These columns DO
-    // exist on the recalls schema (~7 production rows from the retired
-    // manufacturer-push flow). See SCHEMA.md "recalls" section.
-    if (r.is_pushed || r.recall_event_id) return false;
-    if (RECALL_FEED_SOURCES.has(r.source)) return matchedIds.has(r.id);
+  // The Active tab's own list comes from the one list (B4 stage 5): manual
+  // recalls (minus duplicates of a pushed event) and feed entries that a
+  // scan still on shelf matches and the organization has not dismissed.
+  const manualRecalls  = activeList.filter(r => {
+    if (r._kind === 'pushed') return false;
+    if (r._kind === 'feed') return !r._dismissed && matchedIds.has(r.id);
     const key = (r.product_name||'').toLowerCase() + '|' + (r.lot_number||'').toLowerCase();
     return !pushedKeys.has(key);
   });
-  const historyRecalls = recalls.filter(r => !r.active);
-  const feedRecalls    = recalls.filter(r => RECALL_FEED_SOURCES.has(r.source));
+  // Feed alerts: every catalog entry for the organization's region, with
+  // its per-organization state. The per-organization copies in `recalls`
+  // are no longer read here (they go in stage 6).
+  const feedRecalls    = activeList.filter(r => r._kind === 'feed');
   const active         = manualRecalls.length + activePushed;
   // Audit fix: exclude drill acks from the "unacknowledged" count — CLAUDE.md rule:
   // "Mock drills never count toward active recall numbers."
@@ -3970,11 +3987,13 @@ async function renderRecalls() {
             <div style="width:8px;height:8px;border-radius:50%;background:${r.active?'var(--danger)':'var(--muted)'};flex-shrink:0;"></div>
             <div style="flex:1;min-width:0;">
               <div style="font-size:var(--fs-body);font-weight:600;color:var(--text);">${esc(r.product_name||'')}</div>
-              <div style="font-size:var(--fs-eyebrow);color:var(--muted);margin-top:2px;">${regionTerm('lot_short')}: ${esc(r.lot_number||'—')} · ${esc(r.source||'Manual')} · ${r.created_at?fmtDash(r.created_at):''}</div>
+              <div style="font-size:var(--fs-eyebrow);color:var(--muted);margin-top:2px;">${regionTerm('lot_short')}: ${esc(r.lot_number||'—')} · ${esc(r._kind === 'feed' ? (r.source||'').toUpperCase() + ' alert, matches your scans' : (r.source||'Manual'))} · ${r.published_at?fmtDash(r.published_at):''}</div>
             </div>
-            <span style="font-size:var(--fs-label);padding:2px 8px;border-radius:var(--r-md);background:${r.active?'rgba(var(--danger-rgb),0.12)':'rgba(var(--accent-rgb),0.12)'};color:${r.active?'var(--danger)':'var(--accent)'};white-space:nowrap;">${r.active?'Active':'Resolved'}</span>
-            ${_orgRegion === 'us' ? `<button onclick="openFdaNotificationFromManualRecall('${r.id}')" title="Generate FDA 21 CFR 7.46 recall notification draft" style="font-size:var(--fs-eyebrow);padding:5px 10px;border-radius:var(--r-xs);border:1px solid rgba(var(--info-rgb),0.4);background:none;color:var(--info);cursor:pointer;white-space:nowrap;">FDA doc</button>` : ''}
-            ${r.active ? `<button onclick="resolveManualRecall('${r.id}', this)" title="Mark this recall as resolved. It will move to the History tab" style="font-size:var(--fs-eyebrow);padding:5px 10px;border-radius:var(--r-xs);border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;white-space:nowrap;">Resolve</button>` : ''}
+            <span style="font-size:var(--fs-label);padding:2px 8px;border-radius:var(--r-md);background:rgba(var(--danger-rgb),0.12);color:var(--danger);white-space:nowrap;">Active</span>
+            ${_orgRegion === 'us' && r._kind !== 'feed' ? `<button onclick="openFdaNotificationFromManualRecall('${r.id}')" title="Generate FDA 21 CFR 7.46 recall notification draft" style="font-size:var(--fs-eyebrow);padding:5px 10px;border-radius:var(--r-xs);border:1px solid rgba(var(--info-rgb),0.4);background:none;color:var(--info);cursor:pointer;white-space:nowrap;">FDA doc</button>` : ''}
+            ${r._kind === 'feed'
+              ? `<button onclick="dismissFeedRecall('${r.id}', this)" title="Not your product. The alert leaves the active lists and stays in Feed alerts" style="font-size:var(--fs-eyebrow);padding:5px 10px;border-radius:var(--r-xs);border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;white-space:nowrap;">Dismiss</button>`
+              : `<button onclick="resolveManualRecall('${r.id}', this)" title="Mark this recall as resolved. It will move to the History tab" style="font-size:var(--fs-eyebrow);padding:5px 10px;border-radius:var(--r-xs);border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;white-space:nowrap;">Resolve</button>`}
           </div>`).join('')}
       </div>` : ''}`;
 
@@ -4008,39 +4027,61 @@ async function renderRecalls() {
 
   } else if (_recallsTab === 'feed') {
     const isUS = _orgRegion === 'us';
+    // The catalog with per-organization state (B4 stage 5): live entries
+    // first, focus categories on top; dismissed entries behind a toggle.
+    const liveFeed      = feedRecalls.filter(r => !r._dismissed);
+    const dismissedFeed = feedRecalls.filter(r => r._dismissed);
+    const matchedCount  = liveFeed.filter(r => matchedIds.has(r.id)).length;
+    const feedRow = (r) => {
+      const matched  = !r._dismissed && matchedIds.has(r.id);
+      const inFocus  = _recallInFocus(r);   // Phase 6: focus categories first, badged
+      const state    = catalogState[r.id] || {};
+      const reviewed = !!state.reviewed_at;
+      // XSS sweep 2026-05-27: feed strings come from a third-party API and
+      // are rendered verbatim, so every field gets esc(). The reason is
+      // truncated to 120 characters before escaping.
+      const reasonText = r.reason || r.description || '';
+      const _desc120 = reasonText.slice(0,120) + (reasonText.length>120?'…':'');
+      const lotsText = (r.lots && r.lots.length) ? r.lots.slice(0, 6).join(', ') + (r.lots.length > 6 ? ` +${r.lots.length - 6} more` : '') : (r.lot_number || '—');
+      const recallNo = (r.description || '').match(/\[([A-Z]-\d{4}-\d{4})\]$/);
+      return `<div style="display:flex;align-items:flex-start;gap:12px;padding:13px 16px;background:var(--surface);border:1px solid ${matched?'rgba(var(--danger-rgb),0.25)':'var(--border)'};border-radius:var(--r-md);${r._dismissed?'opacity:0.6;':''}">
+        <div style="flex-shrink:0;margin-top:2px;">
+          ${r._dismissed
+            ? `<span style="font-size:var(--fs-label);padding:2px 8px;border-radius:var(--r-md);background:rgba(var(--accent-muted-rgb),0.1);color:var(--muted);white-space:nowrap;">Dismissed</span>`
+            : matched
+              ? `<span style="font-size:var(--fs-label);padding:2px 8px;border-radius:var(--r-md);background:rgba(var(--danger-rgb),0.12);color:var(--danger);font-weight:700;white-space:nowrap;">⚠ MATCHED</span>`
+              : `<span style="font-size:var(--fs-label);padding:2px 8px;border-radius:var(--r-md);background:rgba(var(--accent-muted-rgb),0.1);color:var(--muted);white-space:nowrap;">No match</span>`}
+        </div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:var(--fs-meta);font-weight:600;color:var(--text);margin-bottom:2px;">${esc(r.product_name||'—')}${inFocus ? ` <span style="font-size:var(--fs-label);font-family:'DM Mono',monospace;letter-spacing:0.06em;text-transform:uppercase;padding:2px 6px;border-radius:var(--r-xs);background:rgba(var(--info-rgb),0.12);color:var(--info);margin-left:6px;vertical-align:middle;">In your focus categories</span>` : ''}${r.severity ? ` <span style="margin-left:6px;vertical-align:middle;">${sevPill(r.severity)}</span>` : ''}</div>
+          <div style="font-size:var(--fs-eyebrow);color:var(--muted);">${regionTerm('lot_short')}: <span style="font-family:'DM Mono',monospace;">${esc(lotsText)}</span> · ${esc((r.source||'').toUpperCase())}${recallNo ? ` <span style="font-family:'DM Mono',monospace;">${esc(recallNo[1])}</span>` : ''}${r.recalling_firm ? ` · ${esc(r.recalling_firm)}` : ''} · ${r.published_at?fmtDash(r.published_at):''}${reviewed ? ` · Reviewed ${fmtDash(state.reviewed_at)}` : ''}</div>
+          ${_desc120?`<div style="font-size:var(--fs-eyebrow);color:var(--muted);margin-top:4px;line-height:1.5;">${esc(_desc120)}</div>`:''}
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;flex-shrink:0;">
+          ${r._dismissed
+            ? `<button onclick="restoreFeedRecall('${r.id}', this)" style="font-size:var(--fs-eyebrow);padding:5px 10px;border-radius:var(--r-xs);border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;white-space:nowrap;">Restore</button>`
+            : `${reviewed ? '' : `<button onclick="markFeedRecallReviewed('${r.id}', this)" title="Record that someone looked at this alert" style="font-size:var(--fs-eyebrow);padding:5px 10px;border-radius:var(--r-xs);border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;white-space:nowrap;">Mark reviewed</button>`}
+               <button onclick="dismissFeedRecall('${r.id}', this)" title="Not your product. The alert leaves the active lists and stays here as dismissed" style="font-size:var(--fs-eyebrow);padding:5px 10px;border-radius:var(--r-xs);border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;white-space:nowrap;">Dismiss</button>`}
+        </div>
+      </div>`;
+    };
     el.innerHTML = `
       <div style="margin-bottom:16px;">
-        <div style="font-size:var(--fs-eyebrow);color:var(--muted);">${feedRecalls.length} ${isUS?'FDA':'Mattilsynet'} alerts imported · ${feedRecalls.filter(r=>matchedIds.has(r.id)).length} match your scan history${_orgFocusCategories.length ? ` · ${feedRecalls.filter(_recallInFocus).length} in your focus categories` : ''}</div>
+        <div style="font-size:var(--fs-eyebrow);color:var(--muted);">${liveFeed.length} ${isUS?'FDA':'Mattilsynet'} alerts · ${matchedCount} match your scan history${_orgFocusCategories.length ? ` · ${liveFeed.filter(_recallInFocus).length} in your focus categories` : ''}${dismissedFeed.length ? ` · ${dismissedFeed.length} dismissed` : ''}</div>
       </div>
       ${tabBar('feed')}
       <div style="background:rgba(var(--info-light-rgb),0.05);border:1px solid rgba(var(--info-light-rgb),0.2);border-radius:var(--r-md);padding:13px 16px;margin-bottom:16px;font-size:var(--fs-meta);color:var(--muted);line-height:1.6;">
-        <strong style="color:var(--text);">${isUS?'FDA':'Mattilsynet'} feed</strong> — updated daily. Alerts that match a lot code or barcode from your scan history are automatically surfaced in the Active tab. All others are shown here for reference.
+        <strong style="color:var(--text);">${isUS?'FDA':'Mattilsynet'} feed</strong> — updated daily from the shared recall catalog. Alerts whose lot code or GTIN matches a scan still on shelf are surfaced in the Active tab and in the scanner. Dismiss an alert that is not your product; it leaves the active lists for your organization and stays here.
       </div>
       ${feedRecalls.length === 0 ? `<div class="empty" style="padding:40px 24px;text-align:center;">No feed alerts yet — the daily import runs at 06:00 UTC.</div>` : ''}
       <div style="display:flex;flex-direction:column;gap:8px;">
-        ${[...feedRecalls].sort((a, b) => (_recallInFocus(b) ? 1 : 0) - (_recallInFocus(a) ? 1 : 0)).map(r => {
-          const matched = matchedIds.has(r.id);
-          const inFocus = _recallInFocus(r);   // Phase 6: focus categories first, badged
-          // XSS sweep 2026-05-27 — FDA / Mattilsynet feed strings are
-          // ingested from third-party APIs and rendered verbatim, so
-          // every field gets esc(). description is truncated to 120
-          // chars before escape — entity-safe because slice doesn't
-          // split entities (no entities until esc() runs).
-          const _desc120 = (r.description||'').slice(0,120) + ((r.description||'').length>120?'…':'');
-          return `<div style="display:flex;align-items:flex-start;gap:12px;padding:13px 16px;background:var(--surface);border:1px solid ${matched?'rgba(var(--danger-rgb),0.25)':'var(--border)'};border-radius:var(--r-md);">
-            <div style="flex-shrink:0;margin-top:2px;">
-              ${matched
-                ? `<span style="font-size:var(--fs-label);padding:2px 8px;border-radius:var(--r-md);background:rgba(var(--danger-rgb),0.12);color:var(--danger);font-weight:700;white-space:nowrap;">⚠ MATCHED</span>`
-                : `<span style="font-size:var(--fs-label);padding:2px 8px;border-radius:var(--r-md);background:rgba(var(--accent-muted-rgb),0.1);color:var(--muted);">No match</span>`}
-            </div>
-            <div style="flex:1;min-width:0;">
-              <div style="font-size:var(--fs-meta);font-weight:600;color:var(--text);margin-bottom:2px;">${esc(r.product_name||'—')}${inFocus ? ` <span style="font-size:var(--fs-label);font-family:'DM Mono',monospace;letter-spacing:0.06em;text-transform:uppercase;padding:2px 6px;border-radius:var(--r-xs);background:rgba(var(--info-rgb),0.12);color:var(--info);margin-left:6px;vertical-align:middle;">In your focus categories</span>` : ''}</div>
-              <div style="font-size:var(--fs-eyebrow);color:var(--muted);">${regionTerm('lot_short')}: <span style="font-family:'DM Mono',monospace;">${esc(r.lot_number||'—')}</span> · Source: ${esc(r.source||'')} · ${r.created_at?fmtDash(r.created_at):''}</div>
-              ${r.description?`<div style="font-size:var(--fs-eyebrow);color:var(--muted);margin-top:4px;line-height:1.5;">${esc(_desc120)}</div>`:''}
-            </div>
-          </div>`;
-        }).join('')}
-      </div>`;
+        ${[...liveFeed].sort((a, b) => (matchedIds.has(b.id) ? 1 : 0) - (matchedIds.has(a.id) ? 1 : 0) || (_recallInFocus(b) ? 1 : 0) - (_recallInFocus(a) ? 1 : 0)).map(feedRow).join('')}
+      </div>
+      ${dismissedFeed.length ? `
+      <div style="margin-top:16px;">
+        <button onclick="_feedShowDismissed=!_feedShowDismissed;renderRecalls()" style="font-family:'DM Mono',monospace;font-size:var(--fs-eyebrow);padding:7px 12px;border-radius:var(--r-sm);border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;">${_feedShowDismissed ? 'Hide' : 'Show'} ${dismissedFeed.length} dismissed</button>
+        ${_feedShowDismissed ? `<div style="display:flex;flex-direction:column;gap:8px;margin-top:10px;">${dismissedFeed.map(feedRow).join('')}</div>` : ''}
+      </div>` : ''}`;
 
   } else if (_recallsTab === 'add') {
     el.innerHTML = `
@@ -4072,8 +4113,8 @@ async function renderRecalls() {
             <div class="field"><label>Source</label>
               <select id="new-recall-source">
                 <option value="manual">Manual (self-initiated)</option>
-                <option value="mattilsynet">Mattilsynet notification</option>
-                <option value="fda">FDA notification</option>
+                <option value="mattilsynet_notice">Mattilsynet notification</option>
+                <option value="fda_notice">FDA notification</option>
               </select></div>
             <div class="field"><label>Reason / description</label>
               <textarea id="new-recall-description" rows="3" placeholder="Describe the reason for the recall: allergen undeclared, contamination, labeling error, etc." style="width:100%;background:var(--surface2);border:1px solid var(--glass-border);border-radius:var(--r-sm);padding:9px 11px;color:var(--text);font-family:'Figtree',sans-serif;font-size:var(--fs-body);resize:vertical;"></textarea></div>
@@ -6719,13 +6760,13 @@ async function renderCommandCenter() {
     // for the coverage tile. We query within the time window so we don't
     // pull every scan in history.
     // ackRes is `let` because the migration-008 fallback below may re-issue it.
-    let [storesRes, srmRes, liveRecallsRes, openEventsRes, ackRes, recentScansRes] = await Promise.all([
+    let [storesRes, srmRes, activeRes, ackRes, recentScansRes] = await Promise.all([
       sb.from('stores').select('*').eq('organisation_id', _orgId),
-      sb.from('scan_recall_matches').select('store_id, scan_id, recall_id, recall_event_id').eq('organisation_id', _orgId),
-      // Live-recall id sets (2026-09-09 audit fix): a match row alone must
+      sb.from('scan_recall_matches').select('store_id, scan_id, recall_id, recall_event_id, catalog_id').eq('organisation_id', _orgId),
+      // Live-recall id set (2026-09-09 audit fix): a match row alone must
       // not keep a store red after the recall itself was resolved/closed.
-      sb.from('recalls').select('id').eq('organisation_id', _orgId).eq('active', true),
-      sb.from('recall_events').select('id').eq('is_drill', false).is('closed_at', null),
+      // The one list (B4 stage 5) gives every live id in one call.
+      _fetchActiveRecalls(),
       sb.from('recall_acknowledgements')
         .select('id, store_id, recall_event_id, status, acknowledged_at, pulled_at, disposed_at, confirmed_at, created_at, recall_events(id, product_name, lot_number, severity, reason, is_drill, published_at, closed_at)')
         .eq('organisation_id', _orgId)
@@ -6794,16 +6835,13 @@ async function renderCommandCenter() {
     // and the select 400s), we must keep showing the match rather than
     // silently clearing every store's active-recall marker. Under-reporting
     // an active recall is the dangerous direction in this product.
-    const _livenessKnown = !liveRecallsRes.error && !openEventsRes.error;
-    if (!_livenessKnown) console.warn('[command-center] recall liveness unavailable — showing all matches:', liveRecallsRes.error?.message || openEventsRes.error?.message);
-    const liveRecallIds = new Set([
-      ...(liveRecallsRes.data || []).map(r => r.id),
-      ...(openEventsRes.data || []).map(e => e.id),
-    ]);
+    const _livenessKnown = !activeRes.error;
+    if (!_livenessKnown) console.warn('[command-center] recall liveness unavailable — showing all matches:', activeRes.error?.message);
+    const liveRecallIds = new Set((activeRes.data || []).map(r => r.id));
     const activeRecallByStore = {};
     (srmRes.data || []).forEach(m => {
       if (!m.store_id || !onShelfScanIds.has(m.scan_id)) return;
-      if (_livenessKnown && !liveRecallIds.has(m.recall_event_id) && !liveRecallIds.has(m.recall_id)) return;
+      if (_livenessKnown && !liveRecallIds.has(m.recall_event_id) && !liveRecallIds.has(m.recall_id) && !liveRecallIds.has(m.catalog_id)) return;
       activeRecallByStore[m.store_id] = (activeRecallByStore[m.store_id] || 0) + 1;
     });
 
@@ -12268,7 +12306,8 @@ async function fetchReportData(key) {
       if (distData.length > 0) {
         const ids = [...new Set(distData.map(d => d.recall_event_id))];
         const { data: events } = await sb.from('recall_events').select('*').in('id', ids).order('published_at', {ascending:false});
-        pushed = (events || []).map(ev => ({ ...ev, _type:'pushed', _dist: distData.find(d => d.recall_event_id === ev.id) }));
+        // Drills are training, not recalls (CLAUDE.md); they never belonged in this report.
+        pushed = (events || []).filter(ev => !ev.is_drill).map(ev => ({ ...ev, _type:'pushed', _dist: distData.find(d => d.recall_event_id === ev.id) }));
       }
       const pushedKeys2 = new Set(pushed.map(ev => (ev.product_name||'').toLowerCase()+'|'+(ev.lot_number||'').toLowerCase()));
       const internal = (recallsRes.data || []).filter(r => {
@@ -12328,11 +12367,9 @@ async function fetchReportData(key) {
       });
     }
     case 'exposure': {
-      const distRes = await sb.from('recall_distributions').select('recall_event_id').eq('retailer_org_id', _orgId);
-      const ids = [...new Set((distRes.data || []).map(d => d.recall_event_id))];
-      if (ids.length === 0) return [];
-      const { data } = await sb.from('recall_events').select('*').in('id', ids).eq('is_drill', false).order('published_at', {ascending:false});
-      return data || [];
+      // The pushed recalls of the one list (B4 stage 5): open, not drills.
+      const activeRes = await _fetchActiveRecalls();
+      return (activeRes.data || []).filter(r => r._kind === 'pushed').map(r => ({ ...r, barcode: r.barcode_number }));
     }
     case 'fsma': {
       // 2026-10-07: US orgs report on receiving records (the Phase 4 model); the
@@ -13195,28 +13232,16 @@ async function runLotCheck(immediate = false) {
           .order('received_at', { ascending: false }).limit(1000)
       : Promise.resolve({ data: [] });
     if (_orgRegion === 'us' && _userRole === 'store_manager' && activeStoreId) rcvQuery = rcvQuery.eq('store_id', activeStoreId);
-    const [scansRes, recallsRes, distRes, rcvRes] = await Promise.all([
+    const [scansRes, activeRes, rcvRes] = await Promise.all([
       scansQuery,
-      // CLAUDE.md schema gotcha: alias description as reason so Lot Lookup
-      // readers (runLotCheck rendering, intelligence panel) keep working.
-      sb.from('recalls').select('*, reason:description').eq('active', true).eq('organisation_id', _orgId).limit(200),
-      sb.from('recall_distributions')
-        .select('recall_event_id, recall_events!inner(id,product_name,lot_number,reason,severity,is_drill)')
-        .eq('retailer_org_id', _orgId)
-        .eq('recall_events.is_drill', false),
+      // The one list of active recalls (B4 stage 5): manual, pushed and feed.
+      _fetchActiveRecalls(),
       rcvQuery,
     ]);
 
     const allScans = scansRes.data || [];
     const deliveries = (rcvRes && !rcvRes.error && rcvRes.data) || [];
-    const recalls  = [
-      ...(recallsRes.data || []),
-      ...(distRes.data || []).map(d => ({
-        id: d.recall_events.id, product_name: d.recall_events.product_name,
-        lot_number: d.recall_events.lot_number, description: d.recall_events.reason,
-        severity: d.recall_events.severity, source: 'manufacturer_push', active: true,
-      })),
-    ];
+    const recalls  = activeRes.data || [];
 
     // Match scans
     const matched = allScans.filter(s => {
@@ -13251,8 +13276,8 @@ async function runLotCheck(immediate = false) {
     // alone is only "possible".
     const _qLot = q.trim();
     const _isExactRecall = r =>
-      lotsMatch(r.lot_number, _qLot) ||
-      (r.barcode_number && r.barcode_number.trim().toLowerCase() === _qLot.toLowerCase());
+      _recallLotsMatch(r, _qLot) ||
+      Batchd.activeRecalls.recallBarcodes(r).includes(_qLot.toLowerCase());
     const exactR    = recalls.filter(_isExactRecall);
     const possibleR = recalls.filter(r =>
       !_isExactRecall(r) && _qLot.length >= 4 && productNameMatch(r.product_name, _qLot));

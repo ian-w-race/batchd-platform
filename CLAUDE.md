@@ -31,6 +31,8 @@ work. Never give Ian partial diffs or snippets to paste in by hand.
   workflow on every deploy preview. Add a test in e2e/ for each new core
   flow; they may only target localhost or a deploy preview. The workflow
   signs in to the shared staging test account on every push.
+  e2e/feed-alerts.spec.mjs (B4 stage 5) dismisses and restores one catalog
+  entry in Retail's Feed alerts and leaves the staging organization as found.
   e2e/core-flow.spec.mjs is the plan A3 chain (receive, shelf-scan, push a
   recall, see it in the store, produce records, scan the lot again and
   check its match row) on one fresh lot per run; it closes its recall at
@@ -465,11 +467,23 @@ pov once and refuses to run again.
   normalizes the rows with `Batchd.activeRecalls.normalizeActiveRecalls`
   (src/shared/active-recalls.js) into the cache shape; scripts/check.mjs
   refuses a new page query of recall_distributions or recall_events in
-  index.html. Retail still reads the two sources itself until stage 5.
-  Lists that read the recalls table only, on purpose: the scanner's
-  loadRecallsList, loadMgrRecalls and loadMgrData (manual-recall
-  management; loadMgrData also loads scan_recall_matches) and the
-  duplicate checks before a manual recall is filed.
+  index.html. In RETAIL (since B4 stage 5, 2026-11-08) the same:
+  `_fetchActiveRecalls(opts)` in dashboard.html calls the function and
+  normalizes; the Dashboard overview, the Recalls panel's Active and Feed
+  tabs, Lot Lookup, the lot tracer, the Intelligence panel, the Store
+  Network command center and the exposure report read it, and the check
+  refuses the old query pairs and unfiltered recall_events lists in
+  dashboard.html. Reads that stay on the tables on purpose: the Recalls
+  panel's History tab and the recall history report (inactive recalls and
+  closed events, by event id through recall_distributions), Live Recall
+  and the drill pages (one event by id), the Consumer Notify picker
+  (events closed within the last 30 days are still offered), the
+  scanner's loadRecallsList, loadMgrRecalls and loadMgrData
+  (manual-recall management; loadMgrData also loads scan_recall_matches)
+  and the duplicate checks before a manual recall is filed. The Feed
+  alerts tab is the catalog with per-organization state
+  (recall_catalog_org: dismiss, restore, mark reviewed) and reads the
+  per-organization copies no more.
 - A received lot with no shelf scan is "held at receiving": warn to hold
   it, but it does not count toward active-recall badges.
 
@@ -707,8 +721,9 @@ Code, known and not fixed:
 - Fixed 2026-11-08 (B4 stage 4): a recall pushed with several lots now
   matches a scan of any of them, because batchd_active_recalls returns
   every lot in `lots` and the shared matcher reads that list (and the
-  GTINs of a feed entry). Retail's own matchers still read lot_number
-  only until stage 5.
+  GTINs of a feed entry). Retail's lotsMatch readers go through
+  `_recallLotsMatch(recall, lot)` and its strict readers through
+  `Batchd.activeRecalls.recallLots` and `recallBarcodes` (stage 5).
 - Design review leftovers: spacing onto `--s-*`; the photo lightbox and
   camera overlays keep literal colors on purpose.
 Not built (by decision): EDI 856, a Shipping sheet for distribution
