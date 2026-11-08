@@ -258,8 +258,10 @@ admin.html keep their own small, older color sets.
   entries get a sweep_catalog_matches call, ten at a time. It writes
   nothing to `recalls` and reads no organizations any more (check.mjs
   refuses both); the per-organization copies were removed by
-  scripts/retire-feed-copies.sql (staging 2026-11-08; production with
-  Ian's go-ahead, backup.recalls_feed_copies_20261108). parseCodeInfo
+  scripts/retire-feed-copies.sql on staging and production on 2026-11-08
+  with Ian's go-ahead (982 rows on production, kept in
+  backup.recalls_feed_copies_20261108; `recalls` now holds 12 rows: manual
+  recalls and the linked rows of pushed recalls). parseCodeInfo
   pulls lot codes and GTINs out of the FDA's free-text code_info
   conservatively (B5 improves it; batchd_parse_lots is its SQL twin). The
   Mattilsynet leg is gone (decision 3 of the B4 plan; the feed answered

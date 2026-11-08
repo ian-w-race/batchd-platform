@@ -1,6 +1,6 @@
 # Batch'd database reference
 
-Generated 2026-11-08 16:51 UTC from the production project (lurxucdmrugikdlvvebc) by scripts/schema-reference.sql. Do not edit by hand; regenerate after every migration.
+Generated 2026-11-08 18:00 UTC from the production project (lurxucdmrugikdlvvebc) by scripts/schema-reference.sql. Do not edit by hand; regenerate after every migration.
 
 49 tables, 2 views, 50 functions, 191 policies.
 
@@ -1200,7 +1200,7 @@ Table access: authenticated: insert, select, update; service_role: delete, inser
 
 ## recalls
 
-Row security: on · Approximate rows: 994
+Row security: on · Approximate rows: 12
 Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |

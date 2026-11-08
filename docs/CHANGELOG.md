@@ -20,8 +20,13 @@ how it was verified and what is still unverified. Everything before
   when the backup count differs from the expected count. Staging
   2026-11-08: 56 removed, 0 match rows affected, 57 recalls left (manual
   and linked rows), batchd_active_recalls still returns the QA
-  organization's 28 feed entries. Production: 982 copies (934 fda, 48
-  mattilsynet, 3 organizations, 0 matches), pending Ian's go-ahead.
+  organization's 28 feed entries. Production, the same day with Ian's
+  go-ahead after a second preview count: 982 copies removed (934 fda, 48
+  mattilsynet, 3 organizations), 0 match rows affected, 12 recalls rows
+  left (2 manual, 10 linked rows of pushed recalls), 501 catalog entries
+  untouched, batchd_active_recalls still returns 464 feed entries for
+  Ian's organization. docs/SCHEMA-REFERENCE.md regenerated afterwards
+  (row counts only; the schema did not change).
 - Rules: CLAUDE.md's "every recall check reads both sources" became
   "every recall check calls batchd_active_recalls"; the match-row section
   describes the three paths (manual recall_id, pushed linked recall_id

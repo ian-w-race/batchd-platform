@@ -12,8 +12,9 @@
 --   select count(*) from recalls where source in ('fda','mattilsynet','rasff')
 --     and organisation_id is not null and recall_event_id is null
 --     and coalesce(is_pushed, false) = false;
--- Staging 2026-11-08: 56. Production 2026-11-08: 982 (934 fda, 48 mattilsynet,
--- across 3 organizations; 0 scan_recall_matches rows pointed at a copy).
+-- Ran on staging 2026-11-08 (56 rows) and on production the same day with
+-- Ian's approval (982 rows: 934 fda, 48 mattilsynet, across 3 organizations;
+-- 0 scan_recall_matches rows pointed at a copy; 12 recalls rows left).
 --
 -- The block refuses to run when a copy has no catalog entry under the shared
 -- key, when a match row points at a copy without carrying catalog_id (its
