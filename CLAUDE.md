@@ -617,11 +617,12 @@ docs/HISTORY.md.
   lets saves retry without it, so new columns degrade gracefully on an
   older database.
 
-## Netlify functions (14)
+## Netlify functions (15)
 | Function | Purpose | Auth |
 |---|---|---|
 | ai-analyze.js | Anthropic proxy for investigations and NL queries | requireAi (member of org, plan pov/active) |
-| fetch-recall-feeds.js | Daily FDA import: each entry once into recall_catalog plus a sweep_catalog_matches call per new entry; writes nothing else | Scheduled only, no URL |
+| fetch-recall-feeds.js | Daily FDA import: each enforcement entry once into recall_catalog plus a sweep_catalog_matches call per new entry, the nightly re-parse of 100 older entries, then it starts fetch-fda-announcements-background; writes nothing else | Scheduled only, no URL |
+| fetch-fda-announcements-background.js | B5 stage 2: reads the FDA recall announcements RSS, skips known and non-food items, reads each new food announcement with the supplier notice reader (Claude, Batch'd pays) and writes one catalog entry per product (kind announcement, notice_url), then sweeps; at most 10 reads a run | INTERNAL_NOTIFY_SECRET (x-internal-secret), started by fetch-recall-feeds; background function |
 | notify-consumers.js | Consumer recall emails | corp_admin of the recall's org |
 | notify-event.js | recall_pushed, complaint_filed, drill_scheduled emails | INTERNAL_NOTIFY_SECRET or member JWT |
 | ocr.js | Anthropic vision; owns its prompt templates | requireAi |

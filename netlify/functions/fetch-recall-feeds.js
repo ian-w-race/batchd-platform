@@ -38,7 +38,7 @@ const run = async (event) => {
   }
 
   const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
-  const results = { catalog: null, reparse: null, errors: [] };
+  const results = { catalog: null, reparse: null, announcements: null, errors: [] };
 
   let feed = null;
   try {
@@ -64,6 +64,9 @@ const run = async (event) => {
     console.error('[fetch-recall-feeds] re-parse error:', e.message);
     results.errors.push('Re-parse: ' + e.message);
   }
+  // FDA announcements (B5 stage 2): the press releases are read by the
+  // background function, which has the minutes this scheduled run lacks.
+  results.announcements = await triggerAnnouncements();
 
   console.log('[fetch-recall-feeds] Complete:', JSON.stringify(results));
 
@@ -76,6 +79,7 @@ const run = async (event) => {
       catalog_matches:  results.catalog?.matches ?? 0,
       catalog_reparsed: results.reparse?.reparsed ?? 0,
       reparse_matches:  results.reparse?.matches ?? 0,
+      announcements:    results.announcements,
       errors: results.errors.length > 0 ? results.errors : undefined,
       timestamp: new Date().toISOString(),
     }),
@@ -232,6 +236,25 @@ async function importCatalog(sb, feed) {
     }
   }
   return { added: added.length, skipped: skipped + rows.length - added.length, refreshed: Math.max(0, (written || []).length - added.length), matches };
+}
+
+// Starts fetch-fda-announcements-background on this site with the internal
+// secret (netlify/lib/auth.js). Netlify answers 202 and runs it for up to 15
+// minutes; its own run is a job_runs row. A missing site URL or secret is
+// reported, not thrown: the catalog import above must not fail over it.
+async function triggerAnnouncements() {
+  const base = process.env.URL;
+  const secret = require('../lib/auth').internalSecret();
+  if (!base) return { skipped: 'no site URL' };
+  if (!secret) return { skipped: 'no internal secret' };
+  try {
+    const r = await fetch(`${base}/.netlify/functions/fetch-fda-announcements-background`, {
+      method: 'POST', headers: { 'x-internal-secret': secret }, signal: AbortSignal.timeout(8000),
+    });
+    return { started: r.status === 202 || r.ok, status: r.status };
+  } catch (e) {
+    return { started: false, error: String(e && e.message || e).slice(0, 160) };
+  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────
