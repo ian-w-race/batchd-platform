@@ -4,6 +4,40 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-11-08 (B5 stage 3: announcements joined, pushed recalls cover public entries)
+- Migration 046 (staging 2026-11-08, production pending): recall_catalog
+  gains announced_at; batchd_norm_firm compares firm names loosely;
+  link_catalog_announcements(p_days) joins each new enforcement entry to
+  the announcement from the same firm within the window that shares a
+  GTIN, a lot or the announcement's match terms, sets announcement_id,
+  announced_at and notice_url, and carries every organization's state
+  (reviewed, dismissed, matched, covered) over; link_catalog_coverage
+  (p_event) marks recall_catalog_org.covered_by_event_id where one of
+  the organization's pushed recalls (never a drill) shares a lot or GTIN
+  with a public entry, or names the same product for an all-lots entry;
+  link_catalog_coverage_for_event(p_event) lets a corporate admin of the
+  pushing organization run that for one event. batchd_active_recalls
+  hides an announcement an enforcement entry has joined, counts the
+  announcement's matches on the enforcement entry, and returns
+  announced_at (dropped and recreated with the same grants). Rehearsed
+  on staging inside a rolled-back transaction: one enforcement entry
+  linked to its announcement by GTIN under a differently written firm
+  name, an unrelated firm not linked, the organization's reviewed and
+  matched state carried over, the list hiding the announcement and
+  showing the entry as announced and matched, a pushed recall covering
+  the entries that share its lot, and the member wrapper callable as the
+  QA corporate admin.
+- fetch-recall-feeds.js runs both links nightly after the re-parse (job
+  detail links_announcements and links_coverage); the composer calls
+  link_catalog_coverage_for_event right after a push, fire and forget.
+- Retail Feed alerts: an entry that joined an announcement shows
+  "Announced <date>"; a covered entry shows "Covered by your recall". The
+  normalizer carries announced_at.
+- Verified: node scripts/check.mjs (11 of 11); node --test (151 tests);
+  the end-to-end suite locally against staging with 046 applied (12
+  passed, 1 skipped: the notice test needs functions), so the composer
+  push with its new coverage call still completes the chain.
+
 ## 2026-11-08 (B5 stage 2: FDA announcements on day 0)
 - netlify/functions/fetch-fda-announcements-background.js, a Netlify
   background function started by fetch-recall-feeds.js at the end of its

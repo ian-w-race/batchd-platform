@@ -15,7 +15,11 @@ process.env.BATCHD_JOB_LOG = 'off'; // job_runs logging is tested in health-chec
 function makeDb({ orgs, recalls = [], catalog = [] }) {
   const db = { orgs, recalls: recalls.map((r) => ({ ...r })), catalog: catalog.map((r) => ({ ...r })), calls: 0, sweeps: [] };
   let seq = 0;
-  db.rpc = (name, args) => Promise.resolve().then(() => { db.calls++; db.sweeps.push({ name, ...args }); return { data: 2, error: null }; });
+  db.rpc = (name, args) => Promise.resolve().then(() => {
+    db.calls++;
+    if (name.startsWith('link_catalog_')) { db.links = (db.links || 0) + 1; return { data: 0, error: null }; }   // B5 stage 3, nightly
+    db.sweeps.push({ name, ...args }); return { data: 2, error: null };
+  });
   db.from = (table) => {
     const st = { table, filters: [], op: 'select', rows: null, opts: null, limit: null };
     const b = {
@@ -98,7 +102,9 @@ test('fresh import writes each entry once to the catalog and sweeps it, and writ
   assert.equal(db.sweeps.length, 3, 'one sweep per new entry');
   assert.equal(r.catalog_matches, 6, 'the stub reports 2 matches per sweep');
   assert.equal(r.fda_added, undefined, 'the per-organization copies are no longer written or reported (B4 stage 6)');
-  assert.equal(db.calls, 2 + 3 + 1, 'catalog lookup, catalog upsert, three sweeps, the re-parse read (nothing to re-parse); no organisations read, no recalls write');
+  assert.equal(db.calls, 2 + 3 + 1 + 2, 'catalog lookup, catalog upsert, three sweeps, the re-parse read (nothing to re-parse), the two link calls; no organisations read, no recalls write');
+  assert.equal(db.links, 2, 'announcements and coverage linked once a run');
+  assert.equal(r.links_announcements, 0); assert.equal(r.links_coverage, 0);
   assert.equal(db.recalls.length, 0, 'nothing in recalls');
   assert.equal(r.errors, undefined, 'the Mattilsynet leg is gone, so no 404 error');
   const c = db.catalog[0];
@@ -153,7 +159,7 @@ test('old per-organization copies left in recalls are neither read nor touched',
   const r = JSON.parse((await load(db).handler({})).body);
   assert.equal(r.catalog_added, 2);
   assert.equal(db.recalls.length, 1, 'untouched');
-  assert.equal(db.calls, 2 + 2 + 1, 'no read of recalls; one re-parse read');
+  assert.equal(db.calls, 2 + 2 + 1 + 2, 'no read of recalls; one re-parse read; the two link calls');
 });
 
 test('the catalog keeps the full reason text', async () => {
