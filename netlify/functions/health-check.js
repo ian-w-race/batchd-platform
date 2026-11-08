@@ -39,7 +39,9 @@ async function gather(now) {
     sbGet(`job_runs?started_at=gte.${encodeURIComponent(since)}&select=job,site,started_at,finished_at,ok,status_code,detail&order=started_at.desc&limit=1000`),
     sbGet(`recall_notices?status=eq.processing&created_at=lt.${encodeURIComponent(new Date(now - LIMITS.stuckNoticeMinutes * 60e3).toISOString())}&select=id,created_at&limit=50`),
     sbGet(`recall_notices?status=eq.failed&updated_at=gte.${encodeURIComponent(new Date(now - 24 * HOUR).toISOString())}&select=id,error&limit=50`),
-    sbGet(`recalls?source=eq.fda&select=created_at&order=created_at.desc&limit=1`),
+    // B4 stage 2 (2026-11-08): the importer writes recall_catalog; its newest
+    // entry says whether the feed is still publishing.
+    sbGet(`recall_catalog?source=eq.fda&select=created_at&order=created_at.desc&limit=1`),
   ]);
   return { runs, stuck, failedNotices, newestFdaAt: newestFda[0]?.created_at || null };
 }

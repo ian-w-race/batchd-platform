@@ -242,17 +242,23 @@ admin.html keep their own small, older color sets.
   whose run returns "skipped", so batchd-app has
   SCHEDULED_FUNCTIONS_DISABLED=true and www is the one site that runs
   the jobs. Nothing to change.
-- fetch-recall-feeds.js (rewritten 2026-10-24): one FDA request, one
-  query for what the US orgs already hold, one bulk upsert with stable ids
-  derived from org and FDA recall number (or product and report day when
-  the feed sends "N/A" or nothing). The recall number is always kept at
-  the end of the description ("... [H-0015-2027]"). Before the rewrite
-  most runs were cut off at Netlify's 15 s limit and the import created
-  duplicates; scripts/cleanup-duplicate-fda-recalls.sql ran on production
-  on 2026-10-24 (953 rows removed, kept in
-  backup.recalls_fda_duplicates_20261024) and its read-only preview found
-  0 duplicates in 7,734 FDA rows on 2026-10-28. The Mattilsynet RSS URL answers 404
-  (frozen NO path; it fails fast and is caught).
+- fetch-recall-feeds.js (B4 stage 2, 2026-11-08): one FDA request, then
+  two writes. First the catalog: one recall_catalog row per report entry,
+  keyed (source, external_key) where the key is the recall number plus a
+  hash of the product text (one FDA number covers several product lines)
+  or product and report day when the feed sends "N/A" or nothing; new
+  entries get a sweep_catalog_matches call, ten at a time. Then, until B4
+  stage 6, the per-organization copies as before: one query for what the
+  US orgs hold, one bulk upsert with stable ids from org and recall
+  number, the recall number kept at the end of the description
+  ("... [H-0015-2027]"). parseCodeInfo pulls lot codes and GTINs out of
+  the FDA's free-text code_info conservatively (B5 improves it). The
+  Mattilsynet leg is gone (decision 3 of the B4 plan; the feed answered
+  404 for weeks) and so are the scanner's own FDA, RASFF and Mattilsynet
+  importers and its "Fetch latest recalls now" button; recall-feeds.js
+  (the proxy they used) now has no caller. History: the 2026-10-24 rewrite
+  and scripts/cleanup-duplicate-fda-recalls.sql (953 duplicates removed,
+  kept in backup.recalls_fda_duplicates_20261024).
 - netlify.toml arms recall-escalation (every 30 min), fetch-recall-feeds
   (daily 06:00 UTC) and health-check (daily 07:00 UTC) on every site that
   deploys it, so SCHEDULED_FUNCTIONS_DISABLED=true must be set on exactly
@@ -550,15 +556,15 @@ docs/HISTORY.md.
 | Function | Purpose | Auth |
 |---|---|---|
 | ai-analyze.js | Anthropic proxy for investigations and NL queries | requireAi (member of org, plan pov/active) |
-| fetch-recall-feeds.js | Daily FDA and Mattilsynet import | Scheduled only, no URL |
+| fetch-recall-feeds.js | Daily FDA import: each entry once into recall_catalog plus a sweep_catalog_matches call per new entry, and, until B4 stage 6, the per-organization copies in recalls | Scheduled only, no URL |
 | notify-consumers.js | Consumer recall emails | corp_admin of the recall's org |
 | notify-event.js | recall_pushed, complaint_filed, drill_scheduled emails | INTERNAL_NOTIFY_SECRET or member JWT |
 | ocr.js | Anthropic vision; owns its prompt templates | requireAi |
-| health-check.js | Daily 07:00 UTC: reads job_runs and emails platform admins when a job has not run or failed, plus one "all clear" on Mondays (HEALTH_HEARTBEAT=off disables) | Scheduled only |
+| health-check.js | Daily 07:00 UTC: reads job_runs (and recall_catalog for the stale-feed rule) and emails platform admins when a job has not run or failed, plus one "all clear" on Mondays (HEALTH_HEARTBEAT=off disables) | Scheduled only |
 | parse-recall-notice-background.js | Background function: Claude reads a supplier recall notice into recall_notices.extracted (prompt and schema in netlify/lib/recall-notice.js) | corp_admin of the notice's org, plan pov/active |
 | push-recall-email.js | Recall alert emails | INTERNAL_NOTIFY_SECRET, fails closed |
 | recall-escalation.js | 2h and 24h unacknowledged escalations | Scheduled only |
-| recall-feeds.js | Proxies rasff and Mattilsynet feeds | Any active session |
+| recall-feeds.js | Proxies rasff and Mattilsynet feeds; no caller since 2026-11-08, retire with B4 stage 6 | Any active session |
 | recall-reminder.js | Reminder emails from dashboard buttons | corp_admin of orgId |
 | send-invite.js | Staff invitation emails | corp_admin of the invitation's org, or platform admin |
 | trace.js | Retired, answers 410 | None |
