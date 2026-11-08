@@ -4,6 +4,36 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-11-08 (B5 stage 2: FDA announcements on day 0)
+- netlify/functions/fetch-fda-announcements-background.js, a Netlify
+  background function started by fetch-recall-feeds.js at the end of its
+  daily run with the internal secret: it reads the FDA "Recalls, Market
+  Withdrawals, & Safety Alerts" RSS (about 20 items, every product type),
+  skips items already in the catalog, fetches each new article, skips
+  anything whose "Product Type" is not food, a beverage or a dietary
+  supplement without AI, and hands the rest (at most 10 a run) to the
+  supplier notice reader (netlify/lib/recall-notice.js, claude-opus-5-5,
+  the same schema and prompt, told it is a public announcement; Ian's
+  decision 1). One catalog entry per product the reader lists: kind
+  announcement, external_key press|<guid>|<n>, no recall number,
+  notice_url, lots, GTINs, ranges, best-by window, match_terms, the
+  recalling firm, the class when stated, feed_status Announced, the RSS
+  item and the reading in raw. Each new entry is swept. Every run is a
+  job_runs row (job fetch-fda-announcements).
+- fetch-recall-feeds.js reports the start in its job detail
+  (announcements: started, status) and never fails over it.
+- Retail Feed alerts shows an "Announced" badge and the "FDA notice" link
+  on such entries; the scanner's Recalls drawer labels a matched one FDA
+  ANNOUNCEMENT. No migration (045 added the columns).
+- Verified: node scripts/check.mjs (11 of 11); node --test (151 tests;
+  tests/fetch-fda-announcements.test.mjs drives the feed, the article
+  pages and the reader as stubs: known and non-food items skipped, one
+  entry per product, sweeps, a second run reading nothing new, the
+  internal secret required); the end-to-end suite locally against staging
+  (12 passed, 1 skipped: the notice test needs functions). Not verified
+  until the first production run: the live RSS and article pages through
+  the function (SMOKE.md 70).
+
 ## 2026-11-08 (B5 stage 1: the recall code parser)
 - src/shared/lot-codes.cjs: one parser for what a store can match on,
   shared by the importer (CommonJS), the browser bundle (Batchd.lotCodes)

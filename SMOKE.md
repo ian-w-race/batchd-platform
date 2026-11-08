@@ -537,6 +537,22 @@ not repeated here.
     whose best-before date falls inside a feed entry's window and whose
     name matches the entry; the pre-placement warning fires red.
 
+## B5 stage 2: FDA announcements on day 0 (2026-11-08)
+
+70. The morning after the merge (the 06:00 UTC run starts the background
+    function), in the Supabase SQL editor on production: `select job, ok,
+    detail from job_runs where job = 'fetch-fda-announcements' order by
+    started_at desc limit 1;` shows ok true with items about 20, read
+    below 10 and entries_added above 0 unless every food announcement of
+    the week is already in; `select product_name, notice_url, lots, gtins,
+    best_by_from from recall_catalog where kind = 'announcement' order by
+    published_at desc limit 5;` lists the newest press releases with
+    their codes. Retail, Recalls, Feed alerts: those entries carry an
+    "Announced" badge and an "FDA notice" link to the FDA article; the
+    scanner's Recalls drawer labels a matched one "FDA ANNOUNCEMENT".
+    Netlify, Functions, fetch-fda-announcements-background: one invocation
+    a day, after fetch-recall-feeds.
+
 ## Run log
 
 - 2026-11-01, Claude, local static server against the staging database:
