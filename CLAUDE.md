@@ -342,8 +342,8 @@ admin.html keep their own small, older color sets.
   so it drops and recreates batchd_active_recalls with the same grants.
   046 (the catalog links, B5 stage 3: link_catalog_announcements,
   link_catalog_coverage, link_catalog_coverage_for_event, announced_at,
-  the function recreated once more) is on staging since 2026-11-08 and
-  waits for Ian's go-ahead on production. CHECK_MIGRATIONS.sql reports APPLIED or
+  the function recreated once more) was applied to staging and then
+  production on 2026-11-08 with Ian's go-ahead. CHECK_MIGRATIONS.sql reports APPLIED or
   MISSING per migration; Ian ran it 2026-10-11 and every row was APPLIED.
   031 to 044 were applied through the Supabase connector (031 to 039 on
   2026-10-24, 040 and 041 on 2026-10-25, 042 and 043 on 2026-11-01, 044

@@ -5,7 +5,11 @@ how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
 ## 2026-11-08 (B5 stage 3: announcements joined, pushed recalls cover public entries)
-- Migration 046 (staging 2026-11-08, production pending): recall_catalog
+- Migration 046 (staging and then production 2026-11-08 with Ian's
+  go-ahead; the 046 check row reads true on production, anon is refused,
+  and the first coverage pass found one public entry that one of Ian's
+  organization's pushed recalls already names; docs/SCHEMA-REFERENCE.md
+  regenerated): recall_catalog
   gains announced_at; batchd_norm_firm compares firm names loosely;
   link_catalog_announcements(p_days) joins each new enforcement entry to
   the announcement from the same firm within the window that shares a
