@@ -4,6 +4,38 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-11-08 (B4 stage 2: the importer writes the recall catalog)
+- fetch-recall-feeds.js now writes each FDA report entry once into
+  recall_catalog, keyed (source, external_key) with the recall number plus
+  a hash of the product text (one FDA number covers several product lines)
+  or product and report day when the feed sends no number, with the full
+  product text, reason, code_info, classification, firm, status, report
+  date and the raw entry; parseCodeInfo pulls lot codes and GTINs out of
+  the free-text code_info conservatively. Each new entry gets a
+  sweep_catalog_matches call (ten at a time), so matching scans of every US
+  organization are recorded and recall_catalog_org.matched_at is stamped.
+  The job detail gains catalog_added, catalog_skipped and catalog_matches.
+- Order change against the plan: the per-organization copies in recalls
+  keep being written exactly as before until every screen reads
+  batchd_active_recalls (stages 4 and 5), so no new feed recall disappears
+  from Feed alerts in between. Deleting those copies moves to stage 6.
+- Removed: the Mattilsynet leg (decision 3; its feed answered 404 for
+  weeks), and the scanner's own FDA, RASFF and Mattilsynet importers, the
+  sign-in and timer fetches that drove them, and the "Fetch latest recalls
+  now" button in the manager's Recall Source card. The scanner's 30-minute
+  timer still re-syncs its recall cache. recall-feeds.js, the proxy those
+  importers called, has no caller left and goes with stage 6.
+- health-check.js reads recall_catalog for the stale-feed rule; until the
+  first run after this deploy fills it, that rule stays quiet (null).
+- Verified: node scripts/check.mjs (10 of 10); node --test (124 tests;
+  the importer's tests rewritten with a stub that honors the catalog's
+  unique key and counts sweep calls: one catalog row per entry, one sweep
+  per new entry, nothing on a second run, several product lines under one
+  number as several entries, parseCodeInfo cases); the end-to-end suite
+  locally against the built site (result below). Not verified until the
+  06:00 UTC run after the merge: the real FDA feed through the new path
+  (SMOKE.md 64); the health check will report a failed run.
+
 ## 2026-11-01 (B4 stage 1: migration 043, the recall catalog, on staging)
 - migrations/043_recall_catalog.sql adds, without changing anything the apps
   read today: recall_catalog (each public recall entry once, no

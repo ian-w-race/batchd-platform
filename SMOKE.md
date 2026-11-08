@@ -463,6 +463,17 @@ not repeated here.
     SQL editor (project lurxucdmrugikdlvvebc): the 043 row reads true, and
     every earlier row still reads true.
 
+## B4 stage 2: the importer writes the catalog (2026-11-08)
+
+64. The morning after the merge (06:00 UTC run), in the Supabase SQL
+    editor on production: `select count(*) from recall_catalog;` is above
+    0 and the newest job_runs row for fetch-recall-feeds has catalog_added,
+    catalog_matches and fda_added in its detail, with no Mattilsynet error.
+    In the scanner, Settings (manager), Recall Source: the "Fetch latest
+    recalls now" button is gone; the source pills still save. Retail,
+    Recalls, Feed alerts: the newest FDA entries still appear (the
+    per-organization copies continue until stage 6).
+
 ## Run log
 
 - 2026-11-01, Claude, local static server against the staging database:

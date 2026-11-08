@@ -4511,7 +4511,6 @@
         </div>
         <div id="mgr-source-desc" style="font-size:var(--fs-meta);color:var(--muted);line-height:1.6;margin-top:8px;"></div>
         <div id="mgr-source-save-msg" style="font-size:var(--fs-meta);min-height:18px;"></div>
-        <button class="btn btn-ghost" onclick="fetchExternalRecalls()" id="mgr-btn-fetch-recalls" style="align-self:flex-start;margin-top:4px;" data-i18n="recallSrc.fetchBtn">Fetch latest recalls now</button>
       </div>
     </div>
 
@@ -9883,15 +9882,9 @@ updateOfflineBadge(); // set initial state
 // Re-check recalls when the browser tab becomes visible (user returns to app)
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && currentUser) {
-    const lastFetchKey = `batched_recall_fetch_${currentUser.id}`;
-    const lastFetch = parseInt(localStorage.getItem(lastFetchKey) || '0', 10);
-    const isStale = Date.now() - lastFetch > RECALL_FETCH_INTERVAL_MS;
-    if (isStale && recallSource !== 'manual') {
-      runAutoFetch()
-        .then(() => localStorage.setItem(lastFetchKey, String(Date.now())))
-        .catch(() => {});
-    }
-    // Always re-run the silent recall match check on tab focus
+    // Re-run the silent recall match check on tab focus. Public feeds are
+    // imported by the server (fetch-recall-feeds.js), not by the scanner
+    // (B4 stage 2, 2026-11-08).
     if (allRecords.length) checkActiveRecalls();
   }
 });
@@ -10135,17 +10128,8 @@ async function initRecallSystem() {
 
   } catch(e) { recallSource = 'both'; }
 
-  // Step 2: fire recall fetch in the BACKGROUND — never block login on external APIs
-  const lastFetchKey = `batched_recall_fetch_${currentUser.id}`;
-  const lastFetch = parseInt(localStorage.getItem(lastFetchKey) || '0', 10);
-  const isStale = Date.now() - lastFetch > RECALL_FETCH_INTERVAL_MS;
-
-  if (isStale && recallSource !== 'manual') {
-    // Do not await — runs in background after login completes
-    runAutoFetch()
-      .then(() => localStorage.setItem(lastFetchKey, String(Date.now())))
-      .catch(e => console.warn('Auto recall fetch failed:', e));
-  }
+  // Step 2 (the scanner's own feed fetch) was removed on 2026-11-08: the
+  // daily server importer writes the recall catalog (B4 stage 2).
 
   // Step 3: check for matches — also with timeout so it never blocks login
   try {
@@ -10154,35 +10138,15 @@ async function initRecallSystem() {
     await Promise.race([checkPromise, timeoutPromise]);
   } catch(e) { console.warn('checkRecallsOnLogin failed:', e); }
 
-  // Step 4: schedule repeating auto-fetch every 6 hours
+  // Step 4: re-sync the recall cache on a timer, so the scan-time checks
+  // see recalls pushed or imported while the app stays open.
   clearInterval(recallSchedulerInterval);
-  if (recallSource !== 'manual') {
-    recallSchedulerInterval = setInterval(async () => {
-      try {
-        await runAutoFetch();
-        localStorage.setItem(lastFetchKey, String(Date.now()));
-        await checkRecallsOnLogin(true);
-      } catch(e) {
-        console.warn('Scheduled recall fetch failed:', e);
-      }
-    }, RECALL_FETCH_INTERVAL_MS);
-  }
+  recallSchedulerInterval = setInterval(async () => {
+    try { await checkRecallsOnLogin(true); }
+    catch(e) { console.warn('Scheduled recall re-check failed:', e); }
+  }, RECALL_FETCH_INTERVAL_MS);
 }
 
-async function runAutoFetch() {
-  if (recallSource === 'manual') return;
-  const promises = [];
-  if (recallSource === 'fda' || recallSource === 'both') {
-    promises.push(fetchFDARecalls().catch(e => console.warn('FDA fetch error:', e)));
-  }
-  if (recallSource === 'rasff' || recallSource === 'both') {
-    // 'rasff' key in user_settings means Norwegian/EU source = Mattilsynet only.
-    // RASFF has no reliable public API — fetchRASFFRecalls() was always failing silently.
-    // fetchMattilsynetRecalls() covers Norway via Mattilsynet's public RSS feed.
-    promises.push(fetchMattilsynetRecalls().catch(e => console.warn('Mattilsynet fetch error:', e)));
-  }
-  await Promise.allSettled(promises);
-}
 
 // ── LOGIN RECALL ALERT ────────────────────────────────────────
 // Fetches recent scans (last 30 days) and cross-checks active recalls.
@@ -10611,24 +10575,12 @@ async function setRecallSource(source) {
     }, { onConflict: 'user_id' });
     if (error) throw error;
     if (msgEl) { msgEl.style.color = 'var(--accent)'; msgEl.textContent = '✓ Saved'; setTimeout(() => { if (msgEl) msgEl.textContent = ''; }, 2000); }
-    // Reset the scheduler so next fetch uses the new source
+    // The scanner no longer fetches public feeds itself (B4 stage 2,
+    // 2026-11-08); the server importer does. Keep the cache re-sync timer.
     clearInterval(recallSchedulerInterval);
-    const lastFetchKey = `batched_recall_fetch_${currentUser.id}`;
-    localStorage.removeItem(lastFetchKey); // force a fresh fetch next time
-    if (source !== 'manual') {
-      // Fetch immediately so the user sees results right away
-      fetchExternalRecalls();
-      recallSchedulerInterval = setInterval(async () => {
-        try {
-          await runAutoFetch();
-          // The login-time scheduler this replaces also re-synced
-          // _cachedActiveRecalls every cycle — keep that behavior or the
-          // scan-time recall check goes stale (2026-09-09 audit fix).
-          await checkRecallsOnLogin(true);
-          localStorage.setItem(lastFetchKey, String(Date.now()));
-        } catch(e) {}
-      }, RECALL_FETCH_INTERVAL_MS);
-    }
+    recallSchedulerInterval = setInterval(async () => {
+      try { await checkRecallsOnLogin(true); } catch(e) {}
+    }, RECALL_FETCH_INTERVAL_MS);
   } catch(e) {
     if (msgEl) { msgEl.style.color = 'var(--danger)'; msgEl.textContent = '✗ Could not save — ' + e.message; }
   }
@@ -10816,209 +10768,12 @@ async function deleteRecall(id) {
 // mgrAddRecall (this file) and saveManualRecall (dashboard.html).
 
 // ── EXTERNAL RECALL FETCHERS ──────────────────────────────────
-async function fetchExternalRecalls() {
-  const btn = document.getElementById('mgr-btn-fetch-recalls') || document.getElementById('btn-fetch-recalls');
-  if (btn) { btn.disabled = true; btn.textContent = 'Fetching…'; }
-  const msgEl = document.getElementById('mgr-source-save-msg') || document.getElementById('source-save-msg');
-
-  if (recallSource === 'manual') {
-    if (msgEl) { msgEl.style.color = 'var(--muted)'; msgEl.textContent = currentLang==='no'?'Manuell modus — ingen ekstern kilde.':'Manual mode — no external feed.'; }
-    if (btn) { btn.disabled = false; btn.textContent = 'Fetch latest recalls now'; }
-    return;
-  }
-
-  const results = [];
-  try {
-    if (recallSource === 'fda' || recallSource === 'both') {
-      try {
-        const n = await fetchFDARecalls();
-        results.push(`FDA: +${n}`);
-      } catch(e) {
-        results.push(`FDA: ✗ ${e.message}`);
-        console.error('FDA fetch failed:', e);
-      }
-    }
-    if (recallSource === 'rasff' || recallSource === 'both') {
-      // 'rasff' = Norwegian/EU source. RASFF has no reliable public API.
-      // Mattilsynet's RSS feed covers Norway and EU-relevant alerts.
-      try {
-        const n = await fetchMattilsynetRecalls();
-        results.push(`Mattilsynet: +${n}`);
-      } catch(e) {
-        results.push(`Mattilsynet: ✗ ${e.message}`);
-        console.error('Mattilsynet fetch failed:', e);
-      }
-    }
-    const hasError = results.some(r => r.includes('✗'));
-    if (msgEl) {
-      msgEl.style.color = hasError ? 'var(--warn)' : 'var(--accent)';
-      msgEl.textContent = results.join(' · ');
-      setTimeout(() => { if (msgEl) msgEl.textContent = ''; }, 6000);
-    }
-    loadRecallsList();
-  } catch(e) {
-    if (msgEl) { msgEl.style.color = 'var(--danger)'; msgEl.textContent = '✗ ' + e.message; }
-  }
-  if (btn) { btn.disabled = false; btn.textContent = 'Fetch latest recalls now'; }
-}
-
-async function fetchFDARecalls() {
-  const url = 'https://api.fda.gov/food/enforcement.json?search=status:Ongoing&limit=20&sort=report_date:desc';
-  const resp = await fetch(url);
-  if (!resp.ok) throw new Error('FDA API error ' + resp.status);
-  const data = await resp.json();
-  const results = data.results || [];
-  // Dedupe rewrite (2026-08-05): the old per-row check compared the FULL
-  // stored description against the bare recall_number — never equal, so
-  // once any other importer (the daily fetch-recall-feeds function, or a
-  // second device) had seeded rows, every 6-hourly auto-fetch re-inserted
-  // all 20 recalls again, unbounded. Mirror the server importer: one
-  // existence query, in-memory match on the [recall_number] tag that both
-  // importers embed in description.
-  const { data: _existRows, error: _exErr } = await sb.from('recalls')
-    .select('description, product_name')
-    .eq('organisation_id', _currentOrgId)
-    .eq('source', 'fda')
-    .order('created_at', { ascending: false })
-    .limit(400);
-  if (_exErr) throw new Error('FDA dedupe check failed: ' + _exErr.message);
-  let _existingText = (_existRows || [])
-    .map(e => (e.description || '') + ' ' + (e.product_name || ''))
-    .join('\n');
-  let added = 0;
-  for (const r of results) {
-    const _key = r.recall_number ? `[${r.recall_number}]` : (r.product_description || '').slice(0, 40);
-    if (!_key || _existingText.includes(_key)) continue;
-    const { error } = await sb.from('recalls').insert({
-      product_name:    r.product_description?.slice(0, 120) || 'FDA Recall',
-      lot_number:      r.code_info || null,
-      description:     (r.reason_for_recall || '').slice(0, 200) + (r.recall_number ? ` [${r.recall_number}]` : ''),
-      source:          'fda',
-      active:          true,
-      organisation_id: _currentOrgId,
-    });
-    if (!error) { added++; _existingText += '\n' + _key; }
-  }
-  return added;
-}
-
-// The recall-feeds proxy requires a signed-in session (2026-09-20): it was
-// an open relay anyone could drive. One helper so every caller sends the JWT.
-async function _fetchRecallFeed(source) {
-  const { data: { session: _fs } } = await sb.auth.getSession();
-  return fetch('/.netlify/functions/recall-feeds?source=' + encodeURIComponent(source), {
-    headers: { 'Authorization': 'Bearer ' + (_fs?.access_token || '') },
-  });
-}
-
-// ── DEPRECATED: fetchRASFFRecalls ────────────────────────────
-// RASFF has no reliable public API — this function has never succeeded.
-// It was calling the Netlify recall-feeds proxy which only implements
-// FDA and Mattilsynet. fetchMattilsynetRecalls() covers Norwegian/EU
-// food safety alerts via Mattilsynet's public RSS feed instead.
-// Kept here for reference; nothing calls this function any more.
-async function fetchRASFFRecalls() {
-  const resp = await _fetchRecallFeed('rasff');
-  if (!resp.ok) throw new Error('RASFF proxy error ' + resp.status);
-  const xml = await resp.text();
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(xml, 'text/xml');
-  const items = Array.from(doc.querySelectorAll('item'));
-  if (!items.length) throw new Error('RASFF proxy returned 0 items. Length: ' + xml.length + '. Preview: ' + xml.slice(0,100));
-  let added = 0;
-  for (const item of items.slice(0, 20)) {
-    const title = item.querySelector('title')?.textContent?.trim() || 'RASFF Alert';
-    const desc  = item.querySelector('description')?.textContent?.trim() || '';
-    const { data: existing } = await sb.from('recalls')
-      .select('id').ilike('product_name', title.slice(0,100)).eq('organisation_id', _currentOrgId).maybeSingle();
-    if (existing) continue;
-    const { error } = await sb.from('recalls').insert({
-      product_name:    title.slice(0, 120),
-      description:     (desc.replace(/<[^>]+>/g,'')).slice(0, 200),
-      source:          'rasff',
-      active:          true,
-      organisation_id: _currentOrgId,
-    });
-    if (!error) added++;
-  }
-  return added;
-}
-
-async function fetchMattilsynetRecalls() {
-  let added = 0;
-  // Dedupe rewrite (2026-08-05): one existence query, in-memory prefix
-  // matching, shared by the RSS branch and the page-scrape fallback.
-  // The old per-row ilike had no % wildcard (never matched once titles
-  // longer than the stored 120-char product_name were truncated) and
-  // maybeSingle() errors once 2+ duplicate rows exist — treated as "no
-  // dupe", making it insert MORE duplicates forever. Prefix-match only
-  // when the title was actually truncated; short titles require full
-  // equality so a new short title can't false-match an older longer one.
-  const { data: _existRows, error: _exErr } = await sb.from('recalls')
-    .select('product_name')
-    .eq('organisation_id', _currentOrgId)
-    .eq('source', 'mattilsynet')
-    .order('created_at', { ascending: false })
-    .limit(400);
-  if (_exErr) throw new Error('Mattilsynet dedupe check failed: ' + _exErr.message);
-  const _existingNames = (_existRows || []).map(e => e.product_name || '');
-  const _isDupe = (title) => _existingNames.some(n =>
-    title.length > 60 ? n.startsWith(title.slice(0, 60)) : n === title.slice(0, 120));
-  try {
-    const resp = await _fetchRecallFeed('mattilsynet_rss');
-    if (!resp.ok) throw new Error('Mattilsynet RSS proxy error ' + resp.status);
-    const xml = await resp.text();
-    if (!xml) throw new Error('Empty Mattilsynet feed');
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(xml, 'text/xml');
-    const items = Array.from(doc.querySelectorAll('item'));
-
-    for (const item of items.slice(0, 30)) {
-      const extra1 = item.querySelector('extra1')?.textContent?.trim() ||
-                     item.getElementsByTagName('extra1')[0]?.textContent?.trim() || '';
-      const title = item.querySelector('title')?.textContent?.trim() || '';
-      const isRecall = /tilbaketrekk|tilbakekall/i.test(extra1) ||
-                       /tilbaketrekk|tilbakekall|recall|trekkes|kalles tilbake/i.test(title);
-      if (!isRecall) continue;
-      const desc = item.querySelector('description')?.textContent?.trim() || '';
-      const link = item.querySelector('link')?.textContent?.trim() || '';
-      if (_isDupe(title)) continue;
-      const { error } = await sb.from('recalls').insert({
-        product_name:    title.slice(0, 120),
-        description:     (desc.replace(/<[^>]+>/g, '')).slice(0, 200) + (link ? ' [mattilsynet.no]' : ''),
-        source:          'mattilsynet',
-        active:          true,
-        organisation_id: _currentOrgId,
-      });
-      if (!error) { added++; _existingNames.push(title.slice(0, 120)); }
-    }
-  } catch(e) {
-    console.warn('Mattilsynet RSS failed, trying tilbakekallinger page:', e);
-    try {
-      const resp2 = await _fetchRecallFeed('mattilsynet_page');
-      if (!resp2.ok) throw new Error('page proxy error');
-      const html = await resp2.text();
-      const matches = [...html.matchAll(/href="\/tilbakekallinger\/([^"]+)"[^>]*>([^<]{10,})</g)];
-      for (const m of matches.slice(0, 15)) {
-        const slug  = m[1];
-        const title = m[2].trim();
-        if (!title || title.length < 10) continue;
-        if (_isDupe(title)) continue;
-        const { error } = await sb.from('recalls').insert({
-          product_name:    title.slice(0, 120),
-          description:     `Mattilsynet tilbakekalling. mattilsynet.no/tilbakekallinger/${slug}`,
-          source:          'mattilsynet',
-          active:          true,
-          organisation_id: _currentOrgId,
-        });
-        if (!error) { added++; _existingNames.push(title.slice(0, 120)); }
-      }
-    } catch(e2) {
-      throw new Error('Mattilsynet fallback also failed: ' + e2.message);
-    }
-  }
-  return added;
-}
+// ── PUBLIC RECALL FEEDS ──────────────────────────────────────
+// Imported once a day by the server (netlify/functions/fetch-recall-feeds.js)
+// into recall_catalog (improvement plan B4). The scanner's own FDA, RASFF
+// and Mattilsynet importers, the "Fetch latest recalls now" button and the
+// recall-feeds proxy calls were removed on 2026-11-08: they were a second
+// writer of the same rows.
 
 // ── HISTORY ──────────────────────────────────────────────────
 async function loadHistory() {
