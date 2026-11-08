@@ -1,8 +1,8 @@
 # Batch'd database reference
 
-Generated 2026-11-01 22:36 UTC from the production project (lurxucdmrugikdlvvebc) by scripts/schema-reference.sql. Do not edit by hand; regenerate after every migration.
+Generated 2026-11-08 16:51 UTC from the production project (lurxucdmrugikdlvvebc) by scripts/schema-reference.sql. Do not edit by hand; regenerate after every migration.
 
-49 tables, 2 views, 49 functions, 191 policies.
+49 tables, 2 views, 50 functions, 191 policies.
 
 # Tables
 
@@ -462,7 +462,7 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 ## job_runs
 
-Row security: on · Approximate rows: 309
+Row security: on · Approximate rows: 689
 Table access: authenticated: select; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
@@ -911,7 +911,7 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 ## recall_catalog
 
-Row security: on · Approximate rows: 0
+Row security: on · Approximate rows: 501
 Table access: authenticated: select; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
@@ -958,7 +958,7 @@ Table access: authenticated: select; service_role: delete, insert, references, s
 
 ## recall_catalog_org
 
-Row security: on · Approximate rows: 0
+Row security: on · Approximate rows: 980
 Table access: authenticated: insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
@@ -1200,7 +1200,7 @@ Table access: authenticated: insert, select, update; service_role: delete, inser
 
 ## recalls
 
-Row security: on · Approximate rows: 844
+Row security: on · Approximate rows: 994
 Table access: anon: select; authenticated: delete, insert, select, update; service_role: delete, insert, references, select, trigger, truncate, update
 
 | Column | Type | Null | Default |
@@ -2274,6 +2274,7 @@ Options: security_invoker=true
 | `batchd_norm_gtin(text)` | text | invoker | authenticated, service_role |
 | `batchd_norm_lot(text)` | text | invoker | authenticated, service_role |
 | `batchd_org_ai_enabled(uuid)` | boolean | definer | authenticated, service_role |
+| `batchd_parse_lots(text)` | text[] | invoker | authenticated, service_role |
 | `batchd_receiving_set_retention()` | trigger | invoker | service_role |
 | `batchd_touch_updated_at()` | trigger | invoker | service_role |
 | `batchd_user_is_corp_admin()` | boolean | definer | PUBLIC, anon, authenticated, service_role |

@@ -4,7 +4,7 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
-## 2026-11-08 (B4 stage 3: migration 044 copies the feed rows into the catalog, on staging)
+## 2026-11-08 (B4 stage 3: migration 044 copies the feed rows into the catalog)
 - migrations/044_recall_catalog_backfill.sql copies every per-organization
   public feed row in recalls (source fda or mattilsynet, with an
   organization) into recall_catalog once, under the same key the importer
@@ -32,8 +32,17 @@ how it was verified and what is still unverified. Everything before
   recall_catalog_org rows, 0 dismissed, 0 matches repointed, and
   batchd_active_recalls returns those 28 feed entries for the QA
   organization; the CHECK_MIGRATIONS 044 row reads true. 13 entries carry
-  parsed lots, and no entry carries a bare year as a lot. Production
-  pending Ian's go-ahead.
+  parsed lots, and no entry carries a bare year as a lot.
+- Applied to production the same day with Ian's go-ahead, after a preview
+  count (982 copies across 4 organizations, 501 distinct keys, an empty
+  catalog). Result: 501 catalog entries (464 fda, 37 mattilsynet; 50
+  without a recall number), 980 recall_catalog_org rows (the expected
+  count), 0 dismissed, 0 matches repointed (no match pointed at a copy),
+  283 entries with parsed lots, none with a bare year; the 044 check row
+  reads true; batchd_active_recalls returns 464 feed entries for Ian's
+  organization. docs/SCHEMA-REFERENCE.md regenerated (50 functions; the
+  one new function is batchd_parse_lots, callable by authenticated and
+  service_role, not anon).
 - Verified: node scripts/check.mjs (10 of 10); node --test (124 tests,
   the importer's tests covering the md5 key, the merge, the refresh count
   and the tightened lot rule). Not verified: the real FDA run through the
