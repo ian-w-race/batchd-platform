@@ -113,6 +113,17 @@ WITH checks AS (
   UNION ALL SELECT '030 products_public exposes the FTL columns',
          EXISTS (SELECT 1 FROM information_schema.columns
                  WHERE table_schema='public' AND table_name='products_public' AND column_name='is_ftl')
+  UNION ALL SELECT '044 feed rows copied into the recall catalog (every per-org copy has an entry)',
+         NOT EXISTS (
+           SELECT 1 FROM recalls r
+           WHERE r.source IN ('fda','mattilsynet') AND r.organisation_id IS NOT NULL AND r.product_name IS NOT NULL
+             AND NOT EXISTS (
+               SELECT 1 FROM recall_catalog c
+               WHERE c.source = r.source
+                 AND c.external_key = CASE WHEN substring(r.description FROM '\[([A-Z]-\d{4}-\d{4})\]$') IS NOT NULL
+                       THEN substring(r.description FROM '\[([A-Z]-\d{4}-\d{4})\]$') || '|' || left(md5(r.product_name), 12)
+                       ELSE 'pd|' || r.product_name || '|' || to_char(r.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') END))
+         AND EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'batchd_parse_lots')
   UNION ALL SELECT '043 recall catalog, per-org state, catalog matches and the one active list',
          to_regclass('public.recall_catalog') IS NOT NULL
          AND to_regclass('public.recall_catalog_org') IS NOT NULL

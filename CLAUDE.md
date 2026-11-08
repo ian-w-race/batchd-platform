@@ -310,13 +310,17 @@ admin.html keep their own small, older color sets.
   exist in production (checked 2026-10-24; CHECK_MIGRATIONS reports it
   MISSING). The only writer is the retired OCR path in saveRecord, so the
   insert never runs today. Apply 007 before reviving OCR capture.
-- Migrations: 001 to 043 with 020a, no 027 (John's code_patterns slot,
+- Migrations: 001 to 044 with 020a, no 027 (John's code_patterns slot,
   applied outside the folder). 043 (the recall catalog, B4 stage 1) was
   applied to staging and then production on 2026-11-01 with Ian's
-  go-ahead; both functions are byte-identical on the two projects. CHECK_MIGRATIONS.sql reports APPLIED or
+  go-ahead; both functions are byte-identical on the two projects. 044
+  (the catalog backfill, B4 stage 3) was applied to staging and then
+  production on 2026-11-08 with Ian's go-ahead; it is re-runnable and
+  deletes nothing. CHECK_MIGRATIONS.sql reports APPLIED or
   MISSING per migration; Ian ran it 2026-10-11 and every row was APPLIED.
-  031 to 043 were applied through the Supabase connector (031 to 039 on
-  2026-10-24, 040 and 041 on 2026-10-25, 042 and 043 on 2026-11-01), which records them in
+  031 to 044 were applied through the Supabase connector (031 to 039 on
+  2026-10-24, 040 and 041 on 2026-10-25, 042 and 043 on 2026-11-01, 044
+  on 2026-11-08), which records them in
   supabase_migrations; confirmed there 2026-10-28, with job_runs and
   recall_notices present and match_recall_notice identical on staging and
   production (staging's 040b best-by fix is folded into production's
