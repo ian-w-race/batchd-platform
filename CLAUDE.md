@@ -337,9 +337,9 @@ admin.html keep their own small, older color sets.
   (the catalog backfill, B4 stage 3) was applied to staging and then
   production on 2026-11-08 with Ian's go-ahead; it is re-runnable and
   deletes nothing. 045 (the catalog's code columns and the function's new
-  fields, B5 stage 1) is on staging since 2026-11-08 and waits for Ian's
-  go-ahead on production; it changes the function's return type, so it
-  drops and recreates batchd_active_recalls with the same grants.
+  fields, B5 stage 1) was applied to staging and then production on
+  2026-11-08 with Ian's go-ahead; it changes the function's return type,
+  so it drops and recreates batchd_active_recalls with the same grants.
   CHECK_MIGRATIONS.sql reports APPLIED or
   MISSING per migration; Ian ran it 2026-10-11 and every row was APPLIED.
   031 to 044 were applied through the Supabase connector (031 to 039 on

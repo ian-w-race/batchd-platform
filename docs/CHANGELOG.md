@@ -22,7 +22,11 @@ how it was verified and what is still unverified. Everything before
   the product corroborates and never alone (Ian's decision 3); an
   all-lots recall is red on a GTIN and only a warning on the product name
   (decision 2). exactIdentifierHit counts a whole lot inside a range.
-- Migration 045 (staging 2026-11-08, production pending): recall_catalog
+- Migration 045 (staging and then production 2026-11-08 with Ian's
+  go-ahead; the 045 check row reads true on production and
+  batchd_active_recalls returns 464 feed entries for Ian's organization
+  with feed_kind enforcement; docs/SCHEMA-REFERENCE.md regenerated,
+  recall_catalog now has 30 columns): recall_catalog
   gains kind, notice_url, event_key, announcement_id, lot_ranges,
   best_by_from, best_by_to, all_lots, match_terms and parser_version;
   recall_catalog_org gains covered_by_event_id; batchd_active_recalls

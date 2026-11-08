@@ -1,6 +1,6 @@
 # Batch'd database reference
 
-Generated 2026-11-08 18:00 UTC from the production project (lurxucdmrugikdlvvebc) by scripts/schema-reference.sql. Do not edit by hand; regenerate after every migration.
+Generated 2026-11-08 18:40 UTC from the production project (lurxucdmrugikdlvvebc) by scripts/schema-reference.sql. Do not edit by hand; regenerate after every migration.
 
 49 tables, 2 views, 50 functions, 191 policies.
 
@@ -45,8 +45,8 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 **Other indexes**
 
 - `CREATE INDEX idx_code_patterns_scan_count ON public.code_patterns USING btree (scan_count DESC)`
-- `CREATE INDEX code_patterns_product_name_idx ON public.code_patterns USING btree (product_name)`
 - `CREATE INDEX idx_code_patterns_barcode ON public.code_patterns USING btree (barcode_number) WHERE (barcode_number IS NOT NULL)`
+- `CREATE INDEX code_patterns_product_name_idx ON public.code_patterns USING btree (product_name)`
 
 **Policies**
 
@@ -228,14 +228,14 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Other indexes**
 
-- `CREATE INDEX idx_complaints_barcode ON public.complaints USING btree (barcode)`
-- `CREATE INDEX idx_complaints_country ON public.complaints USING btree (country)`
+- `CREATE INDEX idx_complaints_triage_level ON public.complaints USING btree (triage_level)`
 - `CREATE INDEX idx_complaints_status ON public.complaints USING btree (status)`
 - `CREATE INDEX idx_complaints_receiving_org ON public.complaints USING btree (receiving_org_id)`
 - `CREATE INDEX idx_complaints_manufacturer ON public.complaints USING btree (manufacturer_id)`
 - `CREATE INDEX idx_complaints_created ON public.complaints USING btree (created_at DESC)`
+- `CREATE INDEX idx_complaints_country ON public.complaints USING btree (country)`
+- `CREATE INDEX idx_complaints_barcode ON public.complaints USING btree (barcode)`
 - `CREATE INDEX complaints_ip_hash_created_idx ON public.complaints USING btree (ip_hash, created_at)`
-- `CREATE INDEX idx_complaints_triage_level ON public.complaints USING btree (triage_level)`
 
 **Policies**
 
@@ -275,8 +275,8 @@ Table access: authenticated: delete, insert, select, update; service_role: delet
 
 **Other indexes**
 
-- `CREATE UNIQUE INDEX ftl_overrides_org_name_uidx ON public.ftl_overrides USING btree (organisation_id, product_name_normalized) WHERE ((gtin IS NULL) AND (product_name_normalized IS NOT NULL))`
 - `CREATE UNIQUE INDEX ftl_overrides_org_gtin_uidx ON public.ftl_overrides USING btree (organisation_id, gtin) WHERE (gtin IS NOT NULL)`
+- `CREATE UNIQUE INDEX ftl_overrides_org_name_uidx ON public.ftl_overrides USING btree (organisation_id, product_name_normalized) WHERE ((gtin IS NULL) AND (product_name_normalized IS NOT NULL))`
 
 **Policies**
 
@@ -588,12 +588,12 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Other indexes**
 
-- `CREATE INDEX organisation_members_primary_store_idx ON public.organisation_members USING btree (primary_store_id) WHERE (primary_store_id IS NOT NULL)`
-- `CREATE INDEX organisation_members_active_role_idx ON public.organisation_members USING btree (organisation_id, role, active)`
-- `CREATE INDEX org_members_user_idx ON public.organisation_members USING btree (user_id)`
-- `CREATE INDEX org_members_org_idx ON public.organisation_members USING btree (organisation_id)`
-- `CREATE UNIQUE INDEX organisation_members_user_org_unique ON public.organisation_members USING btree (user_id, organisation_id)`
 - `CREATE INDEX idx_org_members_active ON public.organisation_members USING btree (organisation_id, active)`
+- `CREATE UNIQUE INDEX organisation_members_user_org_unique ON public.organisation_members USING btree (user_id, organisation_id)`
+- `CREATE INDEX org_members_org_idx ON public.organisation_members USING btree (organisation_id)`
+- `CREATE INDEX organisation_members_active_role_idx ON public.organisation_members USING btree (organisation_id, role, active)`
+- `CREATE INDEX organisation_members_primary_store_idx ON public.organisation_members USING btree (primary_store_id) WHERE (primary_store_id IS NOT NULL)`
+- `CREATE INDEX org_members_user_idx ON public.organisation_members USING btree (user_id)`
 
 **Triggers**
 
@@ -761,10 +761,10 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Other indexes**
 
-- `CREATE INDEX products_published_lookup ON public.products USING btree (barcode_normalized) WHERE ((published = true) AND (barcode_normalized IS NOT NULL))`
-- `CREATE INDEX products_barcode_idx ON public.products USING btree (barcode)`
 - `CREATE INDEX products_manufacturer_idx ON public.products USING btree (manufacturer_id)`
+- `CREATE INDEX products_barcode_idx ON public.products USING btree (barcode)`
 - `CREATE UNIQUE INDEX products_barcode_normalized_unique ON public.products USING btree (barcode_normalized) WHERE (barcode_normalized IS NOT NULL)`
+- `CREATE INDEX products_published_lookup ON public.products USING btree (barcode_normalized) WHERE ((published = true) AND (barcode_normalized IS NOT NULL))`
 
 **Triggers**
 
@@ -842,9 +842,9 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Other indexes**
 
-- `CREATE INDEX products_pending_barcode_normalized_idx ON public.products_pending USING btree (barcode_normalized) WHERE (barcode_normalized IS NOT NULL)`
-- `CREATE INDEX products_pending_unreviewed_idx ON public.products_pending USING btree (staged_at) WHERE (reviewed_at IS NULL)`
 - `CREATE INDEX products_pending_confidence_idx ON public.products_pending USING btree (confidence_score DESC, staged_at) WHERE (reviewed_at IS NULL)`
+- `CREATE INDEX products_pending_unreviewed_idx ON public.products_pending USING btree (staged_at) WHERE (reviewed_at IS NULL)`
+- `CREATE INDEX products_pending_barcode_normalized_idx ON public.products_pending USING btree (barcode_normalized) WHERE (barcode_normalized IS NOT NULL)`
 
 **Triggers**
 
@@ -934,17 +934,31 @@ Table access: authenticated: select; service_role: delete, insert, references, s
 | `raw` | jsonb |  |  |
 | `created_at` | timestamp with time zone | not null | now() |
 | `updated_at` | timestamp with time zone | not null | now() |
+| `kind` | text | not null | 'enforcement'::text |
+| `notice_url` | text |  |  |
+| `event_key` | text |  |  |
+| `announcement_id` | uuid |  |  |
+| `lot_ranges` | jsonb | not null | '[]'::jsonb |
+| `best_by_from` | date |  |  |
+| `best_by_to` | date |  |  |
+| `all_lots` | boolean | not null | false |
+| `match_terms` | text[] | not null | '{}'::text[] |
+| `parser_version` | integer | not null | 1 |
 
 **Constraints**
 
+- Check: `CHECK ((kind = ANY (ARRAY['enforcement'::text, 'announcement'::text])))`
 - Check: `CHECK ((source = ANY (ARRAY['fda'::text, 'fsis'::text, 'mattilsynet'::text])))`
+- Links: `FOREIGN KEY (announcement_id) REFERENCES recall_catalog(id) ON DELETE SET NULL`
 - Primary key: `PRIMARY KEY (id)`
 - Unique: `UNIQUE (source, external_key)`
 
 **Other indexes**
 
-- `CREATE INDEX recall_catalog_gtins_gin ON public.recall_catalog USING gin (gtins)`
+- `CREATE INDEX recall_catalog_parser_version_idx ON public.recall_catalog USING btree (parser_version, created_at DESC)`
 - `CREATE INDEX recall_catalog_lots_gin ON public.recall_catalog USING gin (lots)`
+- `CREATE INDEX recall_catalog_event_key_idx ON public.recall_catalog USING btree (source, event_key) WHERE (event_key IS NOT NULL)`
+- `CREATE INDEX recall_catalog_gtins_gin ON public.recall_catalog USING gin (gtins)`
 - `CREATE INDEX recall_catalog_source_published_idx ON public.recall_catalog USING btree (source, published_at DESC)`
 
 **Triggers**
@@ -972,10 +986,12 @@ Table access: authenticated: insert, select, update; service_role: delete, inser
 | `dismissed_by` | uuid |  |  |
 | `dismiss_note` | text |  |  |
 | `matched_at` | timestamp with time zone |  |  |
+| `covered_by_event_id` | uuid |  |  |
 
 **Constraints**
 
 - Links: `FOREIGN KEY (catalog_id) REFERENCES recall_catalog(id) ON DELETE CASCADE`
+- Links: `FOREIGN KEY (covered_by_event_id) REFERENCES recall_events(id) ON DELETE SET NULL`
 - Links: `FOREIGN KEY (dismissed_by) REFERENCES auth.users(id)`
 - Links: `FOREIGN KEY (organisation_id) REFERENCES organisations(id) ON DELETE CASCADE`
 - Links: `FOREIGN KEY (reviewed_by) REFERENCES auth.users(id)`
@@ -1122,9 +1138,9 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Other indexes**
 
+- `CREATE INDEX recall_events_source_idx ON public.recall_events USING btree (source_org_id)`
 - `CREATE INDEX recall_events_barcode_idx ON public.recall_events USING btree (barcode)`
 - `CREATE INDEX recall_events_lot_idx ON public.recall_events USING btree (lot_number)`
-- `CREATE INDEX recall_events_source_idx ON public.recall_events USING btree (source_org_id)`
 
 **Policies**
 
@@ -1305,9 +1321,9 @@ Table access: authenticated: delete, insert, select, update; service_role: delet
 
 **Other indexes**
 
-- `CREATE INDEX receiving_events_org_store_received_idx ON public.receiving_events USING btree (organisation_id, store_id, received_at DESC)`
 - `CREATE INDEX receiving_events_org_store_status_idx ON public.receiving_events USING btree (organisation_id, store_id, status)`
 - `CREATE INDEX receiving_events_org_lot_idx ON public.receiving_events USING btree (organisation_id, traceability_lot_code)`
+- `CREATE INDEX receiving_events_org_store_received_idx ON public.receiving_events USING btree (organisation_id, store_id, received_at DESC)`
 
 **Triggers**
 
@@ -1420,14 +1436,14 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Other indexes**
 
+- `CREATE UNIQUE INDEX scan_recall_matches_scan_recall_unique ON public.scan_recall_matches USING btree (scan_id, recall_id)`
+- `CREATE INDEX idx_srm_recall ON public.scan_recall_matches USING btree (recall_id)`
+- `CREATE INDEX idx_srm_org ON public.scan_recall_matches USING btree (organisation_id)`
+- `CREATE UNIQUE INDEX scan_recall_matches_scan_catalog_unique ON public.scan_recall_matches USING btree (scan_id, catalog_id) WHERE (catalog_id IS NOT NULL)`
+- `CREATE INDEX idx_srm_store ON public.scan_recall_matches USING btree (organisation_id, store_name)`
 - `CREATE INDEX scan_recall_matches_catalog_idx ON public.scan_recall_matches USING btree (catalog_id) WHERE (catalog_id IS NOT NULL)`
 - `CREATE INDEX idx_srm_scan ON public.scan_recall_matches USING btree (scan_id)`
 - `CREATE INDEX scan_recall_matches_recall_event_id_idx ON public.scan_recall_matches USING btree (recall_event_id)`
-- `CREATE INDEX idx_srm_store ON public.scan_recall_matches USING btree (organisation_id, store_name)`
-- `CREATE UNIQUE INDEX scan_recall_matches_scan_catalog_unique ON public.scan_recall_matches USING btree (scan_id, catalog_id) WHERE (catalog_id IS NOT NULL)`
-- `CREATE INDEX idx_srm_org ON public.scan_recall_matches USING btree (organisation_id)`
-- `CREATE UNIQUE INDEX scan_recall_matches_scan_recall_unique ON public.scan_recall_matches USING btree (scan_id, recall_id)`
-- `CREATE INDEX idx_srm_recall ON public.scan_recall_matches USING btree (recall_id)`
 - `CREATE INDEX idx_srm_placed ON public.scan_recall_matches USING btree (placed_at DESC)`
 
 **Policies**
@@ -1544,11 +1560,11 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Other indexes**
 
-- `CREATE INDEX scans_barcode_normalized_for_promotion ON public.scans USING btree (normalize_barcode(barcode_number), product_name) WHERE ((barcode_number IS NOT NULL) AND (organisation_id IS NOT NULL))`
-- `CREATE INDEX scans_org_idx ON public.scans USING btree (organisation_id)`
-- `CREATE INDEX scans_store_id_idx ON public.scans USING btree (store_id)`
-- `CREATE INDEX idx_scans_label_text ON public.scans USING gin (to_tsvector('simple'::regconfig, COALESCE(label_text, ''::text)))`
 - `CREATE INDEX scans_receiving_event_idx ON public.scans USING btree (receiving_event_id)`
+- `CREATE INDEX idx_scans_label_text ON public.scans USING gin (to_tsvector('simple'::regconfig, COALESCE(label_text, ''::text)))`
+- `CREATE INDEX scans_org_idx ON public.scans USING btree (organisation_id)`
+- `CREATE INDEX scans_barcode_normalized_for_promotion ON public.scans USING btree (normalize_barcode(barcode_number), product_name) WHERE ((barcode_number IS NOT NULL) AND (organisation_id IS NOT NULL))`
+- `CREATE INDEX scans_store_id_idx ON public.scans USING btree (store_id)`
 - `CREATE INDEX idx_scans_complaint_filed ON public.scans USING btree (organisation_id, complaint_filed) WHERE (complaint_filed = true)`
 - `CREATE INDEX idx_scans_org_store_created ON public.scans USING btree (organisation_id, store_name, created_at DESC)`
 
@@ -1654,10 +1670,10 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Other indexes**
 
-- `CREATE INDEX shipments_barcode_idx ON public.shipments USING btree (barcode)`
-- `CREATE INDEX shipments_mfr_idx ON public.shipments USING btree (manufacturer_id)`
-- `CREATE INDEX shipments_retailer_idx ON public.shipments USING btree (retailer_id)`
 - `CREATE INDEX shipments_lot_idx ON public.shipments USING btree (lot_number)`
+- `CREATE INDEX shipments_barcode_idx ON public.shipments USING btree (barcode)`
+- `CREATE INDEX shipments_retailer_idx ON public.shipments USING btree (retailer_id)`
+- `CREATE INDEX shipments_mfr_idx ON public.shipments USING btree (manufacturer_id)`
 
 **Policies**
 
@@ -1762,8 +1778,8 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Other indexes**
 
-- `CREATE INDEX store_manager_stores_user_idx ON public.store_manager_stores USING btree (user_id)`
 - `CREATE INDEX store_manager_stores_store_idx ON public.store_manager_stores USING btree (store_id)`
+- `CREATE INDEX store_manager_stores_user_idx ON public.store_manager_stores USING btree (user_id)`
 
 **Policies**
 
@@ -1807,9 +1823,9 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Other indexes**
 
+- `CREATE UNIQUE INDEX stores_org_name_uidx ON public.stores USING btree (organisation_id, lower(btrim(name)))`
 - `CREATE INDEX stores_org_external_code_idx ON public.stores USING btree (organisation_id, external_code) WHERE (external_code IS NOT NULL)`
 - `CREATE INDEX stores_org_idx ON public.stores USING btree (organisation_id)`
-- `CREATE UNIQUE INDEX stores_org_name_uidx ON public.stores USING btree (organisation_id, lower(btrim(name)))`
 
 **Policies**
 
@@ -1922,8 +1938,8 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Other indexes**
 
-- `CREATE INDEX idx_supplier_lot_codes_ingredient ON public.supplier_lot_codes USING btree (ingredient_id)`
 - `CREATE INDEX idx_supplier_lot_codes_org ON public.supplier_lot_codes USING btree (supplier_org_id)`
+- `CREATE INDEX idx_supplier_lot_codes_ingredient ON public.supplier_lot_codes USING btree (ingredient_id)`
 
 **Policies**
 
@@ -1962,8 +1978,8 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Other indexes**
 
-- `CREATE INDEX idx_supplier_links_mfr ON public.supplier_manufacturer_links USING btree (manufacturer_org_id)`
 - `CREATE INDEX idx_supplier_links_supplier ON public.supplier_manufacturer_links USING btree (supplier_org_id)`
+- `CREATE INDEX idx_supplier_links_mfr ON public.supplier_manufacturer_links USING btree (manufacturer_org_id)`
 
 **Policies**
 
@@ -2008,8 +2024,8 @@ Table access: anon: select; authenticated: delete, insert, select, update; servi
 
 **Other indexes**
 
-- `CREATE INDEX idx_supplier_shipments_org ON public.supplier_shipments USING btree (supplier_org_id)`
 - `CREATE INDEX idx_supplier_shipments_mfr ON public.supplier_shipments USING btree (manufacturer_org_id)`
+- `CREATE INDEX idx_supplier_shipments_org ON public.supplier_shipments USING btree (supplier_org_id)`
 
 **Policies**
 
@@ -2056,8 +2072,8 @@ Table access: authenticated: delete, insert, select, update; service_role: delet
 
 **Other indexes**
 
-- `CREATE UNIQUE INDEX suppliers_org_name_uidx ON public.suppliers USING btree (organisation_id, lower(name))`
 - `CREATE INDEX suppliers_org_active_idx ON public.suppliers USING btree (organisation_id, active)`
+- `CREATE UNIQUE INDEX suppliers_org_name_uidx ON public.suppliers USING btree (organisation_id, lower(name))`
 
 **Triggers**
 
@@ -2257,7 +2273,7 @@ Options: security_invoker=true
 | Function | Returns | Security | Callable by |
 |---|---|---|---|
 | `accept_invitation(text,text,text,text,text,text)` | jsonb | definer | anon, authenticated, service_role |
-| `batchd_active_recalls(uuid)` | TABLE(kind text, recall_id uuid, event_id uuid, catalog_id uuid, product_name text, lot_number text, lots text[], barcode text, gtins text[], description text, reason text, severity text, source text, published_at timestamp with time zone, recalling_firm text, dismissed boolean, matched boolean) | invoker | authenticated, service_role |
+| `batchd_active_recalls(uuid)` | TABLE(kind text, recall_id uuid, event_id uuid, catalog_id uuid, product_name text, lot_number text, lots text[], barcode text, gtins text[], description text, reason text, severity text, source text, published_at timestamp with time zone, recalling_firm text, dismissed boolean, matched boolean, lot_ranges jsonb, best_by_from date, best_by_to date, all_lots boolean, match_terms text[], feed_kind text, notice_url text, covered boolean) | invoker | authenticated, service_role |
 | `batchd_bypass_guards_active()` | boolean | invoker | authenticated, service_role |
 | `batchd_guard_member_insert()` | trigger | invoker | service_role |
 | `batchd_guard_member_self_update()` | trigger | invoker | service_role |
