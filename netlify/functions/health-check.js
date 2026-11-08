@@ -97,13 +97,15 @@ function heartbeatText(now, runs) {
   const weekAgo = now - 7 * 24 * HOUR;
   const week = runs.filter((r) => Date.parse(r.started_at) >= weekAgo);
   const count = (job) => week.filter((r) => r.job === job && r.ok).length;
+  // Since B4 stage 6 the importer reports catalog_added (one row per FDA
+  // entry); older runs reported fda_added (per-organization copies).
   const fdaAdded = week.filter((r) => r.job === 'fetch-recall-feeds' && r.ok)
-    .reduce((n, r) => n + (Number(r.detail?.fda_added) || 0), 0);
+    .reduce((n, r) => n + (Number(r.detail?.catalog_added ?? r.detail?.fda_added) || 0), 0);
   const failed = week.filter((r) => r.ok === false).length;
   return [
     "The daily Batch'd health check found nothing wrong this week.",
     '',
-    `FDA recall import: ${count('fetch-recall-feeds')} runs, ${fdaAdded} recall${fdaAdded === 1 ? '' : 's'} added.`,
+    `FDA recall import: ${count('fetch-recall-feeds')} runs, ${fdaAdded} catalog entr${fdaAdded === 1 ? 'y' : 'ies'} added.`,
     `Recall escalation: ${count('recall-escalation')} runs.`,
     `Health check: ${count('health-check')} runs.`,
     `Failed runs or sends: ${failed}.`,

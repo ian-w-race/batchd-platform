@@ -125,9 +125,9 @@ test('the all clear goes out on a healthy Monday only, and never with problems',
 
 test('the all clear text counts the week\'s runs, added recalls and failures', () => {
   const runs = [
-    { job: 'fetch-recall-feeds', started_at: ago(1), ok: true, detail: { fda_added: 3 } },
-    { job: 'fetch-recall-feeds', started_at: ago(25), ok: true, detail: { fda_added: 2 } },
-    { job: 'fetch-recall-feeds', started_at: ago(24 * 9), ok: true, detail: { fda_added: 50 } },   // older than a week
+    { job: 'fetch-recall-feeds', started_at: ago(1), ok: true, detail: { catalog_added: 3 } },
+    { job: 'fetch-recall-feeds', started_at: ago(25), ok: true, detail: { fda_added: 2 } },          // a run from before B4 stage 6
+    { job: 'fetch-recall-feeds', started_at: ago(24 * 9), ok: true, detail: { catalog_added: 50 } },   // older than a week
     { job: 'recall-escalation', started_at: ago(0.4), ok: true },
     { job: 'recall-escalation', started_at: ago(0.9), ok: true },
     { job: 'health-check', started_at: ago(24), ok: true },
@@ -135,7 +135,7 @@ test('the all clear text counts the week\'s runs, added recalls and failures', (
   ];
   const text = heartbeatText(NOW, runs);
   assert.match(text, /nothing wrong this week/);
-  assert.match(text, /FDA recall import: 2 runs, 5 recalls added/);
+  assert.match(text, /FDA recall import: 2 runs, 5 catalog entries added/);
   assert.match(text, /Recall escalation: 2 runs/);
   assert.match(text, /Health check: 1 runs/);
   assert.match(text, /Failed runs or sends: 1\./);

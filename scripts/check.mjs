@@ -200,6 +200,11 @@ check('Scanner and Retail read active recalls only through batchd_active_recalls
   for (const fn of ['export function normalizeActiveRecalls(', 'export function exactIdentifierHit(', 'export function matchIdColumns(']) {
     if (!shared.includes(fn)) throw new Error(`src/shared/active-recalls.js: ${fn.slice(16, -1)} missing`);
   }
+  // B4 stage 6: the importer writes the catalog only, and the feed proxy is gone.
+  const imp = read('netlify/functions/fetch-recall-feeds.js');
+  if (imp.includes("from('recalls')") || imp.includes("from('organisations')")) throw new Error('fetch-recall-feeds.js: writes or reads per-organization recalls again; the catalog is the only target');
+  if (!imp.includes("from('recall_catalog')")) throw new Error('fetch-recall-feeds.js: does not write recall_catalog');
+  if (existsSync(join(ROOT, 'netlify/functions/recall-feeds.js'))) throw new Error('netlify/functions/recall-feeds.js is retired (B4 stage 6); do not bring it back');
   return `scanner ${(s.match(/_fetchActiveRecalls\(/g) || []).length - 1} callers, Retail ${(d.match(/_fetchActiveRecalls\(/g) || []).length - 1} callers`;
 });
 

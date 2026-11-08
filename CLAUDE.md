@@ -249,23 +249,25 @@ admin.html keep their own small, older color sets.
   whose run returns "skipped", so batchd-app has
   SCHEDULED_FUNCTIONS_DISABLED=true and www is the one site that runs
   the jobs. Nothing to change.
-- fetch-recall-feeds.js (B4 stage 2, 2026-11-08): one FDA request, then
-  two writes. First the catalog: one recall_catalog row per report entry,
-  keyed (source, external_key) where the key is the recall number plus a
-  hash of the product text (one FDA number covers several product lines)
-  or product and report day when the feed sends "N/A" or nothing; new
-  entries get a sweep_catalog_matches call, ten at a time. Then, until B4
-  stage 6, the per-organization copies as before: one query for what the
-  US orgs hold, one bulk upsert with stable ids from org and recall
-  number, the recall number kept at the end of the description
-  ("... [H-0015-2027]"). parseCodeInfo pulls lot codes and GTINs out of
-  the FDA's free-text code_info conservatively (B5 improves it). The
+- fetch-recall-feeds.js (B4 stages 2 and 6, 2026-11-08): one FDA request,
+  one write. One recall_catalog row per report entry, keyed (source,
+  external_key) where the key is the recall number plus the first 12 hex
+  characters of md5(product name) (one FDA number covers several product
+  lines) or product and report day when the feed sends "N/A" or nothing;
+  the upsert merges, so status and raw text refresh on every run; new
+  entries get a sweep_catalog_matches call, ten at a time. It writes
+  nothing to `recalls` and reads no organizations any more (check.mjs
+  refuses both); the per-organization copies were removed by
+  scripts/retire-feed-copies.sql (staging 2026-11-08; production with
+  Ian's go-ahead, backup.recalls_feed_copies_20261108). parseCodeInfo
+  pulls lot codes and GTINs out of the FDA's free-text code_info
+  conservatively (B5 improves it; batchd_parse_lots is its SQL twin). The
   Mattilsynet leg is gone (decision 3 of the B4 plan; the feed answered
   404 for weeks) and so are the scanner's own FDA, RASFF and Mattilsynet
-  importers and its "Fetch latest recalls now" button; recall-feeds.js
-  (the proxy they used) now has no caller. History: the 2026-10-24 rewrite
-  and scripts/cleanup-duplicate-fda-recalls.sql (953 duplicates removed,
-  kept in backup.recalls_fda_duplicates_20261024).
+  importers, its "Fetch latest recalls now" button and recall-feeds.js,
+  the proxy they used (deleted in stage 6). History: the 2026-10-24
+  rewrite and scripts/cleanup-duplicate-fda-recalls.sql (953 duplicates
+  removed, kept in backup.recalls_fda_duplicates_20261024).
 - netlify.toml arms recall-escalation (every 30 min), fetch-recall-feeds
   (daily 06:00 UTC) and health-check (daily 07:00 UTC) on every site that
   deploys it, so SCHEDULED_FUNCTIONS_DISABLED=true must be set on exactly
@@ -454,17 +456,20 @@ pov once and refuses to run again.
 - A recall requires action only when ALL THREE hold: the recall is
   active, an org scan matches by exact lot or barcode, and that scan is
   still on shelf. Mock drills never count.
-- Feed recalls (FDA, Mattilsynet) count as active only if confirmed in
-  scan_recall_matches. Manual and pushed recalls count on an exact lot or
-  barcode match to an on-shelf scan.
-- Every recall check reads BOTH sources: the recalls table (manual and
-  feed) AND recall_events joined through recall_distributions on
-  retailer_org_id (pushed). This has regressed before. In the SCANNER
-  (since B4 stage 4, 2026-11-08) that means one call: every reader goes
-  through `_fetchActiveRecalls()`, which calls the database function
-  `batchd_active_recalls(p_org)` (manual, pushed and feed in one shape,
-  drills, closed events and dismissed feed entries left out) and
-  normalizes the rows with `Batchd.activeRecalls.normalizeActiveRecalls`
+- Feed recalls (the FDA entries of recall_catalog) count as active only if
+  confirmed in scan_recall_matches (catalog_id) and not dismissed by the
+  organization (recall_catalog_org.dismissed_at). Manual and pushed
+  recalls count on an exact lot or barcode match to an on-shelf scan.
+- Every recall check calls `batchd_active_recalls(p_org)` (migration 043;
+  SECURITY INVOKER). It returns manual recalls (`recalls`), pushed events
+  (recall_events through recall_distributions) and public feed entries
+  (recall_catalog with the organization's recall_catalog_org state) in one
+  shape, with drills, closed events and dismissed feed entries left out.
+  Never build that list from the tables in a page again: the old rule
+  ("read BOTH sources") regressed four times before B4 replaced it. In the
+  SCANNER (since B4 stage 4, 2026-11-08) every reader goes through
+  `_fetchActiveRecalls()`, which calls the function and normalizes the
+  rows with `Batchd.activeRecalls.normalizeActiveRecalls`
   (src/shared/active-recalls.js) into the cache shape; scripts/check.mjs
   refuses a new page query of recall_distributions or recall_events in
   index.html. In RETAIL (since B4 stage 5, 2026-11-08) the same:
@@ -473,7 +478,10 @@ pov once and refuses to run again.
   tabs, Lot Lookup, the lot tracer, the Intelligence panel, the Store
   Network command center and the exposure report read it, and the check
   refuses the old query pairs and unfiltered recall_events lists in
-  dashboard.html. Reads that stay on the tables on purpose: the Recalls
+  dashboard.html. Since B4 stage 6 `recalls` holds only manual recalls and
+  the linked rows of pushed recalls (the feed copies are gone; the
+  importer writes the catalog only). Reads that stay on the tables on
+  purpose: the Recalls
   panel's History tab and the recall history report (inactive recalls and
   closed events, by event id through recall_distributions), Live Recall
   and the drill pages (one event by id), the Consumer Notify picker
@@ -516,9 +524,9 @@ through `_writeMatchRows` (since B4 stage 4, 2026-11-08).
   sweep_catalog_matches RPC and by the scanner (save path and sign-in
   sweep). The (scan_id, catalog_id) unique index is partial, so PostgREST
   upsert cannot target it: `_writeMatchRows` selects, then inserts the
-  missing rows. Query with `.eq('catalog_id', id)`. Until stage 6 the old
-  per-organization feed copies in `recalls` still exist, but no scanner
-  write points at them any more.
+  missing rows. Query with `.eq('catalog_id', id)`. Since stage 6 the
+  per-organization feed copies are gone from `recalls`, so no match row
+  points at a feed copy any more.
 - Path B (pushed): recall_event_id = recall_events.id, recall_id = the
   linked recalls row for that lot (is_pushed, recall_event_id set; one
   per lot since 2026-10-25). recall_id has a foreign key to recalls(id),
@@ -594,11 +602,11 @@ docs/HISTORY.md.
   lets saves retry without it, so new columns degrade gracefully on an
   older database.
 
-## Netlify functions (15)
+## Netlify functions (14)
 | Function | Purpose | Auth |
 |---|---|---|
 | ai-analyze.js | Anthropic proxy for investigations and NL queries | requireAi (member of org, plan pov/active) |
-| fetch-recall-feeds.js | Daily FDA import: each entry once into recall_catalog plus a sweep_catalog_matches call per new entry, and, until B4 stage 6, the per-organization copies in recalls | Scheduled only, no URL |
+| fetch-recall-feeds.js | Daily FDA import: each entry once into recall_catalog plus a sweep_catalog_matches call per new entry; writes nothing else | Scheduled only, no URL |
 | notify-consumers.js | Consumer recall emails | corp_admin of the recall's org |
 | notify-event.js | recall_pushed, complaint_filed, drill_scheduled emails | INTERNAL_NOTIFY_SECRET or member JWT |
 | ocr.js | Anthropic vision; owns its prompt templates | requireAi |
@@ -606,7 +614,6 @@ docs/HISTORY.md.
 | parse-recall-notice-background.js | Background function: Claude reads a supplier recall notice into recall_notices.extracted (prompt and schema in netlify/lib/recall-notice.js) | corp_admin of the notice's org, plan pov/active |
 | push-recall-email.js | Recall alert emails | INTERNAL_NOTIFY_SECRET, fails closed |
 | recall-escalation.js | 2h and 24h unacknowledged escalations | Scheduled only |
-| recall-feeds.js | Proxies rasff and Mattilsynet feeds; no caller since 2026-11-08, retire with B4 stage 6 | Any active session |
 | recall-reminder.js | Reminder emails from dashboard buttons | corp_admin of orgId |
 | send-invite.js | Staff invitation emails | corp_admin of the invitation's org, or platform admin |
 | trace.js | Retired, answers 410 | None |

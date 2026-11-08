@@ -5,10 +5,10 @@
 // 2026-11-08), then matches it against every US organization's scans
 // through sweep_catalog_matches.
 //
-// Transition (B4 stages 2 to 5): the screens still read the old
-// per-organization copies in the recalls table, so this function also
-// keeps writing those rows exactly as before. Stage 6 removes that path
-// once every screen reads batchd_active_recalls. Do not remove it earlier.
+// Since B4 stage 6 (2026-11-08) the catalog is the only thing it writes:
+// the per-organization copies in the recalls table are gone (both apps read
+// batchd_active_recalls since stages 4 and 5) and nothing may write them
+// again (scripts/check.mjs refuses a `recalls` write in this file).
 //
 // Schedule: daily at 06:00 UTC (configured in netlify.toml)
 // Scheduled only: Netlify scheduled functions cannot be called by URL.
@@ -38,17 +38,7 @@ const run = async (event) => {
   }
 
   const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
-  const results = { fda: null, catalog: null, errors: [] };
-
-  // ── US retailer organizations (the per-organization copies, until stage 6) ──
-  const { data: orgs, error: orgErr } = await sb
-    .from('organisations')
-    .select('id, region')
-    .eq('type', 'retailer');
-  if (orgErr) {
-    return { statusCode: 500, body: JSON.stringify({ error: 'Could not load orgs: ' + orgErr.message }) };
-  }
-  const usOrgs = (orgs || []).filter(o => o.region === 'us').map(o => o.id);
+  const results = { catalog: null, errors: [] };
 
   let feed = null;
   try {
@@ -59,21 +49,12 @@ const run = async (event) => {
   }
 
   if (feed) {
-    // 1. The catalog: each entry once, then the sweep for the new ones.
+    // The catalog: each entry once, then the sweep for the new ones.
     try {
       results.catalog = await importCatalog(sb, feed);
     } catch (e) {
       console.error('[fetch-recall-feeds] catalog error:', e.message);
       results.errors.push('Catalog: ' + e.message);
-    }
-    // 2. The per-organization copies the screens still read (stage 6 removes this).
-    if (usOrgs.length > 0) {
-      try {
-        results.fda = await importPerOrg(sb, feed, usOrgs);
-      } catch (e) {
-        console.error('[fetch-recall-feeds] per-org error:', e.message);
-        results.errors.push('FDA: ' + e.message);
-      }
     }
   }
 
@@ -82,8 +63,6 @@ const run = async (event) => {
   return {
     statusCode: 200,
     body: JSON.stringify({
-      fda_added:        results.fda?.added    ?? 0,
-      fda_skipped:      results.fda?.skipped  ?? 0,
       catalog_added:    results.catalog?.added   ?? 0,
       catalog_skipped:  results.catalog?.skipped ?? 0,
       catalog_refreshed: results.catalog?.refreshed ?? 0,
@@ -229,97 +208,6 @@ async function importCatalog(sb, feed) {
   return { added: added.length, skipped: skipped + rows.length - added.length, refreshed: Math.max(0, (written || []).length - added.length), matches };
 }
 
-// ── The per-organization copies (until B4 stage 6) ─────────────
-// Rewritten 2026-10-24. One query for what the US orgs already have, one
-// bulk insert. Each org and recall pair gets a stable id, so two sites or
-// two retries can never insert the same pair twice. The recall number is
-// always kept at the end of the description ("... [F-1234-2026]").
-const FDA_DESC_MAX = 200;
-
-function fdaDescription(reason, recallNumber) {
-  const suffix = recallNumber ? ` [${recallNumber}]` : '';
-  return String(reason || '').slice(0, FDA_DESC_MAX - suffix.length) + suffix;
-}
-
-function recallNumberFrom(description) {
-  const m = /\[([A-Z]-\d{4}-\d{4})\]$/.exec(String(description || ''));
-  return m ? m[1] : null;
-}
-
-// Stable UUID (version 5 layout) from the org and the FDA recall number.
-function stableRecallId(orgId, key) {
-  const h = crypto.createHash('sha1').update(`batchd-fda|${orgId}|${key}`).digest('hex');
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-${((parseInt(h[16], 16) & 0x3) | 0x8).toString(16)}${h.slice(17, 20)}-${h.slice(20, 32)}`;
-}
-
-async function importPerOrg(sb, feed, orgIds) {
-  const candidates = [];
-  let skipped = 0;
-  for (const r of feed) {
-    const productName = (r.product_description || '').slice(0, 120);
-    if (!productName) { skipped++; continue; }
-    const createdAt = (r.report_date ? parseDate(r.report_date) : null) || new Date().toISOString();
-    const recallNumber = fdaRecallNumber(r);
-    candidates.push({
-      recallNumber,
-      productName,
-      lotNumber:    (r.code_info || '').slice(0, 80) || null,
-      description:  fdaDescription(r.reason_for_recall, recallNumber),
-      createdAt,
-    });
-  }
-  if (!candidates.length) return { added: 0, skipped };
-
-  // What the US orgs already hold for this window. Old rows may have lost
-  // the recall number to truncation, so they also match on product and day.
-  const earliest = candidates.reduce((m, c) => (c.createdAt < m ? c.createdAt : m), candidates[0].createdAt);
-  const since = new Date(new Date(earliest).getTime() - 86400000).toISOString();
-  const { data: existing, error: exErr } = await sb.from('recalls')
-    .select('id, organisation_id, product_name, description, created_at')
-    .eq('source', 'fda')
-    .in('organisation_id', orgIds)
-    .gte('created_at', since)
-    .limit(5000);
-  if (exErr) throw new Error('Could not read existing FDA recalls: ' + exErr.message);
-
-  const have = new Set();
-  for (const row of existing || []) {
-    const rn = recallNumberFrom(row.description);
-    if (rn) have.add(`${row.organisation_id}|rn|${rn}`);
-    have.add(`${row.organisation_id}|pd|${row.product_name}|${String(row.created_at).slice(0, 10)}`);
-    have.add(`id|${row.id}`);
-  }
-
-  const rows = [];
-  for (const c of candidates) {
-    const key = c.recallNumber || `${c.productName}|${c.createdAt.slice(0, 10)}`;
-    for (const orgId of orgIds) {
-      const id = stableRecallId(orgId, key);
-      if (have.has(`id|${id}`)) continue;
-      if (c.recallNumber && have.has(`${orgId}|rn|${c.recallNumber}`)) continue;
-      if (have.has(`${orgId}|pd|${c.productName}|${c.createdAt.slice(0, 10)}`)) continue;
-      rows.push({
-        id,
-        product_name:    c.productName,
-        lot_number:      c.lotNumber,
-        description:     c.description,
-        source:          'fda',
-        active:          true,
-        organisation_id: orgId,
-        created_at:      c.createdAt,
-      });
-    }
-  }
-  if (!rows.length) return { added: 0, skipped: skipped + candidates.length * orgIds.length };
-
-  const { data: inserted, error: insErr } = await sb.from('recalls')
-    .upsert(rows, { onConflict: 'id', ignoreDuplicates: true })
-    .select('id');
-  if (insErr) throw new Error('FDA insert failed: ' + insErr.message);
-  const added = (inserted || []).length;
-  return { added, skipped: skipped + candidates.length * orgIds.length - added };
-}
-
 // ── Helpers ───────────────────────────────────────────────────
 function parseDate(str) {
   // FDA dates come as YYYYMMDD
@@ -331,7 +219,7 @@ function parseDate(str) {
 }
 
 // Exported for tests.
-exports._test = { fdaDescription, recallNumberFrom, stableRecallId, catalogKey, catalogRow, parseCodeInfo, importCatalog, importPerOrg };
+exports._test = { catalogKey, catalogRow, parseCodeInfo, importCatalog };
 
 // Every run is recorded in job_runs for the daily health check (migration 041).
 exports.handler = require('../lib/job-log').withJobLog('fetch-recall-feeds', run);

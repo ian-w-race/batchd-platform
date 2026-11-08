@@ -511,6 +511,19 @@ not repeated here.
     and "Mattilsynet notification" as before and a recall saved with one
     of them appears in the Active tab as an internal recall.
 
+## B4 stage 6: the feed copies are retired (2026-11-08)
+
+68. After the production run of scripts/retire-feed-copies.sql, in the
+    Supabase SQL editor on production: `select count(*) from recalls where
+    source in ('fda','mattilsynet','rasff');` is 0, `select count(*) from
+    backup.recalls_feed_copies_20261108;` is 982, and `select count(*) from
+    recall_catalog;` is unchanged (501 plus whatever the daily runs added).
+    Scanner and Retail: the sign-in alert, Feed alerts, Lot Lookup and the
+    Recalls drawer show the same FDA entries as before the delete (they
+    read the catalog). The morning after the merge, the newest job_runs
+    row for fetch-recall-feeds has catalog_added and no fda_added, and
+    `select count(*) from recalls where source = 'fda';` is still 0.
+
 ## Run log
 
 - 2026-11-01, Claude, local static server against the staging database:
