@@ -4,6 +4,41 @@ Newest first. One entry per change Ian ships: the date, what changed,
 how it was verified and what is still unverified. Everything before
 2026-10-24 is in docs/HISTORY.md.
 
+## 2026-11-08 (B4 stage 3: migration 044 copies the feed rows into the catalog, on staging)
+- migrations/044_recall_catalog_backfill.sql copies every per-organization
+  public feed row in recalls (source fda or mattilsynet, with an
+  organization) into recall_catalog once, under the same key the importer
+  writes (recall number from the end of the description plus the first 12
+  hex characters of md5(product name), or product and report day without a
+  number), writes one recall_catalog_org row per (organization, entry) with
+  first_seen_at from the oldest copy, dismissed_at when every copy the
+  organization had was inactive and matched_at from existing scan matches,
+  and stamps catalog_id on matches that pointed at a copy. Nothing is
+  deleted; the copies keep serving every screen until stage 6. Re-runnable.
+- The migration also adds batchd_parse_lots(text), the SQL twin of the
+  importer's parseCodeInfo (4 to 30 characters with a digit, no spaces, not
+  a date, not a bare number of four digits or fewer, not a UPC), and
+  refreshes the lots of migrated entries with it on every run, so a parser
+  change reaches entries that have no raw feed text.
+- fetch-recall-feeds.js: the catalog key hashes the product name with md5
+  (first 12 hex characters) instead of a JavaScript string hash, so
+  migrated and imported entries meet on the unique key; the upsert now
+  merges (status, classification, raw and the rest refresh on every run,
+  reported as catalog_refreshed) and a lookup before the upsert decides
+  which entries are new and get a sweep; parseCodeInfo drops bare numbers
+  of four digits or fewer (years, counts).
+- Applied to staging 2026-11-08 (recorded as 044_recall_catalog_backfill)
+  and reconciled: 56 copies, 28 distinct keys, 28 catalog entries, 28
+  recall_catalog_org rows, 0 dismissed, 0 matches repointed, and
+  batchd_active_recalls returns those 28 feed entries for the QA
+  organization; the CHECK_MIGRATIONS 044 row reads true. 13 entries carry
+  parsed lots, and no entry carries a bare year as a lot. Production
+  pending Ian's go-ahead.
+- Verified: node scripts/check.mjs (10 of 10); node --test (124 tests,
+  the importer's tests covering the md5 key, the merge, the refresh count
+  and the tightened lot rule). Not verified: the real FDA run through the
+  merge path (SMOKE.md 64 covers the first scheduled run).
+
 ## 2026-11-08 (B4 stage 2: the importer writes the recall catalog)
 - fetch-recall-feeds.js now writes each FDA report entry once into
   recall_catalog, keyed (source, external_key) with the recall number plus

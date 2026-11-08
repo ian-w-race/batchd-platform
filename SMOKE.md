@@ -474,6 +474,16 @@ not repeated here.
     Recalls, Feed alerts: the newest FDA entries still appear (the
     per-organization copies continue until stage 6).
 
+## Migration 044, the feed rows copied into the catalog (B4 stage 3)
+
+65. Nothing changes on screen: the apps still read the old tables until
+    stages 4 and 5 and the copies stay. After the production apply, run
+    migrations/CHECK_MIGRATIONS.sql in the Supabase SQL editor (project
+    lurxucdmrugikdlvvebc): the 044 row reads true, and every earlier row
+    still reads true. `select count(*) from recall_catalog_org;` is above
+    0 and `select count(*) from recall_catalog where lots && array['2025',
+    '2026', '2027'];` is 0.
+
 ## Run log
 
 - 2026-11-01, Claude, local static server against the staging database:

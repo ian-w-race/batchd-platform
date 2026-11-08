@@ -33,14 +33,20 @@ function makeDb({ orgs, recalls = [], catalog = [] }) {
           const store = st.table === 'recall_catalog' ? db.catalog : db.recalls;
           if (st.op === 'upsert') {
             const keys = String(st.opts?.onConflict || 'id').split(',');
-            const added = [];
+            const out = [];
             for (const row of st.rows) {
-              if (store.some((r) => keys.every((k) => r[k] === row[k]))) continue; // ON CONFLICT DO NOTHING
-              const saved = { id: row.id || 'cat-' + (++seq), ...row };
+              const existing = store.find((r) => keys.every((k) => r[k] === row[k]));
+              if (existing) {
+                if (st.opts?.ignoreDuplicates) continue;          // ON CONFLICT DO NOTHING
+                Object.assign(existing, row);                     // ON CONFLICT DO UPDATE; created_at stays
+                out.push({ id: existing.id, created_at: existing.created_at, external_key: existing.external_key });
+                continue;
+              }
+              const saved = { id: row.id || 'cat-' + (++seq), ...row, created_at: row.created_at || new Date().toISOString() };
               store.push(saved);
-              added.push({ id: saved.id });
+              out.push({ id: saved.id, created_at: saved.created_at, external_key: saved.external_key });
             }
-            return { data: added, error: null };
+            return { data: out, error: null };
           }
           let out = store.filter((r) => st.filters.every((f) => f(r)));
           if (st.limit) out = out.slice(0, st.limit);
@@ -85,6 +91,7 @@ test('fresh import writes each entry once to the catalog, sweeps it, and still a
   assert.equal(db.sweeps.length, 3, 'one sweep per new entry');
   assert.equal(r.catalog_matches, 6, 'the stub reports 2 matches per sweep');
   assert.equal(r.fda_added, 6, 'per-org copies: 3 entries x 2 US orgs, none for the NO org');
+  assert.equal(db.calls, 3 + 3 + 2, 'organisations, catalog lookup, catalog upsert, three sweeps, existing per-org rows, per-org upsert');
   assert.equal(db.recalls.filter((x) => x.source === 'fda').length, 6);
   assert.ok(db.recalls.every((x) => /\[F-\d{4}-2026\]$/.test(x.description)));
   assert.equal(r.errors, undefined, 'the Mattilsynet leg is gone, so no 404 error');
@@ -93,13 +100,16 @@ test('fresh import writes each entry once to the catalog, sweeps it, and still a
   assert.deepEqual(c.lots, ['L100']); assert.equal(c.report_date, '2026-10-20'); assert.equal(c.raw.product_description, 'Romaine hearts');
 });
 
-test('a second run adds nothing to the catalog or the copies, and sweeps nothing', async () => {
+test('a second run adds nothing to the catalog or the copies, refreshes the entries, and sweeps nothing', async () => {
   global.fetch = fda([item(1, 'Romaine hearts'), item(2, 'Peanut butter')]);
   const db = makeDb({ orgs: US });
   const mod = load(db);
   await mod.handler({});
+  global.fetch = fda([item(1, 'Romaine hearts', '20261020', 'Possible Listeria contamination', { status: 'Terminated' }), item(2, 'Peanut butter')]);
   const second = JSON.parse((await mod.handler({})).body);
   assert.equal(second.catalog_added, 0);
+  assert.equal(second.catalog_refreshed, 2);
+  assert.equal(db.catalog.find((c) => c.recall_number === 'F-0001-2026').feed_status, 'Terminated', 'a later run refreshes the status');
   assert.equal(second.fda_added, 0);
   assert.equal(db.catalog.length, 2);
   assert.equal(db.recalls.length, 4);
@@ -114,6 +124,10 @@ test('one recall number with several product lines is several catalog entries', 
   assert.equal(r.catalog_added, 2);
   assert.notEqual(db.catalog[0].external_key, db.catalog[1].external_key);
   assert.ok(db.catalog.every((c) => c.external_key.startsWith('F-0005-2026|')));
+  // The same key migration 044 computes in SQL from the old rows:
+  // recall_number || '|' || left(md5(product_name), 12).
+  const { createHash } = await import('node:crypto');
+  assert.equal(db.catalog[0].external_key, 'F-0005-2026|' + createHash('md5').update('Creamy peanut butter 16 oz').digest('hex').slice(0, 12));
 });
 
 test('two runs at the same moment cannot duplicate (stable ids and the unique key)', async () => {
@@ -180,6 +194,7 @@ test('code_info parsing keeps lot codes, finds UPCs, and skips dates and labels'
   assert.deepEqual(parseCodeInfo('Lot #: L24201, L24202; Best By 12/15/2026'), { lots: ['L24201', 'L24202'], gtins: [] });
   assert.deepEqual(parseCodeInfo('UPC 0 41497 03611 9, Lot codes 2024-07 and 2024-08'), { lots: ['2024-07', '2024-08'], gtins: ['041497036119'] });
   assert.deepEqual(parseCodeInfo('All lots. Exp 01/2027'), { lots: [], gtins: [] });
+  assert.deepEqual(parseCodeInfo('Best by 2026, lot 26187 and 2576'), { lots: ['26187'], gtins: [] }, 'bare years and small counts are not lots');
   assert.deepEqual(parseCodeInfo('Item 00812345000016 lot PB24105 through PB24150'), { lots: ['PB24105', 'PB24150'], gtins: ['00812345000016'] });
   assert.deepEqual(parseCodeInfo(''), { lots: [], gtins: [] });
   assert.deepEqual(parseCodeInfo(null), { lots: [], gtins: [] });

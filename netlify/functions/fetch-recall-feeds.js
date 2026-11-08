@@ -86,6 +86,7 @@ const run = async (event) => {
       fda_skipped:      results.fda?.skipped  ?? 0,
       catalog_added:    results.catalog?.added   ?? 0,
       catalog_skipped:  results.catalog?.skipped ?? 0,
+      catalog_refreshed: results.catalog?.refreshed ?? 0,
       catalog_matches:  results.catalog?.matches ?? 0,
       errors: results.errors.length > 0 ? results.errors : undefined,
       timestamp: new Date().toISOString(),
@@ -112,14 +113,18 @@ function fdaRecallNumber(r) {
 
 // ── The catalog (B4 stage 2) ───────────────────────────────────
 // One FDA recall number covers several product lines, each a separate
-// entry in the report, so the key is the number plus a hash of the product
-// text. Entries without a number are keyed on product and report day.
+// entry in the report, so the key is the number plus a hash of the
+// 120-character product name. Entries without a number are keyed on that
+// name and the report day. Migration 044 derives the same key from the old
+// per-organization rows (recall number from the description, product_name,
+// created_at), so a migrated entry and a freshly imported one meet on the
+// unique key instead of becoming two rows.
 function catalogKey(r) {
   const recallNumber = fdaRecallNumber(r);
   const productName = (r.product_description || '').slice(0, 120);
   const day = (r.report_date ? parseDate(r.report_date) : null) || '';
   if (recallNumber) {
-    const h = crypto.createHash('sha1').update(r.product_description || '').digest('hex').slice(0, 12);
+    const h = crypto.createHash('md5').update(productName).digest('hex').slice(0, 12);
     return `${recallNumber}|${h}`;
   }
   return `pd|${productName}|${day.slice(0, 10)}`;
@@ -127,8 +132,9 @@ function catalogKey(r) {
 
 // Lot codes and GTINs out of the FDA's free-text code_info, conservatively:
 // a token counts as a lot when it has 4 to 30 characters, at least one digit
-// and no spaces, is not a date and is not a UPC. Digit runs of 12 to 14
-// (spaces allowed, as "0 41497 03611 9") count as GTINs. B5 improves this.
+// and no spaces, is not a date, not a bare number of four digits or fewer
+// (years and counts) and not a UPC. Digit runs of 12 to 14 (spaces allowed,
+// as "0 41497 03611 9") count as GTINs. B5 improves this.
 const CODE_LABELS = /\b(lot|lots|lot\s*(?:#|no\.?|number|numbers|code|codes)|batch|batches|codes?|numbers?|no\.?|item|items|upc|upcs|sku|skus|best\s*by|use\s*by|sell\s*by|exp(?:ires|iry|iration)?|dates?|through|thru|to|and|all)\b/gi;
 function parseCodeInfo(text) {
   const s = String(text || '');
@@ -147,6 +153,7 @@ function parseCodeInfo(text) {
       if (!/\d/.test(t)) continue;
       if (/^\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4}$/.test(t) || /^\d{4}[\/.-]\d{1,2}[\/.-]\d{1,2}$/.test(t)) continue; // a date
       if (/^\d{1,2}[\/.-]\d{2,4}$/.test(t)) continue;                                                       // month/year
+      if (/^\d{1,4}$/.test(t)) continue;                                                                   // a year or a count
       if (/^\d{12,14}$/.test(t)) { gtins.add(t); continue; }
       lots.add(t);
       if (lots.size >= 50) break;
@@ -192,13 +199,22 @@ async function importCatalog(sb, feed) {
   }
   if (!rows.length) return { added: 0, skipped, matches: 0 };
 
-  // Insert the entries the catalog does not have yet; the unique key keeps
-  // two sites or two retries from ever adding one twice.
-  const { data: inserted, error: insErr } = await sb.from('recall_catalog')
-    .upsert(rows, { onConflict: 'source,external_key', ignoreDuplicates: true })
-    .select('id');
-  if (insErr) throw new Error('Catalog insert failed: ' + insErr.message);
-  const added = (inserted || []).map(x => x.id);
+  // Which of these entries the catalog already holds (one query), then an
+  // upsert on the unique key: a new entry is inserted, a known one is
+  // refreshed (the FDA moves an entry's status from Ongoing to Completed or
+  // Terminated, and a migrated entry gains its raw feed text here). Two
+  // sites or two retries can never add one twice. Only new entries are swept.
+  const { data: existing, error: exErr } = await sb.from('recall_catalog')
+    .select('external_key')
+    .eq('source', 'fda')
+    .in('external_key', rows.map(r => r.external_key));
+  if (exErr) throw new Error('Could not read the catalog: ' + exErr.message);
+  const known = new Set((existing || []).map(x => x.external_key));
+  const { data: written, error: insErr } = await sb.from('recall_catalog')
+    .upsert(rows, { onConflict: 'source,external_key' })
+    .select('id, external_key');
+  if (insErr) throw new Error('Catalog upsert failed: ' + insErr.message);
+  const added = (written || []).filter(x => !known.has(x.external_key)).map(x => x.id);
 
   // Match each new entry against every US organization's scans (service
   // role only). Ten at a time keeps the run inside Netlify's budget.
@@ -210,7 +226,7 @@ async function importCatalog(sb, feed) {
       else console.warn('[fetch-recall-feeds] sweep failed:', r.reason?.message || r.value?.error?.message);
     }
   }
-  return { added: added.length, skipped: skipped + rows.length - added.length, matches };
+  return { added: added.length, skipped: skipped + rows.length - added.length, refreshed: Math.max(0, (written || []).length - added.length), matches };
 }
 
 // ── The per-organization copies (until B4 stage 6) ─────────────
