@@ -2289,7 +2289,7 @@ Options: security_invoker=true
 | `batchd_my_active_org_ids()` | SETOF uuid | definer | authenticated, service_role |
 | `batchd_my_partner_source_org_ids()` | SETOF uuid | definer | authenticated, service_role |
 | `batchd_my_source_event_ids()` | SETOF uuid | definer | authenticated, service_role |
-| `batchd_norm_firm(text)` | text | invoker | PUBLIC, anon, authenticated, service_role |
+| `batchd_norm_firm(text)` | text | invoker | authenticated, service_role |
 | `batchd_norm_gtin(text)` | text | invoker | authenticated, service_role |
 | `batchd_norm_lot(text)` | text | invoker | authenticated, service_role |
 | `batchd_org_ai_enabled(uuid)` | boolean | definer | authenticated, service_role |

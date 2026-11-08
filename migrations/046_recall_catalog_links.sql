@@ -36,6 +36,8 @@ RETURNS text LANGUAGE sql IMMUTABLE SET search_path = public AS $$
            regexp_replace(lower(coalesce(p, '')), '\m(inc|llc|ltd|co|corp|corporation|company|dba|d/b/a|the|incorporated|limited|lp|llp)\M\.?', ' ', 'g'),
            '[^a-z0-9]+', '', 'g'), '');
 $$;
+REVOKE ALL ON FUNCTION public.batchd_norm_firm(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.batchd_norm_firm(text) TO authenticated, service_role;
 
 -- ── 1. Enforcement entries join their announcements ─────────────────────────
 CREATE OR REPLACE FUNCTION public.link_catalog_announcements(p_days integer DEFAULT 120)
