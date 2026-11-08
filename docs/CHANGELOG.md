@@ -32,7 +32,8 @@ how it was verified and what is still unverified. Everything before
   unique key and counts sweep calls: one catalog row per entry, one sweep
   per new entry, nothing on a second run, several product lines under one
   number as several entries, parseCodeInfo cases); the end-to-end suite
-  locally against the built site (result below). Not verified until the
+  locally against the built site (11 passed, 1 skipped; the scanner's
+  sign-in, timer and Settings paths no longer call a feed). Not verified until the
   06:00 UTC run after the merge: the real FDA feed through the new path
   (SMOKE.md 64); the health check will report a failed run.
 
