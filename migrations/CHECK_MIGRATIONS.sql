@@ -113,6 +113,15 @@ WITH checks AS (
   UNION ALL SELECT '030 products_public exposes the FTL columns',
          EXISTS (SELECT 1 FROM information_schema.columns
                  WHERE table_schema='public' AND table_name='products_public' AND column_name='is_ftl')
+  UNION ALL SELECT '046 recall catalog links: announcements joined, pushed recalls cover public entries, announced_at returned',
+         EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='recall_catalog' AND column_name='announced_at')
+         AND EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'link_catalog_announcements')
+         AND EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'link_catalog_coverage')
+         AND EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'link_catalog_coverage_for_event')
+         AND NOT has_function_privilege('authenticated', 'public.link_catalog_coverage(uuid)', 'EXECUTE')
+         AND has_function_privilege('authenticated', 'public.link_catalog_coverage_for_event(uuid)', 'EXECUTE')
+         AND EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                     WHERE n.nspname = 'public' AND p.proname = 'batchd_active_recalls' AND pg_get_function_result(p.oid) LIKE '%announced_at timestamp%')
   UNION ALL SELECT '045 recall catalog codes: ranges, best-by window, all-lots, parser_version, kind; covered_by_event_id; the function returns them',
          EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='recall_catalog' AND column_name='parser_version')
          AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='recall_catalog' AND column_name='lot_ranges')

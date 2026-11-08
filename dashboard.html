@@ -4061,7 +4061,7 @@ async function renderRecalls() {
         </div>
         <div style="flex:1;min-width:0;">
           <div style="font-size:var(--fs-meta);font-weight:600;color:var(--text);margin-bottom:2px;">${esc(r.product_name||'—')}${r._feedKind === 'announcement' ? ` <span title="From the FDA's recall announcement, before the enforcement report lists it" style="font-size:var(--fs-label);font-family:'DM Mono',monospace;letter-spacing:0.06em;text-transform:uppercase;padding:2px 6px;border-radius:var(--r-xs);background:rgba(var(--warn-rgb),0.12);color:var(--warn);margin-left:6px;vertical-align:middle;">Announced</span>` : ''}${inFocus ? ` <span style="font-size:var(--fs-label);font-family:'DM Mono',monospace;letter-spacing:0.06em;text-transform:uppercase;padding:2px 6px;border-radius:var(--r-xs);background:rgba(var(--info-rgb),0.12);color:var(--info);margin-left:6px;vertical-align:middle;">In your focus categories</span>` : ''}${r.severity ? ` <span style="margin-left:6px;vertical-align:middle;">${sevPill(r.severity)}</span>` : ''}</div>
-          <div style="font-size:var(--fs-eyebrow);color:var(--muted);">${regionTerm('lot_short')}: <span style="font-family:'DM Mono',monospace;">${esc(lotsText)}</span> · ${esc((r.source||'').toUpperCase())}${recallNo ? ` <span style="font-family:'DM Mono',monospace;">${esc(recallNo[1])}</span>` : ''}${r.recalling_firm ? ` · ${esc(r.recalling_firm)}` : ''} · ${r.published_at?fmtDash(r.published_at):''}${reviewed ? ` · Reviewed ${fmtDash(state.reviewed_at)}` : ''}${r.notice_url ? ` · <a href="${esc(r.notice_url)}" target="_blank" rel="noopener" style="color:var(--info);">FDA notice</a>` : ''}</div>
+          <div style="font-size:var(--fs-eyebrow);color:var(--muted);">${regionTerm('lot_short')}: <span style="font-family:'DM Mono',monospace;">${esc(lotsText)}</span> · ${esc((r.source||'').toUpperCase())}${recallNo ? ` <span style="font-family:'DM Mono',monospace;">${esc(recallNo[1])}</span>` : ''}${r.recalling_firm ? ` · ${esc(r.recalling_firm)}` : ''} · ${r.published_at?fmtDash(r.published_at):''}${r.announced_at ? ` · Announced ${fmtDash(r.announced_at)}` : ''}${reviewed ? ` · Reviewed ${fmtDash(state.reviewed_at)}` : ''}${r.notice_url ? ` · <a href="${esc(r.notice_url)}" target="_blank" rel="noopener" style="color:var(--info);">FDA notice</a>` : ''}${r._covered ? ` · <span title="One of your pushed recalls names this product's lot or GTIN" style="color:var(--accent);">Covered by your recall</span>` : ''}</div>
           ${_desc120?`<div style="font-size:var(--fs-eyebrow);color:var(--muted);margin-top:4px;line-height:1.5;">${esc(_desc120)}</div>`:''}
         </div>
         <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;flex-shrink:0;">
@@ -5643,6 +5643,12 @@ async function _composerPushRecall() {
 
     showToast(`Recall pushed: ${stores?.length || 0} store${(stores?.length || 0) !== 1 ? 's' : ''} notified${lots.length > 1 ? `, ${lots.length} lots` : ''}`, 'ok', 3500);
     invalidateOverviewCache();
+    // B5 stage 3: a public feed entry that names one of these lots or GTINs
+    // is now covered by this recall for this organization (migration 046).
+    // Fire and forget; the nightly link does the same.
+    sb.rpc('link_catalog_coverage_for_event', { p_event: ev.id }).then(({ error }) => {
+      if (error) console.warn('[composer] coverage link:', error.message);
+    });
     // A recall that came from a supplier notice: link the two (migration 040).
     if (s.noticeId) {
       const { error: nErr } = await sb.from('recall_notices')

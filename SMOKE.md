@@ -553,6 +553,19 @@ not repeated here.
     Netlify, Functions, fetch-fda-announcements-background: one invocation
     a day, after fetch-recall-feeds.
 
+## B5 stage 3: announcements joined, pushed recalls cover public entries (2026-11-08)
+
+71. After the production apply of migration 046: Retail, Dashboard, Push a
+    Recall for a product and lot that an FDA entry in Feed alerts also
+    names (pick one with a lot code from the Feed tab); after the push,
+    Recalls, Feed alerts: that entry's line reads "Covered by your recall".
+    Over the following weeks, when the enforcement report lists a recall
+    that arrived first as an announcement, Feed alerts shows one entry
+    with the FDA recall number, "Announced <date>" and the "FDA notice"
+    link, not two. In the Supabase SQL editor on production the morning
+    after a run: the newest fetch-recall-feeds job_runs row has
+    links_announcements and links_coverage in its detail.
+
 ## Run log
 
 - 2026-11-01, Claude, local static server against the staging database:

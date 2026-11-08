@@ -60,6 +60,7 @@ export function normalizeActiveRecalls(rows, opts = {}) {
       _feedKind: clean(row.kind),
       notice_url: clean(row.notice_url),
       _covered: !!row.covered,
+      announced_at: clean(row.announced_at),
       description: clean(row.description),
       reason: clean(row.reason),
       severity: clean(row.severity),

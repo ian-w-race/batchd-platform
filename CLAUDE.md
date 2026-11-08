@@ -330,7 +330,7 @@ admin.html keep their own small, older color sets.
   exist in production (checked 2026-10-24; CHECK_MIGRATIONS reports it
   MISSING). The only writer is the retired OCR path in saveRecord, so the
   insert never runs today. Apply 007 before reviving OCR capture.
-- Migrations: 001 to 045 with 020a, no 027 (John's code_patterns slot,
+- Migrations: 001 to 046 with 020a, no 027 (John's code_patterns slot,
   applied outside the folder). 043 (the recall catalog, B4 stage 1) was
   applied to staging and then production on 2026-11-01 with Ian's
   go-ahead; both functions are byte-identical on the two projects. 044
@@ -340,7 +340,10 @@ admin.html keep their own small, older color sets.
   fields, B5 stage 1) was applied to staging and then production on
   2026-11-08 with Ian's go-ahead; it changes the function's return type,
   so it drops and recreates batchd_active_recalls with the same grants.
-  CHECK_MIGRATIONS.sql reports APPLIED or
+  046 (the catalog links, B5 stage 3: link_catalog_announcements,
+  link_catalog_coverage, link_catalog_coverage_for_event, announced_at,
+  the function recreated once more) was applied to staging and then
+  production on 2026-11-08 with Ian's go-ahead. CHECK_MIGRATIONS.sql reports APPLIED or
   MISSING per migration; Ian ran it 2026-10-11 and every row was APPLIED.
   031 to 044 were applied through the Supabase connector (031 to 039 on
   2026-10-24, 040 and 041 on 2026-10-25, 042 and 043 on 2026-11-01, 044
@@ -475,6 +478,13 @@ pov once and refuses to run again.
   confirmed in scan_recall_matches (catalog_id) and not dismissed by the
   organization (recall_catalog_org.dismissed_at). Manual and pushed
   recalls count on an exact lot or barcode match to an on-shelf scan.
+  Since B5 stage 3 an announcement (kind 'announcement', from the FDA
+  press release) that an enforcement entry has joined (announcement_id)
+  is hidden by the function and the enforcement entry carries its
+  announced_at and notice_url; recall_catalog_org.covered_by_event_id
+  marks a public entry that one of the organization's own pushed recalls
+  names (shared lot or GTIN, or the product for an all-lots entry), set
+  nightly by the importer and by the composer right after a push.
 - Every recall check calls `batchd_active_recalls(p_org)` (migration 043;
   SECURITY INVOKER). It returns manual recalls (`recalls`), pushed events
   (recall_events through recall_distributions) and public feed entries

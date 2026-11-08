@@ -38,7 +38,7 @@ const run = async (event) => {
   }
 
   const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
-  const results = { catalog: null, reparse: null, announcements: null, errors: [] };
+  const results = { catalog: null, reparse: null, links: null, announcements: null, errors: [] };
 
   let feed = null;
   try {
@@ -64,6 +64,21 @@ const run = async (event) => {
     console.error('[fetch-recall-feeds] re-parse error:', e.message);
     results.errors.push('Re-parse: ' + e.message);
   }
+  // The links (B5 stage 3): enforcement entries join their announcements,
+  // and each organization's pushed recalls cover the public entries they
+  // name. Both are SQL functions for the service role (migration 046).
+  try {
+    const [ann, cov] = await Promise.all([
+      sb.rpc('link_catalog_announcements', { p_days: 120 }),
+      sb.rpc('link_catalog_coverage', { p_event: null }),
+    ]);
+    if (ann.error) throw new Error('link_catalog_announcements: ' + ann.error.message);
+    if (cov.error) throw new Error('link_catalog_coverage: ' + cov.error.message);
+    results.links = { announcements: Number(ann.data) || 0, coverage: Number(cov.data) || 0 };
+  } catch (e) {
+    console.error('[fetch-recall-feeds] link error:', e.message);
+    results.errors.push('Links: ' + e.message);
+  }
   // FDA announcements (B5 stage 2): the press releases are read by the
   // background function, which has the minutes this scheduled run lacks.
   results.announcements = await triggerAnnouncements();
@@ -79,6 +94,8 @@ const run = async (event) => {
       catalog_matches:  results.catalog?.matches ?? 0,
       catalog_reparsed: results.reparse?.reparsed ?? 0,
       reparse_matches:  results.reparse?.matches ?? 0,
+      links_announcements: results.links?.announcements ?? 0,
+      links_coverage:   results.links?.coverage ?? 0,
       announcements:    results.announcements,
       errors: results.errors.length > 0 ? results.errors : undefined,
       timestamp: new Date().toISOString(),
